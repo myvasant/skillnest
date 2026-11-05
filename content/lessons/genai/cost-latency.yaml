@@ -1,0 +1,214 @@
+id: genai.cost-latency
+concept: genai.cost-latency
+title: Cost and latency engineering
+subtitle: Token budgets, prompt caching, streaming, smaller or local models, batching and routing reduce cost and
+  waiting time
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Token budgets, prompt caching, streaming, smaller or local models, batching and routing reduce cost and
+  waiting time.
+objectives:
+- Explain the role of cost and latency engineering in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: Prompt caching
+  url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  publisher: Anthropic
+- title: Prompt caching
+  url: https://developers.openai.com/api/docs/guides/prompt-caching
+  publisher: OpenAI
+- title: Automatic Prefix Caching
+  url: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/
+  publisher: vLLM project
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Token budgets, prompt caching, streaming, smaller or local models, batching and routing reduce cost and
+      waiting time. LLM costs scale with every user and every token, and slow responses lose users; both must be
+      engineered, not discovered on the first invoice.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Cost per request is roughly input tokens times the input price plus output tokens times the output
+      price; output tokens are usually pricier and dominate latency.
+
+      - Cut tokens with shorter system prompts, fewer but better retrieved chunks, summarised history, a maximum
+      output length and instructions to be concise.
+
+      - Prompt caching, offered by several providers on varying terms, reuses work for a repeated prompt prefix
+      — put static content first and variable content last.
+
+      - Stream responses and measure time to first token and total time separately.
+
+      - Route easy requests to smaller models, use batch APIs for non-urgent work and cache complete responses for
+      repeated queries; check current pricing and discounts.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or
+      human correction.
+
+      - Reasoning models can generate many reasoning tokens that are billed even when they are not shown.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def estimate_cost(input_tokens, output_tokens, input_rate, output_rate):\n    if min(input_tokens, output_tokens,\
+      \ input_rate, output_rate) < 0: raise ValueError(\"values must be non-negative\")\n    return (input_tokens*input_rate\
+      \ + output_tokens*output_rate)/1_000_000\n\nprint(estimate_cost(1000, 500, 2.0, 8.0))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: cost-latency-code
+  - type: item
+    ref: cost-latency-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Cost per request is roughly input tokens times the input price plus output tokens times the output price;
+      output tokens are usually pricier and dominate latency.
+
+      - Cut tokens with shorter system prompts, fewer but better retrieved chunks, summarised history, a maximum
+      output length and instructions to be concise.
+
+      - Prompt caching, offered by several providers on varying terms, reuses work for a repeated prompt prefix
+      — put static content first and variable content last.
+
+      - Stream responses and measure time to first token and total time separately.
+
+      - Route easy requests to smaller models, use batch APIs for non-urgent work and cache complete responses for
+      repeated queries; check current pricing and discounts.
+
+
+      **Limitations**
+
+      - The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or human
+      correction.
+
+      - Reasoning models can generate many reasoning tokens that are billed even when they are not shown.'
+  - type: item
+    ref: cost-latency-mcq
+  - type: item
+    ref: cost-latency-tf
+  - type: item
+    ref: cost-latency-code
+items:
+- id: cost-latency-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of cost and latency engineering?
+  explanation: Cost per request is roughly input tokens times the input price plus output tokens times the output
+    price; output tokens are usually pricier and dominate latency.
+  options:
+  - id: a
+    text: Cost per request is roughly input tokens times the input price plus output tokens times the output price;
+      output tokens are usually pricier and dominate latency.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or human
+      correction.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: cost-latency-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or human
+    correction.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: cost-latency-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding cost and latency engineering to an application. Describe the design, one failure mode,
+    and how you would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: cost-latency-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for cost and latency engineering. The assertions include the normal
+    path and a meaningful edge case.
+  starterCode: "def estimate_cost(input_tokens, output_tokens, input_rate, output_rate):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def estimate_cost(input_tokens, output_tokens, input_rate, output_rate):\n    if min(input_tokens,\
+    \ output_tokens, input_rate, output_rate) < 0: raise ValueError(\"values must be non-negative\")\n    return\
+    \ (input_tokens*input_rate + output_tokens*output_rate)/1_000_000"
+  tests:
+  - name: Core behaviour
+    code: assert abs(estimate_cost(1000,500,2,8)-0.006)<1e-12
+  - name: Edge case
+    code: 'try: estimate_cost(-1,0,1,1)
+
+      except ValueError: pass
+
+      else: raise AssertionError("negative token count must fail")'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - cost-latency-mcq
+  - cost-latency-tf
+  - cost-latency-code
+cheatsheet: '**Key ideas**
+
+  - Cost per request is roughly input tokens times the input price plus output tokens times the output price; output
+  tokens are usually pricier and dominate latency.
+
+  - Cut tokens with shorter system prompts, fewer but better retrieved chunks, summarised history, a maximum output
+  length and instructions to be concise.
+
+  - Prompt caching, offered by several providers on varying terms, reuses work for a repeated prompt prefix — put
+  static content first and variable content last.
+
+  - Stream responses and measure time to first token and total time separately.
+
+  - Route easy requests to smaller models, use batch APIs for non-urgent work and cache complete responses for repeated
+  queries; check current pricing and discounts.
+
+
+  **Failure modes**
+
+  - The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or human correction.
+
+  - Reasoning models can generate many reasoning tokens that are billed even when they are not shown.'

@@ -1,0 +1,400 @@
+id: cs.dependency-management
+concept: cs.dependency-management
+title: Dependency Management and Versioning
+subtitle: Direct dependencies, compatibility ranges and reproducible environments
+estimatedMinutes: 50
+summary: Learn how Python projects declare direct dependencies, how transitive packages form a dependency
+  graph, why version specifiers differ from lock files, and how to maintain reproducible and secure environments.
+objectives:
+- Distinguish direct and transitive dependencies.
+- Read Python dependency declarations in pyproject.toml.
+- Explain version ranges, exact pins and lock files.
+- Distinguish SemVer as a convention from Python PEP 440 version rules.
+- Describe a reproducible install workflow for development and CI.
+- Assess dependency maintenance, licence, security and supply-chain risks.
+sources:
+- title: Python Packaging User Guide — Dependency specifiers
+  url: https://packaging.python.org/en/latest/specifications/version-specifiers/
+  publisher: Python Packaging Authority
+- title: PEP 440 — Version Identification and Dependency Specification
+  url: https://peps.python.org/pep-0440/
+  publisher: Python Software Foundation
+- title: PEP 751 — A file format to record Python dependencies for installation reproducibility
+  url: https://peps.python.org/pep-0751/
+  publisher: Python Software Foundation
+- title: Semantic Versioning 2.0.0
+  url: https://semver.org/
+  publisher: Tom Preston-Werner
+- title: Python Packaging User Guide — Managing Application Dependencies
+  url: https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/
+  publisher: Python Packaging Authority
+reviewedOn: '2026-11-04'
+sections:
+- id: why-dependencies
+  title: Why dependency management exists
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'A **dependency** is code your project relies on but does not own. A web application might depend
+      on an HTTP client, which depends on an async library, which depends on a small utility package.
+      That chain is a dependency graph.
+
+
+      Without a deliberate strategy, two machines can install different versions and behave differently.
+      A package update can also introduce a breaking change, a vulnerability, a licence concern or a new
+      transitive dependency.'
+  - type: callout
+    variant: warning
+    title: A dependency is also a risk
+    body: Every package expands the code you trust, install, update and ship. Add dependencies because
+      they provide meaningful value, not because importing a library feels easier than writing five lines
+      of standard-library code.
+- id: direct-transitive
+  title: Direct and transitive dependencies
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A **direct dependency** is one your project explicitly declares because your own code uses
+      it. A **transitive dependency** is installed because one of your direct dependencies needs it.
+
+
+      If your application imports `httpx`, and `httpx` depends on `anyio`, then `httpx` is direct while
+      `anyio` is transitive from your application’s perspective. The full resolved graph matters: a vulnerability
+      can live several levels below the package you named.'
+  - type: item
+    ref: deps-direct-transitive
+- id: metadata-specifiers
+  title: Project metadata and version specifiers
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Python projects commonly declare dependencies in `pyproject.toml`, under `[project]` using
+      the `dependencies` field. A declaration such as `httpx>=0.27,<1` is a **version specifier**: it
+      expresses an allowed range using Python packaging rules (PEP 440).
+
+
+      A project may also declare optional dependencies for extras or development tools. Keep runtime requirements
+      separate from test, lint and documentation tools where the chosen build backend supports that separation.'
+  - type: code
+    language: python
+    code: 'import tomllib
+
+      from io import BytesIO
+
+
+      config = b"""
+
+      [project]
+
+      name = "report-tool"
+
+      requires-python = ">=3.11"
+
+      dependencies = ["httpx>=0.27,<1", "pydantic>=2,<3"]
+
+      """
+
+      project = tomllib.load(BytesIO(config))["project"]
+
+      print(project["name"])
+
+      print(project["requires-python"])
+
+      print(project["dependencies"])'
+    runnable: true
+    expectedOutput: 'report-tool
+
+      >=3.11
+
+      [''httpx>=0.27,<1'', ''pydantic>=2,<3'']'
+    caption: Python 3.11 added tomllib to the standard library. It reads TOML metadata; it does not install
+      packages.
+  - type: item
+    ref: deps-toml-predict
+- id: ranges-vs-lock
+  title: Compatibility ranges versus lock files
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A **version range** says which versions your project is willing to use. A **lock file** records
+      one concrete resolution of the entire dependency graph, including transitive dependencies and often
+      artifact hashes. The range is a compatibility policy; the lock is a reproducible installation snapshot.
+
+
+      For an application, a lock file helps every developer and CI install the same graph. For a reusable
+      library, metadata ranges let downstream applications resolve dependencies alongside their own constraints.
+      The right approach depends on the project type and package manager.'
+  - type: callout
+    variant: note
+    title: SemVer and PEP 440 are related, not identical
+    body: 'Semantic Versioning is a general versioning convention: MAJOR for incompatible changes, MINOR
+      for backward-compatible features and PATCH for compatible fixes. Python package version comparison
+      and specifiers follow PEP 440. Do not assume every package follows SemVer or that a version range
+      has identical meaning in every ecosystem.'
+  - type: item
+    ref: deps-pin-tf
+- id: reproducible-workflow
+  title: A reproducible dependency workflow
+  kind: application
+  blocks:
+  - type: markdown
+    body: 'A practical workflow is:
+
+
+      1. Create and activate a project virtual environment.
+
+      2. Declare a direct dependency in project metadata with a considered compatibility range.
+
+      3. Use the project’s chosen tool to resolve dependencies and create/update its lock file.
+
+      4. Install from the lock file in CI and verify the lock is current.
+
+      5. Review updates in small changes: inspect release notes, supported Python versions, licence, maintenance
+      and security advisories.
+
+      6. Run tests and regenerate the lock file when an update is accepted.
+
+
+      Do not edit a generated lock file by hand unless the tool explicitly documents that workflow.'
+  - type: code
+    language: bash
+    code: '# Illustrative shell workflow; commands vary by package manager.
+
+      python -m venv .venv
+
+      python -m pip install --upgrade pip
+
+      python -m pip install -e .
+
+      python -m pip freeze'
+    runnable: false
+    caption: This shows a basic virtual-environment install. `pip freeze` is a snapshot of installed distributions,
+      not a complete project lock workflow with hashes or metadata.
+    status: illustrative
+- id: supply-chain
+  title: Dependency security and supply-chain hygiene
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Before adding or updating a package, ask:
+
+
+      - Is it maintained and compatible with the Python versions you support?
+
+      - Does its licence fit the project and distribution model?
+
+      - Does it pull in a large or surprising dependency tree?
+
+      - Is there a known vulnerability or abandoned release line?
+
+      - Can you pin or lock the resolved artifacts and verify hashes?
+
+
+      A pinned environment is not automatically secure. Schedule updates, review automated update pull
+      requests, remove unused packages and respond to security advisories. A lock file improves repeatability;
+      it does not prove a package is trustworthy.'
+  - type: callout
+    variant: production
+    title: Reproducibility and freshness are both required
+    body: A perfectly repeatable installation of an old vulnerable package is still vulnerable. Reproducible
+      builds make the selected graph explicit; regular reviewed updates keep that graph maintained.
+- id: practice
+  title: Practise reading dependency graphs
+  kind: practice
+  blocks:
+  - type: item
+    ref: deps-direct-transitive
+  - type: item
+    ref: deps-pin-tf
+  - type: item
+    ref: deps-toml-predict
+  - type: item
+    ref: deps-closure-code
+  - type: item
+    ref: deps-version-policy-explain
+- id: summary
+  title: Dependency management checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: 'Can you name the direct dependencies your code uses? Can you inspect the transitive graph?
+      Does project metadata describe compatibility? Is the resolved environment reproducible? Are updates
+      reviewed and tested? Have you considered maintenance, licence, vulnerabilities and dependency size?
+
+
+      A lock file is not a substitute for thoughtful dependency selection or regular maintenance.'
+items:
+- id: deps-direct-transitive
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Your application imports `httpx`. `httpx` itself depends on `anyio`, which depends on `sniffio`.
+    Which statement is correct?
+  options:
+  - id: all-direct
+    text: All three packages are direct dependencies because they are installed.
+    correct: false
+    feedback: Direct means your project explicitly depends on a package. Dependencies required by another
+      package are transitive.
+  - id: direct-httpx
+    text: '`httpx` is a direct dependency; `anyio` and `sniffio` are transitive dependencies of that chain.'
+    correct: true
+    feedback: The application directly requests httpx. Its dependency graph brings in the other packages.
+  - id: only-sniffio
+    text: Only `sniffio` is a direct dependency because it is lowest in the graph.
+    correct: false
+    feedback: Being deepest in a graph does not make a package direct.
+  - id: not-dependencies
+    text: Only packages listed in your source imports count as dependencies.
+    correct: false
+    feedback: The full runtime dependency graph also includes packages required by the packages you import.
+  explanation: Direct dependencies are declared by your project. Transitive dependencies are pulled in
+    by those direct dependencies.
+- id: deps-pin-tf
+  type: true-false
+  skill: recognition
+  difficulty: 1
+  prompt: Pinning every package forever to its current exact version is the safest long-term dependency
+    strategy.
+  answer: false
+  explanation: Pins improve repeatability for a given install, but never updating leaves known vulnerabilities
+    and compatibility problems unpatched. Reproducibility must be paired with deliberate updates.
+- id: deps-toml-predict
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: What does this Python 3.11+ program print when it reads the TOML project metadata?
+  code: 'import tomllib
+
+    from io import BytesIO
+
+
+    config = b"""
+
+    [project]
+
+    name = "report-tool"
+
+    requires-python = ">=3.11"
+
+    dependencies = ["httpx>=0.27,<1", "pydantic>=2,<3"]
+
+    """
+
+    project = tomllib.load(BytesIO(config))["project"]
+
+    print(project["name"])
+
+    print(project["requires-python"])
+
+    print(len(project["dependencies"]))'
+  answer: 'report-tool
+
+    >=3.11
+
+    2'
+  wrongAnswers:
+  - answer: 'report-tool
+
+      >=3.11
+
+      0'
+    feedback: The two dependency strings are part of the project metadata list.
+  - answer: KeyError
+    feedback: The TOML contains a `[project]` table with all requested keys.
+  - answer: 'report-tool
+
+      3.11
+
+      2'
+    feedback: The requires-python value is a string and retains its comparison operator.
+  explanation: tomllib parses TOML into Python dictionaries. The project table contains the name, Python
+    compatibility specifier and two direct dependency declarations.
+- id: deps-closure-code
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: Implement `dependency_closure(graph, roots)`. `graph` maps every package name to its direct
+    dependency names. Return a sorted list of all transitive dependencies reachable from the roots, excluding
+    the root names themselves. Raise `KeyError` for an unknown root or dependency and `ValueError` for
+    a dependency cycle. Do not mutate the graph.
+  starterCode: "def dependency_closure(graph, roots):\n    # TODO: walk dependencies, detect unknown names\
+    \ and cycles\n    return []\n"
+  solution: "def dependency_closure(graph, roots):\n    roots = set(roots)\n    visiting = set()\n   \
+    \ visited = set()\n\n    def visit(package):\n        if package not in graph:\n            raise\
+    \ KeyError(package)\n        if package in visiting:\n            raise ValueError(\"dependency cycle\
+    \ detected\")\n        if package in visited:\n            return\n        visiting.add(package)\n\
+    \        for dependency in graph[package]:\n            visit(dependency)\n        visiting.remove(package)\n\
+    \        visited.add(package)\n\n    for root in roots:\n        visit(root)\n    return sorted(visited\
+    \ - roots)\n"
+  tests:
+  - name: transitive chain
+    code: 'graph = {"app": ["httpx"], "httpx": ["anyio"], "anyio": ["sniffio"], "sniffio": []}
+
+      assert dependency_closure(graph, ["app"]) == ["anyio", "httpx", "sniffio"]'
+  - name: shared dependency
+    code: 'graph = {"app": ["api", "worker"], "api": ["common"], "worker": ["common"], "common": []}
+
+      assert dependency_closure(graph, ["app"]) == ["api", "common", "worker"]'
+  - name: unknown dependency
+    code: "try:\n    dependency_closure({\"app\": [\"missing\"]}, [\"app\"])\nexcept KeyError:\n    pass\n\
+      else:\n    raise AssertionError(\"unknown dependency should fail\")"
+  - name: cycle detection
+    code: "try:\n    dependency_closure({\"a\": [\"b\"], \"b\": [\"a\"]}, [\"a\"])\nexcept ValueError:\n\
+      \    pass\nelse:\n    raise AssertionError(\"cycle should fail\")"
+  - name: unknown root
+    code: "try:\n    dependency_closure({}, [\"not-installed\"])\nexcept KeyError:\n    pass\nelse:\n\
+      \    raise AssertionError(\"unknown root should fail\")"
+  hints:
+  - Use depth-first search with a `visiting` set for the current recursion path and a `visited` set for
+    completed packages.
+  - A name already in `visiting` means the graph contains a cycle.
+  - Validate every root and dependency by checking that it exists as a key in the graph.
+  - Return sorted visited packages minus the original roots.
+  explanation: A dependency graph is not a flat list. Depth-first search follows each edge, avoids processing
+    shared dependencies twice, detects a back-edge to the current recursion path, and rejects names absent
+    from the graph.
+- id: deps-version-policy-explain
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: A service uses a library with versions `2.4.1`, `2.5.0` and `3.0.0`. Explain the difference
+    between a compatibility range in project metadata and a lock file, and propose a safe update workflow.
+  explanation: A project declaration communicates which versions are considered compatible. A lock file
+    records the concrete resolved dependency graph for a reproducible installation.
+  rubric:
+  - Explains that version specifiers/ranges describe allowed versions rather than one exact resolved environment.
+  - Explains that a lock file records exact resolved versions and often hashes for direct and transitive
+    dependencies.
+  - Mentions that versioning schemes are conventions and package-specific compatibility promises must
+    be checked.
+  - Proposes controlled updates, tests, security review and lock-file regeneration.
+  modelAnswer: I would declare a supported range such as `library>=2.4,<3` in project metadata if the
+    library follows that compatibility promise. The lock file would record the exact version chosen today
+    plus its transitive dependencies, so CI and developers can recreate the same environment. I would
+    update dependencies in small reviewed changes, inspect release notes and licence/security status,
+    regenerate the lock, run tests and deploy progressively. A major version boundary is a warning to
+    review compatibility, not proof that every package follows SemVer perfectly.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - deps-direct-transitive
+  - deps-pin-tf
+  - deps-toml-predict
+  - deps-closure-code
+  - deps-version-policy-explain
+cheatsheet: '- Direct dependency: declared because your code uses it.
+
+  - Transitive dependency: required by another dependency.
+
+  - `pyproject.toml` declares project metadata and allowed version ranges.
+
+  - PEP 440 defines Python version specifiers.
+
+  - A lock file records a concrete resolved graph; it is not the same as a compatibility range.
+
+  - SemVer is a convention, not a universal guarantee.
+
+  - Reproduce installs from the lock file; update it deliberately.
+
+  - Review maintenance, licence, vulnerabilities, hashes and transitive packages.'

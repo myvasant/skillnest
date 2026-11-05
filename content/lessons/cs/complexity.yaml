@@ -1,0 +1,1249 @@
+id: cs.complexity
+concept: cs.complexity
+title: Algorithmic Complexity and Big-O
+subtitle: Predicting how code scales before you run it
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Learn to count the work an algorithm does as a function of its input size n, describe how that work
+  grows with Big-O notation, read the complexity straight off loops and nested loops, and know the
+  hidden cost of everyday Python operations such as `x in my_list`, `insert(0, x)` and string building.
+objectives:
+  - Count the basic operations a short function performs as a function of its input size n.
+  - Simplify an operation count to its Big-O class by dropping constant factors and lower-order terms.
+  - Determine the time complexity of single, nested, sequential and halving loops by reading the code.
+  - Distinguish time complexity from space complexity, and worst-case from amortised cost.
+  - Predict the cost of common Python operations (list vs set membership, append vs insert(0, …), string joining) and rewrite accidentally quadratic code to run in linear time.
+  - Explain why Big-O is not a measurement and why O(1) does not mean "fast".
+sources:
+  - title: "MIT 6.006 Introduction to Algorithms (Spring 2020)"
+    url: https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/
+    publisher: MIT OpenCourseWare
+  - title: TimeComplexity (cost of operations on built-in types)
+    url: https://wiki.python.org/moin/TimeComplexity
+    publisher: Python Wiki
+  - title: "Design and History FAQ: How are lists implemented in CPython?"
+    url: https://docs.python.org/3/faq/design.html#how-are-lists-implemented-in-cpython
+    publisher: Python Software Foundation
+  - title: "PEP 8: Programming Recommendations (string concatenation)"
+    url: https://peps.python.org/pep-0008/#programming-recommendations
+    publisher: Python Software Foundation
+  - title: Open Data Structures (Chapter 1, asymptotic notation)
+    url: https://opendatastructures.org/
+    publisher: Pat Morin
+sections:
+  - id: why
+    title: Why "it works on my laptop" is not enough
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Here are two correct ways to answer one question: *does this list contain any value twice?* The
+          first compares every pair of items. The second remembers what it has seen in a
+          [set](glossary:set). Both return the right answer. Instead of timing them (timings change from
+          machine to machine and run to run), each function **counts its checks**:
+      - type: code
+        runnable: true
+        code: |
+          def has_duplicate_nested(items):
+              checks = 0
+              for i in range(len(items)):
+                  for j in range(i + 1, len(items)):
+                      checks += 1
+                      if items[i] == items[j]:
+                          return True, checks
+              return False, checks
+
+          def has_duplicate_set(items):
+              checks = 0
+              seen = set()
+              for item in items:
+                  checks += 1
+                  if item in seen:
+                      return True, checks
+                  seen.add(item)
+              return False, checks
+
+          for n in [10, 100, 1000]:
+              data = list(range(n))   # no repeats, so both must check everything
+              _, nested = has_duplicate_nested(data)
+              _, with_set = has_duplicate_set(data)
+              print(f"n={n:>4}: nested loops {nested:>6} checks, set {with_set:>4} checks")
+        expectedOutput: |
+          n=  10: nested loops     45 checks, set   10 checks
+          n= 100: nested loops   4950 checks, set  100 checks
+          n=1000: nested loops 499500 checks, set 1000 checks
+        caption: Same answers, very different amounts of work. Watch what happens to each count when n grows ten times.
+        annotations:
+          - line: 4
+            text: The inner loop runs once for every later item, so the number of pairs grows like n × n.
+          - line: 15
+            text: "`item in seen` on a set is a hash lookup: it does not scan the set (more on that below)."
+      - type: markdown
+        body: |
+          Each time n grows **10×**, the nested version does about **100×** more work, while the set version
+          does **10×** more. At n = 10 million rows — a modest database table — the nested version needs about
+          5 × 10¹³ checks. Even at an optimistic billion checks per second that is roughly 14 hours; the set
+          version needs 10 million checks.
+
+          The code that was "fine in testing" with 100 rows becomes the outage in production. This lesson
+          teaches you to **predict** that from the code, before you ever run it, using
+          [time complexity](glossary:time-complexity) and [Big-O notation](glossary:big-o-notation).
+
+  - id: counting
+    title: Count steps, not seconds
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A stopwatch measures one program on one machine with one input. To compare
+          [algorithms](glossary:algorithm) we need something that does not depend on the hardware, so we
+          count **basic operations** — steps that each take a fixed amount of time no matter how big the
+          input is: a comparison, an addition, an assignment, reading `items[i]`.
+
+          Then we ask: **how does the count grow as the input size n grows?** For a list, n is usually its
+          length; for a string, its number of characters; for a number, sometimes its value.
+      - type: code
+        runnable: true
+        code: |
+          def total(numbers):
+              steps = 0
+              result = 0
+              for x in numbers:
+                  result += x
+                  steps += 1
+              return result, steps
+
+          print(total([4, 8, 15, 16, 23, 42]))
+          print(total(list(range(1000))))
+        expectedOutput: |
+          (108, 6)
+          (499500, 1000)
+        caption: One addition per item, so the work is n additions (plus a constant amount of setup).
+      - type: markdown
+        body: |
+          We write the running time as a function **T(n)**. Here T(n) is about n: double the list, double
+          the work. Counting exactly ("1 assignment for `steps`, 1 for `result`, then 2 per item…" gives
+          T(n) = 2n + 2) is possible, but as you will see next, the exact constants hardly matter. What
+          matters is the **shape** of the growth.
+
+          Try it yourself: how many times does the innermost line run here?
+      - type: item
+        ref: predict-count-nested
+
+  - id: big-o
+    title: "Big-O: keep the term that dominates"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Suppose careful counting gives T(n) = 3n² + 5n + 2. For small n every term matters, but as n grows
+          the n² term swamps the others:
+      - type: code
+        runnable: true
+        code: |
+          for n in [10, 100, 1000, 10_000]:
+              exact = 3 * n**2 + 5 * n + 2
+              leading = 3 * n**2
+              print(f"n={n:>6}: exact {exact:>12,}  3n² alone {leading:>12,}  share {leading / exact:.2%}")
+        expectedOutput: |
+          n=    10: exact          352  3n² alone          300  share 85.23%
+          n=   100: exact       30,502  3n² alone       30,000  share 98.35%
+          n=  1000: exact    3,005,002  3n² alone    3,000,000  share 99.83%
+          n= 10000: exact  300,050,002  3n² alone  300,000,000  share 99.98%
+        caption: The lower-order terms 5n + 2 become irrelevant as n grows.
+      - type: markdown
+        body: |
+          [Big-O notation](glossary:big-o-notation) captures exactly this. To find the Big-O class of a count:
+
+          1. **Keep only the fastest-growing term**: 3n² + 5n + 2 → 3n².
+          2. **Drop its constant factor**: 3n² → n². So T(n) is **O(n²)**, read "order n squared".
+
+          Why is it fair to drop the 3? Because constant factors depend on things outside the algorithm —
+          the language, the machine, how you counted "one step". The *shape* (doubling n quadruples the
+          work) does not. Big-O deliberately describes the shape.
+
+          **Precise definition.** f(n) is O(g(n)) if there are positive constants *c* and *n₀* such that
+          f(n) ≤ c · g(n) for every n ≥ n₀. In words: beyond some size, f never grows faster than a constant
+          multiple of g. So **Big-O is an upper bound on growth**. For 3n² + 5n + 2 we can pick c = 4 and
+          n₀ = 6, and check it:
+      - type: code
+        runnable: true
+        code: |
+          def f(n):
+              return 3 * n**2 + 5 * n + 2
+
+          print(all(f(n) <= 4 * n**2 for n in range(6, 100_000)))
+          print(f(5), 4 * 5**2)
+        expectedOutput: |
+          True
+          102 100
+        caption: From n = 6 onwards f(n) stays below 4n², so f is O(n²). Below n₀ the bound may fail (n = 5), and that is allowed.
+      - type: callout
+        variant: note
+        title: Upper bound, and the tightest one by convention
+        body: |
+          Because Big-O is an upper bound, an O(n) algorithm is technically also O(n²) — n never exceeds n²
+          for n ≥ 1. In practice, people always quote the **tightest** simple bound, so "this is O(n²)" means
+          "it grows like n², not slower". The deep dive at the end shows the notations Θ and Ω that make
+          this distinction formal.
+      - type: item
+        ref: simplify-big-o
+
+  - id: growth-classes
+    title: The common growth classes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A handful of classes cover almost everything you will meet, listed from slowest-growing (best)
+          to fastest-growing (worst):
+
+          | Class | Name | Typical Python example | Work for n = 1,000,000 |
+          |---|---|---|---|
+          | O(1) | constant | `items[i]`, `len(items)`, `d[key]` (average) | 1 |
+          | O(log n) | logarithmic | binary search, a loop that halves n | about 20 |
+          | O(n) | linear | one loop over the data, `x in my_list`, `sum`, `max` | 1,000,000 |
+          | O(n log n) | linearithmic | `sorted()`, merge sort | about 20 million |
+          | O(n²) | quadratic | nested loops over the same list | 10¹² |
+          | O(2ⁿ) | exponential | every subset of n items, naive recursive Fibonacci | a number with 301,030 digits |
+
+          **What is log n?** log₂ n answers "how many times can I halve n before I reach 1?" Halving a
+          million 20 times gets you to 1, so log₂(1,000,000) ≈ 20. Logarithms grow so slowly that O(log n)
+          is nearly as good as O(1). In Big-O the base of the logarithm does not matter, because
+          log₂ n and log₁₀ n differ only by a constant factor.
+
+          Drag the slider below and switch the y-axis between linear and logarithmic scales.
+      - type: visualization
+        component: complexity-growth
+        title: How the classes pull apart
+        caption: >-
+          Operation counts for each class up to n = 32. Even at this tiny size O(2ⁿ) is in the billions,
+          while O(log n) has barely moved. Untick the log scale to see how flat the slow classes really are.
+        props:
+          maxN: 32
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          n = 1_000_000
+          print(f"log2(n)   = {math.log2(n):.1f}")
+          print(f"n log2(n) = {n * math.log2(n):,.0f}")
+          print(f"n squared = {n**2:,}")
+          print(f"2**n has {int(n * math.log10(2)) + 1:,} digits")
+        expectedOutput: |
+          log2(n)   = 19.9
+          n log2(n) = 19,931,569
+          n squared = 1,000,000,000,000
+          2**n has 301,030 digits
+        caption: The numbers behind the table. 2ⁿ for n = 1,000,000 is too large to print sensibly, so we count its digits with a logarithm.
+
+  - id: analysing-loops
+    title: Reading complexity from code
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          You rarely count every step. Instead you read the structure of the code and apply a few rules:
+
+          | Code shape | Cost | Example |
+          |---|---|---|
+          | Straight-line statements (no loops, no calls that loop) | O(1) | `x = items[0] + 1` |
+          | One loop over n items, O(1) body | O(n) | `for x in items: total += x` |
+          | Two loops **one after the other** | add: O(n) + O(n) = O(n) | find the max, then the min |
+          | A loop **inside** a loop, both over n | multiply: O(n) × O(n) = O(n²) | compare every pair |
+          | A loop that **halves** (or doubles) its variable each time | O(log n) | `while n > 1: n //= 2` |
+          | A loop whose body calls something costly | loop count × body cost | `for x in a: if x in b:` |
+
+          The last row catches most real performance bugs: `x in some_list`, `some_list.index(x)`,
+          `some_list.remove(x)`, `sum(...)` and slicing are all **hidden loops**.
+
+          The halving rule surprises people, so step through it. Watch `n` and `steps`:
+      - type: visualization
+        component: python-tracer
+        title: A halving loop
+        caption: Each pass halves n, so the loop runs only 4 times for n = 16 (16 → 8 → 4 → 2 → 1). Doubling n adds just one more pass.
+        props:
+          code: |
+            n = 16
+            steps = 0
+            while n > 1:
+                n = n // 2
+                steps += 1
+            print(steps)
+      - type: code
+        runnable: true
+        code: |
+          def halving_steps(n):
+              steps = 0
+              while n > 1:
+                  n = n // 2
+                  steps += 1
+              return steps
+
+          for n in [8, 1000, 1_000_000, 1_000_000_000]:
+              print(f"{n:,} -> {halving_steps(n)} steps")
+        expectedOutput: |
+          8 -> 3 steps
+          1,000 -> 9 steps
+          1,000,000 -> 19 steps
+          1,000,000,000 -> 29 steps
+        caption: A billion needs only 29 halvings. This is why binary search is so fast.
+      - type: item
+        ref: predict-halving
+      - type: markdown
+        body: |
+          Now the nested-loop rule. The inner loop starts again from scratch on **every** pass of the
+          outer loop, so the innermost line runs n × n times:
+      - type: visualization
+        component: python-tracer
+        title: The inner loop restarts every time
+        caption: For n = 3 the counter line runs 3 × 3 = 9 times. Notice j going back to 0 each time i changes.
+        props:
+          code: |
+            n = 3
+            count = 0
+            for i in range(n):
+                for j in range(n):
+                    count += 1
+            print(count)
+      - type: markdown
+        body: |
+          **Different inputs get different letters.** If a function takes two lists of lengths n and m, a
+          loop over one inside a loop over the other is O(n · m), not O(n²). Writing n for both hides real
+          information: if m is always 3, the function is effectively linear.
+      - type: item
+        ref: classify-two-lists
+
+  - id: space
+    title: Time versus space
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Space complexity](glossary:space-complexity) uses the same notation for **memory**: how much
+          extra memory does the algorithm need as n grows, beyond the input itself? Both functions below
+          reverse a list in O(n) time, but they differ in space:
+      - type: code
+        runnable: true
+        code: |
+          def reversed_copy(items):
+              result = []
+              for i in range(len(items) - 1, -1, -1):
+                  result.append(items[i])
+              return result               # O(n) extra space: a whole new list
+
+          def reverse_in_place(items):
+              left, right = 0, len(items) - 1
+              while left < right:
+                  items[left], items[right] = items[right], items[left]
+                  left += 1
+                  right -= 1              # O(1) extra space: just two indices
+
+          data = [1, 2, 3, 4, 5]
+          print(reversed_copy(data), data)
+          reverse_in_place(data)
+          print(data)
+        expectedOutput: |
+          [5, 4, 3, 2, 1] [1, 2, 3, 4, 5]
+          [5, 4, 3, 2, 1]
+        caption: Same time complexity, different memory use. The in-place version changes the caller's list, which is a design trade-off of its own.
+      - type: markdown
+        body: |
+          Trading memory for time is one of the most common moves in engineering. The duplicate checker in
+          the first section became O(n) **because** it spent O(n) memory on a set of seen items. Caches,
+          indexes and lookup tables all make the same trade. (Recursive functions also use memory for every
+          call that is in progress — see [recursion](concept:cs.recursion).)
+      - type: item
+        ref: space-choice
+
+  - id: python-costs
+    title: The hidden cost of everyday Python operations
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          One line of Python can hide a loop. These are the average-case costs in CPython (from the
+          [Python wiki](https://wiki.python.org/moin/TimeComplexity)); n is the size of the container:
+
+          | Operation | Cost | Why |
+          |---|---|---|
+          | `items[i]`, `items[i] = x`, `len(items)` | O(1) | the position is computed directly; the length is stored |
+          | `items.append(x)`, `items.pop()` | O(1) amortised | work happens at the end (see the next section) |
+          | `items.insert(0, x)`, `items.pop(0)` | O(n) | every other element shifts one place |
+          | `x in items`, `items.index(x)`, `items.count(x)`, `items.remove(x)` | O(n) | compares items one by one |
+          | `x in a_set`, `d[key]`, `d[key] = value` | O(1) average, O(n) worst | [hash table](glossary:hash-table) lookup |
+          | `items[a:b]`, `items.copy()`, `list(other)` | O(k) for k copied items | a new list is built |
+          | `sorted(items)`, `items.sort()` | O(n log n) | Timsort |
+          | `min`, `max`, `sum` | O(n) | must look at every item |
+          | `"".join(pieces)` | O(total length) | measures first, then copies once |
+
+          You do not have to take the table on trust. We can make Python **count its own comparisons**:
+          the class below adds one to a counter every time `==` is used on it.
+      - type: code
+        runnable: true
+        code: |
+          class Tracked:
+              """A value that counts how many times == is used on it."""
+              comparisons = 0
+
+              def __init__(self, value):
+                  self.value = value
+
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value == other.value
+
+              def __hash__(self):
+                  return hash(self.value)
+
+          items = [Tracked(i) for i in range(10_000)]
+          lookup = set(items)
+
+          for container in (items, lookup):
+              Tracked.comparisons = 0
+              found = Tracked(9_999) in container
+              print(type(container).__name__, found, Tracked.comparisons)
+        expectedOutput: |
+          list True 10000
+          set True 1
+        caption: "`in` on a list compared against all 10,000 items before finding the last one; the set jumped straight to the right place and compared once."
+        annotations:
+          - line: 12
+            text: Sets need a hash to decide where an item lives. The hashing lesson explains this in depth.
+          - line: 20
+            text: A new Tracked(9_999) is equal to the stored one but is a different object, so == really has to run.
+      - type: markdown
+        body: |
+          **`insert(0, x)` versus `append(x)`.** A list keeps its items side by side in memory. Putting
+          something at the front means shifting every existing item one place to the right. That shifting
+          happens in C, where we cannot count it from Python, so here is a faithful **model** of it written in
+          Python:
+      - type: code
+        runnable: true
+        code: |
+          def insert_front(items, value):
+              """Model of items.insert(0, value). Returns how many items had to move."""
+              items.append(None)                  # make room for one more at the end
+              moves = 0
+              for i in range(len(items) - 1, 0, -1):
+                  items[i] = items[i - 1]         # shift one place to the right
+                  moves += 1
+              items[0] = value
+              return moves
+
+          model = []
+          total_moves = sum(insert_front(model, i) for i in range(1000))
+          print("moves to build 1000 items at the front:", total_moves)
+
+          real = []
+          for i in range(1000):
+              real.insert(0, i)
+          print("model matches list.insert(0, ...):", model == real)
+        expectedOutput: |
+          moves to build 1000 items at the front: 499500
+          model matches list.insert(0, ...): True
+        caption: Building a list by inserting at the front costs 0 + 1 + 2 + … + 999 moves — quadratic. Appending moves nothing.
+      - type: markdown
+        body: |
+          If you need to add or remove at the front often, either append and reverse once at the end
+          (O(n) in total), or use `collections.deque`, which is O(1) at both ends — see
+          [stacks and queues](concept:cs.stacks-queues).
+
+          **Building strings with `+` in a loop.** Strings are [immutable](glossary:immutable), so
+          `text = text + piece` must create a brand-new string and copy everything built so far into it.
+          `"".join(pieces)` adds up the total length first and copies each character exactly once. Counting
+          the characters each approach has to write:
+      - type: code
+        runnable: true
+        code: |
+          pieces = ["ab"] * 1000          # 1000 pieces of 2 characters
+
+          # Model of: text = text + piece  (a whole new string every time)
+          copied = 0
+          length = 0
+          for piece in pieces:
+              length += len(piece)
+              copied += length            # the entire new string is written
+          print("repeated + :", f"{copied:,}", "characters copied")
+
+          # Model of: "".join(pieces)  (one pass, each character copied once)
+          print("''.join()  :", f"{sum(len(p) for p in pieces):,}", "characters copied")
+          print("same text  :", "".join(pieces) == "ab" * 1000)
+        expectedOutput: |
+          repeated + : 1,001,000 characters copied
+          ''.join()  : 2,000 characters copied
+          same text  : True
+        caption: Repeated concatenation copies 2 + 4 + 6 + … + 2000 characters — O(n²) in the number of pieces. join is O(n).
+      - type: callout
+        variant: warning
+        title: CPython sometimes hides this cost — do not rely on it
+        body: |
+          When nothing else refers to the string, CPython can often grow it in place for `text += piece`,
+          so a quick experiment may look linear. That is an implementation detail that is fragile even in
+          CPython and absent in other Pythons. [PEP 8](https://peps.python.org/pep-0008/#programming-recommendations)
+          says not to rely on it: collect the pieces in a list and call `"".join(pieces)`.
+      - type: item
+        ref: python-costs-mcq
+
+  - id: cases-amortised
+    title: Worst case, average case and amortised cost
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The same algorithm can do very different amounts of work on different inputs of the same size.
+          Linear search finds the first item after 1 comparison (the **best case**) but needs n comparisons
+          when the item is last or missing (the **worst case**). When you state a complexity, say which case
+          you mean:
+
+          - **Worst case** — a guarantee: it will never be slower than this. This is the default when people
+            say "binary search is O(log n)".
+          - **Average case** — typical behaviour over the expected inputs. Dict lookups are O(1) on
+            *average*; their rare worst case is O(n).
+          - **Amortised** — the average cost per operation over a long **sequence** of operations, even
+            if a few individual operations are expensive.
+
+          `list.append` is the classic amortised operation. A list keeps some spare capacity; when it runs
+          out, it allocates a bigger block and copies everything across — an O(n) step. Because the new
+          block is proportionally larger, those copies are rare. A toy dynamic array that doubles its
+          capacity shows the effect:
+      - type: code
+        runnable: true
+        code: |
+          class DoublingArray:
+              """Toy dynamic array: when full, allocate twice the capacity and copy."""
+
+              def __init__(self):
+                  self.capacity = 1
+                  self.size = 0
+                  self.slots = [None]
+                  self.copies = 0
+
+              def append(self, value):
+                  if self.size == self.capacity:          # full: grow
+                      self.capacity *= 2
+                      new_slots = [None] * self.capacity
+                      for i in range(self.size):
+                          new_slots[i] = self.slots[i]
+                          self.copies += 1
+                      self.slots = new_slots
+                  self.slots[self.size] = value
+                  self.size += 1
+
+          for n in [10, 1000, 100_000]:
+              arr = DoublingArray()
+              for i in range(n):
+                  arr.append(i)
+              print(f"{n:,} appends: {arr.copies:,} copies, {arr.copies / n:.2f} per append")
+        expectedOutput: |
+          10 appends: 15 copies, 1.50 per append
+          1,000 appends: 1,023 copies, 1.02 per append
+          100,000 appends: 131,071 copies, 1.31 per append
+        caption: However many appends you do, the copies per append stay below 2 — a constant. That is what "amortised O(1)" means.
+      - type: markdown
+        body: |
+          The total copying is 1 + 2 + 4 + … + (the last capacity), which is always less than twice the
+          final size, so n appends cost O(n) in total and **O(1) each on average**. CPython's lists grow by a
+          smaller proportion than doubling (an implementation detail that has changed between versions), but
+          any proportional growth gives the same result. Growing by a *fixed* amount (say, 10 slots each
+          time) would not: that makes n appends cost O(n²). The full story is in
+          [dynamic arrays](concept:cs.dynamic-arrays).
+      - type: item
+        ref: amortised-tf
+
+  - id: beyond-big-o
+    title: "Deep dive: Θ, Ω, and when constants matter"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Three bounds.** Big-O is one of a family of notations:
+
+          | Notation | Meaning | Definition (for some c > 0 and all n ≥ n₀) |
+          |---|---|---|
+          | f(n) = O(g(n)) | grows **no faster** than g (upper bound) | f(n) ≤ c · g(n) |
+          | f(n) = Ω(g(n)) | grows **at least as fast** as g (lower bound) | f(n) ≥ c · g(n) |
+          | f(n) = Θ(g(n)) | grows **exactly like** g (tight bound) | both of the above (with two constants) |
+
+          3n² + 5n + 2 is Θ(n²): it is O(n²) and Ω(n²). It is also O(n³) (true but loose) and Ω(n) (true
+          but loose). When engineers say "O(n²)" they almost always mean Θ(n²).
+
+          **Bounds and cases are independent.** "Worst case" and "best case" pick *which inputs* you are
+          talking about; O, Ω and Θ describe *how a count grows*. Linear search is Θ(n) in the worst case and
+          Θ(1) in the best case. A famous lower bound: **any** comparison-based sort needs Ω(n log n)
+          comparisons in the worst case, which is why `sorted()` cannot beat O(n log n) in general — see
+          [sorting](concept:cs.sorting).
+
+          You can watch `sorted()` stay close to n log₂ n by counting its comparisons:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+
+          class Counted:
+              comparisons = 0
+
+              def __init__(self, value):
+                  self.value = value
+
+              def __lt__(self, other):
+                  Counted.comparisons += 1
+                  return self.value < other.value
+
+          random.seed(1)
+          values = list(range(1000))
+          random.shuffle(values)
+          sorted(Counted(v) for v in values)
+
+          n = len(values)
+          print("sorted() comparisons:", Counted.comparisons)
+          print("n * log2(n)         :", round(n * math.log2(n)))
+          print("pairs n(n-1)/2      :", n * (n - 1) // 2)
+        expectedOutput: |
+          sorted() comparisons: 8649
+          n * log2(n)         : 9966
+          pairs n(n-1)/2      : 499500
+        caption: "sorted() only needs the < operator, so counting __lt__ calls counts all its comparisons. A fixed random seed makes the shuffle — and the count — reproducible."
+      - type: markdown
+        body: |
+          **When constants win.** Big-O describes behaviour as n grows large. For small n, an algorithm
+          with a worse class but a tiny constant can be faster. CPython's sort itself uses insertion sort —
+          an O(n²) algorithm — on short runs of the input, because it is faster there. Hardware effects such
+          as CPU caches also make memory layout matter: walking a contiguous array beats chasing pointers
+          even when both are O(n).
+
+          **Big-O is a prediction, not a measurement.** Use it to choose approaches and spot red flags in a
+          code review; then measure real code with real data using a profiler before optimising — see
+          [profiling](concept:python.profiling).
+
+  - id: mistakes
+    title: Common mistakes and how to spot them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          Complexity bugs rarely crash. They show up as code that passes every test and then crawls on real
+          data. Learn the symptoms:
+
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Fine in tests, unbearably slow on real data | A hidden O(n) operation inside a loop (`in list`, `.index`, `.remove`, `pop(0)`, `insert(0, …)`, slicing) makes the whole thing O(n²) | Use a set or dict for lookups, a deque for queues, or restructure the loop |
+          | "It only has one loop, so it's O(n)" | The loop body calls something that is itself O(n) | Multiply: loop count × cost of the body |
+          | One n used for two different inputs | Confusing len(a) with len(b) | Use separate letters: O(n · m) or O(n + m) |
+          | `TypeError: cannot use 'list' as a set element (unhashable type: 'list')` | Turning a list of lists into a set to speed up `in` | Convert the inner lists to tuples first |
+          | Big-O says A should win but B is faster in practice | Small n, constant factors, memory effects | Measure with realistic sizes |
+          | String building is slow on another Python or in another function | Relying on CPython's in-place `+=` trick | Collect pieces in a list, then `"".join(pieces)` |
+
+          The `TypeError` row is the one you will hit first: switching from a list to a set is the right
+          idea, but set items must be hashable.
+      - type: code
+        runnable: true
+        code: |
+          visited = [[0, 0], [0, 1], [1, 1]]
+          fast_lookup = set(visited)
+        expectError: TypeError
+        caption: "Python 3.14 says: TypeError: cannot use 'list' as a set element (unhashable type: 'list')."
+      - type: code
+        runnable: true
+        code: |
+          visited = [[0, 0], [0, 1], [1, 1]]
+          fast_lookup = {tuple(point) for point in visited}
+          print((0, 1) in fast_lookup, (2, 2) in fast_lookup)
+        expectedOutput: |
+          True False
+        caption: Tuples are hashable, so they can live in a set. Each lookup is now O(1) on average.
+      - type: item
+        ref: debug-dedupe
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises check **how much work** your code does, not just its answer: the tests pass in
+          objects that count how often `==` is used, so an accidentally quadratic solution fails with a
+          message telling you how many comparisons it made.
+      - type: item
+        ref: common-items
+      - type: item
+        ref: parsons-duplicates
+      - type: item
+        ref: explain-constant-factors
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Measure algorithms by **counting basic operations** as a function of input size n, not by timing.
+          - **Big-O** is an upper bound on growth: keep the dominant term, drop constants — 3n² + 5n + 2 is O(n²).
+          - Classes from best to worst: O(1), O(log n), O(n), O(n log n), O(n²), O(2ⁿ).
+          - Loops: one after another **add**, nested **multiply**, halving gives **log n**; use separate
+            letters for separate inputs.
+          - Count the **hidden loops**: `x in list`, `.index`, `.remove`, `pop(0)`, `insert(0, x)`, slicing,
+            and string `+` in a loop. Sets and dicts give O(1) average lookups.
+          - Say which case you mean: worst, average or **amortised** (`append` is amortised O(1)).
+          - Space complexity uses the same notation for memory; trading memory for time is common.
+          - Big-O predicts; profilers measure. O(1) means "does not grow", not "fast".
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          After every solution, state its time **and** space complexity and justify them from the code: "one
+          pass over n items with O(1) set operations, so O(n) time and O(n) extra space for the set". If you
+          can, name the trade-off ("the nested-loop version needs no extra memory but is O(n²)").
+
+items:
+  - id: predict-count-nested
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: How many times does `count += 1` run? Predict what this prints.
+    code: |
+      def count_pairs(n):
+          count = 0
+          for i in range(n):
+              for j in range(i):
+                  count += 1
+          return count
+
+      print(count_pairs(5))
+    answer: "10"
+    explanation: >-
+      The inner loop runs i times on each pass: 0 + 1 + 2 + 3 + 4 = 10. In general it is n(n − 1)/2,
+      which is still O(n²) — halving a quadratic count does not change its class.
+    wrongAnswers:
+      - answer: "25"
+        feedback: >-
+          That would be true if the inner loop were `range(n)`. Here it is `range(i)`, so it runs 0, 1, 2, 3
+          and then 4 times.
+      - answer: "15"
+        feedback: >-
+          That is 1 + 2 + 3 + 4 + 5, which would need `range(i + 1)`. `range(i)` stops before i, so the first
+          pass (i = 0) runs zero times.
+      - answer: "5"
+        feedback: The outer loop runs 5 times, but each pass runs the inner loop several times; add those up.
+
+  - id: simplify-big-o
+    type: mcq
+    skill: recognition
+    prompt: "Careful counting shows a function performs `2n³ + 100n² + 5000` steps. What is its Big-O class?"
+    explanation: >-
+      Keep the fastest-growing term (2n³) and drop its constant factor (2), giving O(n³). The 100n² and 5000
+      terms look large for small n, but n³ overtakes them as n grows.
+    options:
+      - id: a
+        text: O(n³)
+        correct: true
+        feedback: Right. Dominant term, constant dropped.
+      - id: b
+        text: O(2n³)
+        feedback: That is the same class, but Big-O drops constant factors, so it is written O(n³).
+      - id: c
+        text: O(5000)
+        feedback: >-
+          5000 is the biggest number for tiny n, but it never grows. Big-O asks what dominates as n grows
+          large — and constants are written O(1) anyway.
+      - id: d
+        text: O(n³ + n²)
+        feedback: The lower-order term n² becomes irrelevant for large n, so it is dropped.
+
+  - id: predict-halving
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output.
+    code: |
+      n = 100
+      steps = 0
+      while n > 1:
+          n = n // 2
+          steps += 1
+      print(steps)
+    answer: "6"
+    explanation: >-
+      100 → 50 → 25 → 12 → 6 → 3 → 1: six halvings (floor division drops the remainder). The count grows like
+      log₂ n, so even n = 1,000,000 needs only 19 steps.
+    wrongAnswers:
+      - answer: "50"
+        feedback: >-
+          n is halved on every pass, not reduced by one or two. The loop body shrinks n very quickly, so it
+          only runs a handful of times.
+      - answer: "7"
+        feedback: >-
+          log₂ 100 ≈ 6.64, but the loop counts whole halvings with floor division: 100, 50, 25, 12, 6, 3, 1
+          is six steps. Trace it by hand.
+      - answer: "100"
+        feedback: The loop does not run once per unit of n; each pass halves n.
+
+  - id: classify-two-lists
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      `xs` has n items and `ys` has m items. What is the time complexity of this function?
+
+      ```python
+      def shared(xs, ys):
+          result = []
+          for x in xs:
+              if x in ys:
+                  result.append(x)
+          return result
+      ```
+    explanation: >-
+      The loop runs n times, and `x in ys` on a list scans up to m items each time, so the worst case is
+      O(n · m). Converting ys to a set first (O(m)) makes each lookup O(1) on average, for O(n + m) in total.
+    options:
+      - id: a
+        text: O(n)
+        feedback: "There is only one visible loop, but `x in ys` is a hidden loop over ys. Count the body's cost too."
+      - id: b
+        text: O(n · m)
+        correct: true
+        feedback: Correct. n iterations, each with an O(m) list scan.
+      - id: c
+        text: O(n + m)
+        feedback: That would be the cost if ys were a set, so each `in` were O(1) on average. As a list, each `in` is O(m).
+      - id: d
+        text: O(n²)
+        feedback: Only if m happens to equal n. With two inputs, keep two letters — if ys always has 3 items, this function is linear.
+
+  - id: space-choice
+    type: mcq
+    skill: explanation
+    prompt: |
+      `has_duplicate_set(items)` from the first section loops once over n items and adds each one to a set
+      called `seen`. What are its worst-case time and extra space?
+    explanation: >-
+      One pass with O(1) average set operations gives O(n) time. In the worst case (no duplicates) every item
+      ends up in `seen`, so the extra memory is O(n). The nested-loop version uses O(1) extra space but O(n²)
+      time — a classic time–space trade-off.
+    options:
+      - id: a
+        text: O(n) time, O(1) extra space
+        feedback: The set grows by one item per loop pass when there are no duplicates, so its memory grows with n.
+      - id: b
+        text: O(n) time, O(n) extra space
+        correct: true
+        feedback: Right. It buys linear time by spending linear memory.
+      - id: c
+        text: O(n²) time, O(n) extra space
+        feedback: Set membership is O(1) on average, so the loop does a constant amount of work per item.
+      - id: d
+        text: O(1) time, O(n) extra space
+        feedback: It must look at every item at least once when there are no duplicates, so the time grows with n.
+
+  - id: python-costs-mcq
+    type: mcq
+    skill: recognition
+    prompt: "`items` is a list of n numbers. Which operation's cost grows with n?"
+    explanation: >-
+      `pop(0)` removes the first item, and every remaining item must shift one place left — O(n). Indexing and
+      `len` are O(1); `append` is amortised O(1).
+    options:
+      - id: a
+        text: "`items[500]`"
+        feedback: Indexing computes the position directly, so it is O(1) whatever the length.
+      - id: b
+        text: "`items.append(7)`"
+        feedback: Appending works at the end and is amortised O(1) — occasional resizes average out.
+      - id: c
+        text: "`items.pop(0)`"
+        correct: true
+        feedback: Correct. Removing from the front shifts every other item. Use collections.deque.popleft() for queues.
+      - id: d
+        text: "`len(items)`"
+        feedback: A list stores its length, so len() is O(1) — it does not count the items.
+
+  - id: amortised-tf
+    type: true-false
+    skill: explanation
+    prompt: |
+      True or false: because an occasional `append` has to copy the whole list into a bigger block of memory,
+      building a list of n items with `append` costs O(n²) in total.
+    answer: false
+    explanation: >-
+      The capacity grows proportionally, so the expensive copies happen rarely: the total copying is less than
+      a constant times n. n appends cost O(n) in total, which is amortised O(1) per append. Growing by a fixed
+      number of slots each time would indeed give O(n²).
+
+  - id: debug-dedupe
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `dedupe` returns the items without repeats, keeping the **first** occurrence of each in its original
+      order. It gives the right answers, but on a list of 100,000 items it takes minutes: `item not in
+      result` scans the growing result list, so the function is O(n²).
+
+      Make it O(n) **without changing its output**. The tests pass in 1,000 objects that count their `==`
+      comparisons.
+    starterCode: |
+      def dedupe(items):
+          """Return items without repeats, keeping first occurrences in order."""
+          result = []
+          for item in items:
+              if item not in result:
+                  result.append(item)
+          return result
+
+      print(dedupe([3, 1, 3, 2, 1]))
+    solution: |
+      def dedupe(items):
+          """Return items without repeats, keeping first occurrences in order."""
+          seen = set()
+          result = []
+          for item in items:
+              if item not in seen:
+                  seen.add(item)
+                  result.append(item)
+          return result
+
+      print(dedupe([3, 1, 3, 2, 1]))
+    expectedOutput: |
+      [3, 1, 2]
+    tests:
+      - name: keeps first occurrences in order
+        code: |
+          assert dedupe([3, 1, 3, 2, 1]) == [3, 1, 2], f"dedupe([3, 1, 3, 2, 1]) should be [3, 1, 2], got {dedupe([3, 1, 3, 2, 1])!r}. Keep the original order."
+          assert dedupe(["b", "a", "b"]) == ["b", "a"], "dedupe should work for strings too."
+          assert dedupe([]) == [], "dedupe([]) should return an empty list."
+      - name: does O(n) work, not O(n²)
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return isinstance(other, Tracked) and self.value == other.value
+              def __hash__(self):
+                  return hash(self.value)
+
+          data = [Tracked(i) for i in range(1000)]
+          Tracked.comparisons = 0
+          out = dedupe(data)
+          assert [t.value for t in out] == list(range(1000)), "With 1,000 distinct items, dedupe should return all of them in order."
+          assert Tracked.comparisons < 5000, (
+              f"dedupe made {Tracked.comparisons:,} == comparisons for 1,000 distinct items. "
+              "Checking `in` against a list scans it every time. Keep a set of items you have already seen "
+              "and check membership in the set instead."
+          )
+    hints:
+      - Which part of the loop is the hidden O(n) operation?
+      - Keep a second collection, a `set` called `seen`, just for asking "have I had this before?". Keep `result` for the order.
+      - "Inside the loop: `if item not in seen:` then add it to both `seen` and `result`."
+    feedback:
+      - when: { outputEquals: "[1, 2, 3]\n" }
+        message: >-
+          `list(set(items))` removes repeats but does not keep the original order (and sets of strings come
+          out in an unpredictable order). Use the set only for membership checks and build `result` in order.
+    explanation: >-
+      The list `result` is kept for order, and a set `seen` answers "have I had this before?" in O(1) on
+      average. The loop now does a constant amount of work per item, so the function is O(n) time and O(n)
+      extra space. `list(dict.fromkeys(items))` is an equivalent O(n) one-liner, because dicts keep insertion
+      order.
+
+  - id: common-items
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `common_items(a, b)` that returns a list of the items of `a` that also appear in `b`, in the
+      order they appear in `a`. Assume `a` has no repeated items.
+
+      It must run in **O(len(a) + len(b))** time. The tests call it on two lists of 1,000 objects that count
+      their `==` comparisons.
+    starterCode: |
+      def common_items(a, b):
+          # Return the items of a that also appear in b, in a's order.
+          # Aim for O(len(a) + len(b)), not O(len(a) * len(b)).
+          pass
+
+      print(common_items([5, 1, 4, 2], [2, 3, 5]))
+    solution: |
+      def common_items(a, b):
+          in_b = set(b)
+          return [x for x in a if x in in_b]
+
+      print(common_items([5, 1, 4, 2], [2, 3, 5]))
+    expectedOutput: |
+      [5, 2]
+    tests:
+      - name: finds the common items in a's order
+        code: |
+          assert common_items([5, 1, 4, 2], [2, 3, 5]) == [5, 2], f"Expected [5, 2], got {common_items([5, 1, 4, 2], [2, 3, 5])!r}. Keep the order of a."
+          assert common_items(["x", "y"], ["z"]) == [], "If nothing is shared, return an empty list."
+          assert common_items([], [1, 2]) == [] and common_items([1, 2], []) == [], "Empty inputs should give an empty list."
+      - name: runs in linear time
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return isinstance(other, Tracked) and self.value == other.value
+              def __hash__(self):
+                  return hash(self.value)
+
+          a = [Tracked(i) for i in range(1000)]
+          b = [Tracked(i) for i in range(500, 1500)]
+          Tracked.comparisons = 0
+          result = common_items(a, b)
+          assert result is not None, "common_items must return a list."
+          assert [t.value for t in result] == list(range(500, 1000)), "With a = 0..999 and b = 500..1499 the result should be the items 500..999, in a's order."
+          assert Tracked.comparisons < 5000, (
+              f"common_items made {Tracked.comparisons:,} == comparisons for two lists of 1,000 items. "
+              "`x in b` on a list scans b each time (O(n * m)). Put b into a set once, before the loop."
+          )
+    hints:
+      - "`x in b` is a loop over b. How can you make each membership check O(1)?"
+      - Build `set(b)` once, before you loop over a — building it is O(len(b)).
+      - "A list comprehension works well: `[x for x in a if x in b_set]`."
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Add a return statement that returns the list of common items.
+      - when: { codeContains: "& set(" }
+        message: >-
+          Set intersection finds the right items, but sets have no defined order, so the result may not follow
+          a's order. Use the set only for lookups while you loop over a.
+    explanation: >-
+      Building `set(b)` costs O(m) once; each of the n lookups is then O(1) on average, so the total is
+      O(n + m) time and O(m) extra space. The nested version needs no extra memory but costs O(n · m).
+
+  - id: parsons-duplicates
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into an O(n) function that reports whether a list contains a repeated value. The
+      program should print `True False`. Two lines are distractors.
+    solution: |
+      def has_duplicates(items):
+          seen = set()
+          for item in items:
+              if item in seen:
+                  return True
+              seen.add(item)
+          return False
+      print(has_duplicates([4, 7, 1, 7]), has_duplicates([1, 2, 3]))
+    distractors:
+      - "    seen = {}"
+      - "        if item not in seen:"
+    expectedOutput: |
+      True False
+    explanation: >-
+      The set must exist before the loop; each item is checked before it is added (otherwise every item
+      would "already" be present). `return False` belongs after the loop, once every item has been checked.
+      `{}` is an empty dict, not an empty set, and has no `add` method.
+
+  - id: explain-constant-factors
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      A teammate says: "Dict lookups are O(1), so they take no time at all. And this O(n²) function that
+      compares every pair of our 20 office locations is a performance problem — we must rewrite it."
+      Explain what is wrong with both claims.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that O(1) means the cost does not grow with n, not that it is zero or necessarily small.
+      - Mentions that Big-O hides constant factors, so an O(1) operation can still be relatively expensive.
+      - Points out that for n = 20, n² is only about 400 steps (190 pairs), which is negligible; Big-O matters as n grows large.
+      - Recommends measuring (profiling) with realistic data before optimising, and considering whether n will grow.
+    modelAnswer: |
+      O(1) means the cost of a lookup stays the same however big the dict gets. It does not mean free:
+      each lookup still hashes the key and compares it, and that constant cost can matter inside a hot loop.
+      For the second claim, Big-O describes growth for large n. With 20 locations, comparing every pair is
+      only 190 comparisons — far too little to matter. Rewriting it would add complexity for no gain. It
+      would only matter if the number of locations could grow to tens of thousands. The right move is to
+      measure real code with realistic sizes and optimise what the profiler shows is slow.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-classify-loglinear
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      What is the time complexity of this function for a list of n items?
+
+      ```python
+      def process(items):
+          for x in items:
+              k = len(items)
+              while k > 1:
+                  k //= 2
+      ```
+    explanation: >-
+      The outer loop runs n times. Each pass runs a halving loop over len(items) = n, which takes about
+      log₂ n steps. Nested loops multiply: O(n log n).
+    options:
+      - id: a
+        text: O(n)
+        feedback: The inner while loop does not take constant time; it runs about log₂ n times on every pass.
+      - id: b
+        text: O(log n)
+        feedback: The halving loop is O(log n), but it runs once for every item, so multiply by n.
+      - id: c
+        text: O(n log n)
+        correct: true
+        feedback: Correct. n passes × log n halvings.
+      - id: d
+        text: O(n²)
+        feedback: The inner loop does not count down one at a time; it halves k, so it runs only about log n times.
+
+  - id: m-predict-sequential
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output.
+    code: |
+      def work(n):
+          ops = 0
+          for i in range(n):
+              ops += 1
+          for j in range(n):
+              ops += 1
+          return ops
+
+      print(work(5), work(10))
+    answer: "10 20"
+    explanation: >-
+      The two loops run one after the other, so their counts add: n + n = 2n. Doubling n doubles the work,
+      which is O(n). Only loops *inside* other loops multiply.
+    wrongAnswers:
+      - answer: "25 100"
+        feedback: >-
+          That would be n × n, the count for nested loops. These loops are siblings — the second starts after
+          the first finishes — so their counts add.
+      - answer: "5 10"
+        feedback: Both loops increase ops, so each contributes n.
+
+  - id: m-tf-constant
+    type: true-false
+    skill: recognition
+    prompt: "True or false: an algorithm that always performs exactly 1000·n + 50 steps is O(n)."
+    answer: true
+    explanation: >-
+      Drop the lower-order term (50) and the constant factor (1000): O(n). The constant 1000 matters for real
+      speed, but not for the growth class — doubling n still doubles the work.
+
+  - id: m-worst-average
+    type: mcq
+    skill: explanation
+    prompt: You search an unsorted list of n items for a value by checking each item in turn. Which statement is correct?
+    explanation: >-
+      If the value is first, one comparison suffices (best case, O(1)). If it is last or missing, all n items
+      are checked (worst case, O(n)). Saying "linear search is O(n)" refers to the worst case.
+    options:
+      - id: a
+        text: The best case is O(1) and the worst case is O(n).
+        correct: true
+        feedback: Right. Always say which case a complexity refers to; the worst case is the usual default.
+      - id: b
+        text: It is always O(n), because Big-O ignores which item you look for.
+        feedback: Different inputs of the same size can cost different amounts. Finding the first item costs one comparison.
+      - id: c
+        text: The average case is O(log n).
+        feedback: On average you check about half the items, n/2, which is still O(n). Logarithmic search needs sorted data (binary search).
+      - id: d
+        text: The worst case is O(1) when the value is found.
+        feedback: The worst case is the most expensive input — the value being last or missing — which needs n comparisons.
+
+  - id: m-first-repeat
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `first_repeat(items)` that reads the items from left to right and returns the first item that
+      appears for the **second** time, or `None` if nothing repeats. For `["b", "a", "c", "a", "b"]` the
+      answer is `"a"`, because the second "a" comes before the second "b".
+
+      It must be **O(n)**: the tests count `==` comparisons on 1,001 items.
+    starterCode: |
+      def first_repeat(items):
+          # Return the first item seen for a second time, or None.
+          return None
+
+      print(first_repeat(["b", "a", "c", "a", "b"]))
+      print(first_repeat([1, 2, 3]))
+    solution: |
+      def first_repeat(items):
+          seen = set()
+          for item in items:
+              if item in seen:
+                  return item
+              seen.add(item)
+          return None
+
+      print(first_repeat(["b", "a", "c", "a", "b"]))
+      print(first_repeat([1, 2, 3]))
+    expectedOutput: |
+      a
+      None
+    tests:
+      - name: finds the first repeat
+        code: |
+          assert first_repeat(["b", "a", "c", "a", "b"]) == "a", f"Expected 'a', got {first_repeat(['b', 'a', 'c', 'a', 'b'])!r}. The second 'a' (position 3) comes before the second 'b' (position 4)."
+          assert first_repeat([7, 7]) == 7, "first_repeat([7, 7]) should be 7."
+      - name: returns None when nothing repeats
+        code: |
+          assert first_repeat([1, 2, 3]) is None, "With no repeats, return None."
+          assert first_repeat([]) is None, "An empty list has no repeats: return None."
+      - name: one pass with O(1) lookups
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return isinstance(other, Tracked) and self.value == other.value
+              def __hash__(self):
+                  return hash(self.value)
+
+          data = [Tracked(i) for i in range(1000)] + [Tracked(500)]
+          Tracked.comparisons = 0
+          found = first_repeat(data)
+          assert found is not None and found.value == 500, "The only repeated value is 500; return the item where it repeats."
+          assert Tracked.comparisons < 5000, (
+              f"first_repeat made {Tracked.comparisons:,} == comparisons on 1,001 items. "
+              "Remember what you have seen in a set, so each check is O(1) instead of scanning earlier items."
+          )
+    hints:
+      - You need to remember every item you have already passed. Which container answers "have I seen this?" in O(1)?
+      - Check membership **before** adding the current item.
+    feedback:
+      - when: { outputEquals: "b\nNone\n" }
+        message: >-
+          You returned the first item that *has* a repeat somewhere ("b"), not the first item at which a
+          repeat happens. Scan left to right and stop as soon as you meet an item you have already seen.
+    explanation: >-
+      A set of seen items makes each check O(1) on average, so one pass costs O(n) time and O(n) extra space.
+      Checking `item in items[:i]` instead would slice and scan on every pass, which is O(n²).
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-classify-loglinear, m-predict-sequential, m-tf-constant, m-worst-average, m-first-repeat]
+
+cheatsheet: |
+  | Class | Shape in code | Python examples |
+  |---|---|---|
+  | O(1) | no loop | `a[i]`, `len(a)`, `d[k]`*, `x in s`*, `a.append(x)`† |
+  | O(log n) | halve each step | binary search, `bisect` |
+  | O(n) | one loop | `x in list`, `a.index(x)`, `sum`, `max`, `a.insert(0, x)`, `a.pop(0)` |
+  | O(n log n) | sort | `sorted(a)`, `a.sort()` |
+  | O(n²) | loop in a loop | compare every pair; O(n) call inside a loop |
+  | O(2ⁿ) | all subsets | naive recursive Fibonacci |
+
+  \* average case (worst O(n)) · † amortised
+
+  - Simplify: keep the dominant term, drop constants (3n² + 5n + 2 → O(n²)).
+  - Sequential loops add; nested loops multiply; separate inputs get separate letters (O(n · m)).
+  - Space: count extra memory the same way (a set of seen items is O(n)).
+  - Build strings with `"".join(parts)`; use a set/dict for repeated lookups; use `deque` for queues.

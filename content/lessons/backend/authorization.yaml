@@ -1,0 +1,202 @@
+id: backend.authorization
+concept: backend.authorization
+title: Authorisation
+subtitle: Decide what an authenticated user may do — role- and attribute-based access control, object-level checks
+  and least privilege
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Decide what an authenticated user may do — role- and attribute-based access control, object-level checks
+  and least privilege.
+objectives:
+- Explain the core model behind authorisation.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Authorization Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+  publisher: OWASP
+- title: API1:2023 Broken Object Level Authorization
+  url: https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/
+  publisher: OWASP API Security Project
+- title: 'NIST SP 800-162: Guide to Attribute Based Access Control (ABAC)'
+  url: https://csrc.nist.gov/pubs/sp/800/162/upd2/final
+  publisher: NIST
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Decide what an authenticated user may do — role- and attribute-based access control, object-level checks
+      and least privilege. Knowing who a user is does not decide what they may touch; broken object-level authorisation
+      (reading someone else's record by changing an ID) is the top risk in the OWASP API Security Top 10 (2023).
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Check permission server-side on every request for the specific object, for example `order.owner_id
+      == current_user.id`, not just whether the caller is logged in.
+
+      - RBAC grants permissions through roles (admin, editor, viewer); ABAC decides from attributes of the user,
+      the resource and the context (department, ownership, time).
+
+      - Deny by default and apply least privilege, so new endpoints and roles start with no access.
+
+      - Centralise checks in reusable dependencies or a policy layer so they cannot be forgotten on one endpoint.
+
+      - Filter queries by tenant or owner inside the database query itself, so rows the user may not see are never
+      loaded.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Hiding a button in the UI is not authorisation; the API must enforce the rule.
+
+      - Unguessable IDs such as UUIDs make enumeration harder but do not replace an ownership check.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def can_access(role, action):\n    policy = {\"admin\": {\"read\", \"write\", \"delete\"}, \"editor\"\
+      : {\"read\", \"write\"}, \"viewer\": {\"read\"}}\n    return action in policy.get(role, set())\n\nprint(can_access(\"\
+      editor\", \"delete\"))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: authorization-code
+  - type: item
+    ref: authorization-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Check permission server-side on every request for the specific object, for example `order.owner_id == current_user.id`,
+      not just whether the caller is logged in.
+
+      - RBAC grants permissions through roles (admin, editor, viewer); ABAC decides from attributes of the user,
+      the resource and the context (department, ownership, time).
+
+      - Deny by default and apply least privilege, so new endpoints and roles start with no access.
+
+      - Centralise checks in reusable dependencies or a policy layer so they cannot be forgotten on one endpoint.
+
+      - Filter queries by tenant or owner inside the database query itself, so rows the user may not see are never
+      loaded.
+
+
+      **Avoid**
+
+      - Hiding a button in the UI is not authorisation; the API must enforce the rule.
+
+      - Unguessable IDs such as UUIDs make enumeration harder but do not replace an ownership check.'
+  - type: item
+    ref: authorization-mcq
+  - type: item
+    ref: authorization-tf
+  - type: item
+    ref: authorization-code
+items:
+- id: authorization-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of authorisation?
+  explanation: Check permission server-side on every request for the specific object, for example `order.owner_id
+    == current_user.id`, not just whether the caller is logged in.
+  options:
+  - id: a
+    text: Check permission server-side on every request for the specific object, for example `order.owner_id ==
+      current_user.id`, not just whether the caller is logged in.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Hiding a button in the UI is not authorisation; the API must enforce the rule.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: authorization-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Hiding a button in the UI is not authorisation; the API must enforce the rule.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: authorization-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing authorisation in a real application. What design decisions would you make, what failure
+    case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: authorization-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for authorisation. Implement the stated rule and make sure both ordinary and edge-case
+    tests pass.
+  starterCode: "def can_access(role, action):\n    raise NotImplementedError('Complete this function')"
+  solution: "def can_access(role, action):\n    policy = {\"admin\": {\"read\", \"write\", \"delete\"}, \"editor\"\
+    : {\"read\", \"write\"}, \"viewer\": {\"read\"}}\n    return action in policy.get(role, set())"
+  tests:
+  - name: Core behaviour
+    code: assert can_access("viewer", "read") is True
+  - name: Edge cases
+    code: 'assert can_access("viewer", "write") is False
+
+      assert can_access("unknown", "read") is False'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - authorization-mcq
+  - authorization-tf
+  - authorization-code
+cheatsheet: '**Core model**
+
+  - Check permission server-side on every request for the specific object, for example `order.owner_id == current_user.id`,
+  not just whether the caller is logged in.
+
+  - RBAC grants permissions through roles (admin, editor, viewer); ABAC decides from attributes of the user, the
+  resource and the context (department, ownership, time).
+
+  - Deny by default and apply least privilege, so new endpoints and roles start with no access.
+
+  - Centralise checks in reusable dependencies or a policy layer so they cannot be forgotten on one endpoint.
+
+  - Filter queries by tenant or owner inside the database query itself, so rows the user may not see are never loaded.
+
+
+  **Common mistakes**
+
+  - Hiding a button in the UI is not authorisation; the API must enforce the rule.
+
+  - Unguessable IDs such as UUIDs make enumeration harder but do not replace an ownership check.'

@@ -1,0 +1,1207 @@
+id: genai.tokens-context
+concept: genai.tokens-context
+title: Tokens and Context Windows
+subtitle: The unit every limit, bill and delay is counted in
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  LLMs read and write tokens, not characters or words. You will build a toy byte-pair-encoding (BPE)
+  tokenizer in Python, see why non-English text and code often need more tokens, and learn to treat the
+  context window as a budget shared by input and output — and to trim it when a conversation grows.
+objectives:
+  - Explain why models use sub-word tokens instead of words or characters.
+  - Implement a toy BPE trainer (merge the most frequent pair, deterministic ties) and use its merges to tokenize new words.
+  - Compare token, character, word and byte counts, and explain why non-English text and code often cost more tokens.
+  - Check whether a request fits a context window, reserving room for the output, and trim conversation history to a budget.
+  - Estimate how cost and latency scale with input and output tokens.
+sources:
+  - title: Tokenization algorithms (summary of the tokenizers)
+    url: https://huggingface.co/docs/transformers/tokenizer_summary
+    publisher: Hugging Face
+  - title: "LLM Course, chapter 6: Byte-Pair Encoding tokenization"
+    url: https://huggingface.co/learn/llm-course/chapter6/5
+    publisher: Hugging Face
+  - title: Neural Machine Translation of Rare Words with Subword Units (BPE)
+    url: https://arxiv.org/abs/1508.07909
+    publisher: arXiv (Sennrich, Haddow and Birch)
+  - title: tiktoken (README)
+    url: https://github.com/openai/tiktoken
+    publisher: OpenAI
+  - title: Language Model Tokenizers Introduce Unfairness Between Languages
+    url: https://arxiv.org/abs/2305.15425
+    publisher: arXiv (Petrov et al.)
+  - title: "Lost in the Middle: How Language Models Use Long Contexts"
+    url: https://arxiv.org/abs/2307.03172
+    publisher: arXiv (Liu et al.)
+  - title: Unicode HOWTO
+    url: https://docs.python.org/3/howto/unicode.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why not just use words or characters?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          In [what LLMs are](concept:genai.what-are-llms) our toy model used whole words as tokens. That
+          breaks as soon as a word was not in the training text:
+      - type: code
+        runnable: true
+        code: |
+          training_text = "the player played and the players play"
+          vocab = set(training_text.split())
+          for word in ["played", "replaying", "playful"]:
+              print(f"{word:10} ->", word if word in vocab else "[UNK]")
+
+          sentence = "the players replayed the game"
+          print(len(sentence.split()), "word tokens vs", len(sentence), "character tokens")
+        expectedOutput: |
+          played     -> played
+          replaying  -> [UNK]
+          playful    -> [UNK]
+          5 word tokens vs 29 character tokens
+        caption: A word vocabulary maps every unseen word to an "unknown" token. Characters never fail, but make sequences about six times longer here.
+      - type: markdown
+        body: |
+          Both extremes are bad:
+
+          - **Words**: the vocabulary would need every word, name, typo and inflection in every language,
+            and still fail on new ones (`[UNK]` loses the information completely).
+          - **Characters**: nothing is unknown, but sequences become very long. Every token costs compute
+            and context space, and a single character carries little meaning.
+
+          **Sub-word tokens** are the compromise every modern LLM uses: frequent words become one token,
+          and rare words are split into reusable pieces — `replaying` might become `re` + `play` + `ing`.
+      - type: item
+        ref: mcq-why-subwords
+
+  - id: tokens
+    title: Tokens, vocabularies and IDs
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **[tokenizer](glossary:tokenizer)** converts text into a list of
+          **[tokens](glossary:token)** drawn from a fixed **vocabulary**, and each token into an integer
+          **ID**. The model only ever sees those IDs. Decoding reverses the process: IDs → token strings →
+          text.
+
+          Each model family has its **own** tokenizer, typically with tens of thousands to a few hundred
+          thousand entries. The same text therefore gives different token counts on different models.
+
+          Many current tokenizers work on **bytes** rather than characters. Remember from
+          [text encoding](concept:foundations.text-encoding) that UTF-8 stores each character as 1–4
+          bytes. A tokenizer whose base vocabulary is all 256 possible byte values can encode *any*
+          text — nothing is ever unknown — and then learns merges so common byte sequences become
+          single tokens.
+      - type: code
+        runnable: true
+        code: |
+          for text in ["cat", "café", "नमस्ते", "日本", "👍"]:
+              print(f"{text}: {len(text)} characters, {len(text.encode('utf-8'))} bytes")
+        expectedOutput: |
+          cat: 3 characters, 3 bytes
+          café: 4 characters, 5 bytes
+          नमस्ते: 6 characters, 18 bytes
+          日本: 2 characters, 6 bytes
+          👍: 1 characters, 4 bytes
+        caption: "Characters (Unicode code points) and UTF-8 bytes are not the same count. Devanagari and Japanese characters take 3 bytes each; this emoji takes 4."
+
+  - id: bpe
+    title: Build a toy BPE tokenizer
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **[Byte-pair encoding](glossary:byte-pair-encoding) (BPE)** learns sub-word tokens from data
+          ([Sennrich et al., 2016](https://arxiv.org/abs/1508.07909)). Training is a simple loop:
+
+          1. Split every word of the training text into single symbols (here: characters).
+          2. Count every **adjacent pair** of symbols, weighted by how often the word occurs.
+          3. **Merge** the most frequent pair into one new symbol and record the merge.
+          4. Repeat until you have made the number of merges you want (= vocabulary size − base symbols).
+
+          We use the word counts from the [Hugging Face tokenizer summary](https://huggingface.co/docs/transformers/tokenizer_summary)
+          so you can compare your results with theirs. First, counting pairs:
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter
+
+          word_counts = {"hug": 10, "pug": 5, "pun": 12, "bun": 4, "hugs": 5}
+
+          def count_pairs(splits, word_counts):
+              pairs = Counter()
+              for word, symbols in splits.items():
+                  for a, b in zip(symbols, symbols[1:]):
+                      pairs[(a, b)] += word_counts[word]
+              return pairs
+
+          splits = {word: list(word) for word in word_counts}
+          print(splits["hugs"])
+          print(count_pairs(splits, word_counts).most_common(3))
+        expectedOutput: |
+          ['h', 'u', 'g', 's']
+          [(('u', 'g'), 20), (('p', 'u'), 17), (('u', 'n'), 16)]
+        annotations:
+          - line: 9
+            text: A pair inside "hug" counts 10 times, because "hug" occurs 10 times in the training text.
+          - line: 12
+            text: Every word starts as a list of single characters — the base vocabulary.
+      - type: markdown
+        body: |
+          "u" + "g" appears 20 times (10 in "hug", 5 in "pug", 5 in "hugs"), so it is merged first.
+          Merging means replacing every adjacent `"u", "g"` in a word's symbol list with one symbol
+          `"ug"`, scanning left to right:
+      - type: visualization
+        component: python-tracer
+        title: Merging one pair inside a word
+        caption: The loop either joins two symbols (and skips ahead by 2) or copies one symbol (and moves on by 1).
+        props:
+          code: |
+            symbols = ["h", "u", "g", "s"]
+            pair = ("u", "g")
+            merged = []
+            i = 0
+            while i < len(symbols):
+                if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                    merged.append(symbols[i] + symbols[i + 1])
+                    i += 2
+                else:
+                    merged.append(symbols[i])
+                    i += 1
+            print(merged)
+      - type: markdown
+        body: |
+          Now the full trainer. To make it **deterministic**, ties between equally frequent pairs are
+          broken alphabetically: `max(sorted(pairs), key=pairs.get)` looks at the pairs in sorted order,
+          and `max` returns the *first* of several equal maxima.
+      - type: code
+        runnable: true
+        id: bpe-trainer
+        code: |
+          from collections import Counter
+
+          def count_pairs(splits, word_counts):
+              pairs = Counter()
+              for word, symbols in splits.items():
+                  for a, b in zip(symbols, symbols[1:]):
+                      pairs[(a, b)] += word_counts[word]
+              return pairs
+
+          def merge_pair(symbols, pair):
+              merged = []
+              i = 0
+              while i < len(symbols):
+                  if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                      merged.append(symbols[i] + symbols[i + 1])
+                      i += 2
+                  else:
+                      merged.append(symbols[i])
+                      i += 1
+              return merged
+
+          def train_bpe(word_counts, num_merges):
+              splits = {word: list(word) for word in word_counts}
+              merges = []
+              for _ in range(num_merges):
+                  pairs = count_pairs(splits, word_counts)
+                  if not pairs:
+                      break
+                  best = max(sorted(pairs), key=pairs.get)
+                  merges.append(best)
+                  splits = {word: merge_pair(symbols, best) for word, symbols in splits.items()}
+              return merges, splits
+
+          word_counts = {"hug": 10, "pug": 5, "pun": 12, "bun": 4, "hugs": 5}
+          merges, splits = train_bpe(word_counts, 4)
+          for i, (a, b) in enumerate(merges, 1):
+              print(f"merge {i}: {a} + {b} -> {a + b}")
+          print(splits)
+        expectedOutput: |
+          merge 1: u + g -> ug
+          merge 2: u + n -> un
+          merge 3: h + ug -> hug
+          merge 4: p + un -> pun
+          {'hug': ['hug'], 'pug': ['p', 'ug'], 'pun': ['pun'], 'bun': ['b', 'un'], 'hugs': ['hug', 's']}
+        annotations:
+          - line: 29
+            text: Most frequent pair; among ties, the alphabetically first one. Real libraries also break ties deterministically, but each in its own way.
+          - line: 31
+            text: Apply the new merge to every word before counting pairs again — merged symbols can be merged further ("h" + "ug").
+      - type: markdown
+        body: |
+          The trained tokenizer is just the **ordered list of merges**. To tokenize a new word, start from
+          its characters and apply each merge in the order it was learned:
+      - type: code
+        runnable: true
+        code: |
+          def merge_pair(symbols, pair):
+              merged = []
+              i = 0
+              while i < len(symbols):
+                  if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                      merged.append(symbols[i] + symbols[i + 1])
+                      i += 2
+                  else:
+                      merged.append(symbols[i])
+                      i += 1
+              return merged
+
+          def encode_word(word, merges):
+              symbols = list(word)
+              for pair in merges:
+                  symbols = merge_pair(symbols, pair)
+              return symbols
+
+          merges = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+          for word in ["hugs", "bugs", "puns", "mug"]:
+              print(word, "->", encode_word(word, merges))
+        expectedOutput: |
+          hugs -> ['hug', 's']
+          bugs -> ['b', 'ug', 's']
+          puns -> ['pun', 's']
+          mug -> ['m', 'ug']
+        caption: '"bugs", "puns" and "mug" never appeared in training, yet they are tokenized from learned pieces. "m" was never seen at all, so it stays a single character.'
+      - type: markdown
+        body: |
+          Finally, give each token an **ID**: the base characters first, then one new entry per merge. The
+          model works with these integers; decoding maps them back to strings and joins them.
+      - type: code
+        runnable: true
+        code: |
+          merges = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+          word_counts = {"hug": 10, "pug": 5, "pun": 12, "bun": 4, "hugs": 5}
+
+          base = sorted({ch for word in word_counts for ch in word})
+          vocab = base + [a + b for a, b in merges]
+          token_to_id = {token: i for i, token in enumerate(vocab)}
+          print(vocab)
+
+          tokens = ["b", "ug", "s"]          # encode_word("bugs", merges)
+          ids = [token_to_id[t] for t in tokens]
+          print(tokens, "->", ids)
+          print("decoded:", "".join(vocab[i] for i in ids))
+        expectedOutput: |
+          ['b', 'g', 'h', 'n', 'p', 's', 'u', 'ug', 'un', 'hug', 'pun']
+          ['b', 'ug', 's'] -> [0, 7, 5]
+          decoded: bugs
+        caption: Vocabulary size = 7 base symbols + 4 merges = 11. GPT-2's byte-level BPE has 256 byte tokens + 50,000 merges + 1 special token = 50,257.
+      - type: callout
+        variant: note
+        title: This is a toy — real tokenizers differ in details
+        body: |
+          Real BPE tokenizers start from **bytes** (so nothing is unknown), pre-split text with rules
+          for spaces, digits and punctuation, usually keep the leading space inside a token (`" the"`),
+          add special tokens for chat formatting, and are trained on billions of words with tens of
+          thousands of merges. Other algorithms (WordPiece, Unigram) choose pieces differently. The core
+          idea — frequent sequences become single tokens — is the same.
+      - type: item
+        ref: predict-bpe-encode
+
+  - id: counting
+    title: Tokens vs characters vs words
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Because merges are learned from training data, **text that resembles the training data
+          compresses well and other text does not**. Let us train the toy on a few lines of English and
+          count tokens for different kinds of text. Characters the toy never saw fall back to one token
+          per UTF-8 byte, as a byte-level tokenizer would.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter
+
+          def merge_pair(symbols, pair):
+              merged, i = [], 0
+              while i < len(symbols):
+                  if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                      merged.append(symbols[i] + symbols[i + 1])
+                      i += 2
+                  else:
+                      merged.append(symbols[i])
+                      i += 1
+              return merged
+
+          def train_bpe(word_counts, num_merges):
+              splits = {w: list(w) for w in word_counts}
+              merges = []
+              for _ in range(num_merges):
+                  pairs = Counter()
+                  for w, symbols in splits.items():
+                      for a, b in zip(symbols, symbols[1:]):
+                          pairs[(a, b)] += word_counts[w]
+                  if not pairs:
+                      break
+                  best = max(sorted(pairs), key=pairs.get)
+                  merges.append(best)
+                  splits = {w: merge_pair(s, best) for w, s in splits.items()}
+              return merges
+
+          english = """the model reads the text as tokens and the tokens are counted
+          the longer the text the more tokens it needs and the more it costs
+          we count tokens for the input and for the output of every request"""
+          word_counts = Counter(english.split())
+          merges = train_bpe(word_counts, 60)
+          known = {ch for w in word_counts for ch in w} | {a + b for a, b in merges}
+
+          def count_tokens(text):
+              n = 0
+              for word in text.split():
+                  symbols = list(word)
+                  for pair in merges:
+                      symbols = merge_pair(symbols, pair)
+                  n += sum(1 if s in known else len(s.encode("utf-8")) for s in symbols)
+              return n
+
+          samples = {
+              "English": "the model counts the tokens of the request",
+              "Spanish": "los tokens del texto se cuentan",
+              "Hindi": "पाठ के टोकन गिने जाते हैं",
+              "Code": "total = count(tokens) * 2",
+          }
+          for name, text in samples.items():
+              t = count_tokens(text)
+              print(f"{name:8} {len(text):3} chars {len(text.encode('utf-8')):3} bytes {t:3} tokens  {len(text) / t:.1f} chars/token")
+        expectedOutput: |
+          English   42 chars  42 bytes   9 tokens  4.7 chars/token
+          Spanish   31 chars  31 bytes  13 tokens  2.4 chars/token
+          Hindi     25 chars  65 bytes  60 tokens  0.4 chars/token
+          Code      25 chars  25 bytes  12 tokens  2.1 chars/token
+        caption: "Toy tokenizer trained on 3 lines of English, so the effect is exaggerated. The direction is real: tokenizers compress the kind of text they were trained on best."
+      - type: markdown
+        body: |
+          Real tokenizers are trained on large, multilingual corpora, so the gap is smaller than in our
+          toy — but it does not disappear. Petrov et al. found that the same text translated into
+          different languages can differ in token length by **up to 15 times**
+          ([2023](https://arxiv.org/abs/2305.15425)). Practical rules of thumb:
+
+          - For typical English text, a token averages roughly **4 characters, or about ¾ of a word**.
+            (tiktoken's README puts it as about 4 bytes per token.)
+          - Many other languages, and code with lots of symbols and indentation, need **more tokens for
+            the same content** — so they cost more and fill the context window faster.
+          - Character or word counts are only rough estimates. For real limits and bills, **count with
+            the model's own tokenizer** or the provider's token-counting tools.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import tiktoken                          # pip install tiktoken
+
+          enc = tiktoken.get_encoding("o200k_base")  # one of OpenAI's encodings
+          ids = enc.encode("Tokens are not words.")
+          print(len(ids), ids)
+          print(enc.decode(ids))
+        caption: >-
+          Illustrative, not executed: tiktoken is a third-party package (and downloads encoding files on
+          first use), which the browser runtime does not have. It counts tokens for OpenAI models only;
+          other model families ship their own tokenizers (for example via Hugging Face `tokenizers`) or
+          token-counting API endpoints. Run it locally in a virtual environment to try it.
+      - type: item
+        ref: mcq-non-english
+
+  - id: context-window
+    title: The context window is a budget
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The **[context window](glossary:context-window)** is the maximum number of tokens a model can
+          handle in one request — and it covers **input and output together**: system prompt,
+          conversation history, retrieved documents, tool definitions *and* the tokens the model
+          generates. Window sizes vary widely between models (from a few thousand to hundreds of
+          thousands of tokens or more), so check the model's documentation.
+
+          Treat it as a budget. Before sending a request, add up the input and **reserve room for the
+          longest answer you will allow** (the maximum-output-tokens setting):
+      - type: code
+        runnable: true
+        code: |
+          CONTEXT_WINDOW = 8_000      # tokens, for a hypothetical model
+
+          system_prompt = 400
+          history = 5_200
+          documents = 1_900
+          max_output = 1_000          # the longest answer we allow
+
+          used = system_prompt + history + documents
+          print("input tokens:", used)
+          print("room left for output:", CONTEXT_WINDOW - used)
+          print("fits with max_output?", used + max_output <= CONTEXT_WINDOW)
+        expectedOutput: |
+          input tokens: 7500
+          room left for output: 500
+          fits with max_output? False
+        caption: The input alone fits, but it leaves only 500 tokens for the answer. Depending on the provider, such a request is rejected or the answer is cut off at the limit.
+      - type: callout
+        variant: misconception
+        title: A bigger window is not the same as better use of it
+        body: |
+          Models tend to use information near the **start or end** of a long context more reliably than
+          information in the middle ([Liu et al., "Lost in the Middle"](https://arxiv.org/abs/2307.03172)),
+          and irrelevant material can distract them. Long contexts also cost more and respond more
+          slowly. Sending fewer, more relevant tokens often gives *better* answers, which is a key
+          motivation for [retrieval](concept:rag.why-rag).
+      - type: item
+        ref: tf-bigger-window
+
+  - id: truncation
+    title: Trimming to fit
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          When a conversation or document set outgrows the budget, the application must decide what to
+          drop. Common strategies:
+
+          | Strategy | How | Trade-off |
+          |---|---|---|
+          | **Keep the most recent turns** | Always keep the system prompt; add messages from newest to oldest until the budget is used | Simple and predictable; old facts (the user's name, an order number) are lost |
+          | **Summarise older turns** | Replace old messages with a short summary written by a model call | Keeps key facts; costs an extra call, and the summary can omit or distort details |
+          | **Keep the start and the end** | Keep the first message(s) and the most recent ones, drop the middle | Preserves the original task; the dropped middle may matter |
+          | **Retrieve, don't stuff** | Store documents outside the prompt and include only the relevant chunks | Scales to huge corpora; depends on retrieval quality ([RAG](concept:rag.why-rag)) |
+          | **Cap the output** | Set the maximum output tokens and ask for concise answers | Protects the budget; answers can be cut off |
+
+          Here is "keep the most recent turns". The token counts would come from the model's tokenizer;
+          here they are given on each message.
+      - type: code
+        runnable: true
+        code: |
+          messages = [
+              {"role": "system", "content": "You are a support assistant.", "tokens": 300},
+              {"role": "user", "content": "My order is late.", "tokens": 900},
+              {"role": "assistant", "content": "Sorry! What is the order number?", "tokens": 700},
+              {"role": "user", "content": "It is A-1042.", "tokens": 400},
+              {"role": "assistant", "content": "It ships tomorrow.", "tokens": 500},
+              {"role": "user", "content": "Can I change the address?", "tokens": 200},
+          ]
+
+          def trim_history(messages, budget):
+              system, rest = messages[0], messages[1:]
+              used = system["tokens"]
+              kept = []
+              for message in reversed(rest):          # newest first
+                  if used + message["tokens"] > budget:
+                      break                           # stop at the first message that does not fit
+                  kept.append(message)
+                  used += message["tokens"]
+              return [system] + kept[::-1]            # back to chronological order
+
+          trimmed = trim_history(messages, budget=2_000)
+          for m in trimmed:
+              print(m["role"], "|", m["content"])
+          print("tokens used:", sum(m["tokens"] for m in trimmed))
+        expectedOutput: |
+          system | You are a support assistant.
+          user | It is A-1042.
+          assistant | It ships tomorrow.
+          user | Can I change the address?
+          tokens used: 1400
+        annotations:
+          - line: 14
+            text: Walk backwards so the newest messages are kept first.
+          - line: 16
+            text: Stopping (rather than skipping to an older, smaller message) keeps one unbroken stretch of recent conversation.
+          - line: 19
+            text: "`kept` was built newest-first; reverse it so the model reads the conversation in order."
+      - type: callout
+        variant: production
+        title: Budget on purpose
+        body: |
+          Decide the budget explicitly: for example, a fixed allowance for the system prompt and tools, a
+          maximum for retrieved chunks, a maximum for history, and a reserved maximum output. Log the
+          token counts the API reports for every request so you can see which part grows.
+
+  - id: cost-latency
+    title: Cost and latency scale with tokens
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Hosted APIs bill **input and output tokens separately**, usually quoted per million tokens, and
+          output tokens are usually priced higher. Prices differ by provider and model and change often,
+          so the prices below are **made up** for the arithmetic.
+      - type: code
+        runnable: true
+        code: |
+          # Hypothetical prices - always check the provider's current pricing page.
+          PRICE_IN = 3.00 / 1_000_000     # dollars per input token
+          PRICE_OUT = 15.00 / 1_000_000   # dollars per output token
+
+          def request_cost(input_tokens, output_tokens):
+              return input_tokens * PRICE_IN + output_tokens * PRICE_OUT
+
+          print(f"one request: ${request_cost(2_000, 500):.4f}")
+          print(f"100,000 requests: ${request_cost(2_000, 500) * 100_000:,.2f}")
+        expectedOutput: |
+          one request: $0.0135
+          100,000 requests: $1,350.00
+      - type: markdown
+        body: |
+          **Latency** has two parts. The model first processes the whole input (*prefill*), which is
+          fast per token because it happens in parallel; this mostly sets the **time to first token**.
+          It then generates output **one token at a time** (*decoding*) — each new token needs another
+          pass through the network — so total time grows roughly in proportion to the number of output
+          tokens. The speeds below are hypothetical; measure your own.
+      - type: code
+        runnable: true
+        code: |
+          def estimate_seconds(input_tokens, output_tokens, prefill_per_s=5_000, decode_per_s=50):
+              return input_tokens / prefill_per_s + output_tokens / decode_per_s
+
+          print(f"2,000 in, 500 out: {estimate_seconds(2_000, 500):.1f} s")
+          print(f"2,000 in, 50 out: {estimate_seconds(2_000, 50):.1f} s")
+          print(f"20,000 in, 50 out: {estimate_seconds(20_000, 50):.1f} s")
+        expectedOutput: |
+          2,000 in, 500 out: 10.4 s
+          2,000 in, 50 out: 1.4 s
+          20,000 in, 50 out: 5.0 s
+        caption: In this model, ten times more input adds 3.6 s; ten times more output adds 9 s. Output length usually dominates total response time — which is also why streaming the answer helps perceived speed.
+      - type: markdown
+        body: |
+          Chat makes this worse quietly: because the API is stateless, **every turn resends the whole
+          history**, so the input grows each turn and the total billed input grows much faster than the
+          conversation itself.
+      - type: code
+        runnable: true
+        code: |
+          system = 300          # tokens in the system prompt
+          per_exchange = 200    # tokens added by each user message + reply
+          question = 50         # tokens in the new question
+
+          total = 0
+          for turn in range(1, 11):
+              input_tokens = system + per_exchange * (turn - 1) + question
+              total += input_tokens
+              if turn in (1, 5, 10):
+                  print(f"turn {turn:2}: {input_tokens:,} input tokens")
+          print(f"whole conversation: {total:,} input tokens billed")
+        expectedOutput: |
+          turn  1: 350 input tokens
+          turn  5: 1,150 input tokens
+          turn 10: 2,150 input tokens
+          whole conversation: 12,500 input tokens billed
+        caption: Ten short turns bill 12,500 input tokens. Trimming history, summarising and provider prompt caching (see cost and latency engineering) all attack this growth.
+      - type: markdown
+        body: |
+          [Cost and latency engineering](concept:genai.cost-latency) covers the full toolbox (caching,
+          routing to smaller models, batching).
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Why letters are hard for LLMs.** The model receives token IDs, not characters. If
+          `"strawberry"` is two or three tokens, the model never directly "sees" the individual letters,
+          which is why counting letters or reversing words can fail while harder-seeming tasks succeed.
+
+          **Spaces are part of tokens.** Most BPE tokenizers attach the leading space to the word
+          (`" the"` and `"the"` are different tokens), and SentencePiece-style tokenizers represent the
+          space with a visible symbol `▁`. So `"Hello"` at the start of a text and `" Hello"` mid-sentence
+          can get different IDs.
+
+          **Special tokens and chat templates.** Tokenizers reserve IDs for markers such as end-of-text
+          or the start of a user or assistant message. A chat API turns your list of messages into one
+          token sequence using the model's *chat template*; those formatting tokens count toward the
+          window and the bill too.
+
+          **Applying merges.** Our `encode_word` applies every merge in learned order. Production
+          tokenizers get the same result much faster by repeatedly merging the highest-priority pair
+          present, with caching for common words.
+
+          **Why the window is limited at all.** Attention compares every token with every earlier token,
+          so compute grows quickly with context length, and the model stores intermediate results (the
+          KV cache) for every token in the context, so memory grows with it too. Models are also trained
+          up to some length and degrade beyond it.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Request rejected: context length exceeded | Input + maximum output is larger than the window | Trim or summarise history, retrieve fewer chunks, lower the max output, or use a model with a larger window. |
+          | Answer stops mid-sentence | It hit the maximum-output-tokens limit (the API's stop reason says so) | Raise the limit, ask for a shorter answer, or continue in a follow-up call. |
+          | Bill much higher than estimated | Counted characters or words, forgot that output costs more, or resends the full history every turn | Count with the real tokenizer; log the usage the API reports; trim history. |
+          | The model ignores a fact buried in a long prompt | Lost in the middle; too much irrelevant context | Put key instructions and facts at the start or end; send less, more relevant text. |
+          | Two tools report different token counts | Different tokenizers (or one counts chat-format tokens) | Use the tokenizer of the exact model you call. |
+
+          In the toy, a classic bug is a vocabulary without a fallback. "mug" contains `m`, which was not
+          in the training text:
+      - type: code
+        runnable: true
+        code: |
+          merges = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+          vocab = ['b', 'g', 'h', 'n', 'p', 's', 'u', 'ug', 'un', 'hug', 'pun']
+          token_to_id = {token: i for i, token in enumerate(vocab)}
+
+          tokens = ["m", "ug"]     # what encode_word("mug", merges) returns
+          ids = [token_to_id[t] for t in tokens]
+        expectError: KeyError
+        caption: "KeyError: 'm'. Real tokenizers avoid this by including all 256 byte values in the base vocabulary (byte-level BPE) or by mapping unknown pieces to a special unknown token."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build the core of BPE training yourself, then work with token budgets. The checks run your
+          functions on several inputs, so they must compute their answers.
+      - type: item
+        ref: code-most-frequent-pair
+      - type: item
+        ref: parsons-bpe-step
+      - type: item
+        ref: debug-fits-context
+      - type: item
+        ref: code-trim-history
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Models read and write **tokens** — sub-word pieces mapped to integer IDs by the model's own
+            tokenizer. Different models, different counts.
+          - **BPE** learns tokens by repeatedly merging the most frequent adjacent pair; tokenizing
+            applies the learned merges in order. Byte-level BPE can encode any text.
+          - English averages roughly 4 characters per token; many other languages and code need more
+            tokens for the same content. Count with the real tokenizer.
+          - The **context window** caps input + output together. Reserve room for the answer, and trim,
+            summarise or retrieve to stay inside it.
+          - Cost = input tokens × input price + output tokens × output price. Latency grows mainly with
+            output tokens. Resending history makes chat costs grow fast.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How would you fit a long conversation or document set into a limited context window?" —
+          Budget explicitly (system, tools, history, documents, reserved output), keep the newest turns
+          and summarise older ones, retrieve only relevant chunks instead of stuffing whole documents,
+          put key facts at the start or end, cap output length, and measure token usage per request.
+
+items:
+  - id: mcq-why-subwords
+    type: mcq
+    skill: recognition
+    prompt: Why do modern LLMs use sub-word tokens rather than whole words or single characters?
+    explanation: >-
+      Sub-words keep the vocabulary a manageable size, can represent any word (rare words are split into
+      known pieces), and keep sequences much shorter than characters would — saving compute and context.
+    options:
+      - id: a
+        text: They can represent any word from reusable pieces while keeping sequences much shorter than characters.
+        correct: true
+        feedback: Right — the compromise between an impossible word vocabulary and very long character sequences.
+      - id: b
+        text: Sub-words are how humans read, so models copy that.
+        feedback: The choice is an engineering trade-off about vocabulary size and sequence length, not a model of human reading.
+      - id: c
+        text: Characters cannot be stored as numbers, but sub-words can.
+        feedback: Characters are numbers too (Unicode code points, UTF-8 bytes). Character-level models exist; they are just slower and weaker.
+      - id: d
+        text: Word vocabularies are fine, but sub-words make the model know more facts.
+        feedback: Word vocabularies break on unseen words and need enormous size. Tokenization does not add knowledge.
+
+  - id: predict-bpe-encode
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The merges below were learned in this order. What does the program print?
+    code: |
+      def merge_pair(symbols, pair):
+          merged, i = [], 0
+          while i < len(symbols):
+              if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                  merged.append(symbols[i] + symbols[i + 1])
+                  i += 2
+              else:
+                  merged.append(symbols[i])
+                  i += 1
+          return merged
+
+      merges = [("e", "r"), ("l", "o"), ("lo", "w"), ("low", "er")]
+      symbols = list("slower")
+      for pair in merges:
+          symbols = merge_pair(symbols, pair)
+      print(symbols)
+    answer: "['s', 'lower']"
+    explanation: >-
+      Start with s l o w e r. ("e","r") → s l o w er. ("l","o") → s lo w er. ("lo","w") → s low er.
+      ("low","er") → s lower. No merge involves "s", so it stays a separate token.
+    wrongAnswers:
+      - answer: "['slower']"
+        feedback: Only learned merges join symbols. No merge combines "s" with anything, so "s" stays separate.
+      - answer: "['s', 'low', 'er']"
+        feedback: That is the state after the third merge. The fourth merge ("low", "er") joins them into "lower".
+      - answer: "['s', 'l', 'o', 'w', 'e', 'r']"
+        feedback: The loop applies every merge in order; each one replaces a pair with a single combined symbol.
+
+  - id: mcq-non-english
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      On the same model, a short support message takes 12 tokens in English but 40 tokens in its Hindi
+      translation. What is the most likely reason?
+    explanation: >-
+      Tokenizer merges are learned from training data that is mostly English, so English words often
+      become single tokens while text in other scripts is split into smaller pieces — down to individual
+      bytes, and Devanagari characters are 3 bytes each in UTF-8. The same content costs more tokens.
+    options:
+      - id: a
+        text: The tokenizer learned fewer merges for Hindi text, so it is split into smaller pieces (down to bytes).
+        correct: true
+        feedback: Yes. Tokenizers compress best the kind of text they were trained on.
+      - id: b
+        text: Hindi sentences contain more information, so the model needs more tokens to understand them.
+        feedback: It is the same message. Token counts reflect the tokenizer's vocabulary, not the amount of meaning.
+      - id: c
+        text: The model translates Hindi into English internally, and the translation is counted too.
+        feedback: Tokenization happens before the model runs and does no translation.
+      - id: d
+        text: The API counts characters, and Hindi has more characters.
+        feedback: APIs count tokens. The Hindi version may even have fewer characters but more tokens.
+
+  - id: tf-bigger-window
+    type: true-false
+    skill: recognition
+    prompt: "True or false: as long as a document fits inside the context window, the model uses information anywhere in it equally well."
+    answer: false
+    explanation: >-
+      Studies such as "Lost in the Middle" show models use information near the start or end of a long
+      context more reliably than information in the middle, and irrelevant text can distract them. Fitting
+      in the window is necessary, not sufficient.
+
+  - id: code-most-frequent-pair
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `most_frequent_pair(splits, word_counts)` — the heart of BPE training.
+
+      - `splits` maps each word to its current list of symbols, e.g. `{"hug": ["h", "u", "g"]}`.
+      - `word_counts` maps each word to how often it occurs, e.g. `{"hug": 10}`.
+      - Count every adjacent pair of symbols, **weighted by the word's count**, and return the pair with
+        the highest total as a tuple, e.g. `("u", "g")`.
+      - Break ties by returning the **alphabetically smallest** pair. Return `None` if there are no pairs.
+    starterCode: |
+      from collections import Counter
+
+      def most_frequent_pair(splits, word_counts):
+          pairs = Counter()
+          # 1. Count every adjacent pair, weighted by how often the word occurs.
+          # 2. Return the best pair (ties -> alphabetically smallest), or None if there are no pairs.
+          return None
+
+      word_counts = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
+      splits = {word: list(word) for word in word_counts}
+      print(most_frequent_pair(splits, word_counts))
+    solution: |
+      from collections import Counter
+
+      def most_frequent_pair(splits, word_counts):
+          pairs = Counter()
+          for word, symbols in splits.items():
+              for a, b in zip(symbols, symbols[1:]):
+                  pairs[(a, b)] += word_counts[word]
+          if not pairs:
+              return None
+          return max(sorted(pairs), key=pairs.get)
+
+      word_counts = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
+      splits = {word: list(word) for word in word_counts}
+      print(most_frequent_pair(splits, word_counts))
+    expectedOutput: |
+      ('e', 's')
+    tests:
+      - name: breaks the e-s / s-t tie alphabetically
+        code: |
+          wc = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
+          result = most_frequent_pair({w: list(w) for w in wc}, wc)
+          assert result == ("e", "s"), f"('e','s') and ('s','t') both occur 9 times; the alphabetically smaller ('e', 's') should win, but you returned {result!r}."
+      - name: Hugging Face example
+        code: |
+          wc = {"hug": 10, "pug": 5, "pun": 12, "bun": 4, "hugs": 5}
+          result = most_frequent_pair({w: list(w) for w in wc}, wc)
+          assert result == ("u", "g"), f"('u', 'g') occurs 20 times and should win, but you returned {result!r}."
+      - name: counts are weighted by word frequency
+        code: |
+          result = most_frequent_pair({"ab": ["a", "b"], "cd": ["c", "d"]}, {"ab": 1, "cd": 5})
+          assert result == ("c", "d"), f"'cd' occurs 5 times, so ('c', 'd') has weight 5 and should beat ('a', 'b'). You returned {result!r}. Add word_counts[word], not 1."
+      - name: works on merged symbols
+        code: |
+          result = most_frequent_pair({"hug": ["h", "ug"], "pug": ["p", "ug"]}, {"hug": 10, "pug": 5})
+          assert result == ("h", "ug"), f"Symbols can be longer than one character; expected ('h', 'ug'), got {result!r}."
+      - name: no pairs gives None
+        code: |
+          result = most_frequent_pair({"a": ["a"], "b": ["b"]}, {"a": 3, "b": 1})
+          assert result is None, f"Single-symbol words have no pairs, so return None, not {result!r}."
+    hints:
+      - "Loop over `splits.items()`, and inside, over `zip(symbols, symbols[1:])` to get adjacent pairs."
+      - "Add `word_counts[word]` (not 1) to `pairs[(a, b)]`."
+      - "`max(sorted(pairs), key=pairs.get)` returns the most frequent pair, and the alphabetically first one among ties."
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function still returns None for the example. Count the pairs, then return the best one.
+      - when: { outputEquals: "('s', 't')\n" }
+        message: ('e','s') and ('s','t') tie at 9. Ties must go to the alphabetically smallest pair — sort the pairs before taking max.
+    explanation: >-
+      Weighted pair counting is what makes BPE learn the pieces that matter most in the corpus. Sorting
+      before `max` makes the tie-breaking deterministic, so the same corpus always trains the same
+      tokenizer.
+
+  - id: parsons-bpe-step
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to count weighted adjacent pairs and print the pair BPE would merge first. It
+      should print `('u', 'g') 20`. Two lines are distractors.
+    solution: |
+      from collections import Counter
+      words = {"hug": 10, "pug": 5, "hugs": 5}
+      pairs = Counter()
+      for word, count in words.items():
+          for a, b in zip(word, word[1:]):
+              pairs[(a, b)] += count
+      best = max(sorted(pairs), key=pairs.get)
+      print(best, pairs[best])
+    distractors:
+      - "        pairs[(a, b)] += 1"
+      - "best = min(sorted(pairs), key=pairs.get)"
+    expectedOutput: |
+      ('u', 'g') 20
+    explanation: >-
+      Each pair is weighted by its word's count: ("u","g") gets 10 + 5 + 5 = 20, more than ("h","u") with
+      15. Adding 1 instead of count would ignore how common each word is, and `min` would pick the least
+      frequent pair.
+
+  - id: debug-fits-context
+    type: debug
+    skill: debugging
+    prompt: |
+      A request has 7,500 input tokens and allows up to 1,000 output tokens on a model with an
+      8,000-token window. `fits()` says it fits, but the API rejects it. Fix `fits()` so it accounts for
+      the whole budget. A request that exactly fills the window does fit.
+    starterCode: |
+      def fits(input_tokens, max_output_tokens, context_window):
+          """True if the request can run without exceeding the context window."""
+          return input_tokens < context_window
+
+      print(fits(7_500, 1_000, 8_000))   # should be False
+      print(fits(7_000, 1_000, 8_000))   # should be True: exactly fills the window
+    solution: |
+      def fits(input_tokens, max_output_tokens, context_window):
+          """True if the request can run without exceeding the context window."""
+          return input_tokens + max_output_tokens <= context_window
+
+      print(fits(7_500, 1_000, 8_000))   # should be False
+      print(fits(7_000, 1_000, 8_000))   # should be True: exactly fills the window
+    expectedOutput: |
+      False
+      True
+    tests:
+      - name: the rejected request does not fit
+        code: |
+          assert fits(7_500, 1_000, 8_000) is False, "7,500 input + 1,000 output = 8,500 tokens, more than the 8,000-token window."
+      - name: exactly filling the window fits
+        code: |
+          assert fits(7_000, 1_000, 8_000) is True, "7,000 + 1,000 = 8,000 tokens exactly fills the window, which is allowed. Check < versus <=."
+      - name: other budgets
+        code: |
+          assert fits(100, 100, 8_000) is True, "A small request should fit."
+          assert fits(0, 9_000, 8_000) is False, "Asking for 9,000 output tokens can never fit in 8,000."
+          assert fits(8_000, 0, 8_000) is True, "8,000 input tokens with no output exactly fills the window."
+    hints:
+      - The window holds the input AND the generated output.
+      - "Add the two, then compare with the window. Which comparison allows an exact fit: `<` or `<=`?"
+    feedback:
+      - when: { outputEquals: "False\nFalse\n" }
+        message: You now count the output, but an exact fit (7,000 + 1,000 = 8,000) should be allowed. Use <=.
+    explanation: >-
+      The context window is shared by input and output. Checking only the input lets the generated
+      answer push the total over the limit, so you must reserve the maximum output up front.
+
+  - id: code-trim-history
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Write `trim_history(messages, budget)`. `messages[0]` is the system message; each message has a
+      `"tokens"` count. Return a **new** list containing the system message followed by the **longest run
+      of most recent messages** that fits in `budget` together with it, in their original order. Stop at
+      the first message (going backwards) that does not fit — do not skip over it to older ones.
+    starterCode: |
+      def trim_history(messages, budget):
+          # Always keep messages[0]; add the newest messages while they fit.
+          return messages
+
+      messages = [
+          {"role": "system", "content": "Be brief.", "tokens": 100},
+          {"role": "user", "content": "Hi", "tokens": 300},
+          {"role": "assistant", "content": "Hello!", "tokens": 400},
+          {"role": "user", "content": "Help me plan a trip.", "tokens": 250},
+      ]
+      for m in trim_history(messages, 800):
+          print(m["role"], m["content"])
+    solution: |
+      def trim_history(messages, budget):
+          system, rest = messages[0], messages[1:]
+          used = system["tokens"]
+          kept = []
+          for message in reversed(rest):
+              if used + message["tokens"] > budget:
+                  break
+              kept.append(message)
+              used += message["tokens"]
+          return [system] + kept[::-1]
+
+      messages = [
+          {"role": "system", "content": "Be brief.", "tokens": 100},
+          {"role": "user", "content": "Hi", "tokens": 300},
+          {"role": "assistant", "content": "Hello!", "tokens": 400},
+          {"role": "user", "content": "Help me plan a trip.", "tokens": 250},
+      ]
+      for m in trim_history(messages, 800):
+          print(m["role"], m["content"])
+    expectedOutput: |
+      system Be brief.
+      assistant Hello!
+      user Help me plan a trip.
+    tests:
+      - name: keeps system + the newest messages that fit
+        code: |
+          result = trim_history(messages, 800)
+          got = [m["content"] for m in result]
+          assert got == ["Be brief.", "Hello!", "Help me plan a trip."], f"With budget 800: 100 + 250 + 400 = 750 fits, adding 300 more does not. Expected ['Be brief.', 'Hello!', 'Help me plan a trip.'], got {got}."
+      - name: a large budget keeps everything
+        code: |
+          got = [m["content"] for m in trim_history(messages, 10_000)]
+          assert got == [m["content"] for m in messages], f"Everything fits in 10,000 tokens, so all messages should be kept in order; got {got}."
+      - name: a tiny budget keeps only the system message
+        code: |
+          got = [m["role"] for m in trim_history(messages, 150)]
+          assert got == ["system"], f"Only the system message (100 tokens) fits in 150; got {got}."
+      - name: stops at the first message that does not fit
+        code: |
+          msgs = [
+              {"role": "system", "content": "S", "tokens": 100},
+              {"role": "user", "content": "old small", "tokens": 50},
+              {"role": "assistant", "content": "big", "tokens": 1_000},
+              {"role": "user", "content": "new", "tokens": 50},
+          ]
+          got = [m["content"] for m in trim_history(msgs, 300)]
+          assert got == ["S", "new"], f"Going backwards, 'big' does not fit, so stop there; do not skip to 'old small'. Expected ['S', 'new'], got {got}."
+      - name: does not modify the input
+        code: |
+          before = [m["content"] for m in messages]
+          trim_history(messages, 150)
+          assert [m["content"] for m in messages] == before, "Return a new list; do not remove items from the messages list you were given."
+    hints:
+      - "Split into `system, rest = messages[0], messages[1:]` and start `used` at the system message's tokens."
+      - "Loop over `reversed(rest)`; `break` as soon as a message would exceed the budget."
+      - "You collected messages newest-first — reverse them (`kept[::-1]`) before returning."
+    feedback:
+      - when: { outputContains: "user Hi" }
+        message: The oldest user message should be dropped because it does not fit in the budget. Count tokens as you add messages.
+      - when: { outputEquals: "system Be brief.\nuser Help me plan a trip.\nassistant Hello!\n" }
+        message: The messages are in reverse order. Reverse the list of kept messages before returning it.
+    explanation: >-
+      Keeping the newest contiguous stretch preserves the current topic and keeps the conversation
+      readable. Production systems often combine this with a summary of the dropped messages so key facts
+      survive.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-merge
+    type: predict-output
+    skill: prediction
+    prompt: "`merge_pair` scans left to right. What does this print?"
+    code: |
+      def merge_pair(symbols, pair):
+          merged, i = [], 0
+          while i < len(symbols):
+              if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                  merged.append(symbols[i] + symbols[i + 1])
+                  i += 2
+              else:
+                  merged.append(symbols[i])
+                  i += 1
+          return merged
+
+      print(merge_pair(["a", "a", "a", "b"], ("a", "a")))
+    answer: "['aa', 'a', 'b']"
+    explanation: >-
+      At i = 0 the first two "a"s match, so "aa" is appended and i jumps to 2. At i = 2 the pair is
+      ("a", "b"), which does not match, so "a" is copied. Then "b". Merges do not overlap.
+    wrongAnswers:
+      - answer: "['aaa', 'b']"
+        feedback: A merge joins exactly two symbols. After joining the first two, the loop skips past both.
+      - answer: "['a', 'aa', 'b']"
+        feedback: The scan starts at the left, so the first two "a"s are merged, not the last two.
+      - answer: "['aa', 'aa', 'b']"
+        feedback: There are only three "a"s. After "aa" uses two of them, one "a" is left.
+
+  - id: m-cost-scenario
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A feature sends about 3,000 input tokens and gets about 1,500 output tokens per request. Users say
+      it is too slow. Which single change will most reduce total response time?
+    explanation: >-
+      Output tokens are generated one at a time, so total time grows roughly with the number of output
+      tokens. Cutting output from 1,500 to 300 removes most of the decoding time; trimming a little input
+      barely changes it.
+    options:
+      - id: a
+        text: Cap the output (for example at 300 tokens) and ask for a concise answer.
+        correct: true
+        feedback: Right — decoding is sequential, so fewer output tokens means a much faster response.
+      - id: b
+        text: Shorten the system prompt by 200 tokens.
+        feedback: Input is processed in parallel during prefill; 200 fewer input tokens saves little time.
+      - id: c
+        text: Switch to a model with a larger context window.
+        feedback: A larger window allows more tokens; it does not make generation faster.
+      - id: d
+        text: Count tokens with the real tokenizer instead of estimating.
+        feedback: Accurate counting is good practice for budgeting, but it does not change how long generation takes.
+
+  - id: m-encode
+    type: code
+    skill: implementation
+    prompt: |
+      Write `encode_word(word, merges)`: start from the word's characters and apply each merge in
+      `merges` **in order**, using the provided `merge_pair`. Return the list of tokens.
+    starterCode: |
+      def merge_pair(symbols, pair):
+          merged, i = [], 0
+          while i < len(symbols):
+              if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                  merged.append(symbols[i] + symbols[i + 1])
+                  i += 2
+              else:
+                  merged.append(symbols[i])
+                  i += 1
+          return merged
+
+      def encode_word(word, merges):
+          # Start from single characters, then apply each merge in the order it was learned.
+          return list(word)
+
+      merges = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+      print(encode_word("hugs", merges))
+    solution: |
+      def merge_pair(symbols, pair):
+          merged, i = [], 0
+          while i < len(symbols):
+              if i < len(symbols) - 1 and (symbols[i], symbols[i + 1]) == pair:
+                  merged.append(symbols[i] + symbols[i + 1])
+                  i += 2
+              else:
+                  merged.append(symbols[i])
+                  i += 1
+          return merged
+
+      def encode_word(word, merges):
+          symbols = list(word)
+          for pair in merges:
+              symbols = merge_pair(symbols, pair)
+          return symbols
+
+      merges = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+      print(encode_word("hugs", merges))
+    expectedOutput: |
+      ['hug', 's']
+    tests:
+      - name: encodes words with the example merges
+        code: |
+          m = [("u", "g"), ("u", "n"), ("h", "ug"), ("p", "un")]
+          assert encode_word("hugs", m) == ["hug", "s"], f"'hugs' should become ['hug', 's'], got {encode_word('hugs', m)!r}."
+          assert encode_word("bun", m) == ["b", "un"], f"'bun' should become ['b', 'un'], got {encode_word('bun', m)!r}."
+      - name: works with other merges
+        code: |
+          m = [("e", "s"), ("es", "t"), ("l", "o"), ("lo", "w")]
+          assert encode_word("lowest", m) == ["low", "est"], f"With these merges 'lowest' should become ['low', 'est'], got {encode_word('lowest', m)!r}."
+      - name: no matching merges leaves characters
+        code: |
+          assert encode_word("xyz", [("u", "g")]) == ["x", "y", "z"], "If no merge applies, the result is the list of characters."
+    hints:
+      - "Start with `symbols = list(word)`."
+      - "Loop over `merges` and replace `symbols` with `merge_pair(symbols, pair)` each time."
+    feedback:
+      - when: { outputEquals: "['h', 'u', 'g', 's']\n" }
+        message: You return the characters without applying any merges. Loop over merges and call merge_pair.
+    explanation: >-
+      Encoding replays the training merges in order, so "u"+"g" happens before "h"+"ug" can apply. The
+      ordered merge list is the whole learned tokenizer.
+
+  - id: m-tf-char-proxy
+    type: true-false
+    skill: recognition
+    prompt: "True or false: dividing the number of characters by 4 gives an exact token count for any text, so you never need the model's tokenizer."
+    answer: false
+    explanation: >-
+      About 4 characters per token is only a rough average for English. Other languages, code, numbers
+      and unusual text can need many more tokens, and each model's tokenizer differs. Use the real
+      tokenizer (or the provider's token counting) for limits and billing.
+
+  - id: m-design-long-doc
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Users ask questions about a 300-page manual (about 150,000 tokens). Your model's context window is
+      128,000 tokens and answers should be fast and cheap. What is the best design?
+    explanation: >-
+      Split the manual into chunks, index them, and put only the few most relevant chunks in each prompt.
+      That fits easily, costs far less per question, and avoids the model losing key facts in a huge
+      context.
+    options:
+      - id: a
+        text: Index the manual in chunks and include only the most relevant chunks for each question.
+        correct: true
+        feedback: Right — retrieval keeps each request small, cheap and focused. This is RAG.
+      - id: b
+        text: Send the first 128,000 tokens of the manual with every question.
+        feedback: That leaves no room for the answer, drops the end of the manual, and is slow and expensive for every question.
+      - id: c
+        text: Send the whole manual and let the API truncate it.
+        feedback: The request is too large; depending on the API it is rejected or silently loses content you cannot control.
+      - id: d
+        text: Ask the model to memorise the manual in the first message of each conversation.
+        feedback: Models have no memory between calls; anything "memorised" must be resent every time.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-merge, m-cost-scenario, m-encode, m-tf-char-proxy, m-design-long-doc]
+
+cheatsheet: |
+  ```python
+  # Toy BPE training
+  pairs = Counter()                                # weighted adjacent-pair counts
+  for word, symbols in splits.items():
+      for a, b in zip(symbols, symbols[1:]):
+          pairs[(a, b)] += word_counts[word]
+  best = max(sorted(pairs), key=pairs.get)         # most frequent, ties -> alphabetical
+  splits = {w: merge_pair(s, best) for w, s in splits.items()}
+
+  # Encoding = apply merges in learned order
+  for pair in merges:
+      symbols = merge_pair(symbols, pair)
+
+  fits = input_tokens + max_output_tokens <= context_window
+  cost = input_tokens * price_in + output_tokens * price_out
+  ```
+  - English ≈ 4 characters ≈ ¾ word per token; other languages and code usually need more.
+  - Window = system + history + documents + tools + output. Reserve the output.
+  - Latency grows mainly with output tokens; chat resends history every turn.

@@ -1,0 +1,1502 @@
+id: databases.sql-joins
+concept: databases.sql-joins
+title: Joins
+subtitle: Putting split tables back together — without losing or multiplying rows
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Learn why data is split across tables and how joins recombine it: INNER, LEFT, RIGHT and FULL OUTER
+  joins, why one-to-many joins multiply rows, how to find rows with no match (anti-joins), joining a
+  table to itself, and the classic bugs — the WHERE clause that silently turns a LEFT JOIN into an inner
+  join, NOT IN with NULLs and accidental Cartesian products. Every query runs in SQLite via Python's
+  sqlite3 module.
+objectives:
+  - Explain why normalised designs split data into tables linked by primary and foreign keys.
+  - Write INNER, LEFT, RIGHT and FULL OUTER joins and predict exactly which rows each returns, including rows with NULL keys.
+  - Predict how many rows a join produces from the cardinality of the relationship, and recognise totals inflated by fan-out.
+  - Find rows without a match with an anti-join (LEFT JOIN ... WHERE right.id IS NULL or NOT EXISTS) and explain why NOT IN fails with NULLs.
+  - Join a table to itself with aliases to relate rows of the same table.
+  - Diagnose join bugs — conditions in WHERE versus ON, missing join conditions, ambiguous columns.
+sources:
+  - title: "PostgreSQL Tutorial: Joins Between Tables"
+    url: https://www.postgresql.org/docs/current/tutorial-join.html
+    publisher: PostgreSQL Global Development Group
+  - title: "PostgreSQL: Table Expressions (joined tables)"
+    url: https://www.postgresql.org/docs/current/queries-table-expressions.html
+    publisher: PostgreSQL Global Development Group
+  - title: "SQLite: SELECT (join operators)"
+    url: https://www.sqlite.org/lang_select.html
+    publisher: SQLite
+  - title: SQLite Release 3.39.0 (RIGHT and FULL OUTER JOIN support)
+    url: https://www.sqlite.org/releaselog/3_39_0.html
+    publisher: SQLite
+  - title: SQLite Foreign Key Support
+    url: https://www.sqlite.org/foreignkeys.html
+    publisher: SQLite
+  - title: The SQLite Query Optimizer Overview
+    url: https://www.sqlite.org/optoverview.html
+    publisher: SQLite
+sections:
+  - id: why
+    title: Why data is split across tables
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Imagine storing every order in one wide table, copying the customer's name and email onto each
+          order. It is easy to read — until something changes. Ada updates her email, and the support tool
+          updates only the row it happened to be looking at:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE orders_flat (order_id INTEGER PRIMARY KEY, customer_name TEXT,
+                                        customer_email TEXT, total INTEGER);
+              INSERT INTO orders_flat VALUES
+                  (10, 'Ada',   'ada@example.com',     250),
+                  (11, 'Ada',   'ada@newmail.example', 120),
+                  (12, 'Grace', 'grace@example.com',   990);
+          """)
+
+          for row in con.execute("""SELECT DISTINCT customer_name, customer_email
+                                    FROM orders_flat ORDER BY customer_name, customer_email"""):
+              print(row)
+        expectedOutput: |
+          ('Ada', 'ada@example.com')
+          ('Ada', 'ada@newmail.example')
+          ('Grace', 'grace@example.com')
+        caption: Which of Ada's two emails is right? The table itself cannot tell you.
+      - type: markdown
+        body: |
+          Storing the same fact in several places means the copies will eventually disagree (an *update
+          anomaly*). The relational answer is to store **each fact once**: customers in a `customers` table,
+          orders in an `orders` table that refers to its customer by id. Ada's email then lives in exactly
+          one row. (Designing tables this way is called normalisation — see
+          [schema design](concept:databases.schema-design).)
+
+          The price of splitting is that answering "show each order with its customer's name" now needs
+          data from two tables. A [join](glossary:sql-join) combines them back into one result, on demand:
+
+          | customers | | | orders | | |
+          |---|---|---|---|---|---|
+          | **id** | **name** | **city** | **id** | **customer_id** | **total** |
+          | 1 | Ada | London | 10 | 1 | 250 |
+          | 2 | Linus | Helsinki | 11 | 1 | 120 |
+          | 3 | Grace | New York | 12 | 3 | 990 |
+          | 4 | Alan | London | 13 | NULL | 45 |
+
+          These two tables are used throughout the lesson. Notice: Linus and Alan have never ordered, Ada has
+          two orders, and order 13 is a **guest checkout** with no customer (`customer_id` is NULL).
+
+  - id: keys
+    title: "Primary and foreign keys (recap)"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          From [the relational model](concept:databases.relational-model):
+
+          - A **primary key** uniquely identifies each row: `customers.id`, `orders.id`.
+          - A **foreign key** is a column holding another table's key: `orders.customer_id` refers to
+            `customers.id`. The database can then reject an order that points at a customer who does not
+            exist.
+          - In a **one-to-many** relationship (one customer, many orders) the foreign key lives on the
+            "many" side. A foreign key may be NULL when the relationship is optional — like our guest order.
+
+          Joins almost always pair a foreign key with the primary key it refers to.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          schema = """
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY,
+                                   customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London');
+          """
+
+          strict = sqlite3.connect(":memory:")
+          strict.execute("PRAGMA foreign_keys = ON")
+          strict.executescript(schema)
+          try:
+              strict.execute("INSERT INTO orders VALUES (14, 99, 10)")
+          except sqlite3.IntegrityError as error:
+              print("With foreign_keys ON:", error)
+
+          lax = sqlite3.connect(":memory:")
+          lax.executescript(schema)
+          lax.execute("INSERT INTO orders VALUES (14, 99, 10)")
+          print("Without it, orders pointing at customer 99:", lax.execute("SELECT id FROM orders").fetchall())
+        expectedOutput: |
+          With foreign_keys ON: FOREIGN KEY constraint failed
+          Without it, orders pointing at customer 99: [(14,)]
+        caption: SQLite enforces foreign keys only when asked, on each connection.
+        annotations:
+          - line: 12
+            text: "`PRAGMA foreign_keys = ON` must be run on every new SQLite connection; the default is OFF."
+          - line: 21
+            text: The orphan order is accepted silently. PostgreSQL always enforces declared foreign keys.
+      - type: callout
+        variant: production
+        title: Turn foreign keys on in SQLite apps
+        body: |
+          Run `PRAGMA foreign_keys = ON` right after connecting (for example in the function that opens
+          connections). Without it, orphans creep in and your joins quietly return fewer rows than you expect.
+
+  - id: inner-join
+    title: "INNER JOIN: only matching pairs"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          ```text
+          SELECT columns
+          FROM left_table AS l
+          [INNER] JOIN right_table AS r ON <condition>
+          ```
+
+          An [inner join](glossary:inner-join) returns every pair of rows — one from each table — for which
+          the `ON` condition is **TRUE**. `JOIN` on its own means `INNER JOIN`.
+
+          - `AS o` gives a table a short **alias** (the `AS` is optional: `orders o`).
+          - Both tables have an `id` column, so you must **qualify** columns as `o.id` or `c.id`. An
+            unqualified `id` raises `ambiguous column name: id`.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          query = """
+              SELECT o.id, c.name, o.total
+              FROM orders AS o
+              JOIN customers AS c ON c.id = o.customer_id
+              ORDER BY o.id
+          """
+          for row in con.execute(query):
+              print(row)
+        expectedOutput: |
+          (10, 'Ada', 250)
+          (11, 'Ada', 120)
+          (12, 'Grace', 990)
+        caption: Three rows. Who is missing, and why?
+        annotations:
+          - line: 14
+            text: "`o.id` and `c.name` say which table each column comes from."
+          - line: 16
+            text: The join condition pairs the foreign key with the primary key it refers to.
+      - type: markdown
+        body: |
+          Missing from the result: Linus and Alan (no order matches them) and order 13 (its `customer_id`
+          is NULL, and `c.id = NULL` is UNKNOWN for every customer — **NULL keys never match**, not even
+          another NULL).
+
+          **Mental model.** Conceptually, an inner join considers *every* pair (customer, order) and keeps
+          the pairs where the condition is TRUE. The simplest way a database can actually do that is a
+          **nested-loop join**, which you can write in Python. Step through it:
+      - type: visualization
+        component: python-tracer
+        title: A nested-loop join in Python
+        caption: >-
+          For each customer, the inner loop checks every order. Python's `None == 1` is simply False, which
+          drops the guest order just as SQL's UNKNOWN does.
+        props:
+          code: |
+            customers = [(1, "Ada"), (2, "Linus"), (3, "Grace")]
+            orders = [(10, 1, 250), (11, 1, 120), (12, 3, 990), (13, None, 45)]
+
+            result = []
+            for cust_id, name in customers:
+                for order_id, customer_id, total in orders:
+                    if customer_id == cust_id:
+                        result.append((order_id, name, total))
+            print(result)
+      - type: markdown
+        body: |
+          This model also predicts the result size: each customer appears **once per matching order**. Ada
+          matches twice, so she appears twice. Hold on to that — it is the source of the most common join
+          bug, below.
+      - type: item
+        ref: mcq-inner-join
+
+  - id: outer-joins
+    title: "LEFT, RIGHT and FULL OUTER joins"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An inner join drops unmatched rows. Often you want to keep them — "*every* customer, with their
+          orders if they have any". That is an [outer join](glossary:outer-join):
+
+          | Join | Keeps | Unmatched side is filled with |
+          |---|---|---|
+          | `LEFT [OUTER] JOIN` | every row of the **left** table (the one written first) | NULLs for the right table's columns |
+          | `RIGHT [OUTER] JOIN` | every row of the **right** table | NULLs for the left table's columns |
+          | `FULL [OUTER] JOIN` | every row of **both** tables | NULLs on whichever side has no match |
+
+          Switch between the join types below and hover over result rows to see where each came from:
+      - type: visualization
+        component: sql-join
+        title: The same two tables, four join types
+        caption: >-
+          customers is the left table and orders the right one, joined ON customers.id = orders.customer_id.
+          Faded source rows do not appear in the result.
+        props:
+          left:
+            name: customers
+            key: id
+            columns: [id, name]
+            rows: [[1, Ada], [2, Linus], [3, Grace], [4, Alan]]
+          right:
+            name: orders
+            key: customer_id
+            columns: [id, customer_id, total]
+            rows: [[10, 1, 250], [11, 1, 120], [12, 3, 990], [13, null, 45]]
+      - type: markdown
+        body: |
+          Now the same joins for real. RIGHT and FULL OUTER JOIN arrived in SQLite in **version 3.39.0**
+          (2022); older SQLite libraries — which some Python installations still bundle — reject them with
+          an OperationalError, so the program checks the version first:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          def show(title, sql):
+              print(title)
+              for row in con.execute(sql):
+                  print("  ", row)
+
+          print("RIGHT/FULL supported:", sqlite3.sqlite_version_info >= (3, 39, 0))
+          show("LEFT JOIN", """SELECT c.name, o.id, o.total FROM customers c
+                               LEFT JOIN orders o ON o.customer_id = c.id ORDER BY c.id, o.id""")
+          show("RIGHT JOIN", """SELECT c.name, o.id, o.total FROM customers c
+                                RIGHT JOIN orders o ON o.customer_id = c.id ORDER BY o.id""")
+          show("FULL OUTER JOIN", """SELECT c.name, o.id, o.total FROM customers c
+                                     FULL OUTER JOIN orders o ON o.customer_id = c.id
+                                     ORDER BY c.id NULLS LAST, o.id""")
+        expectedOutput: |
+          RIGHT/FULL supported: True
+          LEFT JOIN
+             ('Ada', 10, 250)
+             ('Ada', 11, 120)
+             ('Linus', None, None)
+             ('Grace', 12, 990)
+             ('Alan', None, None)
+          RIGHT JOIN
+             ('Ada', 10, 250)
+             ('Ada', 11, 120)
+             ('Grace', 12, 990)
+             (None, 13, 45)
+          FULL OUTER JOIN
+             ('Ada', 10, 250)
+             ('Ada', 11, 120)
+             ('Linus', None, None)
+             ('Grace', 12, 990)
+             ('Alan', None, None)
+             (None, 13, 45)
+        annotations:
+          - line: 18
+            text: "`sqlite_version_info` is the version of the SQLite library, not of the Python module."
+          - line: 19
+            text: Every customer appears; Linus and Alan get NULL order columns.
+          - line: 21
+            text: Every order appears; the guest order gets a NULL customer name.
+      - type: callout
+        variant: tip
+        title: Prefer LEFT JOIN
+        body: |
+          `A RIGHT JOIN B` returns the same rows as `B LEFT JOIN A` (with the columns in a different order).
+          Most teams write only LEFT JOINs, putting the table whose rows must all survive first, so queries
+          read top-down. PostgreSQL supports all four join types; MySQL has no FULL OUTER JOIN (people emulate
+          it with a UNION of a LEFT and a RIGHT join).
+      - type: item
+        ref: predict-left-count
+
+  - id: cardinality
+    title: "Join cardinality: when rows multiply"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A join does not just "add columns". Each left row appears **once for every matching right row**, so
+          the shape of the relationship decides the row count:
+
+          | Relationship | Effect on the left table's rows |
+          |---|---|
+          | one-to-one | each row appears at most once |
+          | one-to-many (customer → orders) | a customer appears once **per order** |
+          | two one-to-many joins from the same row (customer → orders, customer → tickets) | a customer appears orders **×** tickets times |
+
+          Duplication is correct when each output row is meant to be an order. It becomes a bug when you then
+          add up something that belongs to a *different* level. Here a report joins customers to their orders
+          **and** their support tickets, then totals the order values:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              CREATE TABLE tickets (id INTEGER PRIMARY KEY, customer_id INTEGER, subject TEXT);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+              INSERT INTO tickets VALUES (1, 1, 'Late delivery'), (2, 1, 'Wrong size'),
+                                         (3, 1, 'Refund'), (4, 3, 'Login problem');
+          """)
+
+          rows = con.execute("""
+              SELECT c.name, o.id, o.total, t.subject
+              FROM customers c
+              JOIN orders o  ON o.customer_id = c.id
+              JOIN tickets t ON t.customer_id = c.id
+          """).fetchall()
+          print(len(rows), "rows")
+          print("revenue after joining tickets:", sum(row[2] for row in rows))
+
+          orders_only = con.execute("SELECT o.total FROM customers c JOIN orders o ON o.customer_id = c.id")
+          print("real revenue:", sum(row[0] for row in orders_only))
+        expectedOutput: |
+          7 rows
+          revenue after joining tickets: 2100
+          real revenue: 1360
+        caption: Ada's two orders are each repeated for her three tickets, so her revenue is counted three times.
+        annotations:
+          - line: 20
+            text: Each of Ada's 2 orders pairs with each of her 3 tickets — 6 rows for Ada, 1 for Grace.
+          - line: 23
+            text: Summing o.total over those rows adds (250 + 120) × 3 + 990 = 2100.
+      - type: markdown
+        body: |
+          No error, no warning — just a wrong number in a report. How to avoid it:
+
+          1. **Know the grain.** Before trusting a result, say in words what one row represents ("one row per
+             order", "one row per order × ticket") and check the row count against that.
+          2. **Join only what the question needs.** Revenue does not need tickets.
+          3. **Summarise each child table separately, then join the summaries** — one row per customer from
+             orders, one per customer from tickets. That uses [GROUP BY](concept:databases.sql-aggregation) and
+             [CTEs](concept:databases.sql-advanced), which come next.
+      - type: item
+        ref: explain-inflated-total
+      - type: markdown
+        body: |
+          **The extreme case: no join condition.** If you list two tables without any condition linking them,
+          every row is paired with every row — a [Cartesian product](glossary:cartesian-product). Our 4
+          customers and 4 orders give 16 rows; two tables of 100,000 rows each would give 10 billion.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          print(len(con.execute("SELECT * FROM customers, orders").fetchall()))
+          print(len(con.execute("SELECT * FROM customers CROSS JOIN orders").fetchall()))
+          print(len(con.execute("SELECT * FROM customers c, orders o WHERE o.customer_id = c.id").fetchall()))
+        expectedOutput: |
+          16
+          16
+          3
+        annotations:
+          - line: 13
+            text: The old comma syntax with no WHERE condition is a Cartesian product.
+          - line: 14
+            text: "`CROSS JOIN` asks for every pair on purpose — useful for, say, every size × every colour."
+          - line: 15
+            text: A comma join plus the condition in WHERE is an inner join written the old way. Prefer explicit JOIN ... ON.
+      - type: callout
+        variant: warning
+        title: "SQLite vs PostgreSQL: JOIN without ON"
+        body: |
+          SQLite also accepts `JOIN` with no `ON` and treats it as a cross join. PostgreSQL rejects an
+          `INNER`/`LEFT`/`RIGHT`/`FULL JOIN` without `ON` or `USING` as a syntax error, so there the accident
+          usually comes from the comma syntax or from an `ON` that compares the wrong columns.
+      - type: item
+        ref: predict-cross-where
+
+  - id: anti-joins
+    title: "Anti-joins: rows with no match"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          "Which customers have **never** ordered?" is a question about *missing* matches — an
+          [anti-join](glossary:anti-join). The classic pattern uses a LEFT JOIN, which gives unmatched
+          customers NULLs on the order side, and then keeps exactly those rows:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          anti_join = """
+              SELECT c.name
+              FROM customers c
+              LEFT JOIN orders o ON o.customer_id = c.id
+              WHERE o.id IS NULL
+              ORDER BY c.id
+          """
+          not_exists = """
+              SELECT c.name FROM customers c
+              WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)
+              ORDER BY c.id
+          """
+          print(con.execute(anti_join).fetchall())
+          print(con.execute(not_exists).fetchall())
+        expectedOutput: |
+          [('Linus',), ('Alan',)]
+          [('Linus',), ('Alan',)]
+        annotations:
+          - line: 17
+            text: "Test the right table's primary key: it is never NULL in a real match, so NULL means \"no match\"."
+          - line: 22
+            text: NOT EXISTS says the same thing directly. Subqueries are covered in the advanced SQL lesson.
+      - type: markdown
+        body: |
+          **Test the right column.** `WHERE o.id IS NULL` works because `o.id` is a primary key: a real order
+          always has one. If you tested a nullable column instead — say `o.coupon_code IS NULL` — customers
+          whose orders simply had no coupon would wrongly appear as "never ordered".
+
+          The tempting third way, `NOT IN`, has a trap. Our guest order has `customer_id` NULL, and that
+          single NULL makes the query return **nothing**:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          print(con.execute("""SELECT name FROM customers
+                               WHERE id NOT IN (SELECT customer_id FROM orders)""").fetchall())
+          print(con.execute("SELECT 2 NOT IN (1, 3, NULL)").fetchone())
+        expectedOutput: |
+          []
+          (None,)
+        caption: "`2 NOT IN (1, 3, NULL)` means 2 <> 1 AND 2 <> 3 AND 2 <> NULL — and the last part is UNKNOWN."
+      - type: callout
+        variant: misconception
+        title: '"NOT IN and NOT EXISTS are interchangeable"'
+        body: |
+          They give the same answer only when the subquery can never produce NULL. One NULL turns every
+          `NOT IN` test into UNKNOWN, so no row survives. Prefer `NOT EXISTS` or the LEFT JOIN anti-join for
+          "has no match" questions.
+      - type: markdown
+        body: |
+          The opposite question — "customers who **have** ordered" (a *semi-join*) — has its own trap: a plain
+          JOIN returns Ada twice, once per order. Use `SELECT DISTINCT c.name ...` or
+          `WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)`.
+      - type: item
+        ref: mcq-anti-join
+
+  - id: self-joins
+    title: "Self joins: a table joined to itself"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Sometimes rows refer to other rows of the **same** table: an employee's `manager_id` is another
+          employee's `id`. A [self join](glossary:self-join) lists the table twice under two aliases and
+          joins one copy to the other. The aliases are mandatory — they are the only way to say *which* copy
+          a column comes from.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                      manager_id INTEGER REFERENCES employees (id));
+              INSERT INTO employees VALUES (1, 'Maya', NULL), (2, 'Omar', 1), (3, 'Priya', 1),
+                                           (4, 'Sam', 2), (5, 'Tess', 2);
+          """)
+
+          query = """
+              SELECT e.name AS employee, m.name AS manager
+              FROM employees e
+              LEFT JOIN employees m ON m.id = e.manager_id
+              ORDER BY e.id
+          """
+          for row in con.execute(query):
+              print(row)
+        expectedOutput: |
+          ('Maya', None)
+          ('Omar', 'Maya')
+          ('Priya', 'Maya')
+          ('Sam', 'Omar')
+          ('Tess', 'Omar')
+        annotations:
+          - line: 13
+            text: "`e` is the employee copy, `m` the manager copy of the same table."
+          - line: 14
+            text: LEFT JOIN keeps Maya, who has no manager. An inner join would drop her.
+      - type: markdown
+        body: |
+          A second classic: **pairs** of rows that share something, such as customers in the same city.
+          Joining `customers a` to `customers b` on `a.city = b.city` pairs every customer with themselves and
+          produces each pair twice (Ada–Alan and Alan–Ada). Adding `a.id < b.id` keeps each pair once:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          """)
+
+          every_pair = "SELECT a.name, b.name FROM customers a JOIN customers b ON a.city = b.city"
+          print(len(con.execute(every_pair).fetchall()), "rows with self-pairs and both orders")
+          print(con.execute(every_pair + " AND a.id < b.id").fetchall())
+        expectedOutput: |
+          6 rows with self-pairs and both orders
+          [('Ada', 'Alan')]
+      - type: markdown
+        body: |
+          A self join follows **one** level of a hierarchy. To walk a whole org chart (managers of managers)
+          you need a recursive CTE, covered in [advanced SQL](concept:databases.sql-advanced).
+
+  - id: on-vs-where
+    title: "The LEFT JOIN that became an INNER JOIN"
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          The question: "List **every** customer, with any orders of **more than 200**." The obvious query
+          puts the filter in WHERE — and loses customers:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                           (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+              INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+          """)
+
+          in_where = """SELECT c.name, o.id, o.total FROM customers c
+                        LEFT JOIN orders o ON o.customer_id = c.id
+                        WHERE o.total > 200
+                        ORDER BY c.id"""
+          in_on = """SELECT c.name, o.id, o.total FROM customers c
+                     LEFT JOIN orders o ON o.customer_id = c.id AND o.total > 200
+                     ORDER BY c.id"""
+          print("Filter in WHERE:", con.execute(in_where).fetchall())
+          print("Filter in ON:")
+          for row in con.execute(in_on):
+              print("  ", row)
+        expectedOutput: |
+          Filter in WHERE: [('Ada', 10, 250), ('Grace', 12, 990)]
+          Filter in ON:
+             ('Ada', 10, 250)
+             ('Linus', None, None)
+             ('Grace', 12, 990)
+             ('Alan', None, None)
+        annotations:
+          - line: 15
+            text: Runs after the join. For Linus and Alan o.total is NULL, NULL > 200 is UNKNOWN, so WHERE drops them.
+          - line: 18
+            text: Part of the matching rule. Orders that fail it simply don't match; every customer survives.
+      - type: markdown
+        body: |
+          **ON decides which right-side rows match; WHERE filters the finished joined rows.** For an inner join
+          the two give the same result. For a LEFT JOIN, any WHERE condition on a right-table column that is
+          false or UNKNOWN for NULL silently removes the unmatched rows — the LEFT JOIN behaves like an inner
+          join. (`WHERE o.id IS NULL` in an anti-join is the deliberate exception: it is TRUE for NULLs.)
+
+          The reverse surprise: a condition on the **left** table inside ON does not remove left rows.
+          `LEFT JOIN orders o ON o.customer_id = c.id AND c.city = 'London'` still returns all four
+          customers — Grace just loses her order columns. To filter which customers appear, use WHERE.
+
+          | You want to… | Put the condition in |
+          |---|---|
+          | restrict which right-table rows can match (keep every left row) | `ON` |
+          | restrict which left rows appear | `WHERE` |
+          | keep only left rows **without** a match | `WHERE right.pk IS NULL` |
+
+  - id: under-the-hood
+    title: Under the hood — how databases execute joins
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          The SQL says *what* to combine; the planner picks an algorithm:
+
+          - **Nested loop** — for each outer row, find matching inner rows. Without help that is
+            O(n × m) comparisons; with an **index** on the inner join column each lookup is a quick search.
+          - **Hash join** — build a hash table on one input's join key, then probe it with each row of the
+            other: about O(n + m). This is exactly what you would do in Python with a dictionary.
+          - **Merge join** — sort both inputs by the key (or read them from indexes in order) and walk them
+            together.
+
+          PostgreSQL's planner chooses among Nested Loop, Hash Join and Merge Join using table statistics.
+          SQLite uses nested loops, and when no suitable index exists it may build a temporary *automatic
+          index* for the duration of the query:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                                   total INTEGER NOT NULL);
+          """)
+          query = "SELECT c.name, o.total FROM customers c LEFT JOIN orders o ON o.customer_id = c.id"
+
+          def plan():
+              return [row[3] for row in con.execute("EXPLAIN QUERY PLAN " + query)]
+
+          print(plan())
+          con.execute("CREATE INDEX idx_orders_customer_id ON orders (customer_id)")
+          print(plan())
+        expectedOutput: |
+          ['SCAN c', 'SEARCH o USING AUTOMATIC COVERING INDEX (customer_id=?) LEFT-JOIN']
+          ['SCAN c', 'SEARCH o USING INDEX idx_orders_customer_id (customer_id=?) LEFT-JOIN']
+        caption: SQLite scans customers and searches orders for each one — first with a throw-away index, then with a real one.
+      - type: code
+        runnable: true
+        code: |
+          customers = [(1, "Ada"), (2, "Linus"), (3, "Grace"), (4, "Alan")]
+          orders = [(10, 1, 250), (11, 1, 120), (12, 3, 990), (13, None, 45)]
+
+          # Build: one pass over orders, grouping them by customer_id.
+          by_customer = {}
+          for order in orders:
+              by_customer.setdefault(order[1], []).append(order)
+
+          # Probe: one dictionary lookup per customer (LEFT JOIN: keep customers with no match).
+          for cust_id, name in customers:
+              for order_id, _, total in by_customer.get(cust_id, [(None, None, None)]):
+                  print(name, order_id, total)
+        expectedOutput: |
+          Ada 10 250
+          Ada 11 120
+          Linus None None
+          Grace 12 990
+          Alan None None
+        caption: A hash join (LEFT JOIN variant) in Python — one pass to build, one lookup per probe row.
+        annotations:
+          - line: 7
+            text: "Careful: Python happily uses None as a dict key. SQL never matches NULL keys; this probe never looks up None, so the guest order stays unmatched."
+      - type: callout
+        variant: production
+        title: Index your foreign keys
+        body: |
+          Primary keys are indexed automatically, but in PostgreSQL foreign-key columns are **not**. Joins and
+          `ON DELETE` checks on an unindexed `orders.customer_id` scan the whole table. Create the index
+          yourself (`CREATE INDEX ON orders (customer_id)`) — see [indexes](concept:databases.indexes).
+
+  - id: mistakes
+    title: Common join mistakes
+    kind: debugging
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `OperationalError: ambiguous column name: id` | Two tables have a column with that name | Qualify it: `o.id`, `c.id`. |
+          | Far too many rows | Missing or wrong join condition (Cartesian product) | Check that ON pairs the foreign key with the key it refers to. |
+          | Totals or counts too high after a join | Fan-out through one-to-many joins | State the grain; join only what you need; summarise before joining. |
+          | LEFT JOIN loses unmatched rows | A WHERE condition on a right-table column | Move it into ON. |
+          | "No match" query returns too many rows | `IS NULL` on a nullable right-table column | Test the right table's primary key. |
+          | `NOT IN (subquery)` returns nothing | The subquery returns a NULL | Use NOT EXISTS or the LEFT JOIN anti-join. |
+          | "Who ordered?" lists people twice | Semi-join written as a plain JOIN | DISTINCT or EXISTS. |
+          | Rows with NULL keys vanish | NULL never equals anything | Use an outer join and decide explicitly how to show them. |
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, total INTEGER);
+          """)
+          con.execute("SELECT id, name, total FROM orders JOIN customers ON customers.id = orders.customer_id")
+        expectError: OperationalError
+        caption: "Both tables have an id column, so SQLite cannot tell which one `id` means."
+      - type: item
+        ref: debug-where-on
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          As before, write your SQL in `QUERY`. The checks also run it against different data, so it must
+          really join and filter.
+      - type: item
+        ref: code-left-join-report
+      - type: item
+        ref: code-never-ordered
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Normalised tables store each fact once; joins recombine them, usually ON foreign key = primary key.
+          - **INNER** keeps matching pairs only; **LEFT** keeps all left rows; **RIGHT** all right rows;
+            **FULL OUTER** all rows of both. Unmatched columns are NULL, and **NULL keys never match**.
+          - A row appears once per match: one-to-many joins multiply rows, and two of them from the same row
+            multiply each other. Know the grain before you add anything up.
+          - No join condition = Cartesian product (m × n rows).
+          - Anti-join: `LEFT JOIN ... WHERE right.pk IS NULL` or `NOT EXISTS`; avoid `NOT IN` when NULLs are possible.
+          - Self join: the same table twice with two aliases.
+          - For LEFT JOINs, right-table conditions go in ON; WHERE filters after the join.
+          - SQLite has RIGHT and FULL OUTER JOIN from 3.39.0; PostgreSQL has them all; index FK columns in PostgreSQL.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "explain the join types with an example" — draw two small tables with an unmatched row on
+          each side and a duplicate key, and show each result. Then a debugging question: "this revenue report
+          doubled after someone added a join — why?" (fan-out), or "this LEFT JOIN returns fewer rows than the
+          left table — why?" (a right-table condition in WHERE). Mention NOT IN with NULLs for bonus points.
+
+items:
+  - id: mcq-inner-join
+    type: mcq
+    skill: recognition
+    prompt: |
+      Using the lesson's tables, why does order 13 (the guest checkout, `customer_id` NULL) not appear in
+      `SELECT ... FROM orders o JOIN customers c ON c.id = o.customer_id`?
+    explanation: >-
+      An inner join keeps a pair only when ON is TRUE. `c.id = NULL` is UNKNOWN for every customer, so order
+      13 has no matching pair and disappears. Use a LEFT JOIN from orders (or a RIGHT/FULL join) to keep it.
+    options:
+      - id: a
+        text: Inner joins drop the last row of each table.
+        feedback: Position has nothing to do with it. Each pair is kept or dropped based only on the ON condition.
+      - id: b
+        text: Comparing NULL with any customer id is UNKNOWN, so the order has no matching pair, and an inner join keeps only matching pairs.
+        correct: true
+        feedback: Right. NULL keys never match — not even another NULL.
+      - id: c
+        text: The database rejects orders without a customer when you join.
+        feedback: Nothing is rejected; the order is still in the table. It simply has no partner in this join.
+      - id: d
+        text: You must write INNER JOIN explicitly; plain JOIN skips NULLs.
+        feedback: "`JOIN` and `INNER JOIN` are the same thing."
+
+  - id: predict-left-count
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: How many rows does this LEFT JOIN return?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE teams (id INTEGER PRIMARY KEY, name TEXT);
+          CREATE TABLE players (id INTEGER PRIMARY KEY, name TEXT, team_id INTEGER);
+          INSERT INTO teams VALUES (1, 'Red'), (2, 'Blue'), (3, 'Green');
+          INSERT INTO players VALUES (1, 'Ana', 1), (2, 'Ben', 1), (3, 'Cal', 2),
+                                     (4, 'Dee', 1), (5, 'Eve', NULL);
+      """)
+      rows = con.execute("""SELECT t.name, p.name FROM teams t
+                            LEFT JOIN players p ON p.team_id = t.id""").fetchall()
+      print(len(rows))
+    answer: "5"
+    explanation: >-
+      Every team is kept, once per matching player: Red has 3 players (3 rows), Blue has 1 (1 row), Green has
+      none (1 row with NULL player columns). That is 5. Eve has no team, and a LEFT JOIN from teams does not
+      keep unmatched players.
+    wrongAnswers:
+      - answer: "3"
+        feedback: A join does not give one row per team; Red appears once for each of its three players.
+      - answer: "6"
+        feedback: Eve has no team. LEFT JOIN keeps every row of the left table (teams), not unmatched rows of the right table.
+      - answer: "4"
+        feedback: That is the inner join count. LEFT JOIN also keeps Green, which has no players, as one row of NULLs.
+
+  - id: predict-cross-where
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: With the lesson's 4 customers and 4 orders, what does this print?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+      rows = con.execute("SELECT c.name, o.id FROM customers c, orders o WHERE c.id = 1").fetchall()
+      print(len(rows))
+    answer: "4"
+    explanation: >-
+      Nothing links orders to customers: `c.id = 1` only filters the customers side. The Cartesian product has
+      16 pairs; keeping Ada's row leaves Ada paired with all 4 orders, including Grace's and the guest's.
+    wrongAnswers:
+      - answer: "2"
+        feedback: That would be Ada's own orders, but nothing in the query compares o.customer_id with c.id.
+      - answer: "16"
+        feedback: The WHERE clause does filter — it keeps only pairs whose customer is Ada, leaving 4 of the 16.
+      - answer: "1"
+        feedback: Filtering customers to Ada still pairs her with every order, because there is no join condition.
+
+  - id: explain-inflated-total
+    type: explain
+    skill: explanation
+    prompt: >-
+      A colleague's revenue report was correct until they joined the `tickets` table to show support
+      activity; now Ada's revenue is three times too high. Explain what happened and how to fix the report.
+    explanation: Compare your answer with the model answer and tick the rubric points you covered.
+    rubric:
+      - Explains that a join repeats a row once per matching row, so each order row is repeated for every ticket of the same customer.
+      - Identifies the fan-out as orders × tickets (two one-to-many relationships from the same customer).
+      - States that summing order totals over those repeated rows counts each order several times.
+      - Proposes a fix such as not joining tickets for revenue, or summarising orders and tickets separately (one row per customer each) before joining.
+    modelAnswer: |
+      A join produces one row per matching pair. Customers → orders is one-to-many and customers → tickets is
+      also one-to-many, so joining both pairs every one of Ada's orders with every one of her tickets: 2
+      orders × 3 tickets = 6 rows, each order appearing three times. Summing o.total over those rows adds
+      each order three times. The grain changed from "one row per order" to "one row per order-ticket pair".
+      Fix it by leaving tickets out of the revenue calculation, or by summarising each table to one row per
+      customer first (orders per customer, tickets per customer) and joining those summaries.
+
+  - id: mcq-anti-join
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      `orders` has columns `id` (primary key), `customer_id` and `coupon_code` (often NULL). Which query
+      correctly lists customers who have **never** placed an order?
+    explanation: >-
+      After a LEFT JOIN, the right table's primary key is NULL exactly when there was no match, so
+      `WHERE o.id IS NULL` selects unmatched customers. A nullable column like coupon_code is also NULL for
+      real orders without a coupon.
+    options:
+      - id: a
+        text: "`... LEFT JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL`"
+        correct: true
+        feedback: Correct — o.id can only be NULL when no order matched.
+      - id: b
+        text: "`... LEFT JOIN orders o ON o.customer_id = c.id WHERE o.coupon_code IS NULL`"
+        feedback: Customers whose orders had no coupon would also appear, because coupon_code is NULL for those real orders.
+      - id: c
+        text: "`... JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL`"
+        feedback: An inner join never produces unmatched rows, so o.id is never NULL and this returns nothing.
+      - id: d
+        text: "`... LEFT JOIN orders o ON o.customer_id = c.id AND o.id IS NULL`"
+        feedback: In ON, this restricts which orders can match (none can, since o.id is never NULL), so every customer is returned with NULLs.
+
+  - id: code-left-join-report
+    type: code
+    skill: implementation
+    prompt: |
+      Write `QUERY` to list **every** customer's `name` with each of their order ids (`o.id`). Customers with
+      no orders must still appear, with `None` as the order id. Sort by customer name, then order id.
+
+      On the lesson's tables the result is
+      `[('Ada', 10), ('Ada', 11), ('Alan', None), ('Grace', 12), ('Linus', None)]`.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT c.name, o.id
+          FROM customers c
+          JOIN orders o ON o.customer_id = c.id
+      """
+
+      print(con.execute(QUERY).fetchall())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT c.name, o.id
+          FROM customers c
+          LEFT JOIN orders o ON o.customer_id = c.id
+          ORDER BY c.name, o.id
+      """
+
+      print(con.execute(QUERY).fetchall())
+    expectedOutput: |
+      [('Ada', 10), ('Ada', 11), ('Alan', None), ('Grace', 12), ('Linus', None)]
+    tests:
+      - name: every customer appears, sorted
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Ada", 10), ("Ada", 11), ("Alan", None), ("Grace", 12), ("Linus", None)], (
+              f"Your query returned {rows}. Use LEFT JOIN so customers without orders stay, "
+              "and ORDER BY c.name, o.id."
+          )
+      - name: works on different tables
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (7, 'Zoe', 'Oslo'), (8, 'Bea', 'Rome'), (9, 'Kim', 'Seoul');
+              INSERT INTO orders VALUES (30, 9, 5), (31, 7, 8), (32, 9, 1), (33, NULL, 2);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Bea", None), ("Kim", 30), ("Kim", 32), ("Zoe", 31)], (
+              f"On other data your query returned {got}; expected [('Bea', None), ('Kim', 30), ('Kim', 32), ('Zoe', 31)]."
+          )
+    hints:
+      - Which join keeps every row of the table written first?
+      - "Replace `JOIN` with `LEFT JOIN`, keeping the ON condition."
+      - "Sort by two keys: `ORDER BY c.name, o.id`."
+    feedback:
+      - when: { outputContains: "(None, 13)" }
+        message: The guest order appeared, so the orders table is being kept in full. Keep customers instead — customers must be the left table of a LEFT JOIN.
+      - when: { outputEquals: "[('Ada', 10), ('Ada', 11), ('Grace', 12)]\n" }
+        message: Linus and Alan are missing. An inner join drops customers without orders — use LEFT JOIN.
+    explanation: >-
+      `customers c LEFT JOIN orders o` keeps every customer; Linus and Alan get NULL (None) order ids. The
+      guest order is not included, because LEFT JOIN keeps unmatched rows only from the left table.
+
+  - id: code-never-ordered
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A shop has `products` and `order_items`. Write `QUERY` returning the `name` of every product that has
+      **never been ordered**, sorted by name. Watch out: some order items are custom work with no catalogue
+      product, so their `product_id` is NULL.
+
+      On this data the result is `[('Desk',), ('Lamp',)]`.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+          CREATE TABLE order_items (order_id INTEGER, product_id INTEGER, qty INTEGER);
+          INSERT INTO products VALUES (1, 'Pen'), (2, 'Lamp'), (3, 'Mug'), (4, 'Cable'), (5, 'Desk');
+          INSERT INTO order_items VALUES (10, 1, 2), (10, 3, 1), (11, 1, 5), (12, 4, 1),
+                                         (13, NULL, 1);   -- custom engraving, no product
+      """)
+
+      QUERY = """
+          SELECT name FROM products
+          WHERE id NOT IN (SELECT product_id FROM order_items)
+          ORDER BY name
+      """
+
+      print(con.execute(QUERY).fetchall())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+          CREATE TABLE order_items (order_id INTEGER, product_id INTEGER, qty INTEGER);
+          INSERT INTO products VALUES (1, 'Pen'), (2, 'Lamp'), (3, 'Mug'), (4, 'Cable'), (5, 'Desk');
+          INSERT INTO order_items VALUES (10, 1, 2), (10, 3, 1), (11, 1, 5), (12, 4, 1),
+                                         (13, NULL, 1);   -- custom engraving, no product
+      """)
+
+      QUERY = """
+          SELECT p.name
+          FROM products p
+          LEFT JOIN order_items oi ON oi.product_id = p.id
+          WHERE oi.order_id IS NULL
+          ORDER BY p.name
+      """
+
+      print(con.execute(QUERY).fetchall())
+    expectedOutput: |
+      [('Desk',), ('Lamp',)]
+    tests:
+      - name: finds the products nobody ordered
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Desk",), ("Lamp",)], (
+              f"Your query returned {rows}; expected [('Desk',), ('Lamp',)]. "
+              "If it returned [], a NULL product_id is defeating NOT IN — use a LEFT JOIN anti-join or NOT EXISTS."
+          )
+      - name: works on different data
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+              CREATE TABLE order_items (order_id INTEGER, product_id INTEGER, qty INTEGER);
+              INSERT INTO products VALUES (1, 'Axe'), (2, 'Rope'), (3, 'Tent');
+              INSERT INTO order_items VALUES (1, 2, 1), (2, 2, 3), (3, NULL, 1);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Axe",), ("Tent",)], f"On other data your query returned {got}; expected [('Axe',), ('Tent',)]."
+      - name: each product listed once
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert len(rows) == len(set(rows)), "Each product should appear only once."
+    hints:
+      - Run the starter. Why does it print `[]`? Try `SELECT 2 NOT IN (1, NULL)` in your head.
+      - "Anti-join pattern: `FROM products p LEFT JOIN order_items oi ON oi.product_id = p.id`."
+      - "Then keep the rows where nothing matched: `WHERE oi.order_id IS NULL` (order_id is always set on a real order item)."
+    feedback:
+      - when: { outputEquals: "[]\n" }
+        message: "No rows at all — the NULL product_id makes every NOT IN test UNKNOWN. Use LEFT JOIN ... WHERE ... IS NULL or NOT EXISTS."
+      - when: { outputContains: "Pen" }
+        message: Pen has been ordered. Make sure you keep only the products with no matching order item.
+    explanation: >-
+      `NOT IN` fails because the subquery contains NULL, which makes `id NOT IN (...)` UNKNOWN for every
+      product. The LEFT JOIN anti-join keeps every product, attaches matching order items, and keeps the rows
+      where `oi.order_id` is NULL — which only happens when nothing matched. `NOT EXISTS` works too.
+
+  - id: debug-where-on
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This query should list **every** customer together with their orders of **at least 200** (customers
+      without such orders still appear, with None). Linus and Alan are missing. Fix it, keeping the LEFT JOIN.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT c.name, o.id, o.total
+          FROM customers c
+          LEFT JOIN orders o ON o.customer_id = c.id
+          WHERE o.total >= 200
+          ORDER BY c.id, o.id
+      """
+
+      for row in con.execute(QUERY):
+          print(row)
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT c.name, o.id, o.total
+          FROM customers c
+          LEFT JOIN orders o ON o.customer_id = c.id AND o.total >= 200
+          ORDER BY c.id, o.id
+      """
+
+      for row in con.execute(QUERY):
+          print(row)
+    expectedOutput: |
+      ('Ada', 10, 250)
+      ('Linus', None, None)
+      ('Grace', 12, 990)
+      ('Alan', None, None)
+    tests:
+      - name: every customer appears
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Ada", 10, 250), ("Linus", None, None), ("Grace", 12, 990), ("Alan", None, None)], (
+              f"Your query returned {rows}. Move the total condition from WHERE into the ON clause."
+          )
+      - name: still a LEFT JOIN
+        code: |
+          assert "LEFT" in QUERY.upper(), "Keep the LEFT JOIN — the fix is where the condition goes."
+      - name: works on other data
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (1, 'Kim', 'Seoul'), (2, 'Bea', 'Rome');
+              INSERT INTO orders VALUES (5, 2, 150), (6, 2, 300), (7, 1, 10);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Kim", None, None), ("Bea", 6, 300)], f"On other data your query returned {got}; expected [('Kim', None, None), ('Bea', 6, 300)]."
+    hints:
+      - For Linus, what is o.total after the LEFT JOIN? What is `NULL >= 200`?
+      - WHERE runs after the join and drops UNKNOWN rows. ON decides which orders match.
+      - "Move the condition: `LEFT JOIN orders o ON o.customer_id = c.id AND o.total >= 200`."
+    feedback:
+      - when: { outputContains: "120" }
+        message: The 120 order should not match. Keep the `o.total >= 200` condition — just move it into ON.
+    explanation: >-
+      In WHERE, `o.total >= 200` is UNKNOWN for customers without matching orders (o.total is NULL), so they
+      are filtered out after the join — the LEFT JOIN acts like an inner join. In ON, the condition only limits
+      which orders may match, and every customer survives.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-full
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: How many rows does this FULL OUTER JOIN return?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE students (id INTEGER PRIMARY KEY, name TEXT);
+          CREATE TABLE memberships (student_id INTEGER, club TEXT);
+          INSERT INTO students VALUES (1, 'Ana'), (2, 'Ben'), (3, 'Cy');
+          INSERT INTO memberships VALUES (1, 'chess'), (1, 'drama'), (4, 'robotics'), (NULL, 'choir');
+      """)
+      rows = con.execute("""SELECT s.name, m.club FROM students s
+                            FULL OUTER JOIN memberships m ON m.student_id = s.id""").fetchall()
+      print(len(rows))
+    answer: "6"
+    explanation: >-
+      Ana matches two memberships (2 rows). Ben and Cy match none (1 row each, NULL club). The robotics
+      membership (student 4 does not exist) and the choir membership (NULL student_id) match no student
+      (1 row each, NULL name). 2 + 2 + 2 = 6.
+    wrongAnswers:
+      - answer: "4"
+        feedback: That is a LEFT JOIN from students. FULL OUTER also keeps the two memberships that match no student.
+      - answer: "5"
+        feedback: The NULL-student membership also survives a FULL OUTER JOIN as its own row; NULL keys never match, but nothing is discarded.
+      - answer: "12"
+        feedback: 3 × 4 = 12 would be a Cartesian product. A FULL OUTER JOIN pairs only matching rows and adds the unmatched ones once each.
+
+  - id: m-mcq-not-in
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM sessions)` returns **no rows**, although
+      several users have never logged in. `sessions.user_id` is NULL for anonymous sessions. What is wrong?
+    explanation: >-
+      `x NOT IN (a, b, NULL)` expands to `x <> a AND x <> b AND x <> NULL`; the last comparison is UNKNOWN,
+      so the whole condition can never be TRUE. Rewrite with NOT EXISTS or a LEFT JOIN anti-join (or exclude
+      NULLs in the subquery).
+    options:
+      - id: a
+        text: NOT IN cannot be used with a subquery.
+        feedback: It can; the query is valid SQL. The problem is the NULL in the subquery's results.
+      - id: b
+        text: A NULL in the subquery makes every NOT IN test UNKNOWN, so WHERE keeps nothing; use NOT EXISTS or a LEFT JOIN ... IS NULL.
+        correct: true
+        feedback: Correct. One NULL is enough to empty the result.
+      - id: c
+        text: The query needs DISTINCT inside the subquery.
+        feedback: Duplicates do not change the result of NOT IN; the NULL does.
+      - id: d
+        text: The users table needs an index on id.
+        feedback: Indexes change speed, never the result.
+
+  - id: m-mcq-grain
+    type: mcq
+    skill: design
+    difficulty: 3
+    prompt: |
+      A dashboard joins `customers → orders` and `customers → page_views` in one query and sums
+      `orders.total` per customer. The totals are wildly too high. Which change fixes the report properly?
+    explanation: >-
+      Two one-to-many joins from the same customer multiply each other (orders × page views). Summarising
+      each child table to one row per customer first, then joining those summaries, keeps the grain at one row
+      per customer and each order counted once.
+    options:
+      - id: a
+        text: Summarise orders and page views separately to one row per customer, then join the two summaries to customers.
+        correct: true
+        feedback: Right — each summary has the customer grain, so joining them cannot multiply anything.
+      - id: b
+        text: Use SUM(DISTINCT orders.total).
+        feedback: That drops genuinely equal order totals (two orders of 50 count once) — it hides the symptom with a new bug.
+      - id: c
+        text: Change the joins to LEFT JOINs.
+        feedback: LEFT JOINs keep customers without matches but multiply rows exactly the same way.
+      - id: d
+        text: Add ORDER BY customer_id.
+        feedback: Sorting does not change which rows exist or how many times each order appears.
+
+  - id: m-code-manager
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Using a self join, write `QUERY` that finds employees who **earn more than their own manager**. Return
+      `(employee name, employee salary, manager name, manager salary)`, sorted by employee name.
+
+      On this data the result is `[('Priya', 9500, 'Maya', 9000), ('Sam', 7200, 'Omar', 7000)]`.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, salary INTEGER NOT NULL,
+                                  manager_id INTEGER REFERENCES employees (id));
+          INSERT INTO employees VALUES (1, 'Maya', 9000, NULL), (2, 'Omar', 7000, 1),
+                                       (3, 'Priya', 9500, 1), (4, 'Sam', 7200, 2), (5, 'Tess', 6000, 2);
+      """)
+
+      QUERY = """
+          SELECT name, salary FROM employees
+      """
+
+      print(con.execute(QUERY).fetchall())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, salary INTEGER NOT NULL,
+                                  manager_id INTEGER REFERENCES employees (id));
+          INSERT INTO employees VALUES (1, 'Maya', 9000, NULL), (2, 'Omar', 7000, 1),
+                                       (3, 'Priya', 9500, 1), (4, 'Sam', 7200, 2), (5, 'Tess', 6000, 2);
+      """)
+
+      QUERY = """
+          SELECT e.name, e.salary, m.name, m.salary
+          FROM employees e
+          JOIN employees m ON m.id = e.manager_id
+          WHERE e.salary > m.salary
+          ORDER BY e.name
+      """
+
+      print(con.execute(QUERY).fetchall())
+    expectedOutput: |
+      [('Priya', 9500, 'Maya', 9000), ('Sam', 7200, 'Omar', 7000)]
+    tests:
+      - name: finds the right employees
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Priya", 9500, "Maya", 9000), ("Sam", 7200, "Omar", 7000)], (
+              f"Your query returned {rows}. Join employees e to employees m ON m.id = e.manager_id, "
+              "keep e.salary > m.salary, and ORDER BY e.name."
+          )
+      - name: works on a different org chart
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT NOT NULL, salary INTEGER NOT NULL,
+                                      manager_id INTEGER);
+              INSERT INTO employees VALUES (10, 'Zed', 100, NULL), (11, 'Amy', 120, 10),
+                                           (12, 'Bo', 90, 10), (13, 'Cat', 95, 12), (14, 'Dan', 80, 12);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Amy", 120, "Zed", 100), ("Cat", 95, "Bo", 90)], (
+              f"On another org chart your query returned {got}; expected [('Amy', 120, 'Zed', 100), ('Cat', 95, 'Bo', 90)]."
+          )
+      - name: uses a self join
+        code: |
+          import re
+          assert len(re.findall(r"\bemployees\b", QUERY, re.IGNORECASE)) >= 2, "Use the employees table twice (a self join) with two aliases."
+    hints:
+      - "List the table twice with different aliases: `FROM employees e JOIN employees m`."
+      - "Each employee's manager is the row whose id equals the employee's manager_id: `ON m.id = e.manager_id`."
+      - "Then compare the two copies: `WHERE e.salary > m.salary`."
+    feedback:
+      - when: { errorMessageContains: "ambiguous column name" }
+        message: With the same table listed twice, every column must be qualified with its alias, e.g. e.salary and m.salary.
+      - when: { outputContains: "Tess" }
+        message: Tess earns less than her manager. Check the direction of the comparison — the employee's salary must be greater, e.salary > m.salary.
+    explanation: >-
+      `employees e JOIN employees m ON m.id = e.manager_id` pairs every employee with their manager's row; the
+      inner join drops Maya, who has no manager. `WHERE e.salary > m.salary` then compares the two copies.
+
+  - id: m-debug-cartesian
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This should list each order of more than 100 with its customer's name, but it prints 12 rows of
+      nonsense pairings. Fix the query so it returns one row per qualifying order, ordered by order id.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT o.id, c.name, o.total
+          FROM orders o, customers c
+          WHERE o.total > 100
+          ORDER BY o.id
+      """
+
+      rows = con.execute(QUERY).fetchall()
+      print(len(rows), rows)
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+          CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers (id),
+                               total INTEGER NOT NULL);
+          INSERT INTO customers VALUES (1, 'Ada', 'London'), (2, 'Linus', 'Helsinki'),
+                                       (3, 'Grace', 'New York'), (4, 'Alan', 'London');
+          INSERT INTO orders VALUES (10, 1, 250), (11, 1, 120), (12, 3, 990), (13, NULL, 45);
+      """)
+
+      QUERY = """
+          SELECT o.id, c.name, o.total
+          FROM orders o
+          JOIN customers c ON c.id = o.customer_id
+          WHERE o.total > 100
+          ORDER BY o.id
+      """
+
+      rows = con.execute(QUERY).fetchall()
+      print(len(rows), rows)
+    expectedOutput: |
+      3 [(10, 'Ada', 250), (11, 'Ada', 120), (12, 'Grace', 990)]
+    tests:
+      - name: one row per qualifying order
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [(10, "Ada", 250), (11, "Ada", 120), (12, "Grace", 990)], (
+              f"Your query returned {len(rows)} rows: {rows}. Link each order to its own customer with "
+              "c.id = o.customer_id."
+          )
+      - name: works on other data
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, city TEXT);
+              CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER, total INTEGER NOT NULL);
+              INSERT INTO customers VALUES (5, 'Kim', 'Seoul'), (6, 'Bea', 'Rome');
+              INSERT INTO orders VALUES (1, 6, 500), (2, 5, 50), (3, 5, 101);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [(1, "Bea", 500), (3, "Kim", 101)], f"On other data your query returned {got}; expected [(1, 'Bea', 500), (3, 'Kim', 101)]."
+    hints:
+      - "12 = 3 qualifying orders × 4 customers. What links an order to *its* customer?"
+      - The query has no join condition, so every order is paired with every customer.
+      - "Add the condition: `JOIN customers c ON c.id = o.customer_id` (or `AND o.customer_id = c.id` in WHERE)."
+    feedback:
+      - when: { outputContains: "12 [" }
+        message: Still 12 rows — a Cartesian product. Add a condition that matches o.customer_id with c.id.
+      - when: { outputEquals: "0 []\n" }
+        message: "No rows: check which columns you compare. Orders refer to customers through o.customer_id, not o.id."
+    explanation: >-
+      Listing two tables with only a filter on one of them pairs every qualifying order with every customer
+      (3 × 4 = 12). The join condition `c.id = o.customer_id` keeps only the pairs where the order belongs to
+      the customer.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-full, m-mcq-not-in, m-mcq-grain, m-code-manager, m-debug-cartesian]
+
+cheatsheet: |
+  ```sql
+  SELECT o.id, c.name                        -- qualify columns with aliases
+  FROM orders o
+  JOIN customers c ON c.id = o.customer_id   -- INNER: matching pairs only
+  LEFT JOIN customers c ON ...               -- keep all left rows (NULLs on the right)
+  RIGHT JOIN / FULL OUTER JOIN               -- SQLite 3.39+, PostgreSQL; prefer LEFT
+  -- anti-join: rows with no match
+  FROM customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL
+  WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)
+  -- self join
+  FROM employees e LEFT JOIN employees m ON m.id = e.manager_id
+  ```
+  - A row appears once per match → one-to-many joins multiply rows; state the grain before summing
+  - No join condition = Cartesian product (m × n rows)
+  - LEFT JOIN: right-table filters go in ON; WHERE runs after the join
+  - NULL keys never match; NOT IN + NULL in the subquery → no rows
+  - SQLite: `PRAGMA foreign_keys = ON` per connection · PostgreSQL: index FK columns yourself

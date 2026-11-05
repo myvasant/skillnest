@@ -1,0 +1,950 @@
+id: python.copying
+concept: python.copying
+title: Shallow and Deep Copies
+subtitle: Copying the container, or everything inside it
+estimatedMinutes: 35
+reviewedOn: 2026-10-22
+summary: >-
+  Assignment never copies, so when you need an independent version of some data you must ask for a copy.
+  Learn the four ways to make a shallow copy, why a shallow copy of nested data still shares the inner
+  lists, when copy.deepcopy() is needed, what it costs, and how it copes with shared and circular references.
+objectives:
+  - Make shallow copies of lists, dictionaries and sets, and explain what a shallow copy shares with the original.
+  - Predict which changes to a shallow copy of nested data are visible in the original.
+  - Use copy.deepcopy() to make fully independent copies of nested structures.
+  - Choose between no copy, a shallow copy and a deep copy for a given situation, considering cost.
+  - Diagnose and fix bugs caused by copying too shallowly.
+sources:
+  - title: "copy — Shallow and deep copy operations"
+    url: https://docs.python.org/3/library/copy.html
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Mutable Sequence Types (list.copy)"
+    url: https://docs.python.org/3/library/stdtypes.html#mutable-sequence-types
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: How do I copy an object in Python?"
+    url: https://docs.python.org/3/faq/programming.html#how-do-i-copy-an-object-in-python
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why copy at all?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          In the [mutability lesson](concept:python.mutability) you saw that `b = a` never copies: it gives
+          the same object a second name. Often that's exactly right. But sometimes you need an **independent
+          version**: a draft you can edit while keeping the original, a snapshot for "undo", a template you
+          fill in separately for each user.
+      - type: code
+        runnable: true
+        code: |
+          template = ["Dear customer,", "Thanks for your order."]
+          letter = template
+          letter.append("Your parcel ships today.")
+          print(template)
+        expectedOutput: |
+          ['Dear customer,', 'Thanks for your order.', 'Your parcel ships today.']
+        caption: The template is ruined - letter was never a separate list.
+      - type: code
+        runnable: true
+        code: |
+          template = ["Dear customer,", "Thanks for your order."]
+          letter = template.copy()
+          letter.append("Your parcel ships today.")
+          print(template)
+          print(letter)
+        expectedOutput: |
+          ['Dear customer,', 'Thanks for your order.']
+          ['Dear customer,', 'Thanks for your order.', 'Your parcel ships today.']
+        annotations:
+          - line: 2
+            text: copy() builds a new list object with the same items.
+      - type: markdown
+        body: |
+          `.copy()` fixed it. But when a list contains **other mutable objects** — lists inside lists, lists
+          inside dictionaries — "copy" can mean two different things: copy only the outer container
+          (**shallow**), or copy everything inside it as well (**deep**). Picking the wrong one is one of the
+          most common data bugs in real Python programs.
+
+  - id: shallow
+    title: Shallow copies
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [shallow copy](glossary:shallow-copy) is a **new outer container** whose slots refer to **the same
+          element objects** as the original. For a list there are four equivalent ways to make one:
+
+          | Expression | Notes |
+          |---|---|
+          | `original.copy()` | The list method — the clearest choice. |
+          | `list(original)` | Builds a new list from any iterable. |
+          | `original[:]` | A full [slice](concept:python.slicing) — common in older code. |
+          | `copy.copy(original)` | From the standard library's `copy` module; works for many types. |
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          original = [1, 2, 3]
+          a = original.copy()
+          b = list(original)
+          c = original[:]
+          d = copy.copy(original)
+          a.append(4)
+          print(original, a)
+          print(a is original, b is original, c is original, d is original)
+          print(b == original, c == original, d == original)
+        expectedOutput: |
+          [1, 2, 3] [1, 2, 3, 4]
+          False False False False
+          True True True
+        annotations:
+          - line: 1
+            text: The copy module has to be imported before you can use copy.copy or copy.deepcopy.
+          - line: 10
+            text: Every copy is a new list object...
+          - line: 11
+            text: "...with equal contents."
+      - type: markdown
+        body: |
+          The same idea works for the other containers:
+
+          - **dict:** `d.copy()`, `dict(d)` or `copy.copy(d)`
+          - **set:** `s.copy()`, `set(s)` or `copy.copy(s)`
+          - **tuple, str:** no `.copy()` method at all — they are immutable, so a copy could never behave
+            differently from the original. `copy.copy()` simply returns the same object.
+
+          **For a flat container of immutable items** — numbers, strings, tuples of those — a shallow copy is
+          all you ever need. The items are shared, but nobody can mutate them, so the copy behaves as fully
+          independent.
+
+  - id: shared-inside
+    title: "Nested data: what a shallow copy shares"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The trouble starts with nesting. A shallow copy of a list of lists creates a new outer list, but the
+          **inner lists are shared**. Predict this before stepping through the next program:
+      - type: item
+        ref: predict-shallow-nested
+      - type: visualization
+        component: python-tracer
+        title: A shallow copy shares the inner lists
+        caption: >-
+          After line 2 there are two outer lists, but their slots point at the same two inner lists. Line 3
+          changes only backup's outer list. Line 4 mutates an inner list that both share.
+        props:
+          code: |
+            teams = [["Asha", "Ben"], ["Chen"]]
+            backup = teams.copy()
+            backup.append(["Dev"])
+            backup[0].append("Eli")
+            print(teams)
+            print(backup)
+            print(teams[0] is backup[0])
+      - type: markdown
+        body: |
+          Two different things happened, and the difference is the whole lesson:
+
+          - `backup.append(["Dev"])` mutates backup's **outer** list — a separate object — so `teams` is
+            unaffected. The same is true for replacing a slot, such as `backup[1] = ["Zoe"]`: that rebinds a
+            slot of the new outer list.
+          - `backup[0].append("Eli")` mutates an **inner** list, which both outer lists refer to, so `teams`
+            sees it.
+
+          **A shallow copy protects you from changes to the outer container, but not from mutations inside the
+          elements it shares.**
+
+  - id: deep
+    title: Deep copies with copy.deepcopy()
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [deep copy](glossary:deep-copy) copies the container **and, recursively, every mutable object
+          inside it** — lists inside lists inside dictionaries, as deep as they go. Use `copy.deepcopy()`:
+      - type: visualization
+        component: python-tracer
+        title: A deep copy shares nothing mutable
+        caption: >-
+          deepcopy builds new inner lists too, so changing clone's first team leaves teams untouched. (The
+          module copy also appears as a name, because import binds it.)
+        props:
+          code: |
+            import copy
+
+            teams = [["Asha", "Ben"], ["Chen"]]
+            clone = copy.deepcopy(teams)
+            clone[0].append("Eli")
+            print(teams)
+            print(clone)
+            print(teams[0] is clone[0])
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          teams = [["Asha", "Ben"], ["Chen"]]
+          clone = copy.deepcopy(teams)
+          clone[0].append("Eli")
+          print(teams)
+          print(clone)
+          print(teams[0] is clone[0])
+        expectedOutput: |
+          [['Asha', 'Ben'], ['Chen']]
+          [['Asha', 'Ben', 'Eli'], ['Chen']]
+          False
+      - type: markdown
+        body: |
+          The result shares **no mutable object** with the original. Immutable objects inside it — the
+          strings here — may still be shared, and that is fine: nobody can change them. (CPython's deepcopy
+          returns numbers, strings and other immutable "atoms" as they are, instead of duplicating them.)
+      - type: item
+        ref: mcq-which-deep
+
+  - id: dicts
+    title: Copying dictionaries
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Dictionaries follow exactly the same rules. Here a user's settings start from a set of defaults:
+      - type: code
+        runnable: true
+        code: |
+          defaults = {"theme": "dark", "plugins": ["git"]}
+          user = defaults.copy()
+          user["theme"] = "light"
+          user["plugins"].append("lint")
+          print(defaults)
+          print(user)
+        expectedOutput: |
+          {'theme': 'dark', 'plugins': ['git', 'lint']}
+          {'theme': 'light', 'plugins': ['git', 'lint']}
+        annotations:
+          - line: 3
+            text: Replaces the value in user's own dictionary (a separate object), so defaults keeps "dark".
+          - line: 4
+            text: user["plugins"] is the SAME list as defaults["plugins"]. append mutates it - every user's defaults now include "lint".
+      - type: visualization
+        component: python-tracer
+        title: Two dictionaries, one shared list
+        caption: >-
+          The shallow copy gives user its own dictionary, but the value under "plugins" is a reference to the
+          same list object that defaults holds.
+        props:
+          code: |
+            defaults = {"theme": "dark", "plugins": ["git"]}
+            user = defaults.copy()
+            user["theme"] = "light"
+            user["plugins"].append("lint")
+            print(defaults)
+      - type: markdown
+        body: |
+          With `copy.deepcopy()` the plugins list is copied too:
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          defaults = {"theme": "dark", "plugins": ["git"]}
+          user = copy.deepcopy(defaults)
+          user["theme"] = "light"
+          user["plugins"].append("lint")
+          print(defaults)
+          print(user)
+        expectedOutput: |
+          {'theme': 'dark', 'plugins': ['git']}
+          {'theme': 'light', 'plugins': ['git', 'lint']}
+      - type: item
+        ref: predict-dict-copy
+
+  - id: choosing
+    title: Which one do you need?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | You need... | Use | Example |
+          |---|---|---|
+          | Another name for the same data; sharing is intended | `b = a` (no copy) | Passing data somewhere that only reads it |
+          | An independent outer container; the items are immutable or meant to be shared | Shallow: `a.copy()`, `list(a)`, `a[:]`, `dict(d)` | A copy of a list of numbers that you will sort or extend |
+          | Full independence for nested mutable data you will change at the inner levels | Deep: `copy.deepcopy(a)` | A game-board snapshot for undo; per-user settings built from a template |
+
+          ### The cost of deep copies
+
+          `copy.deepcopy()` visits **every object** reachable from the original and creates a new one for each
+          mutable object it finds. Its time and memory grow with the size of the **whole** structure: deep
+          copying 100 MB of nested lists and dictionaries can need nearly another 100 MB (only immutable items
+          are shared) and noticeable time, and doing it inside a
+          loop multiplies that cost. Some objects can't be duplicated meaningfully at all — open files, network
+          connections, locks — and deepcopy raises a `TypeError` for many of them.
+
+          Cheaper alternatives are often better:
+
+          - **Copy only the part you will change**: `user = dict(defaults)` then
+            `user["plugins"] = defaults["plugins"].copy()`.
+          - **Build the new structure explicitly** from the old one, which also documents what changes.
+          - **Use immutable data** (tuples, frozensets, strings) for parts that should never change — then
+            sharing is safe and no copy is needed.
+      - type: callout
+        variant: production
+        title: Copy at boundaries, not by reflex
+        body: |
+          A common professional habit is to copy **where data crosses a boundary**: when an object stores a
+          list it was given, it keeps its own copy so the caller's later changes can't leak in; when it hands
+          out its internal list, it returns a copy so callers can't corrupt it. Inside your own code, prefer
+          clear ownership over defensive deep copies everywhere.
+      - type: item
+        ref: explain-choose
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How `copy.copy()` works.** For built-in containers it uses the type's own fast copy (`list.copy`,
+          `dict.copy`, ...). For immutable objects (int, str, tuple, frozenset, None, ...) it returns **the
+          object itself**, because a copy could never behave differently. For other objects it uses a
+          `__copy__` method if the class defines one, or otherwise the same protocol that `pickle` uses —
+          which is why some copy errors mention pickling.
+
+          **How `copy.deepcopy()` treats tuples.** A tuple of immutable items can be returned as it is; a tuple
+          that contains a list must be rebuilt so it can hold the copied list:
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          point = (1, 2)
+          print(copy.copy(point) is point)
+          print(copy.deepcopy(point) is point)
+          record = (1, [2])
+          print(copy.deepcopy(record) is record)
+        expectedOutput: |
+          True
+          True
+          False
+        caption: Observed CPython behaviour. Never write code that depends on whether an immutable object was duplicated.
+      - type: markdown
+        body: |
+          **The memo: shared and circular references.** deepcopy keeps a dictionary called the *memo* that
+          maps each original object it has already copied (by id) to its copy. If the same object appears
+          twice in the original, it is copied **once**, and both places in the result refer to that single
+          copy — the copy has the same "shape" as the original:
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          row = [0, 0]
+          grid = [row, row]              # the same row twice
+          clone = copy.deepcopy(grid)
+          print(clone[0] is clone[1])
+          print(clone[0] is row)
+        expectedOutput: |
+          True
+          False
+        annotations:
+          - line: 6
+            text: The sharing inside the structure is preserved...
+          - line: 7
+            text: "...but nothing is shared with the original."
+      - type: markdown
+        body: |
+          The memo also makes **cycles** safe. A list that contains itself would make a naive recursive copy
+          run forever; deepcopy finds the list in its memo the second time and reuses the copy:
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          loop = [1]
+          loop.append(loop)
+          print(loop)
+          clone = copy.deepcopy(loop)
+          print(clone[1] is clone, clone is loop)
+        expectedOutput: |
+          [1, [...]]
+          True False
+        annotations:
+          - line: 5
+            text: Python prints [...] for the self-reference instead of recursing forever.
+      - type: markdown
+        body: |
+          **Objects that can't be copied.** Something like an open file represents an operating-system
+          resource; duplicating the Python object wouldn't duplicate the file handle, so deepcopy refuses:
+      - type: code
+        runnable: true
+        code: |
+          import copy
+
+          log = open("log.txt", "w")
+          backup = copy.deepcopy(log)
+        expectError: TypeError
+        caption: "TypeError: cannot pickle 'TextIOWrapper' instances."
+      - type: markdown
+        body: |
+          **Customising copies.** Classes can define `__copy__` and `__deepcopy__` methods to control exactly
+          what gets copied — for example, to share a large read-only cache instead of duplicating it. You'll
+          be able to write these once you know [classes](concept:python.classes).
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Changing the "copy" changes the original | `b = a` is not a copy at all | `b = a.copy()`, or `copy.deepcopy(a)` for nested data |
+          | Inner lists still change together after copying | A shallow copy of nested data | `copy.deepcopy()`, or copy each inner list |
+          | `NameError: name 'copy' is not defined` | `copy.deepcopy(x)` without `import copy` | Add `import copy` at the top of the program |
+          | `NameError: name 'deepcopy' is not defined` | Called `deepcopy(x)` on its own | Use `copy.deepcopy(x)` after `import copy` |
+          | `AttributeError: 'tuple' object has no attribute 'copy'` | Tuples are immutable and don't need copies | Use the tuple as it is |
+          | Rows are still shared after `[row.copy()] * 3` | The copy happens once; `*` then repeats a reference to it | Copy inside a loop, once per row |
+          | The program is slow or uses lots of memory | Deep copying large data, often inside a loop | Copy once, or copy only the part you change |
+      - type: code
+        runnable: true
+        code: |
+          teams = [["Asha"], ["Ben"]]
+          clone = copy.deepcopy(teams)
+        expectError: NameError
+        caption: The copy module must be imported before you use it.
+      - type: code
+        runnable: true
+        code: |
+          point = (3, 4)
+          other = point.copy()
+        expectError: AttributeError
+        caption: "AttributeError: 'tuple' object has no attribute 'copy'. Immutable objects can simply be shared."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          For each exercise, first ask: which objects are mutable, and which of them will be changed?
+      - type: item
+        ref: safe-template
+      - type: item
+        ref: debug-board
+      - type: item
+        ref: copy-rows-by-hand
+      - type: item
+        ref: parsons-deepcopy
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Assignment never copies. Ask for a copy when you need independence.
+          - **Shallow copy** — `a.copy()`, `list(a)`, `a[:]`, `copy.copy(a)`, `dict(d)`, `set(s)`: a new outer
+            container whose slots refer to the same elements.
+          - Changes to the copy's outer container are private; **mutations inside shared elements are seen by
+            both**.
+          - **Deep copy** — `copy.deepcopy(a)`: recursively copies every mutable object; shares nothing
+            mutable. Handles shared and circular references with a memo.
+          - Flat data of immutable items → shallow is enough. Nested mutable data you'll change → deep (or
+            copy just the part you change).
+          - Deep copies cost time and memory proportional to the whole structure; don't do them by reflex.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What's the difference between a shallow and a deep copy?" — Draw a list of lists: a shallow copy
+          makes a new outer list pointing at the same inner lists, so mutating `copy[0]` shows up in the
+          original; `copy.deepcopy` recursively copies the inner lists too. Mention the memo (shared
+          references and cycles are preserved), the cost, and that for flat lists of immutable values a
+          shallow copy is enough.
+
+items:
+  - id: predict-shallow-nested
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      a = [[1], [2]]
+      b = a[:]
+      b[0].append(9)
+      b[1] = [7]
+      print(a)
+    answer: "[[1, 9], [2]]"
+    explanation: >-
+      `a[:]` is a shallow copy: a new outer list whose slots refer to the same inner lists. `b[0].append(9)`
+      mutates the inner list both share, so a sees it. `b[1] = [7]` only rebinds a slot of b's own outer list,
+      so a's second item is still [2].
+    wrongAnswers:
+      - answer: "[[1], [2]]"
+        feedback: >-
+          A slice copies only the outer list. b[0] is the same inner list as a[0], so appending to it changes
+          what a shows.
+      - answer: "[[1, 9], [7]]"
+        feedback: "`b[1] = [7]` replaces a slot in b's own outer list. a's outer list still refers to [2]."
+      - answer: "[[1], [7]]"
+        feedback: Slot assignment on b doesn't reach a, but mutating the shared inner list b[0] does.
+
+  - id: mcq-which-deep
+    type: mcq
+    skill: recognition
+    prompt: "`a` is a list of lists. Which expression creates a copy whose inner lists are **not** shared with `a`?"
+    explanation: >-
+      Slicing, list() and copy.copy() all make shallow copies: a new outer list holding references to the same
+      inner lists. Only copy.deepcopy() copies the inner lists too.
+    options:
+      - id: a
+        text: "`a[:]`"
+        feedback: A full slice is a shallow copy; the inner lists are shared.
+      - id: b
+        text: "`list(a)`"
+        feedback: list() builds a new outer list from the same inner list objects - shallow.
+      - id: c
+        text: "`copy.copy(a)`"
+        feedback: copy.copy() is the module's shallow copy.
+      - id: d
+        text: "`copy.deepcopy(a)`"
+        correct: true
+        feedback: Right. deepcopy recursively copies every mutable object inside a.
+
+  - id: predict-dict-copy
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      base = {"size": 1, "tags": ["a"]}
+      other = base.copy()
+      other["size"] = 2
+      other["tags"].append("b")
+      print(base)
+    answer: "{'size': 1, 'tags': ['a', 'b']}"
+    explanation: >-
+      `base.copy()` makes a new dictionary, so replacing other["size"] doesn't affect base. But the value under
+      "tags" is the same list object in both dictionaries, and append mutates it.
+    wrongAnswers:
+      - answer: "{'size': 2, 'tags': ['a', 'b']}"
+        feedback: other is a separate dictionary, so assigning other["size"] = 2 only changes other.
+      - answer: "{'size': 1, 'tags': ['a']}"
+        feedback: dict.copy() is shallow. Both dictionaries refer to one tags list, so the append shows up in base too.
+
+  - id: explain-choose
+    type: explain
+    skill: design
+    difficulty: 2
+    prompt: |
+      A game stores its board as a list of 8 rows, each a list of 8 strings. Before every move it saves the
+      board so the player can undo. Explain which kind of copy the save needs, why the other options fail,
+      and one way to keep the cost reasonable.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - "`saved = board` fails: it is the same object, so later moves change the saved board too."
+      - A shallow copy fails because the rows are shared; a move mutates a row, which the snapshot also shows.
+      - A deep copy (or copying every row) is needed so the snapshot shares no mutable rows with the live board.
+      - Mentions cost - e.g. copying each row once per move is cheap for 64 cells, but deep copies of large data or in tight loops get expensive; alternatives include storing only the move to undo.
+    modelAnswer: |
+      Each snapshot must be independent of the live board. `saved = board` doesn't copy anything, so the
+      "saved" board changes with every move. `board.copy()` creates a new outer list, but its 8 slots still
+      refer to the same row lists, and a move like `board[3][4] = "X"` mutates one of those rows - the
+      snapshot shows it too. The save needs a deep copy, `copy.deepcopy(board)`, or equivalently a new list
+      holding `row.copy()` for each row (the strings are immutable, so sharing them is fine). For an 8×8 board
+      that is cheap. For much larger states, saving only the move (what changed and the old value) instead of
+      the whole board keeps undo fast and memory-light.
+
+  - id: safe-template
+    type: code
+    skill: implementation
+    prompt: |
+      `template` describes a report: a title and a list of rows, where each row is itself a list. Create
+      `report`, a **completely independent** copy of `template`. Then, in `report` only, add the row
+      `["total", 12]` to `report["rows"]` and set `report["title"]` to `"October"`. Print `template`, then
+      `report`:
+
+      ```text
+      {'title': 'Untitled', 'rows': [['header', 0]]}
+      {'title': 'October', 'rows': [['header', 0], ['total', 12]]}
+      ```
+    starterCode: |
+      import copy
+
+      template = {"title": "Untitled", "rows": [["header", 0]]}
+
+    solution: |
+      import copy
+
+      template = {"title": "Untitled", "rows": [["header", 0]]}
+      report = copy.deepcopy(template)
+      report["rows"].append(["total", 12])
+      report["title"] = "October"
+      print(template)
+      print(report)
+    expectedOutput: |
+      {'title': 'Untitled', 'rows': [['header', 0]]}
+      {'title': 'October', 'rows': [['header', 0], ['total', 12]]}
+    tests:
+      - name: template is unchanged
+        code: |
+          assert template == {"title": "Untitled", "rows": [["header", 0]]}, f"template must not change, but it is now {template!r}."
+      - name: report has the changes
+        code: |
+          assert defined("report"), "Create a variable named report."
+          assert report == {"title": "October", "rows": [["header", 0], ["total", 12]]}, f"report is {report!r}."
+      - name: report shares no mutable parts with template
+        code: |
+          assert report is not template, "report = template is not a copy - it is the same dictionary."
+          assert report["rows"] is not template["rows"], "report['rows'] is the same list as template['rows']. A shallow copy shares it; make a deep copy."
+          assert report["rows"][0] is not template["rows"][0], "report['rows'][0] is still the same list as template['rows'][0], so mutating it would change the template. Make a deep copy."
+      - name: report is built by copying template
+        code: |
+          assert source.count('"header"') == 1, "Create report by copying template, not by typing the rows again."
+      - name: prints both
+        code: |
+          assert output_lines() == ["{'title': 'Untitled', 'rows': [['header', 0]]}", "{'title': 'October', 'rows': [['header', 0], ['total', 12]]}"], f"Print template and then report. Your program printed {output()!r}."
+    hints:
+      - "report = template would be another name for the same dictionary - you need a copy."
+      - template contains a list of lists. Will a shallow copy (.copy()) give report its own rows list?
+      - "`report = copy.deepcopy(template)` copies the dictionary, the rows list and every row inside it."
+    feedback:
+      - when: { outputContains: "{'title': 'Untitled', 'rows': [['header', 0], ['total', 12]]}" }
+        message: The template gained the new row, so report["rows"] is still shared. .copy() copies only the outer dictionary - use copy.deepcopy(template).
+      - when: { codeMatches: "report\\s*=\\s*template\\s*\\n" }
+        message: "report = template doesn't copy anything; both names refer to one dictionary."
+    explanation: >-
+      `copy.deepcopy(template)` creates a new dictionary, a new rows list and new row lists, so appending to
+      report["rows"] and replacing report["title"] can't affect template. With `.copy()`, the title change
+      would be private but the rows list would be shared, and the template would gain the total row.
+
+  - id: debug-board
+    type: debug
+    skill: debugging
+    prompt: |
+      A noughts-and-crosses program keeps the starting board and plays on a copy. But after the first move
+      the starting board shows the X too. Fix the copy so `start` stays empty, without typing the board's
+      contents again. The output should be:
+
+      ```text
+      [['.', '.'], ['.', '.']]
+      [['X', '.'], ['.', '.']]
+      ```
+    starterCode: |
+      start = [[".", "."], [".", "."]]
+      game = start.copy()
+      game[0][0] = "X"
+      print(start)
+      print(game)
+    solution: |
+      import copy
+
+      start = [[".", "."], [".", "."]]
+      game = copy.deepcopy(start)
+      game[0][0] = "X"
+      print(start)
+      print(game)
+    expectedOutput: |
+      [['.', '.'], ['.', '.']]
+      [['X', '.'], ['.', '.']]
+    tests:
+      - name: start stays empty
+        code: |
+          assert start == [[".", "."], [".", "."]], f"start should still be empty, but it is {start!r}."
+      - name: the move is on game
+        code: |
+          assert game == [["X", "."], [".", "."]], f"game should have the X in its top-left cell, but it is {game!r}."
+      - name: rows are not shared
+        code: |
+          assert all(g is not s for g, s in zip(game, start)), "Some rows of game are the same list objects as rows of start. Copy the rows too."
+      - name: the board is copied, not retyped
+        code: |
+          assert source.count('"."') + source.count("'.'") == 4, "Make game by copying start, not by typing the board again."
+    hints:
+      - Which list does game[0] refer to after a shallow copy?
+      - "start.copy() copies only the outer list; both boards share the same row lists."
+      - "Use copy.deepcopy(start) (after import copy), or build game from a copy of each row."
+    feedback:
+      - when: { outputEquals: "[['X', '.'], ['.', '.']]\n[['X', '.'], ['.', '.']]\n" }
+        message: start still changes. .copy() is shallow, so the rows are shared between the two boards. Copy the rows as well.
+      - when: { errorType: NameError, errorMessageContains: "copy" }
+        message: The copy module has to be imported first. Add `import copy` at the top.
+    explanation: >-
+      A shallow copy gives game its own outer list, but game[0] is still the same row list as start[0], so
+      `game[0][0] = "X"` mutates a row both boards share. A deep copy gives game its own rows.
+
+  - id: copy-rows-by-hand
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      **Without** the copy module, make `snapshot` an independent copy of the two-level list `matrix`: build
+      a new outer list and append a **shallow copy of each row** to it. The starter code then changes
+      `snapshot` and prints both lists; `matrix` must stay `[[1, 2], [3, 4]]`.
+    starterCode: |
+      matrix = [[1, 2], [3, 4]]
+      snapshot = []
+
+      snapshot[0][0] = 99
+      print(matrix)
+      print(snapshot)
+    solution: |
+      matrix = [[1, 2], [3, 4]]
+      snapshot = []
+      for row in matrix:
+          snapshot.append(row.copy())
+      snapshot[0][0] = 99
+      print(matrix)
+      print(snapshot)
+    expectedOutput: |
+      [[1, 2], [3, 4]]
+      [[99, 2], [3, 4]]
+    tests:
+      - name: matrix is unchanged
+        code: |
+          assert matrix == [[1, 2], [3, 4]], f"matrix must not change, but it is {matrix!r}."
+      - name: snapshot has the change
+        code: |
+          assert snapshot == [[99, 2], [3, 4]], f"snapshot should be [[99, 2], [3, 4]], but it is {snapshot!r}."
+      - name: every row is a new list
+        code: |
+          assert all(s is not m for s, m in zip(snapshot, matrix)), "Some rows of snapshot are the same objects as rows of matrix. Append a copy of each row."
+      - name: copies by hand with a loop
+        code: |
+          assert "copy." not in source and "import copy" not in source, "Do this one without the copy module - copy each row yourself."
+          assert uses("For"), "Use a for loop over the rows of matrix."
+      - name: works for another matrix
+        code: |
+          import re
+          changed = re.sub(r"matrix\s*=\s*\[.*?\]\]\n", "matrix = [[5], [6], [7]]\n", source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates matrix so the checks can try another one."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("matrix") == [[5], [6], [7]] and ns.get("snapshot") == [[99], [6], [7]], "With another matrix the copy was wrong. Copy every row of matrix in the loop."
+    hints:
+      - Loop over the rows of matrix.
+      - "Append a NEW list for each row: row.copy(), list(row) or row[:]."
+      - Appending row itself would put the same row object in both lists.
+    feedback:
+      - when: { outputEquals: "[[99, 2], [3, 4]]\n[[99, 2], [3, 4]]\n" }
+        message: matrix changed too, so the rows are shared. Append a copy of each row, not the row itself.
+      - when: { errorType: IndexError }
+        message: snapshot is still empty when the starter code changes snapshot[0][0]. Fill it with copies of the rows first.
+    explanation: >-
+      Copying each row inside a loop is exactly what a deep copy does for a two-level list of numbers: a new
+      outer list plus a new list for every row. The ints inside are shared, which is safe because they are
+      immutable. For deeper or irregular nesting you would need more levels - which is why copy.deepcopy()
+      works recursively.
+
+  - id: parsons-deepcopy
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to give one user their own copy of the default settings, add a plugin for that user
+      only, and print both plugin lists as `['git'] ['git', 'lint']`. Two lines are distractors.
+    solution: |
+      import copy
+      defaults = {"plugins": ["git"]}
+      mine = copy.deepcopy(defaults)
+      mine["plugins"].append("lint")
+      print(defaults["plugins"], mine["plugins"])
+    distractors:
+      - mine = defaults.copy()
+      - mine = defaults
+    expectedOutput: |
+      ['git'] ['git', 'lint']
+    explanation: >-
+      Only a deep copy gives mine its own plugins list. With `defaults.copy()` the list would be shared, and
+      with `mine = defaults` the whole dictionary would be shared; either way defaults would end up with
+      "lint" too.
+
+  # ----- Mastery check (new items, not used in the sections above) -----
+  - id: m-predict-shallow-vs-deep
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import copy
+
+      data = {"scores": [1, 2]}
+      shallow = copy.copy(data)
+      deep = copy.deepcopy(data)
+      data["scores"].append(3)
+      print(len(shallow["scores"]), len(deep["scores"]))
+    answer: "3 2"
+    explanation: >-
+      The shallow copy's "scores" value is the same list as data's, so it sees the appended 3. The deep copy
+      got its own list when it was made, so it still has two items.
+    wrongAnswers:
+      - answer: "2 2"
+        feedback: copy.copy() is shallow - shallow["scores"] is the very same list as data["scores"].
+      - answer: "3 3"
+        feedback: deepcopy() copied the list when it ran, so later changes to data's list don't affect it.
+      - answer: "2 3"
+        feedback: Swap them - the shallow copy shares the list, the deep copy doesn't.
+
+  - id: m-mcq-undo
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A drawing app stores its canvas as a list of rows, each row a list of colour strings. Painting a pixel
+      does `canvas[y][x] = colour`. Which line correctly saves an undo snapshot before each stroke?
+    explanation: >-
+      Painting mutates a row list. Only a snapshot that has its own rows is unaffected; a shallow copy or a
+      plain reference shares the rows with the live canvas.
+    options:
+      - id: a
+        text: "`history.append(canvas)`"
+        feedback: That stores a reference to the live canvas, so every "snapshot" changes as you paint.
+      - id: b
+        text: "`history.append(canvas.copy())`"
+        feedback: A new outer list, but the rows are shared - painting a pixel mutates a row that the snapshot also shows.
+      - id: c
+        text: "`history.append(copy.deepcopy(canvas))`"
+        correct: true
+        feedback: Right. The snapshot gets its own rows, so later painting can't change it.
+      - id: d
+        text: "`history.append(canvas[:])`"
+        feedback: A full slice is a shallow copy too, so the rows are still shared.
+
+  - id: m-tf-flat-shallow
+    type: true-false
+    skill: recognition
+    prompt: "True or false: for a list that contains only integers, a shallow copy behaves as a completely independent copy."
+    answer: true
+    explanation: >-
+      The copy has its own outer list, and the integers it shares with the original are immutable, so no
+      change made through one list can ever show up in the other.
+
+  - id: m-code-clone-inventory
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `warehouse` maps each shelf to a list of items. Make `planned`, a fully independent copy, and in
+      `planned` only, move `"bolts"` from shelf `"A"` to shelf `"B"` (remove it from A's list and append it
+      to B's). Print `warehouse`, then `planned`:
+
+      ```text
+      {'A': ['nails', 'bolts'], 'B': ['glue']}
+      {'A': ['nails'], 'B': ['glue', 'bolts']}
+      ```
+    starterCode: |
+      import copy
+
+      warehouse = {"A": ["nails", "bolts"], "B": ["glue"]}
+
+    solution: |
+      import copy
+
+      warehouse = {"A": ["nails", "bolts"], "B": ["glue"]}
+      planned = copy.deepcopy(warehouse)
+      planned["A"].remove("bolts")
+      planned["B"].append("bolts")
+      print(warehouse)
+      print(planned)
+    expectedOutput: |
+      {'A': ['nails', 'bolts'], 'B': ['glue']}
+      {'A': ['nails'], 'B': ['glue', 'bolts']}
+    tests:
+      - name: warehouse is unchanged
+        code: |
+          assert warehouse == {"A": ["nails", "bolts"], "B": ["glue"]}, f"warehouse must not change, but it is {warehouse!r}."
+      - name: planned has the move
+        code: |
+          assert defined("planned"), "Create a variable named planned."
+          assert planned == {"A": ["nails"], "B": ["glue", "bolts"]}, f"planned is {planned!r}."
+      - name: no shared shelves
+        code: |
+          assert planned["A"] is not warehouse["A"] and planned["B"] is not warehouse["B"], "planned's shelf lists are shared with warehouse. Make a deep copy."
+      - name: planned is built by copying
+        code: |
+          assert source.count('"nails"') == 1 and source.count('"glue"') == 1, "Build planned by copying warehouse, not by typing a new dictionary."
+      - name: prints both
+        code: |
+          assert output_lines() == ["{'A': ['nails', 'bolts'], 'B': ['glue']}", "{'A': ['nails'], 'B': ['glue', 'bolts']}"], f"Your program printed {output()!r}."
+    hints:
+      - The values in warehouse are lists, and you are going to mutate them. What kind of copy keeps them private?
+      - "`copy.deepcopy(warehouse)`"
+      - "Then `planned[\"A\"].remove(\"bolts\")` and `planned[\"B\"].append(\"bolts\")`."
+    feedback:
+      - when: { outputContains: "{'A': ['nails'], 'B': ['glue', 'bolts']}\n{'A': ['nails'], 'B': ['glue', 'bolts']}" }
+        message: warehouse changed too, so the shelf lists are shared. A shallow copy isn't enough here - use copy.deepcopy.
+    explanation: >-
+      The shelf lists are mutated by remove() and append(), so planned needs its own lists. deepcopy copies the
+      dictionary and every list inside it, leaving warehouse untouched.
+
+  - id: m-debug-list-copy
+    type: debug
+    skill: debugging
+    prompt: |
+      A teacher keeps the original marks and adds a 5-mark bonus to the first mark of the first student in
+      a copy. But the original marks change too. Fix it so the program prints:
+
+      ```text
+      [[70, 80], [65, 90]]
+      [[75, 80], [65, 90]]
+      ```
+    starterCode: |
+      marks = [[70, 80], [65, 90]]
+      adjusted = list(marks)
+      adjusted[0][0] += 5
+      print(marks)
+      print(adjusted)
+    solution: |
+      import copy
+
+      marks = [[70, 80], [65, 90]]
+      adjusted = copy.deepcopy(marks)
+      adjusted[0][0] += 5
+      print(marks)
+      print(adjusted)
+    expectedOutput: |
+      [[70, 80], [65, 90]]
+      [[75, 80], [65, 90]]
+    tests:
+      - name: original marks unchanged
+        code: |
+          assert marks == [[70, 80], [65, 90]], f"marks must not change, but it is {marks!r}."
+      - name: bonus applied to the copy
+        code: |
+          assert adjusted == [[75, 80], [65, 90]], f"adjusted should be [[75, 80], [65, 90]], but it is {adjusted!r}."
+      - name: rows are independent
+        code: |
+          assert adjusted[0] is not marks[0], "adjusted[0] is still the same list as marks[0]. Copy the inner lists too."
+      - name: copied, not retyped
+        code: |
+          assert source.count("70") == 1 and source.count("65") == 1, "Make adjusted by copying marks, not by typing the numbers again."
+    hints:
+      - list(marks) makes a new outer list. Which objects does it share with marks?
+      - "`adjusted[0][0] += 5` assigns into the inner list adjusted[0] - which is marks[0]."
+      - "Use copy.deepcopy(marks) after import copy, or copy each inner list."
+    feedback:
+      - when: { outputEquals: "[[75, 80], [65, 90]]\n[[75, 80], [65, 90]]\n" }
+        message: marks still changes. list(marks) is a shallow copy, so the inner lists are shared. Copy them too.
+    explanation: >-
+      `list(marks)` is a shallow copy: adjusted[0] and marks[0] are the same list, so assigning into it
+      changes both. A deep copy gives adjusted its own inner lists.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-shallow-vs-deep, m-mcq-undo, m-tf-flat-shallow, m-code-clone-inventory, m-debug-list-copy]
+
+cheatsheet: |
+  ```python
+  import copy
+  b = a                   # NOT a copy: same object
+  b = a.copy()            # shallow (also list(a), a[:], copy.copy(a))
+  d2 = d.copy()           # shallow dict (also dict(d)); s.copy() / set(s) for sets
+  b = copy.deepcopy(a)    # deep: copies every mutable object inside, recursively
+  rows = []
+  for row in grid:        # two-level copy by hand
+      rows.append(row.copy())
+  ```
+  - Shallow: new outer container, shared elements → mutations inside elements are seen by both
+  - Deep: shares nothing mutable; preserves shared references and cycles (memo); costs time and memory
+  - Flat list of immutables → shallow is enough · nested data you'll mutate → deep (or copy only what changes)

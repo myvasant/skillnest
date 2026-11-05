@@ -1,0 +1,1261 @@
+id: python.while-loops
+concept: python.while-loops
+title: While Loops
+subtitle: Repeating work for as long as a condition holds
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  A while loop repeats a block of code for as long as its condition is true. Learn exactly when the
+  condition is checked, why something in the body must change, how infinite loops happen, and the
+  counter, accumulator and sentinel patterns that real programs are built from.
+objectives:
+  - Explain the order in which a while loop checks its condition and runs its body, and predict how many times the body runs.
+  - Trace a while loop iteration by iteration, by hand and with the step-through tracer.
+  - Write loops that use a counter, an accumulator, or a sentinel value read with input().
+  - Recognise why a loop never ends (no update, wrong direction, update outside the body, != on floats) and fix it.
+  - Choose a while loop when the number of repetitions is not known in advance.
+sources:
+  - title: "Python Language Reference: The while statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-while-statement
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: First Steps Towards Programming"
+    url: https://docs.python.org/3/tutorial/introduction.html#first-steps-towards-programming
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: input()"
+    url: https://docs.python.org/3/library/functions.html#input
+    publisher: Python Software Foundation
+  - title: "dis — Disassembler for Python bytecode"
+    url: https://docs.python.org/3/library/dis.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why programs need to repeat themselves
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Computers are useful because they repeat work tirelessly: add up every price on a receipt,
+          keep asking for a password until it is right, move every character in a game one step per
+          frame. So far, every statement in your programs has run **at most once**. To do something three
+          times, you would have to write it three times:
+      - type: code
+        runnable: true
+        code: |
+          print("Lap 1")
+          print("Lap 2")
+          print("Lap 3")
+        expectedOutput: |
+          Lap 1
+          Lap 2
+          Lap 3
+        caption: Fine for three laps. Now imagine 300 laps — or a number of laps the user types in.
+      - type: markdown
+        body: |
+          Copy-paste breaks down in two ways. It does not **scale** (300 laps means 300 lines), and it
+          cannot handle a count that is **unknown when you write the program** ("keep asking until the
+          answer is valid" might take one try or ten).
+
+          A [loop](glossary:loop) solves both problems: you write the repeated step **once** and tell
+          Python when to stop. Here is the same program with a `while` loop:
+      - type: code
+        runnable: true
+        code: |
+          lap = 1
+          while lap <= 3:
+              print("Lap", lap)
+              lap += 1
+        expectedOutput: |
+          Lap 1
+          Lap 2
+          Lap 3
+        caption: Change the 3 to 300 and run it again. One character changes; the program does not grow.
+        annotations:
+          - line: 2
+            text: "\"While `lap` is at most 3, keep doing the indented lines.\""
+          - line: 4
+            text: Moves `lap` one step closer to making the condition False. Without this line the loop would never end.
+
+  - id: anatomy
+    title: How a while loop works
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A `while` statement has a **condition** and an indented **body**:
+
+          ```text
+          while condition:
+              body statement
+              body statement
+          statement after the loop
+          ```
+
+          Python follows exactly these rules:
+
+          1. **Evaluate the condition** (any [expression](glossary:expression); its truth value is used,
+             just as in an [if statement](concept:python.conditionals)).
+          2. If it is **true**, run the **whole body** from top to bottom, then **go back to step 1**.
+          3. If it is **false**, skip the body and continue with the first statement after the loop.
+
+          One run of the body is called an [iteration](glossary:iteration). The body is defined by
+          indentation, exactly like an `if` block, and the line with `while` ends in a colon.
+      - type: code
+        runnable: true
+        code: |
+          count = 3
+          while count > 0:
+              print(count)
+              count -= 1
+          print("Liftoff!")
+        expectedOutput: |
+          3
+          2
+          1
+          Liftoff!
+        annotations:
+          - line: 2
+            text: Checked four times — with count 3, 2 and 1 (True) and finally with 0 (False).
+          - line: 5
+            text: Not indented, so it is not part of the body. It runs once, after the loop has finished.
+      - type: callout
+        variant: tip
+        title: Read it aloud
+        body: |
+          `while count > 0:` reads as "while count is greater than zero, keep doing this". The loop
+          **ends** when the condition becomes false — so ask yourself "what makes it false, and does the
+          body ever cause that?"
+      - type: item
+        ref: predict-countdown
+
+  - id: mental-model
+    title: "Mental model: an if that jumps back"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          A useful, accurate picture: **a while loop is an `if` statement that jumps back to its own
+          condition after the body finishes.** An `if` asks its question once; a `while` asks the same
+          question again after every iteration, until the answer is "no".
+
+          Step through the countdown. Watch the highlighted line return to `while count > 0:` after each
+          iteration, and watch the name `count` move to a new integer object each time `count -= 1` runs.
+      - type: visualization
+        component: python-tracer
+        title: Step through a countdown
+        caption: >-
+          Press Next to run one step. Notice the pattern line 2 → 3 → 4 → back to 2. The last check of
+          line 2 finds count is 0, so execution jumps straight to line 5.
+        props:
+          code: |
+            count = 3
+            while count > 0:
+                print(count)
+                count -= 1
+            print("Liftoff!")
+      - type: markdown
+        body: |
+          Notice **when** the question is asked: only at the top, before each iteration. Python does not
+          watch the condition while the body runs. Predict the output of this program before reading on:
+      - type: item
+        ref: predict-midbody
+      - type: callout
+        variant: misconception
+        title: '"The loop stops the moment the condition becomes false"'
+        body: |
+          The condition is checked **only** when execution reaches the `while` line. If the body makes
+          the condition false halfway through, the rest of the body still runs; the loop ends at the
+          *next* check. (To leave in the middle of the body on purpose you will use
+          [break](concept:python.loop-control).)
+
+  - id: loop-variable
+    title: "Start, test, update: the three jobs of a loop variable"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Most while loops are controlled by a **loop variable** — a name whose value decides whether the
+          loop continues. That variable needs three things, and forgetting any one of them is the most
+          common loop bug:
+
+          | Job | Where | Example |
+          |---|---|---|
+          | **Start** — give it a first value | before the loop | `n = 1` |
+          | **Test** — decide whether to run again | the condition | `while n <= 4:` |
+          | **Update** — move it toward making the test false | inside the body | `n += 1` |
+      - type: code
+        runnable: true
+        code: |
+          n = 1                      # start
+          while n <= 4:              # test
+              print(n, "squared is", n * n)
+              n += 1                 # update
+        expectedOutput: |
+          1 squared is 1
+          2 squared is 4
+          3 squared is 9
+          4 squared is 16
+      - type: markdown
+        body: |
+          Because the test comes **first**, a loop whose condition is false from the start runs **zero
+          times** — the body is skipped entirely. That is often exactly what you want:
+      - type: code
+        runnable: true
+        code: |
+          tickets_left = 0
+          while tickets_left > 0:
+              print("Selling a ticket")
+              tickets_left -= 1
+          print("Sold out")
+        expectedOutput: |
+          Sold out
+        caption: With no tickets left, the body never runs. Change 0 to 2 and run it again.
+      - type: callout
+        variant: note
+        title: No do-while in Python
+        body: |
+          Some languages have a `do … while` loop whose body always runs at least once. Python does not.
+          When you need "run once, then check", you either set the variable so the first test passes
+          (as the sentinel pattern below does) or write `while True:` with a `break` — covered in
+          [break, continue and loop else](concept:python.loop-control).
+
+  - id: infinite-loops
+    title: Infinite loops
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          If the condition never becomes false, the loop never ends. This is an
+          [infinite loop](glossary:infinite-loop), and every programmer writes one sooner or later.
+          The three classic causes:
+      - type: code
+        status: illustrative
+        code: |
+          n = 1
+          while n <= 5:
+              print(n)
+          # forgot "n += 1": n is 1 forever, so n <= 5 is always True
+        caption: "Not executed here because it never stops. Cause 1: no update at all."
+      - type: code
+        status: illustrative
+        code: |
+          n = 1
+          while n <= 5:
+              print(n)
+          n += 1      # not indented, so it is NOT part of the body
+        caption: "Not executed (never stops). Cause 2: the update is outside the body, so it would only run after a loop that never finishes."
+      - type: code
+        status: illustrative
+        code: |
+          n = 1
+          while n <= 5:
+              print(n)
+              n -= 1      # moves AWAY from the exit: 1, 0, -1, -2, ...
+        caption: "Not executed (never stops). Cause 3: the update goes in the wrong direction."
+      - type: markdown
+        body: |
+          **What happens if you run one?**
+
+          - In Groundwork, your program is **stopped automatically after 8 seconds** (or once it has
+            printed 200,000 characters — the message then asks "Is a loop printing forever?"). Nothing is
+            damaged; fix the code and run again.
+          - On your own computer, press **Ctrl+C** in the terminal. Python stops the program with a
+            `KeyboardInterrupt` and shows the line it was running.
+
+          **How to debug one:** print the loop variable at the start of the body (or use *Step through*)
+          and check that every iteration moves it **toward** the value that makes the condition false.
+      - type: callout
+        variant: production
+        title: Loops that run forever on purpose
+        body: |
+          Some programs are *meant* to loop until they are shut down: a web server waiting for requests,
+          a game redrawing the screen, a worker processing a queue. They are usually written as
+          `while True:` and leave the loop with `break` (or stop when the process is terminated). Such
+          loops always wait for something (a request, a frame timer) instead of spinning as fast as
+          possible.
+      - type: item
+        ref: mcq-which-ends
+
+  - id: counters-accumulators
+    title: Counters and accumulators
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Two patterns appear in almost every loop you will ever write:
+
+          - A [counter](glossary:counter-variable) counts **how many** times something happened:
+            start at 0, add 1 each time.
+          - An [accumulator](glossary:accumulator) builds up a **running result**, such as a total: start
+            at a neutral value (0 for a sum), and combine each new value into it.
+
+          This program uses both to add up the digits of a number. It does not know in advance how many
+          digits there are — the loop simply runs until no digits are left, which is exactly what `while`
+          is good at. It uses `% 10` to get the last digit and `//= 10` to drop it (from
+          [numbers](concept:python.numbers)).
+      - type: code
+        runnable: true
+        code: |
+          number = 4071
+          digit_total = 0
+          digit_count = 0
+          while number > 0:
+              digit = number % 10
+              digit_total += digit
+              digit_count += 1
+              number //= 10
+          print("digits:", digit_count, "sum:", digit_total)
+        expectedOutput: |
+          digits: 4 sum: 12
+        annotations:
+          - line: 2
+            text: The accumulator starts at 0, the neutral value for addition.
+          - line: 3
+            text: The counter starts at 0 because nothing has been counted yet.
+          - line: 8
+            text: The update. Each iteration removes one digit, so number eventually reaches 0 and the loop ends.
+      - type: markdown
+        body: |
+          **Tracing** means following a program step by step and writing down what each name refers to.
+          Professionals do this on paper with a [trace table](glossary:trace-table) — one row per
+          iteration. Here is the table for `number = 472`:
+
+          | Iteration | `number` at the check | `digit` | `digit_total` | `digit_count` | `number` after `//= 10` |
+          |---|---|---|---|---|---|
+          | 1 | 472 → `472 > 0` True | 2 | 2 | 1 | 47 |
+          | 2 | 47 → True | 7 | 9 | 2 | 4 |
+          | 3 | 4 → True | 4 | 13 | 3 | 0 |
+          | — | 0 → `0 > 0` **False**, loop ends | | | | |
+
+          Now check the table against the real execution:
+      - type: visualization
+        component: python-tracer
+        title: Trace the digit loop
+        caption: Compare each iteration with the trace table above. The names digit_total and digit_count are rebound to new integers on every pass.
+        props:
+          code: |
+            number = 472
+            digit_total = 0
+            digit_count = 0
+            while number > 0:
+                digit = number % 10
+                digit_total += digit
+                digit_count += 1
+                number //= 10
+            print("digits:", digit_count, "sum:", digit_total)
+      - type: markdown
+        body: |
+          Counting iterations also answers "how many steps until…?" questions, where the number of
+          repetitions is exactly what you are trying to find out:
+      - type: code
+        runnable: true
+        code: |
+          value = 100
+          steps = 0
+          while value > 1:
+              value //= 2
+              steps += 1
+          print(steps, "halvings to get from 100 down to", value)
+        expectedOutput: |
+          6 halvings to get from 100 down to 1
+        caption: "100 → 50 → 25 → 12 → 6 → 3 → 1. The counter records how many iterations it took."
+      - type: item
+        ref: predict-accumulate
+
+  - id: sentinel
+    title: Sentinel loops with input()
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Loops really earn their keep with user input, because you cannot know how many values a user
+          will type. A common design is a [sentinel value](glossary:sentinel-value): a special input that
+          means "stop", such as `done`, an empty line, or `0`.
+
+          The pattern has a recognisable shape, often called a **priming read**:
+
+          1. Read the first value **before** the loop (so the condition has something to test).
+          2. Loop **while the value is not the sentinel**.
+          3. Process the value, then read the **next** value as the **last** step of the body.
+      - type: code
+        runnable: true
+        stdin: |
+          70
+          85
+          90
+          done
+        code: |
+          total = 0
+          count = 0
+          entry = input("Score (or done): ")
+          while entry != "done":
+              total += int(entry)
+              count += 1
+              entry = input("Score (or done): ")
+          print()
+          print("Scores entered:", count)
+          print("Total:", total)
+        expectedOutput: |
+          Score (or done): Score (or done): Score (or done): Score (or done):
+          Scores entered: 3
+          Total: 245
+        caption: >-
+          The input box supplies 70, 85, 90 and done. Typed values are not echoed (as when input is piped
+          into Python), so the four prompts appear on one line; print() then ends that line.
+        annotations:
+          - line: 3
+            text: The priming read. If the very first entry is "done", the body runs zero times and the total is 0.
+          - line: 4
+            text: Compare with the sentinel while entry is still text. Converting "done" with int() would crash.
+          - line: 5
+            text: Only real scores reach this line, so int() is safe here.
+          - line: 7
+            text: Read the next value as the last step, so the condition tests it straight away.
+      - type: markdown
+        body: |
+          Step through the same pattern with a smaller input. Watch `entry` take each typed value in
+          turn, and notice that `"0"` (the sentinel here) never reaches `int()`.
+      - type: visualization
+        component: python-tracer
+        title: Trace a sentinel loop
+        caption: The tracer reads 4, 6 and then the sentinel 0 from its input.
+        props:
+          stdin: |
+            4
+            6
+            0
+          code: |
+            total = 0
+            entry = input("Number: ")
+            while entry != "0":
+                total += int(entry)
+                entry = input("Number: ")
+            print("Total:", total)
+      - type: markdown
+        body: |
+          The same shape **validates** input: keep asking until the answer is acceptable. Here the loop
+          condition describes a *bad* answer, so the loop runs only while the answer is bad.
+      - type: code
+        runnable: true
+        stdin: |
+          -4
+          200
+          35
+        code: |
+          age = int(input("Age: "))
+          while age < 0 or age > 130:
+              print("Please enter an age from 0 to 130.")
+              age = int(input("Age: "))
+          print("Thanks! Age recorded:", age)
+        expectedOutput: |
+          Age: Please enter an age from 0 to 130.
+          Age: Please enter an age from 0 to 130.
+          Age: Thanks! Age recorded: 35
+        caption: Edit the input box values and run it again. A first answer of 35 skips the loop completely.
+      - type: item
+        ref: mcq-sentinel-order
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Program never finishes (stopped after 8 s) | The loop variable is never updated, is updated outside the body, or moves the wrong way | Check the update line: is it indented under `while`, and does it move toward the exit? |
+          | Loop runs one time too many or too few | [Off-by-one](glossary:off-by-one-error): `<` where you needed `<=` (or the reverse) | Trace the **last** iteration by hand: what is the variable when the condition is checked for the final time? |
+          | Body never runs | The condition is already false at the start | Check the starting value and the comparison direction. |
+          | `TypeError: '<' not supported between instances of 'str' and 'int'` | Comparing `input()` text with a number | Convert first: `int(input(...))`. |
+          | `ValueError: invalid literal for int() with base 10: 'done'` | Converting the sentinel before checking for it | Compare the text with the sentinel first; convert only real values. |
+          | `IndentationError: expected an indented block after 'while' statement` | The body is not indented | Indent the body consistently (4 spaces). |
+          | `SyntaxError: expected ':'` | Missing colon after the condition | Write `while condition:` |
+      - type: code
+        runnable: true
+        stdin: |
+          15
+        code: |
+          age = input("Age: ")
+          while age < 18:
+              print("Too young, try again.")
+              age = input("Age: ")
+        expectError: TypeError
+        caption: "input() always returns a string, and Python will not compare a string with a number. Fix: age = int(input(\"Age: \"))."
+      - type: code
+        runnable: true
+        stdin: |
+          5
+          done
+        code: |
+          total = 0
+          entry = int(input("Number: "))
+          while entry != "done":
+              total += entry
+              entry = int(input("Number: "))
+          print(total)
+        expectError: ValueError
+        caption: "The second int() receives \"done\" and fails. The sentinel must be checked while it is still text."
+      - type: markdown
+        body: |
+          **A subtle one: `!=` with floats.** You might expect this loop to stop after ten steps of 0.1:
+      - type: code
+        status: illustrative
+        code: |
+          x = 0.0
+          while x != 1.0:
+              x += 0.1
+        caption: Not executed — it never stops, because x is never exactly 1.0.
+      - type: code
+        runnable: true
+        code: |
+          x = 0.0
+          count = 0
+          while count < 10:
+              x += 0.1
+              count += 1
+          print(x, x == 1.0)
+        expectedOutput: |
+          0.9999999999999999 False
+        caption: "After ten additions x is 0.9999999999999999, not 1.0 (binary floating point, from the numbers lesson). The next addition jumps past 1.0, so != never becomes False."
+      - type: markdown
+        body: |
+          **Rule of thumb:** control loops with integers where you can, and use `<` / `>` rather than
+          `!=` whenever a value could step *over* the exit value. That applies to integers too:
+          `while i != 5:` with `i += 2` starting from 0 visits 0, 2, 4, 6, … and never stops.
+      - type: item
+        ref: debug-times-table
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          For each exercise, decide the **start**, **test** and **update** before you type anything.
+          If your program is stopped after 8 seconds, look for the missing or misplaced update.
+      - type: item
+        ref: code-sum-to-n
+      - type: item
+        ref: parsons-count-digits
+      - type: item
+        ref: code-guessing-game
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The language rule.** The [reference manual](https://docs.python.org/3/reference/compound_stmts.html#the-while-statement)
+          defines `while` as: repeatedly test the expression and, if it is true, execute the body. When
+          the expression is false (which may be the first time it is tested), the loop ends. A `while`
+          statement may also have an `else` clause, which runs when the condition becomes false but not
+          when the loop is left with `break` — see [loop else](concept:python.loop-control).
+
+          **Truth values.** The condition does not have to be a comparison. Python uses its truth value,
+          so `while number:` means `while number != 0:` for integers, and `while text:` means "while
+          the string is not empty" ([booleans](concept:python.booleans)).
+
+          **How CPython runs it.** CPython first compiles your code to **bytecode**, a list of simple
+          instructions for its virtual machine. A while loop becomes: evaluate the
+          condition, a *conditional jump* past the body if it is false, the body, and an unconditional
+          *backward jump* to the condition. You can see this with the `dis` module:
+      - type: code
+        runnable: true
+        status: illustrative
+        code: |
+          import dis
+          dis.dis("while n > 0:\n    n -= 1\nprint(n)")
+        caption: >-
+          Not verified, because bytecode is a CPython implementation detail that changes between
+          versions. Run it to see your interpreter's instructions; the Python 3.14 output is shown below.
+      - type: code
+        language: text
+        code: |
+          1   L1:     LOAD_NAME                0 (n)
+                      LOAD_SMALL_INT           0
+                      COMPARE_OP             148 (bool(>))
+                      POP_JUMP_IF_FALSE       12 (to L2)
+                      NOT_TAKEN
+
+          2           LOAD_NAME                0 (n)
+                      LOAD_SMALL_INT           1
+                      BINARY_OP               23 (-=)
+                      STORE_NAME               0 (n)
+                      JUMP_BACKWARD           18 (to L1)
+
+          3   L2:     LOAD_NAME                1 (print)
+                      ...
+        caption: "CPython 3.14 (abridged). POP_JUMP_IF_FALSE is the exit test; JUMP_BACKWARD is the jump that goes back to the condition."
+      - type: markdown
+        body: |
+          This is the "if that jumps back" model made concrete: the condition test sits at label `L1`,
+          and every iteration ends by jumping back to it.
+
+          **Performance.** Each iteration executes several bytecode instructions, and each instruction
+          has a small cost. For millions of iterations, built-in functions that loop in C (such as
+          `sum()`, which you will use with [for loops](concept:python.for-loops)) are usually much
+          faster than a hand-written while loop doing the same arithmetic. Measure before optimising —
+          see [profiling](concept:python.profiling).
+
+          **Stopping a runaway loop.** Ctrl+C makes the operating system send an interrupt signal.
+          CPython's signal handler only sets a flag; the interpreter checks that flag regularly while it
+          runs bytecode (backward jumps such as `JUMP_BACKWARD` are one of the check points), and then
+          raises `KeyboardInterrupt` in your program. In the browser there is no terminal, so Groundwork
+          runs your code in a separate worker and terminates that worker after the time limit.
+      - type: code
+        runnable: true
+        code: |
+          x = 0.0
+          iterations = 0
+          while x < 1.0:
+              x += 0.1
+              iterations += 1
+          print(iterations, x)
+        expectedOutput: |
+          11 1.0999999999999999
+        caption: "Even with < the float version runs 11 times, not 10, because 0.9999999999999999 < 1.0. Counting with an integer and computing x = count / 10 avoids the drift."
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `while condition:` runs the indented body **again and again while the condition is true**.
+          - The condition is checked **only at the top**, before each iteration — never in the middle of
+            the body. If it is false at the start, the body runs **zero** times.
+          - Every loop variable needs a **start**, a **test** and an **update** that moves it toward the
+            exit. Missing or misplaced updates cause **infinite loops** (Groundwork stops them after 8 s;
+            locally press Ctrl+C).
+          - **Counters** count iterations; **accumulators** build a running result.
+          - **Sentinel loops** read input before the loop and again at the end of the body, and check for
+            the sentinel before converting.
+          - Use `while` when you **don't know in advance** how many repetitions you need. For walking
+            through a known sequence, the [for loop](concept:python.for-loops) is simpler.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "when would you use a while loop instead of a for loop?" (unknown number of iterations:
+          input validation, convergence, waiting for a condition) and "find the bug" questions with an
+          infinite or off-by-one loop. Talk through start, test and update, and trace the last
+          iteration out loud.
+
+items:
+  - id: predict-countdown
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? Write each value on its own line.
+    code: |
+      n = 10
+      while n > 0:
+          print(n)
+          n -= 3
+    answer: |
+      10
+      7
+      4
+      1
+    explanation: >-
+      The condition is checked before each iteration: 10, 7, 4 and 1 are all greater than 0, so each is
+      printed and then reduced by 3. After printing 1, n becomes -2, the check -2 > 0 is False, and the
+      loop ends without printing -2.
+    wrongAnswers:
+      - answer: |
+          10
+          7
+          4
+          1
+          -2
+        feedback: >-
+          After n becomes -2, the next check `-2 > 0` is False, so the body (and its print) does not run
+          again. The loop only prints values that passed the check.
+      - answer: |
+          10
+          7
+          4
+        feedback: >-
+          1 > 0 is True, so the body runs once more and prints 1. Check each value against the condition
+          before deciding the loop has ended.
+      - answer: |
+          7
+          4
+          1
+        feedback: >-
+          The print comes before the update in the body, so the first value printed is the starting value
+          10.
+
+  - id: predict-midbody
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      x = 0
+      while x < 3:
+          x += 2
+          print("x is", x)
+      print("after the loop, x is", x)
+    answer: |
+      x is 2
+      x is 4
+      after the loop, x is 4
+    explanation: >-
+      Check 0 < 3 (True): x becomes 2 and is printed. Check 2 < 3 (True): x becomes 4 — the condition is
+      now false, but Python does not check it again until the body finishes, so "x is 4" is still
+      printed. Check 4 < 3 (False): the loop ends.
+    wrongAnswers:
+      - answer: |
+          x is 2
+          after the loop, x is 4
+        feedback: >-
+          This assumes the loop stops the instant x reaches 4. The condition is only checked at the top
+          of each iteration, so the print in the same iteration still runs.
+      - answer: |
+          x is 2
+          after the loop, x is 2
+        feedback: >-
+          In the second iteration x += 2 does run (the check 2 < 3 was True), so x becomes 4 and that
+          iteration's print shows it.
+      - answer: |
+          x is 2
+          x is 4
+          x is 6
+          after the loop, x is 6
+        feedback: After x becomes 4, the next check is 4 < 3, which is False, so there is no third iteration.
+
+  - id: mcq-which-ends
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Exactly one of these loops finishes. Which one?
+
+      ```python
+      # A
+      i = 10
+      while i > 0:
+          i += 1
+
+      # B
+      i = 0
+      while i != 5:
+          i += 2
+
+      # C
+      i = 0
+      while i < 5:
+          i += 2
+
+      # D
+      i = 0
+      while i < 5:
+          print(i)
+      ```
+    explanation: >-
+      A loop ends only if its update moves the variable to a value that makes the condition false. C goes
+      0, 2, 4, 6 and stops when 6 < 5 is False. A moves away from the exit, B jumps over 5, and D never
+      updates i at all.
+    options:
+      - id: a
+        text: A
+        feedback: i starts at 10 and only grows, so i > 0 stays True forever. The update moves away from the exit.
+      - id: b
+        text: B
+        feedback: >-
+          i takes the values 0, 2, 4, 6, 8, … and never equals 5, so i != 5 is always True. Use < when a
+          value can step over the exit.
+      - id: c
+        text: C
+        correct: true
+        feedback: Right. i goes 0, 2, 4, 6, and the check 6 < 5 is False, so the loop ends.
+      - id: d
+        text: D
+        feedback: Nothing in the body changes i, so i < 5 is True forever and 0 is printed endlessly.
+
+  - id: predict-accumulate
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      total = 0
+      n = 1
+      while n < 10:
+          total += n
+          n += 3
+      print(total, n)
+    answer: "12 10"
+    explanation: >-
+      Trace it: n = 1 → total 1, n 4; n = 4 → total 5, n 7; n = 7 → total 12, n 10. The check 10 < 10 is
+      False, so the loop ends with total 12 and n 10.
+    wrongAnswers:
+      - answer: "22 13"
+        feedback: >-
+          That adds 10 as well, as if the condition were n <= 10. When n is 10, the check 10 < 10 is False,
+          so 10 is never added.
+      - answer: "12 7"
+        feedback: >-
+          The update n += 3 runs in every iteration, including the last one, so n ends at 10 — the value
+          that made the condition false.
+      - answer: "5 7"
+        feedback: When n is 7, the check 7 < 10 is True, so the body runs once more and adds 7 to total.
+
+  - id: mcq-sentinel-order
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      In the sentinel loop below, why is `input()` called twice — once before the loop and once as the
+      last line of the body?
+
+      ```python
+      entry = input("Score (or done): ")
+      while entry != "done":
+          total += int(entry)
+          entry = input("Score (or done): ")
+      ```
+    explanation: >-
+      The condition needs a value to test before the first iteration, and after processing each value
+      the program needs the next one ready for the next test. Reading at the end of the body means the
+      sentinel is checked immediately, before anything tries to convert it.
+    options:
+      - id: a
+        text: So that the condition always tests a freshly read value — the first one before the loop, every later one at the end of the body.
+        correct: true
+        feedback: Exactly. Each value is read, then tested, then (only if it is not the sentinel) processed.
+      - id: b
+        text: Because Python ignores the first input() of a program.
+        feedback: Every input() call reads one line. The first value is used — it is tested by the condition and then added.
+      - id: c
+        text: To read two scores per iteration.
+        feedback: >-
+          Only one input() runs per iteration (the one at the end of the body). The one before the loop
+          runs once, before the first check.
+      - id: d
+        text: It is a style choice; moving the second input() to the start of the body would work the same.
+        feedback: >-
+          Then the body would overwrite entry before using it, skipping the first score, and "done" would
+          reach int() before the condition could catch it — a ValueError.
+
+  - id: debug-times-table
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print the 7 times table from `7 x 1 = 7` to `7 x 10 = 70` (ten lines), but the
+      last line is missing. Fix the loop — keep it a while loop with a single print call.
+    starterCode: |
+      n = 1
+      while n < 10:
+          print("7 x", n, "=", 7 * n)
+          n += 1
+    solution: |
+      n = 1
+      while n <= 10:
+          print("7 x", n, "=", 7 * n)
+          n += 1
+    expectedOutput: |
+      7 x 1 = 7
+      7 x 2 = 14
+      7 x 3 = 21
+      7 x 4 = 28
+      7 x 5 = 35
+      7 x 6 = 42
+      7 x 7 = 49
+      7 x 8 = 56
+      7 x 9 = 63
+      7 x 10 = 70
+    tests:
+      - name: prints ten lines
+        code: |
+          lines = output_lines()
+          assert len(lines) == 10, f"Expected 10 lines (7 x 1 up to 7 x 10), but your program printed {len(lines)}."
+      - name: starts at 7 x 1 and ends at 7 x 10
+        code: |
+          lines = output_lines()
+          assert lines and lines[0] == "7 x 1 = 7", f"The first line should be '7 x 1 = 7', not {lines[:1]}."
+          assert lines[-1] == "7 x 10 = 70", f"The last line should be '7 x 10 = 70', not {lines[-1:]}."
+      - name: still one loop, one print
+        code: |
+          assert uses("While"), "Keep the while loop and fix its condition."
+          assert source.count("print(") == 1, "Use the single print call inside the loop instead of adding extra print lines."
+    hints:
+      - Trace the end of the loop. What is n when the condition is checked for the last time?
+      - When n is 10, is `n < 10` True or False? Which comparison is True for 10 but False for 11?
+      - Change the condition to `n <= 10` (or `n < 11`).
+    feedback:
+      - when: { outputContains: "7 x 11 = 77" }
+        message: Now the loop goes one step too far. It should stop after n = 10, so the condition must be False when n is 11.
+      - when: { codeContains: "n < 10" }
+        message: "`n < 10` is False when n is 10, so the tenth line never prints. Which comparison includes 10?"
+    explanation: >-
+      This is an off-by-one error. With `n < 10`, the loop body runs for 1 to 9; when n becomes 10 the
+      check fails. `n <= 10` is True for 10 and False for 11, so exactly ten lines are printed.
+
+  - id: code-sum-to-n
+    type: code
+    skill: implementation
+    prompt: |
+      The program reads a whole number `n`. Use a **while loop** to add up `1 + 2 + … + n` in `total`
+      and print it. For input `5` the total is `15`; for `0` it is `0`.
+
+      Do not use `sum()` or `range()` — the point is to manage the loop variable yourself.
+    stdin: |
+      5
+    starterCode: |
+      n = int(input("n: "))
+      total = 0
+      # Use a while loop to add 1, 2, ..., n to total.
+
+      print(total)
+    solution: |
+      n = int(input("n: "))
+      total = 0
+      i = 1
+      while i <= n:
+          total += i
+          i += 1
+      print(total)
+    expectedOutput: |
+      n: 15
+    tests:
+      - name: uses a while loop without sum() or range()
+        code: |
+          assert uses("While"), "Use a while loop to repeat the addition."
+          assert not calls("sum") and not calls("range"), "Solve it with your own while loop instead of sum() or range()."
+      - name: total for n = 5
+        code: |
+          words = output().split()
+          assert words and words[-1] == "15", f"For n = 5 the last thing printed should be 15. Your program printed {output()!r}."
+      - name: works for other values of n
+        code: |
+          for typed, expected in [("10\n", "55"), ("1\n", "1"), ("0\n", "0")]:
+              words = run_program(typed).split()
+              assert words and words[-1] == expected, f"For n = {typed.strip()} the total should be {expected}, but your program printed {words[-1:]}."
+    hints:
+      - You need a second variable (for example `i`) that counts 1, 2, 3, … up to n. Where does it start?
+      - "Loop while `i <= n`. Inside the body: add i to total, then increase i by 1."
+      - |
+        The shape is:
+        ```python
+        i = 1
+        while i <= n:
+            total += i
+            i += 1
+        ```
+    feedback:
+      - when: { outputEquals: "n: 10\n" }
+        message: You added 1 to 4 but not 5. Your loop stops one step early — should the condition include n itself?
+      - when: { outputEquals: "n: 20\n" }
+        message: You added 2 to 6 instead of 1 to 5. Check where your counter starts and whether you update it before or after adding it.
+    explanation: >-
+      The counter i starts at 1 (start), the loop runs while i <= n (test), and each iteration adds i to
+      the accumulator total and then increases i (update). For n = 0 the condition 1 <= 0 is False at
+      once, so the body runs zero times and total stays 0.
+
+  - id: parsons-count-digits
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to count how many digits `90210` has and print the count (`5`). One line is a
+      distractor that does not belong.
+    solution: |
+      number = 90210
+      digits = 0
+      while number > 0:
+          number = number // 10
+          digits += 1
+      print(digits)
+    distractors:
+      - "    number = number % 10"
+    expectedOutput: |
+      5
+    explanation: >-
+      The counter starts at 0 before the loop. Each iteration drops the last digit with // 10 and counts
+      it, until number reaches 0. The print must come after the loop (not indented) so it runs once.
+      `number % 10` keeps only the last digit (0 here), which would end the loop after one iteration.
+
+  - id: code-guessing-game
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Write a number-guessing game. The secret number is `7`.
+
+      - Keep reading guesses (whole numbers) until the guess is correct.
+      - For each wrong guess, print `Too low` or `Too high`.
+      - When the guess is right, the final line prints how many guesses were used.
+
+      With the guesses 3, 9, 7 the output is:
+
+      ```text
+      Guess: Too low
+      Guess: Too high
+      Guess: Correct! Guesses used: 3
+      ```
+
+      (The prompts and messages share lines because typed answers are not echoed.)
+    stdin: |
+      3
+      9
+      7
+    starterCode: |
+      secret = 7
+      guesses = 1                     # the first guess is read on the next line
+      guess = int(input("Guess: "))
+
+      # Write a while loop that keeps going until guess == secret.
+      # For each wrong guess: print "Too low" or "Too high", read a new guess, and count it.
+
+      print("Correct! Guesses used:", guesses)
+    solution: |
+      secret = 7
+      guesses = 1                     # the first guess is read on the next line
+      guess = int(input("Guess: "))
+
+      while guess != secret:
+          if guess < secret:
+              print("Too low")
+          else:
+              print("Too high")
+          guess = int(input("Guess: "))
+          guesses += 1
+
+      print("Correct! Guesses used:", guesses)
+    expectedOutput: |
+      Guess: Too low
+      Guess: Too high
+      Guess: Correct! Guesses used: 3
+    tests:
+      - name: uses a while loop
+        code: |
+          assert uses("While"), "Use a while loop so the game can take any number of guesses."
+      - name: example game (3, 9, 7)
+        code: |
+          expected = ["Guess: Too low", "Guess: Too high", "Guess: Correct! Guesses used: 3"]
+          assert output_lines() == expected, f"Expected {expected}, but got {output_lines()}."
+      - name: right on the first guess
+        code: |
+          out = run_program("7\n").strip()
+          assert out == "Guess: Correct! Guesses used: 1", f"When the first guess is 7 the loop body should not run at all. Got {out!r}."
+      - name: a longer game
+        code: |
+          out = run_program("1\n2\n10\n8\n7\n").strip().split("\n")
+          expected = ["Guess: Too low", "Guess: Too low", "Guess: Too high", "Guess: Too high", "Guess: Correct! Guesses used: 5"]
+          assert out == expected, f"For guesses 1, 2, 10, 8, 7 expected {expected}, but got {out}."
+    hints:
+      - "The loop should continue while the guess is wrong: `while guess != secret:`"
+      - 'Inside the loop, use if/else to print the message, then read the next guess with `int(input("Guess: "))` and add 1 to guesses.'
+      - The final print is already after the loop. It runs once the condition is False — that is, when the guess is right.
+    feedback:
+      - when: { errorType: EOFError }
+        message: >-
+          Your program asked for more guesses than were typed. Make sure the loop stops as soon as
+          guess == secret, and that each iteration reads exactly one new guess.
+      - when: { errorType: TypeError }
+        message: A comparison mixes text and a number. Convert every guess with int(input(...)).
+      - when: { codeContains: "while", outputContains: "Guesses used: 1\n" }
+        message: Your loop is not counting the new guesses. Add 1 to guesses each time the loop reads another guess.
+    explanation: >-
+      This is the sentinel pattern with a twist: the "sentinel" is the correct answer. The first guess is
+      read before the loop, the condition tests it, and each iteration prints a hint, reads the next guess
+      and counts it. If the first guess is right, the body runs zero times.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-odd-total
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      total = 0
+      i = 1
+      while total < 10:
+          total += i
+          i += 2
+      print(i, total)
+    answer: "9 16"
+    explanation: >-
+      Iterations: total 1 (i 3), total 4 (i 5), total 9 (i 7). The check 9 < 10 is still True, so one more
+      iteration makes total 16 and i 9. Then 16 < 10 is False and the loop ends.
+    wrongAnswers:
+      - answer: "7 9"
+        feedback: >-
+          After total becomes 9, the check 9 < 10 is still True, so the body runs once more. The loop
+          does not look ahead to see whether the next addition would pass 10.
+      - answer: "7 16"
+        feedback: The update i += 2 runs in the same iteration as total += i, so after the last iteration i is 9.
+      - answer: "16 9"
+        feedback: print(i, total) prints i first.
+
+  - id: m-tf-zero-iterations
+    type: true-false
+    skill: recognition
+    prompt: "True or false: the body of a while loop always runs at least once."
+    answer: false
+    explanation: >-
+      The condition is evaluated before the first iteration. If it is already false, the body is skipped
+      entirely and execution continues after the loop. (Python has no do-while loop.)
+
+  - id: m-mcq-choose-loop
+    type: mcq
+    skill: transfer
+    prompt: Which task is the most natural fit for a while loop?
+    explanation: >-
+      A while loop shines when the number of repetitions depends on something you only discover while
+      running — such as how many attempts a user needs.
+    options:
+      - id: a
+        text: Keep asking for a password until the user types the correct one.
+        correct: true
+        feedback: Right. Nobody knows in advance how many attempts it will take; the loop repeats while the answer is wrong.
+      - id: b
+        text: Print each character of the word "loop".
+        feedback: >-
+          A while loop with an index can do it, but walking through a known sequence is what a for loop is
+          for — it needs no start, test or update of your own. That is the next lesson.
+      - id: c
+        text: Print a welcome message once when the program starts.
+        feedback: Something that happens once needs no loop at all.
+      - id: d
+        text: Decide whether a number is positive or negative.
+        feedback: That is a single decision, so an if/else statement is the right tool.
+
+  - id: m-code-doubling
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      A bacteria colony doubles every hour. The program reads the starting count. Use a while loop to
+      work out how many **whole hours** it takes until the colony has **at least 1000** bacteria, and
+      print that number of hours.
+
+      For a start of `100`: 100 → 200 → 400 → 800 → 1600, so it prints `4`. A start of 1000 or more needs
+      `0` hours.
+    stdin: |
+      100
+    starterCode: |
+      count = int(input("Starting count: "))
+      hours = 0
+      # Double count every hour until it reaches at least 1000.
+
+      print(hours)
+    solution: |
+      count = int(input("Starting count: "))
+      hours = 0
+      while count < 1000:
+          count *= 2
+          hours += 1
+      print(hours)
+    expectedOutput: |
+      Starting count: 4
+    tests:
+      - name: uses a while loop
+        code: |
+          assert uses("While"), "Use a while loop: you don't know in advance how many hours it takes."
+      - name: 4 hours from 100
+        code: |
+          words = output().split()
+          assert words and words[-1] == "4", f"Starting from 100 the answer is 4 hours. Your program printed {output()!r}."
+      - name: works for other starting counts
+        code: |
+          for typed, expected in [("1\n", "10"), ("300\n", "2"), ("999\n", "1"), ("1000\n", "0"), ("5000\n", "0")]:
+              words = run_program(typed).split()
+              assert words and words[-1] == expected, f"Starting from {typed.strip()} the answer should be {expected} hours, but your program printed {words[-1:]}."
+    hints:
+      - The loop should keep going while the colony is still too small. Which comparison with 1000 expresses that?
+      - "Each iteration is one hour: double count (`count *= 2`) and add 1 to hours."
+    feedback:
+      - when: { codeMatches: "count\\s*!=\\s*1000" }
+        message: >-
+          count can jump past 1000 without ever equalling it (800 → 1600), so `!=` never becomes False.
+          Use `<` to keep going while the colony is too small.
+      - when: { outputEquals: "Starting count: 5\n" }
+        message: One hour too many. Should the loop continue when count is exactly 1000, or 1600?
+    explanation: >-
+      `while count < 1000:` repeats only while the colony is too small. Each iteration doubles the count
+      (the update) and adds one hour (the counter). If the start is already 1000 or more, the body runs
+      zero times and 0 is printed.
+
+  - id: m-debug-sentinel
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should add up numbers until the user types `done`, then print the total. With the
+      input 5, 7, done it should end with `Total: 12`, but it crashes with a ValueError instead. Fix it.
+    stdin: |
+      5
+      7
+      done
+    starterCode: |
+      total = 0
+      entry = int(input("Number (or done): "))
+      while entry != "done":
+          total += entry
+          entry = int(input("Number (or done): "))
+      print("Total:", total)
+    solution: |
+      total = 0
+      entry = input("Number (or done): ")
+      while entry != "done":
+          total += int(entry)
+          entry = input("Number (or done): ")
+      print("Total:", total)
+    expectedOutput: |
+      Number (or done): Number (or done): Number (or done): Total: 12
+    tests:
+      - name: total for 5, 7, done
+        code: |
+          assert output().strip().endswith("Total: 12"), f"The output should end with 'Total: 12'. Your program printed {output()!r}."
+      - name: done straight away
+        code: |
+          out = run_program("done\n").strip()
+          assert out.endswith("Total: 0"), f"If the first entry is done, the total is 0. Got {out!r}."
+      - name: works for other numbers
+        code: |
+          out = run_program("1\n2\n3\n4\ndone\n").strip()
+          assert out.endswith("Total: 10"), f"For 1, 2, 3, 4, done the total is 10. Got {out!r}."
+          assert uses("While"), "Keep the while loop."
+    hints:
+      - Which line raises the ValueError, and what text is it trying to convert?
+      - The comparison with "done" must happen while entry is still a string. Where else could the int() conversion go?
+      - Read entry with plain input(...) and convert inside the body, where only real numbers arrive.
+    feedback:
+      - when: { errorType: ValueError }
+        message: >-
+          int() is still being given "done". Keep entry as text until the condition has compared it with
+          "done", and convert it only inside the body.
+      - when: { errorType: TypeError }
+        message: "`total += entry` adds a string to a number. Convert with `int(entry)` when you add it."
+    explanation: >-
+      Converting immediately after input() means "done" reaches int() before the condition can check it.
+      Keeping entry as text lets the condition compare it with "done"; only values that pass the check
+      reach int(entry) in the body.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-odd-total, m-tf-zero-iterations, m-mcq-choose-loop, m-code-doubling, m-debug-sentinel]
+
+cheatsheet: |
+  ```python
+  n = 1                    # start
+  while n <= 5:            # test: checked before EVERY iteration
+      print(n)
+      n += 1               # update: move toward making the test False
+
+  # sentinel loop (priming read)
+  entry = input("> ")
+  while entry != "done":
+      total += int(entry)   # convert only after checking for the sentinel
+      entry = input("> ")
+
+  # validation loop
+  age = int(input("Age: "))
+  while age < 0 or age > 130:
+      age = int(input("Age: "))
+  ```
+  - Body runs 0+ times; the condition is never re-checked mid-body
+  - Never ends? → missing update, update not indented, wrong direction, or `!=` that is stepped over
+  - Off by one? → trace the last check: `<` vs `<=`
+  - Stuck locally? Ctrl+C (KeyboardInterrupt). Groundwork stops programs after 8 s

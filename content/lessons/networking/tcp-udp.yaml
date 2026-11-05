@@ -1,0 +1,213 @@
+id: networking.tcp-udp
+concept: networking.tcp-udp
+title: 'TCP and UDP: Transport Layer Trade-offs'
+subtitle: What happens after a destination address is known
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: TCP and UDP deliver data between application endpoints but provide different guarantees. Understand handshakes,
+  reliable streams, datagrams, message framing and connection failures.
+objectives:
+- Describe TCP connection establishment and the three-way handshake.
+- Explain acknowledgements, retransmission, ordering, flow control and congestion control at a high level.
+- Compare TCP streams with UDP datagrams and identify suitable use cases.
+- Explain why TCP does not preserve application message boundaries.
+- Interpret common connection refused, timeout and reset failures.
+sources:
+- title: 'RFC 9293: Transmission Control Protocol'
+  url: https://www.rfc-editor.org/rfc/rfc9293
+  publisher: IETF
+- title: 'RFC 768: User Datagram Protocol'
+  url: https://www.rfc-editor.org/rfc/rfc768
+  publisher: IETF
+- title: 'RFC 9000: QUIC: A UDP-Based Multiplexed and Secure Transport'
+  url: https://www.rfc-editor.org/rfc/rfc9000
+  publisher: IETF
+sections:
+- id: why
+  title: Two transport choices
+  kind: why
+  blocks:
+  - type: markdown
+    body: The transport layer moves data between application endpoints. **TCP** and **UDP** are two common transport
+      protocols, but they offer different services. Choosing one is not simply choosing “slow” versus “fast”; it
+      is choosing which guarantees the application receives and which responsibilities remain with the application.
+  - type: callout
+    variant: misconception
+    title: TCP is not an application-level success guarantee
+    body: A successful TCP write means bytes were accepted by the local networking stack. It does not prove that
+      the remote application parsed the message, saved a database row or completed a business operation.
+- id: tcp
+  title: 'TCP: a reliable byte stream'
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'TCP establishes a connection with a **three-way handshake**: the client sends SYN, the server replies
+      SYN-ACK, and the client sends ACK. TCP then numbers bytes, acknowledges received data, retransmits lost segments
+      and delivers bytes to the application in order. It also provides flow control and congestion control.'
+  - type: markdown
+    body: TCP is a **stream**, not a message queue. If a sender writes `hello` once, the receiver might read `he`
+      and later `llo`; if the sender writes twice, one read might contain both messages. The application protocol
+      must define message boundaries using delimiters, fixed-size records, or length prefixes.
+  - type: item
+    ref: tcp-handshake-tf
+- id: udp
+  title: 'UDP: independent datagrams'
+  kind: concept
+  blocks:
+  - type: markdown
+    body: UDP sends independent datagrams without a connection handshake. It does not promise delivery, ordering
+      or duplicate suppression. DNS queries, real-time media, games and QUIC (which underlies HTTP/3) use UDP in
+      different ways.
+  - type: markdown
+    body: 'UDP is useful when the application wants to control recovery or when stale data is less useful than fresh
+      data. But UDP is not automatically faster: the application may need to implement sequencing, loss handling,
+      congestion control, security and retransmission when appropriate.'
+  - type: item
+    ref: transport-choice-mcq
+  - type: item
+    ref: tcp-udp-scenario
+- id: framing
+  title: Why TCP needs framing
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: Suppose a protocol sends a two-byte length followed by a payload. The receiver reads the prefix, interprets
+      it as an integer, then collects exactly that many bytes. Real socket code must loop because a single `recv()`
+      is allowed to return fewer bytes than requested. This exercise checks the framing logic once the full frame
+      has been collected.
+  - type: code
+    language: python
+    runnable: true
+    code: 'payload = b"hello"
+
+      frame = len(payload).to_bytes(2, "big") + payload
+
+      print(frame)
+
+      print(int.from_bytes(frame[:2], "big"))'
+    expectedOutput: |
+      b'\x00\x05hello'
+      5
+    caption: A length-prefixed frame; production socket readers must also handle partial reads and timeouts.
+  - type: item
+    ref: frame-bytes-code
+- id: debug
+  title: Diagnose connection failures
+  kind: debugging
+  blocks:
+  - type: markdown
+    body: A **connection refused** error usually means a host was reachable but no process accepted the connection
+      on that port, or a device actively rejected it. A **timeout** means the expected response did not arrive within
+      the deadline; a firewall silently dropping packets is one possible cause. A reset means an established connection
+      was abruptly closed.
+  - type: callout
+    variant: production
+    title: A timeout is not a diagnosis
+    body: Record destination host and port, connection phase, elapsed time, retry count and the exact exception.
+      Check name resolution, routing, firewall rules, listener binding and server health separately.
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- TCP: connection-oriented, reliable and ordered byte stream.
+
+      - UDP: connectionless datagrams without built-in delivery or ordering guarantees.
+
+      - TCP handshake: SYN → SYN-ACK → ACK.
+
+      - TCP does not preserve application message boundaries.
+
+      - Choose transport based on application needs, latency and recovery responsibilities.'
+  - type: item
+    ref: transport-choice-mcq
+  - type: item
+    ref: tcp-handshake-tf
+  - type: item
+    ref: frame-bytes-code
+items:
+- id: transport-choice-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Which statement best describes TCP?
+  explanation: TCP provides an ordered reliable byte stream using acknowledgements and retransmission. UDP provides
+    datagrams without built-in delivery or ordering guarantees.
+  options:
+  - id: a
+    text: It sends independent datagrams without ordering guarantees.
+    feedback: That describes UDP.
+  - id: b
+    text: It provides a reliable, ordered byte stream.
+    correct: true
+    feedback: Correct. TCP provides a byte stream and handles retransmission and ordering.
+  - id: c
+    text: It encrypts all application data.
+    feedback: TLS provides encryption; TCP alone does not.
+  - id: d
+    text: It guarantees the remote application processed every byte.
+    feedback: TCP delivery does not prove that the application processed or committed the data.
+- id: tcp-handshake-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: The TCP three-way handshake is SYN, SYN-ACK, then ACK.
+  answer: true
+  explanation: The handshake synchronizes initial sequence numbers and establishes the connection before application
+    data is exchanged.
+- id: tcp-udp-scenario
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: A live voice call should continue smoothly even if a few packets are lost. Explain why an application
+    may choose UDP rather than TCP, and name a responsibility it must handle itself.
+  rubric:
+  - Recognise that late retransmission can be worse than a small loss for real-time media.
+  - Explain that UDP has no built-in retransmission, ordering or congestion-control guarantee equivalent to TCP.
+  - Name an application-level strategy such as jitter buffering, concealment, sequencing or congestion control.
+  modelAnswer: A late retransmission may arrive after the audio is already due to play, so a real-time application
+    can prefer a fresh packet over waiting for an old one. UDP does not provide ordering or retransmission, so the
+    application must decide how to handle loss, jitter and congestion.
+  explanation: A strong answer separates what the protocol guarantees from what remains the application or operator
+    responsibility, then proposes a diagnostic based on observable evidence.
+- id: frame-bytes-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: A TCP connection is a byte stream, so applications need message framing. Complete `read_frame` for a simple
+    two-byte big-endian length prefix followed by that many payload bytes. Raise ValueError for an incomplete frame.
+  starterCode: "def read_frame(data: bytes) -> bytes:\n    # First two bytes contain payload length.\n    # Return\
+    \ exactly the payload or raise ValueError.\n    pass\n\nprint(read_frame(b\"\\x00\\x05hello\"))"
+  solution: "def read_frame(data: bytes) -> bytes:\n    if len(data) < 2:\n        raise ValueError(\"missing length\
+    \ prefix\")\n    length = int.from_bytes(data[:2], \"big\")\n    payload = data[2:]\n    if len(payload) !=\
+    \ length:\n        raise ValueError(\"incomplete frame\")\n    return payload\n\nprint(read_frame(b\"\\x00\\\
+    x05hello\"))"
+  expectedOutput: b'hello'
+  tests:
+  - name: Reads complete frame
+    code: 'assert read_frame(b"\x00\x03cat") == b"cat"
+
+      assert read_frame(b"\x00\x00") == b""'
+  - name: Rejects incomplete data
+    code: "for raw in [b\"\", b\"\\x00\", b\"\\x00\\x04hey\"]:\n    try:\n        read_frame(raw)\n    except ValueError:\n\
+      \        pass\n    else:\n        raise AssertionError(f\"Expected ValueError for {raw!r}\")"
+  hints:
+  - Check that the two-byte header exists before reading it.
+  - Use `int.from_bytes(data[:2], "big")` to decode the length.
+  - Compare the payload length with the declared length.
+  feedback:
+  - when:
+      errorType: IndexError
+    message: The length prefix may be missing or incomplete. Check `len(data)` before indexing.
+  explanation: TCP preserves byte order but not application message boundaries. A single send can be split across
+    reads, or multiple sends can be combined. A framing protocol defines how the receiver knows where one message
+    ends.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - transport-choice-mcq
+  - tcp-handshake-tf
+  - frame-bytes-code
+cheatsheet: 'TCP: connection + ordered reliable byte stream + flow/congestion control. UDP: independent datagrams,
+  no built-in ordering or retransmission. TCP handshake: SYN → SYN-ACK → ACK. TCP does not preserve message boundaries;
+  use framing. A timeout and connection refused indicate different failure modes.'

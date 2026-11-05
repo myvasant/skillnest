@@ -1,0 +1,214 @@
+id: mlops.fault-tolerance
+concept: mlops.fault-tolerance
+title: Fault tolerance
+subtitle: Timeouts everywhere, retries with exponential backoff and jitter, circuit breakers, bulkheads and graceful
+  degradation
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Timeouts everywhere, retries with exponential backoff and jitter, circuit breakers, bulkheads and graceful
+  degradation.
+objectives:
+- Explain the core engineering decisions behind fault tolerance.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: Timeouts, retries, and backoff with jitter
+  url: https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter
+  publisher: Amazon Builders' Library
+- title: 'Site Reliability Engineering: Addressing Cascading Failures'
+  url: https://sre.google/sre-book/addressing-cascading-failures/
+  publisher: Google
+- title: Circuit Breaker
+  url: https://martinfowler.com/bliki/CircuitBreaker.html
+  publisher: Martin Fowler
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Timeouts everywhere, retries with exponential backoff and jitter, circuit breakers, bulkheads and graceful
+      degradation. In a distributed system something is always failing; without defences, one slow dependency can
+      tie up every worker and take the whole system down (a cascading failure).
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Put a timeout on every network call, sized from the dependency''s latency percentiles; a call without
+      a timeout can hang forever.
+
+      - Retry only transient failures and only idempotent operations, with capped exponential backoff plus random
+      jitter and a limited retry budget, to avoid retry storms.
+
+      - A circuit breaker stops calling a failing dependency for a cool-down period and fails fast, then lets a
+      trial request through (half-open) to test recovery.
+
+      - Bulkheads isolate resources (separate connection pools or workers per dependency) so one failing dependency
+      cannot consume everything.
+
+      - Graceful degradation returns cached, default or partial results (or uses a simpler model) when a non-critical
+      part fails, instead of an error.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Retries are not free resilience; three retries at each of three layers can turn one request into 64
+      calls to the bottom service.
+
+      - Waiting is not kinder than failing; a fast error lets callers fall back while a slow one ties up their resources.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def circuit_state(failures, threshold, open_until, now):\n    if now < open_until: return \"open\"\n\
+      \    if failures >= threshold: return \"half-open\"\n    return \"closed\"\n\nprint(circuit_state(5, 5, 100,\
+      \ 50))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: fault-tolerance-code
+  - type: item
+    ref: fault-tolerance-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Put a timeout on every network call, sized from the dependency''s latency percentiles; a call without a
+      timeout can hang forever.
+
+      - Retry only transient failures and only idempotent operations, with capped exponential backoff plus random
+      jitter and a limited retry budget, to avoid retry storms.
+
+      - A circuit breaker stops calling a failing dependency for a cool-down period and fails fast, then lets a
+      trial request through (half-open) to test recovery.
+
+      - Bulkheads isolate resources (separate connection pools or workers per dependency) so one failing dependency
+      cannot consume everything.
+
+      - Graceful degradation returns cached, default or partial results (or uses a simpler model) when a non-critical
+      part fails, instead of an error.
+
+
+      **Watch for**
+
+      - Retries are not free resilience; three retries at each of three layers can turn one request into 64 calls
+      to the bottom service.
+
+      - Waiting is not kinder than failing; a fast error lets callers fall back while a slow one ties up their resources.'
+  - type: item
+    ref: fault-tolerance-mcq
+  - type: item
+    ref: fault-tolerance-tf
+  - type: item
+    ref: fault-tolerance-code
+items:
+- id: fault-tolerance-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of fault tolerance?
+  explanation: Put a timeout on every network call, sized from the dependency's latency percentiles; a call without
+    a timeout can hang forever.
+  options:
+  - id: a
+    text: Put a timeout on every network call, sized from the dependency's latency percentiles; a call without a
+      timeout can hang forever.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: Retries are not free resilience; three retries at each of three layers can turn one request into 64 calls
+      to the bottom service.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: fault-tolerance-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Retries are not free resilience; three retries at each of three layers can turn one request into 64 calls
+    to the bottom service.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: fault-tolerance-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply fault tolerance to a realistic engineering scenario. State your assumptions, explain your decision,
+    compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: fault-tolerance-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for fault tolerance. The assertions cover the expected path and an important boundary
+    case.
+  starterCode: "def circuit_state(failures, threshold, open_until, now):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def circuit_state(failures, threshold, open_until, now):\n    if now < open_until: return \"open\"\n\
+    \    if failures >= threshold: return \"half-open\"\n    return \"closed\""
+  tests:
+  - name: Core behaviour
+    code: assert circuit_state(5,5,100,50) == "open"
+  - name: Boundary behaviour
+    code: 'assert circuit_state(5,5,100,100) == "half-open"
+
+      assert circuit_state(0,5,0,10) == "closed"'
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - fault-tolerance-mcq
+  - fault-tolerance-tf
+  - fault-tolerance-code
+cheatsheet: '**Key principles**
+
+  - Put a timeout on every network call, sized from the dependency''s latency percentiles; a call without a timeout
+  can hang forever.
+
+  - Retry only transient failures and only idempotent operations, with capped exponential backoff plus random jitter
+  and a limited retry budget, to avoid retry storms.
+
+  - A circuit breaker stops calling a failing dependency for a cool-down period and fails fast, then lets a trial
+  request through (half-open) to test recovery.
+
+  - Bulkheads isolate resources (separate connection pools or workers per dependency) so one failing dependency
+  cannot consume everything.
+
+  - Graceful degradation returns cached, default or partial results (or uses a simpler model) when a non-critical
+  part fails, instead of an error.
+
+
+  **Trade-offs**
+
+  - Retries are not free resilience; three retries at each of three layers can turn one request into 64 calls to
+  the bottom service.
+
+  - Waiting is not kinder than failing; a fast error lets callers fall back while a slow one ties up their resources.'

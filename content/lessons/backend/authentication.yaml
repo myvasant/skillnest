@@ -1,0 +1,224 @@
+id: backend.authentication
+concept: backend.authentication
+title: Authentication
+subtitle: Verify who a user is with hashed passwords, sessions or tokens (JWT), and delegate login to identity providers
+  with OAuth 2
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Verify who a user is with hashed passwords, sessions or tokens (JWT), and delegate login to identity providers
+  with OAuth 2.0 / OpenID Connect.
+objectives:
+- Explain the core model behind authentication.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Authentication Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+  publisher: OWASP
+- title: Password Storage Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+  publisher: OWASP
+- title: OpenID Connect Core 1.0
+  url: https://openid.net/specs/openid-connect-core-1_0.html
+  publisher: OpenID Foundation
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Verify who a user is with hashed passwords, sessions or tokens (JWT), and delegate login to identity providers
+      with OAuth 2.0 / OpenID Connect. Any API that holds personal data or costs money per call must reliably know
+      who is calling, and home-made login schemes are a leading cause of breaches.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt or
+      bcrypt) and check it with the library''s verify function.
+
+      - Sessions keep state on the server and give the browser an opaque ID in an `HttpOnly`, `Secure`, `SameSite`
+      cookie; tokens such as JWTs carry signed claims the server can verify without a lookup.
+
+      - Verify a JWT''s signature with an allow-listed algorithm and check `exp`, `iss` and `aud`; a standard JWT
+      is signed, not encrypted, so anyone can read its payload.
+
+      - OAuth 2.0 (RFC 6749) delegates authorisation; OpenID Connect adds an ID token so you can log users in through
+      an identity provider. Use the authorisation code flow with PKCE for browser and mobile apps.
+
+      - Protect login with rate limiting and multi-factor authentication, and return the same generic message for
+      an unknown user and a wrong password.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top
+      of it.
+
+      - A JWT cannot be revoked before it expires without extra server-side state; keep access tokens short-lived
+      and use refresh tokens or a deny-list.
+
+      - Base64 is encoding, not encryption, and fast hashes such as SHA-256 are unsuitable for passwords.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def token_is_valid(claims, now, issuer, audience):\n    return (claims.get(\"iss\") == issuer and claims.get(\"\
+      aud\") == audience\n            and isinstance(claims.get(\"exp\"), (int, float)) and claims[\"exp\"] > now)\n\
+      \nclaims = {\"iss\":\"https://issuer.example\", \"aud\":\"api\", \"exp\":2000}\nprint(token_is_valid(claims,\
+      \ 1000, \"https://issuer.example\", \"api\"))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: authentication-code
+  - type: item
+    ref: authentication-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt or bcrypt)
+      and check it with the library''s verify function.
+
+      - Sessions keep state on the server and give the browser an opaque ID in an `HttpOnly`, `Secure`, `SameSite`
+      cookie; tokens such as JWTs carry signed claims the server can verify without a lookup.
+
+      - Verify a JWT''s signature with an allow-listed algorithm and check `exp`, `iss` and `aud`; a standard JWT
+      is signed, not encrypted, so anyone can read its payload.
+
+      - OAuth 2.0 (RFC 6749) delegates authorisation; OpenID Connect adds an ID token so you can log users in through
+      an identity provider. Use the authorisation code flow with PKCE for browser and mobile apps.
+
+      - Protect login with rate limiting and multi-factor authentication, and return the same generic message for
+      an unknown user and a wrong password.
+
+
+      **Avoid**
+
+      - OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top of
+      it.
+
+      - A JWT cannot be revoked before it expires without extra server-side state; keep access tokens short-lived
+      and use refresh tokens or a deny-list.
+
+      - Base64 is encoding, not encryption, and fast hashes such as SHA-256 are unsuitable for passwords.'
+  - type: item
+    ref: authentication-mcq
+  - type: item
+    ref: authentication-tf
+  - type: item
+    ref: authentication-code
+items:
+- id: authentication-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of authentication?
+  explanation: Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt
+    or bcrypt) and check it with the library's verify function.
+  options:
+  - id: a
+    text: Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt or bcrypt)
+      and check it with the library's verify function.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top of
+      it.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: authentication-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top of
+    it.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: authentication-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing authentication in a real application. What design decisions would you make, what
+    failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: authentication-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for authentication. Implement the stated rule and make sure both ordinary and edge-case
+    tests pass.
+  starterCode: "def token_is_valid(claims, now, issuer, audience):\n    raise NotImplementedError('Complete this\
+    \ function')"
+  solution: "def token_is_valid(claims, now, issuer, audience):\n    return (claims.get(\"iss\") == issuer and claims.get(\"\
+    aud\") == audience\n            and isinstance(claims.get(\"exp\"), (int, float)) and claims[\"exp\"] > now)"
+  tests:
+  - name: Core behaviour
+    code: assert token_is_valid({"iss":"i","aud":"a","exp":20}, 10, "i", "a") is True
+  - name: Edge cases
+    code: 'assert token_is_valid({"iss":"i","aud":"a","exp":10}, 10, "i", "a") is False
+
+      assert token_is_valid({}, 1, "i", "a") is False'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - authentication-mcq
+  - authentication-tf
+  - authentication-code
+cheatsheet: '**Core model**
+
+  - Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt or bcrypt)
+  and check it with the library''s verify function.
+
+  - Sessions keep state on the server and give the browser an opaque ID in an `HttpOnly`, `Secure`, `SameSite` cookie;
+  tokens such as JWTs carry signed claims the server can verify without a lookup.
+
+  - Verify a JWT''s signature with an allow-listed algorithm and check `exp`, `iss` and `aud`; a standard JWT is
+  signed, not encrypted, so anyone can read its payload.
+
+  - OAuth 2.0 (RFC 6749) delegates authorisation; OpenID Connect adds an ID token so you can log users in through
+  an identity provider. Use the authorisation code flow with PKCE for browser and mobile apps.
+
+  - Protect login with rate limiting and multi-factor authentication, and return the same generic message for an
+  unknown user and a wrong password.
+
+
+  **Common mistakes**
+
+  - OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top of it.
+
+  - A JWT cannot be revoked before it expires without extra server-side state; keep access tokens short-lived and
+  use refresh tokens or a deny-list.
+
+  - Base64 is encoding, not encryption, and fast hashes such as SHA-256 are unsuitable for passwords.'

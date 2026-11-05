@@ -1,0 +1,356 @@
+id: foundations.files-and-paths
+concept: foundations.files-and-paths
+title: Files, Folders and Paths
+subtitle: Find and organise files without guessing where they are
+estimatedMinutes: 40
+reviewedOn: 2026-11-04
+summary: >-
+  Learn how folders form a tree, how absolute and relative paths identify locations, and why a relative
+  path is resolved from the current working directory. Practise joining paths with pathlib, checking for
+  files and creating a small workspace safely.
+objectives:
+  - Describe a file system as a hierarchy of folders and files.
+  - Distinguish an absolute path from a relative path.
+  - Explain the meanings of the current-folder and parent-folder markers `.` and `..`.
+  - Explain how the current working directory affects relative paths.
+  - Build and inspect paths with pathlib instead of manually joining strings.
+  - Recognise common path errors and avoid unsafe assumptions about user-supplied paths.
+sources:
+  - title: pathlib — Object-oriented filesystem paths
+    url: https://docs.python.org/3/library/pathlib.html
+    publisher: Python Software Foundation
+  - title: os.path — Common pathname manipulations
+    url: https://docs.python.org/3/library/os.path.html
+    publisher: Python Software Foundation
+  - title: "The Linux Command Line — Chapter 2: Navigation"
+    url: https://linuxcommand.org/lc3_lts0020.php
+    publisher: William Shotts
+sections:
+  - id: why
+    title: Why paths matter
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Programs constantly open files: Python reads source code, an API loads configuration, and a data
+          pipeline reads CSV files. The program must know **which file** to open. A file name alone is often
+          not enough because many folders can contain a file named `config.json`.
+
+          A **path** is the address that identifies a file or folder in a file system. A file system is
+          usually organised as a tree: folders can contain files and other folders, which can contain more
+          folders.
+      - type: callout
+        variant: analogy
+        title: A path is an address
+        body: |
+          A folder is like a building and a file is like a room or document inside it. `projects/api/main.py`
+          describes a route through nested folders. The analogy helps with navigation, but real paths also
+          have roots, platform-specific separators and rules about symbolic links and permissions.
+
+  - id: absolute-relative
+    title: Absolute and relative paths
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An **absolute path** identifies a location from the file-system root (or a drive root on Windows).
+          Examples:
+
+          ```text
+          Linux / macOS: /home/ada/projects/app/main.py
+          Windows:       C:\\Users\\Ada\\projects\\app\\main.py
+          ```
+
+          A **relative path** starts from a reference location, usually the process's **current working
+          directory** (CWD). If the CWD is `/home/ada/projects`, then `app/main.py` points to
+          `/home/ada/projects/app/main.py`.
+
+          The markers `.` and `..` mean the current folder and its parent folder. For example, `../data/input.csv`
+          means move one folder up, then enter `data` and open `input.csv`.
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import PurePosixPath
+
+          project = PurePosixPath("/home/ada/projects/weather-app")
+          relative_file = PurePosixPath("src/main.py")
+          print(project / relative_file)
+          print((project / ".." / "data" / "input.csv"))
+          print(relative_file.is_absolute())
+        expectedOutput: |
+          /home/ada/projects/weather-app/src/main.py
+          /home/ada/projects/weather-app/../data/input.csv
+          False
+        annotations:
+          - line: 3
+            text: The slash operator joins path parts; it does not mean arithmetic division here.
+          - line: 4
+            text: "`..` is kept as a path component until a path is resolved against a real file system."
+          - line: 5
+            text: This is a relative path because it does not start at a root.
+      - type: callout
+        variant: warning
+        title: Relative to which folder?
+        body: |
+          In Python, `open("data.csv")` normally looks relative to the **current working directory**, not
+          automatically beside the Python source file. This is a frequent cause of `FileNotFoundError` when
+          a script is launched from a different folder. When you need a path beside the script, use
+          `Path(__file__).resolve().parent` in a normal Python file; `__file__` is not defined in every
+          interactive environment.
+      - type: item
+        ref: path-prediction
+
+  - id: pathlib
+    title: Build paths with pathlib
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Python's **pathlib** library gives you path objects. A path object understands the conventions of
+          the operating system and provides operations such as joining, checking existence, reading and
+          writing files. It is safer and clearer than manually concatenating strings with `"/"` or `"\\"`.
+
+          Use `Path` for paths on the current operating system. `PurePosixPath` and `PureWindowsPath` are
+          useful when you need to inspect a path format without touching the actual file system.
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+
+          with TemporaryDirectory() as folder:
+              workspace = Path(folder) / "project"
+              workspace.mkdir()
+              notes = workspace / "notes.txt"
+              notes.write_text("First lesson", encoding="utf-8")
+              print(notes.name)
+              print(notes.suffix)
+              print(notes.exists())
+              print(notes.read_text(encoding="utf-8"))
+        expectedOutput: |
+          notes.txt
+          .txt
+          True
+          First lesson
+        annotations:
+          - line: 4
+            text: "`Path(folder) / \"project\"` creates a child path using the correct separator for this OS."
+          - line: 6
+            text: "`write_text` writes text using the explicitly chosen UTF-8 encoding."
+          - line: 8
+            text: "`suffix` returns the extension, including the dot."
+          - line: 10
+            text: "`read_text` reads the saved file back as text."
+      - type: markdown
+        body: |
+          Useful `Path` operations include:
+
+          | Operation | Meaning |
+          |---|---|
+          | `Path.cwd()` | Current working directory |
+          | `Path.home()` | Current user's home folder |
+          | `path.name` | Final name component |
+          | `path.stem` | Name without the final suffix |
+          | `path.suffix` | Final extension, including the dot |
+          | `path.parent` | Parent folder |
+          | `path.exists()` | Whether the path exists |
+          | `path.is_file()` / `path.is_dir()` | Check the kind of filesystem entry |
+          | `path.mkdir(parents=True, exist_ok=True)` | Create a folder and missing parents |
+      - type: item
+        ref: pathlib-exercise
+
+  - id: errors-and-safety
+    title: Common path errors and safe handling
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          Common problems include:
+
+          - **`FileNotFoundError`:** the path does not identify an existing file, or the working directory is not what you expected.
+          - **`NotADirectoryError`:** one path component is a file where a folder was expected.
+          - **`PermissionError`:** the process is not allowed to read or write the target.
+          - **Wrong separator assumptions:** manually typed Windows and POSIX paths are not interchangeable.
+
+          A path existing does not mean it is safe to use. If a web application accepts a file name from a
+          user, joining it to an upload folder is not enough: a value such as `../../secrets.txt` may try to
+          escape that folder. Validate the resolved destination is still inside the allowed base directory.
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          base = Path("/srv/app/uploads").resolve()
+          requested = "reports/summary.txt"
+          destination = (base / requested).resolve()
+          print(destination.is_relative_to(base))
+        expectedOutput: |
+          True
+        annotations:
+          - line: 3
+            text: The base directory is converted to an absolute, normalised path.
+          - line: 5
+            text: "`resolve()` normalises the requested destination before the containment check."
+          - line: 6
+            text: "`is_relative_to` checks that the destination is inside the base path; it is available in modern Python."
+      - type: callout
+        variant: production
+        title: Treat file names as untrusted input
+        body: |
+          For security-sensitive file operations, resolve the final path and verify containment under an
+          approved directory. Also consider symlinks, race conditions, file permissions and whether the
+          application should accept the requested file name at all. A simple containment check is a useful
+          teaching example, not a complete defence for every hostile file-system environment.
+      - type: item
+        ref: explain-cwd
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A path is an address in the file-system tree.
+          - Absolute paths start at a root; relative paths are resolved from a reference folder, usually the CWD.
+          - `.` means current folder and `..` means parent folder.
+          - Use `pathlib.Path` to join, inspect, create and read paths.
+          - Check file existence and permissions, and treat user-supplied paths as untrusted.
+      - type: item
+        ref: mastery-path
+      - type: item
+        ref: mastery-path-code
+      - type: item
+        ref: mastery-path-explain
+
+items:
+  - id: path-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this code print?
+    code: |
+      from pathlib import PurePosixPath
+      folder = PurePosixPath("/work/project")
+      print(folder / "data" / "input.csv")
+      print(PurePosixPath("notes.txt").is_absolute())
+    answer: |
+      /work/project/data/input.csv
+      False
+    explanation: Joining path parts builds a path; a name without a root is not absolute.
+  - id: pathlib-exercise
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Complete `make_report(folder)` so it creates a `reports` subfolder, writes `summary.txt` containing `Ready`, and returns the resulting Path object.
+    explanation: >-
+      Path objects join folders and file names using the platform-appropriate separator. Creating the parent directory before writing makes the operation work when the reports folder is not present yet.
+    starterCode: |
+      from pathlib import Path
+
+      def make_report(folder):
+          # Create reports/summary.txt and return its Path.
+          pass
+    solution: |
+      from pathlib import Path
+
+      def make_report(folder):
+          report_dir = Path(folder) / "reports"
+          report_dir.mkdir(parents=True, exist_ok=True)
+          report_file = report_dir / "summary.txt"
+          report_file.write_text("Ready", encoding="utf-8")
+          return report_file
+    tests:
+      - name: creates nested report file
+        code: |
+          from tempfile import TemporaryDirectory
+          with TemporaryDirectory() as folder:
+              result = make_report(folder)
+              assert result.name == "summary.txt"
+              assert result.parent.name == "reports"
+              assert result.read_text(encoding="utf-8") == "Ready"
+      - name: can be called twice
+        code: |
+          from tempfile import TemporaryDirectory
+          with TemporaryDirectory() as folder:
+              make_report(folder)
+              result = make_report(folder)
+              assert result.exists()
+    hints:
+      - Use `Path(folder) / "reports"` to build the child folder.
+      - Create the folder with `mkdir(parents=True, exist_ok=True)`.
+      - Write the file with an explicit encoding and return the Path.
+  - id: explain-cwd
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A script opens `data/input.csv` successfully when run from the project folder, but raises `FileNotFoundError` when launched from a different folder. Explain why and give one robust way to fix it.
+    rubric:
+      - Explains that relative paths are resolved from the current working directory.
+      - Suggests choosing an explicit base path, such as the script directory or a configured data directory.
+    modelAnswer: The relative path is resolved from the process's current working directory, which changed between launches. In a normal script I can build the path from `Path(__file__).resolve().parent`, or accept a configured absolute data directory.
+    explanation: The source file's folder and the process's current working directory are not necessarily the same.
+  - id: mastery-path
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: From `/home/ada/project`, what location does `../data/train.csv` describe?
+    options:
+      - id: a
+        text: "`/home/ada/data/train.csv`"
+        correct: true
+        feedback: Correct. `..` moves from `project` to its parent, `ada`, before entering `data`.
+      - id: b
+        text: "`/home/ada/project/data/train.csv`"
+        correct: false
+        feedback: That would be `data/train.csv` without the `..` component.
+      - id: c
+        text: "`/data/train.csv`"
+        correct: false
+        feedback: The path does not start at the root; it is relative.
+    explanation: The first component `..` moves one level to the parent folder.
+  - id: mastery-path-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Write `csv_path(folder)` to return a Path for `data/input.csv` inside the supplied folder. Do not concatenate path strings manually.
+    explanation: >-
+      The slash operator joins path components and returns a Path object. The same function accepts either a string or an existing Path as its starting folder.
+    starterCode: |
+      from pathlib import Path
+
+      def csv_path(folder):
+          pass
+    solution: |
+      from pathlib import Path
+
+      def csv_path(folder):
+          return Path(folder) / "data" / "input.csv"
+    tests:
+      - name: joins nested path parts
+        code: |
+          from pathlib import Path
+          assert csv_path("/tmp/work") == Path("/tmp/work/data/input.csv")
+      - name: accepts Path input
+        code: |
+          from pathlib import Path
+          assert csv_path(Path("/tmp/work")) == Path("/tmp/work/data/input.csv")
+    hints:
+      - Convert the supplied folder to a Path.
+      - Join each child folder and file name with the `/` operator.
+  - id: mastery-path-explain
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: What is the difference between `Path.cwd()` and `Path(__file__).resolve().parent` in a normal Python script?
+    rubric:
+      - Defines CWD as the process's current working directory.
+      - Defines the second expression as the resolved directory containing the current script.
+    modelAnswer: "`Path.cwd()` returns the directory from which the process is currently operating. `Path(__file__).resolve().parent` points to the directory containing the script file. They can be different when the script is launched from another folder."
+    explanation: The current working directory belongs to the running process; the script's directory belongs to the file location.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-path, mastery-path-code, mastery-path-explain]
+cheatsheet: |
+  Absolute path = starts at a root. Relative path = resolved from a base (usually CWD).
+  `.` = current folder; `..` = parent. Use `Path(folder) / "child"` to join safely.
+  `Path.cwd()` is not automatically the folder containing your script.

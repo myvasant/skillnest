@@ -1,0 +1,653 @@
+id: agents
+order: 16
+title: Agentic AI, MCP, A2A and Multi-Agent Systems
+shortTitle: Agentic AI
+summary: >-
+  When to use workflows versus agents, how agent loops plan and act with tools, memory and state,
+  human approval, permissions and sandboxing, failure recovery, evaluation, the MCP and A2A protocols,
+  and agent frameworks.
+why: >-
+  Agents turn models into systems that take actions. That multiplies both value and risk, so reliability,
+  security and evaluation are first-class topics here — not afterthoughts.
+modules:
+  - id: foundations
+    title: Foundations
+    summary: Agents vs workflows, the agent loop and planning.
+  - id: design
+    title: Designing agents
+    summary: Tools, memory, human-in-the-loop, permissions, recovery and multi-agent designs.
+  - id: protocols
+    title: Protocols
+    summary: Model Context Protocol and Agent2Agent, independent of any framework.
+  - id: frameworks
+    title: Agent frameworks
+    summary: LangGraph agents, CrewAI, AutoGen and others.
+  - id: reliability
+    title: Evaluation, security and observability
+    summary: Measuring, securing and watching agents in production.
+concepts:
+  # ------------------------------------------------------------- foundations
+  - id: agents.what-is-an-agent
+    title: What an AI agent is
+    module: foundations
+    level: intermediate
+    priority: essential
+    summary: An agent is an LLM that decides, in a loop, which actions (tool calls) to take toward a goal; autonomy is a spectrum, not a switch.
+    requires: [genai.tool-calling]
+    why: >-
+      "Agent" is used for everything from a chatbot to an autonomous coder. A precise definition helps you
+      decide how much autonomy a task really needs and which risks you take on with it.
+    keyIdeas:
+      - An agent is an LLM using tools in a loop — it chooses an action (a tool call or a final answer), sees the result and decides what to do next until the task is done.
+      - The building block is the augmented LLM, a model with access to tools, retrieval and memory.
+      - "Autonomy is a spectrum: single call, fixed workflow, router, tool-calling loop, long-running autonomous agent; each step adds flexibility, cost, latency and risk."
+      - Because the model chooses the control flow at run time, the same input can take different paths — the source of both power and unpredictability.
+      - What an agent can do, and the damage it can cause, is defined mostly by its tools and permissions, not by the model alone.
+    misconceptions:
+      - A chatbot with a system prompt is not an agent unless it can take actions and choose its next steps.
+      - Agents are not inherently better than workflows; for many tasks they are slower, costlier and less reliable.
+    interview: Expect to define an agent precisely and give an example where you would not use one.
+    sources:
+      - title: Building effective agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: Agents
+        url: https://docs.langchain.com/oss/python/langchain/agents
+        publisher: LangChain
+        version: "1.x"
+  - id: agents.workflows-vs-agents
+    title: Workflows vs agents
+    module: foundations
+    level: intermediate
+    priority: essential
+    summary: Deterministic workflows (chaining, routing, parallelisation, orchestrator–workers) are cheaper, faster and more predictable; use agents only when the path genuinely can't be known in advance.
+    requires: [agents.what-is-an-agent]
+    why: >-
+      Many production "agents" are better built as workflows — predefined code paths with LLM steps — which
+      are cheaper, faster and easier to test. Knowing the patterns lets you add autonomy only where it pays.
+    keyIdeas:
+      - "Workflow: your code defines the control flow and LLMs fill in steps. Agent: the LLM decides the control flow and tool use itself."
+      - "Common workflow patterns: prompt chaining (sequential steps with checks), routing (classify, then dispatch), parallelisation (sectioning or voting), orchestrator-workers (an LLM splits work dynamically) and evaluator-optimizer (generate, critique, revise)."
+      - Choose an agent when the number and order of steps truly cannot be predicted and mistakes are recoverable; choose a workflow when the steps are known.
+      - Start with the simplest thing — often one well-prompted call with retrieval — and add complexity only when evaluation shows it helps.
+      - Hybrids are common, such as a deterministic workflow with one bounded agentic step.
+    misconceptions:
+      - A workflow is not a lesser agent — it is often the better engineering choice — and using a framework's agent class does not make a design agentic.
+    interview: Interviewers often describe a use case and ask whether you would build a workflow or an agent, and why.
+    sources:
+      - title: Building effective agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: Workflows and agents
+        url: https://docs.langchain.com/oss/python/langgraph/workflows-agents
+        publisher: LangChain
+      - title: Microsoft Agent Framework overview (agents vs workflows)
+        url: https://learn.microsoft.com/en-us/agent-framework/overview/
+        publisher: Microsoft
+  - id: agents.agent-loop
+    title: The agent loop
+    module: foundations
+    level: intermediate
+    priority: essential
+    summary: Observe, reason, act, observe the result, repeat — with explicit stopping conditions, step budgets and error handling.
+    requires: [agents.what-is-an-agent]
+    why: >-
+      Every agent framework hides the same loop. Understanding it — especially how it stops — is what lets you
+      debug runaway costs, endless tool calls and silent failures.
+    keyIdeas:
+      - "The loop: send the conversation plus tool definitions to the model; if it returns tool calls, execute them and append the results as tool messages; repeat until it returns a final answer."
+      - Always add hard stops — a maximum number of iterations, a token or cost budget and a wall-clock timeout — plus a defined fallback when one triggers.
+      - Return expected tool errors to the model as results with a helpful message so it can recover; let unexpected exceptions fail the run visibly.
+      - Context grows every turn; long loops need trimming, summarising or offloading to files or memory to stay within the context window.
+      - Log every iteration (model output, tool name, arguments, result, tokens); this trajectory is what you debug and evaluate.
+    misconceptions:
+      - The model does not run tools itself; your code (or a framework) executes them and decides what to feed back.
+      - Relying on the model alone to decide when to stop, with no step budget, invites infinite loops and runaway cost.
+    interview: A common exercise is to write a minimal tool-calling loop by hand and explain its stopping conditions.
+    sources:
+      - title: Building effective agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: "ReAct: Synergizing Reasoning and Acting in Language Models"
+        url: https://arxiv.org/abs/2210.03629
+        publisher: arXiv
+      - title: Effective context engineering for AI agents
+        url: https://www.anthropic.com/research/effective-context-engineering-for-ai-agents
+        publisher: Anthropic
+  - id: agents.planning
+    title: Planning and reasoning strategies
+    module: foundations
+    level: advanced
+    priority: supporting
+    summary: ReAct interleaves reasoning and actions; plan-and-execute separates planning from execution; reflection adds self-critique — each with cost and failure modes.
+    requires: [agents.agent-loop]
+    why: >-
+      Hard tasks need the agent to think about what to do before acting. Planning strategies structure that
+      reasoning, but each adds tokens and new ways to fail, so you should know what each one buys.
+    keyIdeas:
+      - ReAct interleaves thought, action and observation so reasoning stays grounded in tool results; it underlies most tool-calling loops.
+      - Plan-and-execute (plan-and-solve) writes an explicit multi-step plan first, executes the steps (sometimes with a cheaper model) and replans when results diverge.
+      - Reflection (for example Reflexion) has the model critique a failed attempt and retry with the critique in context; it helps most when there is an external signal such as failing tests.
+      - Reasoning models now do much planning internally; explicit scaffolds still help with transparency, budgets and checkpoints.
+      - Make plans visible and editable, which helps both human review and debugging.
+    misconceptions:
+      - Self-critique without external feedback (tests, tool results, validators) often just rationalises the first answer.
+      - More planning steps are not always better; they cost tokens and can compound early mistakes.
+    interview: Interviewers ask you to compare ReAct with plan-and-execute and to say when reflection actually helps.
+    sources:
+      - title: "ReAct: Synergizing Reasoning and Acting in Language Models"
+        url: https://arxiv.org/abs/2210.03629
+        publisher: arXiv
+      - title: "Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models"
+        url: https://arxiv.org/abs/2305.04091
+        publisher: arXiv
+      - title: "Reflexion: Language Agents with Verbal Reinforcement Learning"
+        url: https://arxiv.org/abs/2303.11366
+        publisher: arXiv
+  # ------------------------------------------------------------------ design
+  - id: agents.tool-design
+    title: Designing tools for agents
+    module: design
+    level: intermediate
+    priority: essential
+    summary: Small, well-named tools with precise descriptions, typed inputs, helpful errors and idempotent effects make agents far more reliable.
+    requires: [agents.agent-loop, backend.api-design]
+    why: >-
+      The model knows your tools only through their names, descriptions and schemas, and tool quality affects
+      agent success as much as the prompt does. Badly designed tools cause wrong calls, wasted tokens and
+      dangerous side effects.
+    keyIdeas:
+      - "Write descriptions as for a new colleague: what the tool does, when to use it (and when not), argument formats, units and an example; use unambiguous parameter names such as `user_id`."
+      - "Prefer a few purpose-built tools that match user tasks (e.g. `search_customers`) over thin wrappers around every API endpoint, and namespace related tools (e.g. `crm_search`, `crm_update`)."
+      - Use typed, constrained inputs (JSON Schema enums, required fields, formats), validate them server-side, and make mistakes hard to make ("poka-yoke"), e.g. require absolute file paths.
+      - Return concise, meaningful output (names, not only opaque IDs), paginate or truncate large results, and write error messages that tell the model how to fix the call.
+      - Make side-effecting tools idempotent (idempotency keys, upserts) and separate read tools from write tools so permissions and approvals can differ.
+    misconceptions:
+      - More tools do not make an agent more capable; large, overlapping toolsets confuse tool selection and use up context.
+    interview: Expect to critique a tool definition and improve its name, description, schema and error behaviour.
+    sources:
+      - title: Writing effective tools for agents — with agents
+        url: https://www.anthropic.com/research/writing-tools-for-agents
+        publisher: Anthropic
+      - title: "MCP specification: Tools"
+        url: https://modelcontextprotocol.io/specification/2026-07-28/server/tools
+        publisher: Model Context Protocol
+        version: "2026-07-28"
+  - id: agents.state-memory
+    title: State and memory
+    module: design
+    level: intermediate
+    priority: essential
+    summary: Short-term conversation state, structured task state and long-term memory (often retrieval-based) each need explicit management and limits.
+    requires: [agents.agent-loop, rag.vector-similarity]
+    why: >-
+      Models are stateless between calls. Anything an agent must remember — the conversation, task progress,
+      user preferences — has to be stored, selected and re-inserted by your system within a limited context
+      window.
+    keyIdeas:
+      - Short-term memory is the current thread's messages and working state; trim or summarise it as it nears the context limit.
+      - Keep structured task state (plan, completed steps, intermediate results) in typed fields rather than buried in chat text, so code can check it.
+      - Long-term memory persists across sessions — facts, preferences, past episodes — usually in a database or vector store, retrieved by key or relevance.
+      - Decide explicitly what is written to memory and when, how it is retrieved, when it expires, and how users can view or delete it.
+      - Memory is an attack surface; poisoned or wrong memories persist and steer later runs.
+    misconceptions:
+      - A bigger context window is not memory; it vanishes when the session ends, and filling it degrades focus and raises cost.
+      - Storing everything is not good memory; irrelevant or stale memories distract the model.
+    interview: Interviewers ask how you would give an assistant memory across sessions and what you would store, retrieve and forget.
+    production: Memory stores hold personal data; apply retention limits, per-user isolation and deletion on request.
+    sources:
+      - title: Memory overview
+        url: https://docs.langchain.com/oss/python/concepts/memory
+        publisher: LangChain
+      - title: "MemGPT: Towards LLMs as Operating Systems"
+        url: https://arxiv.org/abs/2310.08560
+        publisher: arXiv
+  - id: agents.human-in-the-loop
+    title: Human approval and intervention
+    module: design
+    level: intermediate
+    priority: essential
+    summary: Require confirmation before irreversible or costly actions, let people edit plans, and design escalation paths.
+    requires: [agents.agent-loop]
+    why: >-
+      Agents make mistakes, and some actions — payments, deletions, external messages — cannot be undone.
+      Well-placed human checkpoints prevent costly errors while keeping the agent useful.
+    keyIdeas:
+      - "Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible or costly actions (require explicit approval)."
+      - An approval request must show exactly what will happen — the tool, its arguments and the expected effect — and let the reviewer approve, edit or reject.
+      - Implementing approval needs pausable, resumable execution — persist state, wait (possibly for hours), then continue from the checkpoint.
+      - Give the agent escalation paths, asking for clarification or handing off to a person when confidence is low or a step keeps failing.
+      - Avoid approval fatigue; too many prompts lead to rubber-stamping, so reserve approvals for actions that matter.
+    misconceptions:
+      - An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+      - Approval is not a substitute for least privilege; restrict what tools can do regardless.
+    interview: Expect to decide which actions of a given agent need approval and to explain how the run pauses and resumes.
+    production: Record who approved what and when, and expire or escalate pending approvals instead of letting runs hang indefinitely.
+    sources:
+      - title: Interrupts
+        url: https://docs.langchain.com/oss/python/langgraph/interrupts
+        publisher: LangChain
+      - title: "LLM06:2025 Excessive Agency"
+        url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
+        publisher: OWASP GenAI Security Project
+  - id: agents.permissions-sandboxing
+    title: Tool permissions and sandboxing
+    module: design
+    level: advanced
+    priority: essential
+    summary: Grant the least privilege needed, isolate code execution, scope credentials per task and treat every tool call as untrusted input.
+    requires: [agents.tool-design, security.threat-modeling]
+    why: >-
+      An agent can be tricked or simply wrong, so the damage it can do is bounded only by the permissions you
+      give it. Least privilege and isolation turn worst cases from disasters into contained incidents.
+    keyIdeas:
+      - Give each agent only the tools, scopes and data its task needs, prefer read-only access, and use short-lived, task-scoped credentials instead of a user's or admin's full token.
+      - Run model-generated code in an isolated sandbox (container or microVM) with no secrets, restricted network egress, CPU, memory and time limits, and a disposable filesystem.
+      - Enforce permissions in the tool or server layer, not the prompt; the model's tool call is untrusted input to validate like any API request.
+      - Treat tool outputs (web pages, emails, files) as untrusted too, because they can carry instructions that hijack the agent.
+      - Keep audit logs of every tool call and the identity it acted as.
+    misconceptions:
+      - "\"The system prompt tells it not to\" is not a control; instructions can be overridden by injection or simply misread."
+      - A container is not automatically a sandbox; mounted secrets, host sockets and open network access break isolation.
+    interview: Interviewers ask how you would let an agent run code or call internal APIs without handing it the keys to everything.
+    production: Review agent permissions like service-account permissions — regularly and with named owners — and alert on unusual tool-call patterns.
+    sources:
+      - title: "LLM06:2025 Excessive Agency"
+        url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
+        publisher: OWASP GenAI Security Project
+      - title: OWASP Top 10 for Agentic Applications for 2026
+        url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+        publisher: OWASP GenAI Security Project
+      - title: MCP security best practices
+        url: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+        publisher: Model Context Protocol
+  - id: agents.failure-recovery
+    title: Retries, timeouts and failure recovery
+    module: design
+    level: advanced
+    priority: essential
+    summary: Detect loops, cap steps and spend, retry transient failures with backoff, checkpoint progress and fall back gracefully.
+    requires: [agents.agent-loop, python.exceptions]
+    why: >-
+      Agents call flaky networks and APIs and can get stuck repeating themselves. Without explicit recovery
+      logic, a single timeout or loop can burn money or leave work half done.
+    keyIdeas:
+      - "Classify errors: transient (timeouts, 429, 5xx) get retries with exponential backoff and jitter; permanent ones (validation errors, most 4xx) are reported, not retried; invalid tool arguments go back to the model once or twice before stopping."
+      - Put timeouts on every model and tool call, and budgets on every run (steps, tokens, money, wall-clock time).
+      - Detect loops — the same tool with the same arguments, or no progress over N steps — and respond by stopping, replanning or escalating to a person.
+      - Checkpoint after each step so a crashed run resumes instead of restarting; this requires idempotent side effects (idempotency keys).
+      - Plan graceful fallbacks such as a simpler workflow, a different model, a partial answer with a clear explanation, or hand-off to a person.
+    misconceptions:
+      - Retrying everything is harmful; retrying non-idempotent writes can duplicate payments or emails.
+    interview: Expect to explain retries with backoff and jitter, idempotency, and how you would stop an agent stuck in a loop.
+    production: Alert on runs that hit budgets or loop detectors; they are early signs of tool regressions or prompt problems.
+    sources:
+      - title: Timeouts, retries, and backoff with jitter
+        url: https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+        publisher: Amazon Web Services (Builders' Library)
+      - title: Persistence
+        url: https://docs.langchain.com/oss/python/langgraph/persistence
+        publisher: LangChain
+  - id: agents.multi-agent
+    title: Multi-agent systems
+    module: design
+    level: advanced
+    priority: supporting
+    summary: Supervisor, hand-off and peer patterns split work across specialised agents — at the price of coordination overhead, cost and harder debugging.
+    requires: [agents.workflows-vs-agents, agents.state-memory]
+    why: >-
+      Some tasks are too broad for one context window or toolset, or split naturally into parallel parts.
+      Multi-agent designs can help, but they multiply cost and failure modes, so you need to know when they are
+      worth it.
+    keyIdeas:
+      - "Supervisor (orchestrator-workers): a lead agent decomposes the task, delegates to subagents (often exposed as tools) and synthesises their results."
+      - "Hand-offs: control passes from one specialised agent to another (e.g. triage to billing) along with the conversation state."
+      - Benefits are separate, focused contexts per subtask, parallelism for breadth-first work like research, and independent development of specialist agents.
+      - Costs are many more tokens (Anthropic reported about 15x the tokens of a chat for its multi-agent research system), coordination errors, duplicated work and harder debugging.
+      - Try one agent with good tools first; use several when one agent has too many tools, needs too much context, or the work is genuinely parallel.
+    misconceptions:
+      - Giving agents job titles ("manager", "critic") does not create a useful division of labour; clear task boundaries and interfaces do.
+      - More agents do not mean more reliability; errors propagate between agents unless outputs are checked.
+    interview: Interviewers ask when multi-agent designs are justified and how agents share state and hand off work.
+    sources:
+      - title: How we built our multi-agent research system
+        url: https://www.anthropic.com/research/multi-agent-research-system
+        publisher: Anthropic
+      - title: Multi-agent
+        url: https://docs.langchain.com/oss/python/langchain/multi-agent
+        publisher: LangChain
+      - title: Why Do Multi-Agent LLM Systems Fail?
+        url: https://arxiv.org/abs/2503.13657
+        publisher: arXiv
+  # --------------------------------------------------------------- protocols
+  - id: agents.mcp
+    title: Model Context Protocol (MCP)
+    module: protocols
+    level: intermediate
+    priority: essential
+    summary: An open protocol where hosts connect, via clients, to servers that expose tools, resources and prompts over JSON-RPC (stdio or Streamable HTTP transports).
+    requires: [agents.tool-design, networking.json-apis]
+    why: >-
+      Without a standard, every AI application needs a custom integration for every tool and data source. MCP
+      defines one protocol, so any compatible host (IDE, chat app, agent) can use any MCP server.
+    keyIdeas:
+      - "Roles: a host (the AI application) runs one client per server connection, and servers expose capabilities; messages are JSON-RPC 2.0."
+      - "Server features: tools (functions the model can call, with JSON Schema inputs), resources (data identified by URIs, used as context) and prompts (reusable templates a user can choose)."
+      - "Standard transports: stdio (the host launches the server as a local subprocess) and Streamable HTTP (remote servers over HTTP POST, with optional SSE streaming of responses); the older HTTP+SSE transport is deprecated."
+      - The spec is versioned by date; the 2026-07-28 revision made the protocol stateless (no initialize handshake or sessions — each request carries its version and capabilities) and deprecated roots and sampling. Check which revision your SDK and host implement.
+      - Remote (HTTP) servers that need authentication use the spec's OAuth-based authorization; hosts must get user consent before invoking tools and should treat tool descriptions from untrusted servers as untrusted.
+    misconceptions:
+      - MCP is not an agent framework or a model API; it standardises how applications connect to tools and context.
+      - Installing an MCP server means running code with your permissions; a malicious or compromised server can exfiltrate data or inject instructions.
+    interview: Expect to explain host, client and server roles, the three server primitives, and when to use stdio versus Streamable HTTP.
+    sources:
+      - title: Model Context Protocol specification
+        url: https://modelcontextprotocol.io/specification/latest
+        publisher: Model Context Protocol
+        version: "2026-07-28"
+      - title: Architecture overview
+        url: https://modelcontextprotocol.io/docs/learn/architecture
+        publisher: Model Context Protocol
+      - title: Key changes in the 2026-07-28 revision
+        url: https://modelcontextprotocol.io/specification/2026-07-28/changelog
+        publisher: Model Context Protocol
+        version: "2026-07-28"
+  - id: agents.mcp-servers
+    title: Building MCP servers
+    module: protocols
+    level: advanced
+    priority: technology-specific
+    summary: Expose your own tools and data to any MCP-capable host with the official Python SDK, and secure them with authorisation and input validation.
+    requires: [agents.mcp, agents.permissions-sandboxing]
+    tools: [MCP Python SDK, MCP Inspector]
+    why: >-
+      Wrapping internal APIs, databases or files as an MCP server makes them usable from any MCP-capable
+      assistant or agent without per-host integrations — but it also exposes them to model-driven calls, so
+      security is part of the job.
+    keyIdeas:
+      - "In the official Python SDK you decorate functions with `@mcp.tool()` or `@mcp.resource('scheme://{param}')` (prompts work similarly); type hints and docstrings become the schemas and descriptions."
+      - "The server class is `MCPServer` in SDK v2 (it was `FastMCP` in v1.x; a separate community FastMCP project also exists), and v2 targets the stateless 2026-07-28 revision — check your installed version before copying examples."
+      - Use stdio for local, single-user servers launched by the host; use Streamable HTTP for shared or remote servers, behind TLS and authorization.
+      - "Test interactively with the MCP Inspector (e.g. `uv run mcp dev server.py` with the Python SDK) before connecting a real host."
+      - "Validate every input, authorise each tool call on the server, never pass through tokens issued for a different audience, limit file and network access, and log invocations."
+    misconceptions:
+      - With the stdio transport, printing logs to stdout corrupts the JSON-RPC stream; log to stderr.
+      - Returning raw exceptions or huge payloads does not help the model; return concise results and actionable errors.
+    production: Version tools carefully — renaming a tool or changing its schema breaks hosts and prompts that rely on it — and rate-limit and monitor remote servers like any public API.
+    sources:
+      - title: MCP Python SDK
+        url: https://github.com/modelcontextprotocol/python-sdk
+        publisher: Model Context Protocol (GitHub)
+      - title: Build an MCP server
+        url: https://modelcontextprotocol.io/docs/develop/build-server
+        publisher: Model Context Protocol
+      - title: Security best practices
+        url: https://modelcontextprotocol.io/docs/tutorials/security/security_best_practices
+        publisher: Model Context Protocol
+  - id: agents.a2a
+    title: Agent2Agent protocol (A2A)
+    module: protocols
+    level: advanced
+    priority: supporting
+    summary: An open protocol for agents to discover each other through agent cards and collaborate on tasks; MCP connects agents to tools, A2A connects agents to agents.
+    requires: [agents.mcp, agents.multi-agent]
+    why: >-
+      As organisations build agents on different frameworks and vendors, those agents need a common way to
+      find each other and delegate work without exposing their internals. A2A standardises that agent-to-agent
+      layer.
+    keyIdeas:
+      - An Agent Card is a JSON document describing an agent's identity, endpoint, skills, capabilities and authentication requirements; a standard discovery location is `/.well-known/agent-card.json` on the agent's domain.
+      - A client sends a Message made of Parts (text, file or URL, structured data); longer work is tracked as a Task with a lifecycle (submitted, working, input-required, completed, failed, canceled and others) whose results are Artifacts.
+      - Long-running work is followed by polling, streaming over Server-Sent Events, or push notifications to a client webhook.
+      - Remote agents are opaque; they share results, not their prompts, tools or memory.
+      - MCP connects an agent to tools and context, while A2A connects agents to other agents, and systems often use both. The spec (v1.0, Linux Foundation governance) defines JSON-RPC, gRPC and HTTP+JSON bindings; details are still evolving.
+    misconceptions:
+      - A2A does not replace MCP; they address different layers.
+      - Finding an agent card does not make the agent trustworthy; authenticate the remote agent and authorise what it may do.
+    interview: Interviewers ask how A2A differs from MCP and how a client agent discovers and delegates work to a remote agent.
+    sources:
+      - title: A2A protocol specification
+        url: https://a2a-protocol.org/latest/specification/
+        publisher: A2A Project (Linux Foundation)
+        version: "1.0"
+      - title: A2A and MCP
+        url: https://a2a-protocol.org/latest/topics/a2a-and-mcp/
+        publisher: A2A Project (Linux Foundation)
+      - title: a2aproject/A2A
+        url: https://github.com/a2aproject/A2A
+        publisher: GitHub
+  # -------------------------------------------------------------- frameworks
+  - id: agents.langgraph-agents
+    title: Building agents with LangGraph
+    module: frameworks
+    level: advanced
+    priority: technology-specific
+    summary: Prebuilt tool-calling agents (now LangChain's `create_agent`, built on LangGraph) and custom agent graphs with tool nodes, checkpoints and interrupts.
+    requires: [frameworks.langgraph-basics, agents.agent-loop, frameworks.langgraph-persistence, frameworks.langchain-tools]
+    why: >-
+      LangGraph gives agents the production features a hand-written loop lacks — persistence, streaming,
+      interrupts for approval and explicit control flow — while letting you drop down to a custom graph when the
+      prebuilt loop is not enough.
+    keyIdeas:
+      - "Prebuilt: `from langchain.agents import create_agent` builds a tool-calling loop on LangGraph from `model`, `tools`, `system_prompt` and optional `response_format`, `middleware` and `checkpointer`; it replaced `langgraph.prebuilt.create_react_agent` in the 1.0 releases."
+      - "Custom: an LLM node bound to tools, a tool-executing node (e.g. `ToolNode` from `langgraph.prebuilt`) and a conditional edge that loops back while the model requests tools and ends when it answers."
+      - Add a checkpointer and a `thread_id` for multi-turn memory and resumability; use `interrupt()` or human-in-the-loop middleware to approve tool calls.
+      - Stream intermediate steps (tokens, tool calls, state updates) to the UI so users see progress.
+      - Middleware hooks (around model calls and tool calls) add retries, summarisation, guardrails or approvals without rewriting the loop.
+    misconceptions:
+      - "Many tutorials still use `create_react_agent`; check which version a tutorial targets before copying it."
+      - The prebuilt agent is not a black box you must accept; when control flow gets specific, a custom graph is often clearer.
+    tools: [LangGraph, LangChain]
+    sources:
+      - title: Agents
+        url: https://docs.langchain.com/oss/python/langchain/agents
+        publisher: LangChain
+        version: "1.x"
+      - title: Workflows and agents
+        url: https://docs.langchain.com/oss/python/langgraph/workflows-agents
+        publisher: LangChain
+      - title: LangChain v1 migration guide
+        url: https://docs.langchain.com/oss/python/migrate/langchain-v1
+        publisher: LangChain
+  - id: agents.crewai
+    title: CrewAI
+    module: frameworks
+    level: intermediate
+    priority: optional
+    summary: A framework organising agents into role-based crews with tasks and processes, plus event-driven flows.
+    requires: [agents.multi-agent]
+    tools: [CrewAI]
+    why: >-
+      CrewAI offers a high-level, role-based way to compose agents and deterministic flows, which can be quick
+      for prototyping multi-step, multi-role tasks if you accept its abstractions.
+    keyIdeas:
+      - Agents are defined by `role`, `goal` and `backstory` (plus an LLM and tools); Tasks have a description and an expected output and are assigned to agents.
+      - "A Crew runs its tasks with a Process: sequential (in order) or hierarchical (a manager agent delegates and validates)."
+      - Flows add event-driven, stateful control with decorators such as `@start`, `@listen` and `@router`, and can call crews as steps; the docs recommend a Flow as the backbone of larger apps.
+      - It is a standalone, MIT-licensed Python framework with its own primitives; the company also sells a hosted enterprise platform (check the current offering).
+      - Projects scaffolded by the `crewai` CLI typically keep agent and task definitions in YAML files.
+    misconceptions:
+      - Role-play descriptions do not guarantee competence; results still depend on tools, task definitions and evaluation.
+    sources:
+      - title: CrewAI introduction
+        url: https://docs.crewai.com/en/introduction
+        publisher: CrewAI
+      - title: Agents
+        url: https://docs.crewai.com/en/concepts/agents
+        publisher: CrewAI
+      - title: crewAIInc/crewAI
+        url: https://github.com/crewAIInc/crewAI
+        publisher: GitHub
+  - id: agents.autogen
+    title: AutoGen
+    module: frameworks
+    level: intermediate
+    priority: optional
+    summary: Microsoft's framework for multi-agent conversations and event-driven agent applications — no longer maintained, with Microsoft Agent Framework as its official successor.
+    requires: [agents.multi-agent]
+    tools: [AutoGen, Microsoft Agent Framework]
+    why: >-
+      AutoGen popularised conversational multi-agent patterns and much existing code and many tutorials use
+      it. Knowing its status and successor helps you read that code and choose the maintained path for new
+      work.
+    keyIdeas:
+      - AutoGen 0.4 and later is layered — `autogen-core` (an event-driven actor runtime), `autogen-agentchat` (high-level agents and teams such as round-robin and selector group chats) and `autogen-ext` (model clients and tools).
+      - The older 0.2 API (`ConversableAgent`, `UserProxyAgent`) differs substantially from 0.4+, and tutorials often mix the two.
+      - Microsoft's repository now says AutoGen is no longer maintained and points new projects to Microsoft Agent Framework, which combines AutoGen's agent abstractions with Semantic Kernel's enterprise features and adds graph-based workflows; a migration guide exists.
+      - AG2 is a separate, community-led fork of the older AutoGen line, not Microsoft's project.
+      - The core ideas transfer to any framework — agents as message-passing participants, team or group-chat orchestration, and explicit termination conditions.
+    misconceptions:
+      - "\"AutoGen\" does not name one stable API; check whether code targets 0.2, 0.4+, AG2 or Microsoft Agent Framework."
+    sources:
+      - title: microsoft/autogen (status notice)
+        url: https://github.com/microsoft/autogen
+        publisher: Microsoft (GitHub)
+      - title: Microsoft Agent Framework overview
+        url: https://learn.microsoft.com/en-us/agent-framework/overview/
+        publisher: Microsoft
+      - title: Migration guide from AutoGen
+        url: https://learn.microsoft.com/en-us/agent-framework/migration-guide/from-autogen/
+        publisher: Microsoft
+  - id: agents.other-frameworks
+    title: Other agent frameworks and SDKs
+    module: frameworks
+    level: intermediate
+    priority: optional
+    summary: Provider agent SDKs, Pydantic AI, smolagents and others — compare them on control, typing, observability and lock-in.
+    requires: [agents.what-is-an-agent, frameworks.tradeoffs]
+    tools: [OpenAI Agents SDK, Claude Agent SDK, Pydantic AI, smolagents]
+    why: >-
+      Provider SDKs and lightweight libraries often give you a simpler, better-supported agent loop than a
+      general framework. Comparing them on concrete criteria avoids choosing by hype.
+    keyIdeas:
+      - Provider agent SDKs — such as the OpenAI Agents SDK (agents, handoffs, guardrails, tracing), the Claude Agent SDK (built on the agent harness behind Claude Code) and Google's Agent Development Kit — are tuned for their own models, with varying support for others.
+      - Pydantic AI emphasises typed dependencies and validated outputs; smolagents (Hugging Face) is minimal and supports code agents that act by writing Python instead of JSON tool calls.
+      - Microsoft Agent Framework (the successor to AutoGen and Semantic Kernel) targets .NET and Python (Go in preview at the time of writing) with agents plus graph-based workflows.
+      - "Compare on: control over the loop and prompts, typing and validation, MCP support, tracing and OpenTelemetry, deployment model, licence and lock-in."
+      - Evaluate with one real task end to end; this market changes monthly, so re-check maturity and maintenance before committing.
+    misconceptions:
+      - Code-executing agents need a sandbox; letting a model write and run Python is remote code execution by design.
+    sources:
+      - title: OpenAI Agents SDK
+        url: https://openai.github.io/openai-agents-python/
+        publisher: OpenAI
+      - title: Agent SDK overview
+        url: https://code.claude.com/docs/en/agent-sdk/overview
+        publisher: Anthropic
+      - title: smolagents documentation
+        url: https://huggingface.co/docs/smolagents/index
+        publisher: Hugging Face
+  # ------------------------------------------------------------- reliability
+  - id: agents.evaluation
+    title: Evaluating agents
+    module: reliability
+    level: advanced
+    priority: essential
+    summary: Score final task success, inspect trajectories (tool choice, arguments, steps), and track cost, latency and safety across a fixed task suite.
+    requires: [agents.agent-loop, genai.evaluation]
+    why: >-
+      Agents take different paths on every run, and a correct-looking final answer can hide wasteful or unsafe
+      steps. You need task-level and trajectory-level evaluation, repeated over many runs, to know whether a
+      change made the agent better.
+    keyIdeas:
+      - Build a fixed suite of realistic tasks with automatic success checks where possible (tests pass, database ends in the expected state, correct answer), plus rubric or LLM-judge grading for open-ended outputs.
+      - Inspect trajectories — the right tools chosen, valid arguments, number of steps, unnecessary or unsafe actions, recovery from errors.
+      - Agents are non-deterministic, so run each task several times and report pass rates; consistency metrics such as pass^k (all k trials succeed) expose flakiness that a single run hides.
+      - Track cost (tokens, tool calls), latency and safety violations next to success; a slightly better agent that costs five times more may not be an improvement.
+      - Run evaluations in sandboxed environments so they are reproducible and cannot cause real side effects.
+    misconceptions:
+      - Judging only the final answer misses agents that succeed by luck or through unsafe actions.
+      - Public benchmark scores (such as SWE-bench) do not predict performance on your tasks and tools.
+    interview: Expect to design an evaluation plan for an agent, including success criteria, trajectory checks and how to handle non-determinism.
+    production: Re-run the suite on every model, prompt or tool change, and add production failures as new tasks.
+    sources:
+      - title: "Demystifying evals for AI agents"
+        url: https://www.anthropic.com/research/demystifying-evals-for-ai-agents
+        publisher: Anthropic
+      - title: "tau-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains"
+        url: https://arxiv.org/abs/2406.12045
+        publisher: arXiv
+      - title: "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?"
+        url: https://arxiv.org/abs/2310.06770
+        publisher: arXiv
+  - id: agents.security
+    title: Agent security
+    module: reliability
+    level: advanced
+    priority: essential
+    summary: Indirect prompt injection, data exfiltration through tools, excessive agency and confused-deputy attacks — and layered mitigations.
+    requires: [agents.permissions-sandboxing, genai.prompt-injection, agents.mcp]
+    why: >-
+      Agents read untrusted content and hold real permissions — a combination attackers exploit to make them
+      leak data or take harmful actions. Securing them takes layered controls, because no prompt or filter
+      reliably stops prompt injection.
+    keyIdeas:
+      - Indirect prompt injection hides instructions in web pages, emails, documents or tool results, which the agent reads and follows as if they came from the user.
+      - Exfiltration happens through tool calls, URLs, image links or messages; the dangerous combination is access to private data, exposure to untrusted content and an outbound channel.
+      - Excessive agency (too many tools, permissions or autonomy) turns a mistake into an incident; a confused deputy is an agent using its privileges on an attacker's behalf.
+      - OWASP's agentic Top 10 adds agent-specific risks such as goal hijacking, tool misuse, identity and privilege abuse, memory and context poisoning, insecure inter-agent communication and cascading failures.
+      - Layer the defences — least privilege, separating trusted instructions from untrusted data, approval for sensitive actions, egress allow-lists, output filtering, sandboxing and monitoring — and red-team the system.
+    misconceptions:
+      - There is no reliable prompt-level fix for prompt injection; design so that a successful injection has limited impact.
+      - MCP servers and plug-in tools are part of your supply chain; their descriptions and outputs can carry attacks.
+    interview: Interviewers ask how indirect prompt injection works against an agent and which architectural controls limit the damage.
+    production: Threat-model every new tool or data source, log tool calls for forensics, and keep a kill switch that disables an agent or tool quickly.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP GenAI Security Project
+      - title: OWASP Top 10 for Agentic Applications for 2026
+        url: https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/
+        publisher: OWASP GenAI Security Project
+      - title: "Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection"
+        url: https://arxiv.org/abs/2302.12173
+        publisher: arXiv
+  - id: agents.observability
+    title: Agent observability
+    module: reliability
+    level: advanced
+    priority: supporting
+    summary: Trace every step, tool call and token of an agent run to debug failures, attribute cost and spot regressions.
+    requires: [agents.agent-loop, mlops.observability]
+    why: >-
+      When an agent fails, the cause is usually one specific step — a wrong tool argument, a misleading tool
+      result, an overflowing context. Step-level traces are the practical way to find it and to attribute cost.
+    keyIdeas:
+      - Trace each run as a tree — the run, every model call (prompt, output, model, tokens, latency) and every tool call (name, arguments, result, errors) — linked by IDs.
+      - Prefer standards; OpenTelemetry's generative-AI semantic conventions cover model calls, agent and tool operations and MCP (still evolving, now in their own repository), and recent MCP revisions define how trace context is propagated.
+      - Aggregate metrics such as success rate, steps per run, tool error rate, cost per task, latency percentiles and how often budgets or loop detectors fire.
+      - Link traces to user feedback and evaluation scores so failing runs can be found and replayed.
+      - Langfuse (open source), LangSmith and other OpenTelemetry-compatible backends provide agent-friendly trace views.
+    misconceptions:
+      - Logging only the final answer hides the cause of failures; you need the intermediate steps.
+    tools: [Langfuse, LangSmith, OpenTelemetry]
+    interview: Interviewers ask what you would record for each agent step and how you would find the cause of a regression.
+    production: Traces include prompts, tool results and user data; redact secrets and personal data, restrict access and set retention limits.
+    sources:
+      - title: OpenTelemetry semantic conventions for generative AI
+        url: https://github.com/open-telemetry/semantic-conventions-genai
+        publisher: OpenTelemetry (GitHub)
+      - title: Langfuse documentation
+        url: https://langfuse.com/docs
+        publisher: Langfuse
+  - id: agents.context-engineering
+    title: Context engineering for long-running agents
+    module: design
+    level: advanced
+    priority: supporting
+    summary: Decide what goes into the model's limited context at each step — instructions, tool results, notes, summaries — so long tasks stay coherent and affordable.
+    why: Agents accumulate tool output quickly; without deliberate context management they exceed the window, lose track of the goal and cost more every step.
+    requires: [agents.state-memory, genai.tokens-context]
+    keyIdeas:
+      - Treat the context window as a budget; keep stable instructions first and trim or summarise bulky tool output.
+      - Compaction replaces older turns with a summary; structured notes or a scratch file let an agent persist important facts outside the window.
+      - Sub-agents with their own clean context can explore a sub-task and return only a condensed result.
+      - Retrieval (just-in-time loading of files or documents) often beats preloading everything.
+    misconceptions:
+      - A bigger context window does not remove the need for curation; irrelevant context still distracts models and costs tokens.
+    interview: An agent's quality degrades after many tool calls — what would you change about how its context is managed?
+    production: Track tokens per step and per task, and alert when tasks approach the context limit.
+    sources:
+      - title: Effective context engineering for AI agents
+        url: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents
+        publisher: Anthropic

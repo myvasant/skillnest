@@ -1,0 +1,653 @@
+id: python.secure-coding
+concept: python.secure-coding
+title: Secure Python Coding
+subtitle: Treat external data as untrusted
+estimatedMinutes: 60
+reviewedOn: 2026-11-04
+summary: Learn practical Python security habits at the boundaries where data enters a program or crosses
+  into another system. Validate inputs, constrain file paths and resource use, parameterize SQL, avoid
+  unsafe deserialization and shell injection, protect secrets, and handle errors without leaking sensitive
+  data.
+objectives:
+- Identify trust boundaries and explain why input validation is different from authorisation.
+- Validate type, format, range and size before using external data.
+- Resolve user-controlled paths and check that they remain inside an allowed directory.
+- Use SQL parameters and safe subprocess argument lists instead of building executable strings.
+- Explain why pickle, eval and exec must not process untrusted input.
+- Generate security tokens with secrets and compare secret values with compare_digest.
+- Limit resource consumption and avoid leaking secrets through logs and error messages.
+sources:
+- title: Security Considerations — Python 3.14
+  url: https://docs.python.org/3.14/library/security_warnings.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: pickle — Python object serialization
+  url: https://docs.python.org/3.14/library/pickle.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: secrets — Generate secure random numbers for managing secrets
+  url: https://docs.python.org/3.14/library/secrets.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: subprocess — Subprocess management
+  url: https://docs.python.org/3.14/library/subprocess.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: pathlib — Object-oriented filesystem paths
+  url: https://docs.python.org/3.14/library/pathlib.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: sqlite3 — DB-API 2.0 interface for SQLite databases
+  url: https://docs.python.org/3.14/library/sqlite3.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: JSON decoder
+  url: https://docs.python.org/3.14/library/json.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: OWASP Top 10
+  url: https://owasp.org/www-project-top-ten/
+  publisher: OWASP Foundation
+sections:
+- id: trust-boundaries
+  title: Start with trust boundaries
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'A **trust boundary** is a place where data enters from a source you do not fully control: an
+      HTTP
+
+      request, uploaded file, environment variable, database record, message queue, command-line argument
+
+      or AI tool result. Data can be malformed or deliberately crafted even when it comes from a system
+
+      you normally trust.
+
+
+      Treat external data as untrusted until you validate it for the exact operation you intend to perform.
+
+      Validation asks, "Is this value well-formed and within allowed limits?" Authorisation asks, "Is
+      this
+
+      caller allowed to perform this action on this resource?" Passing validation does not grant permission.
+
+      '
+  - type: callout
+    variant: note
+    title: Security is a set of layers
+    body: 'A validator is not a firewall, a file-path check is not a sandbox, and a secret in an environment
+
+      variable is not automatically protected from every process on the machine. Combine validation,
+
+      authorisation, least privilege, safe APIs, resource limits, logging and operational controls.
+
+      '
+  - type: item
+    ref: secure-validation-vs-auth
+- id: validate-input
+  title: Validate type, shape, range and size
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Validation should be specific to the field and the operation:
+
+
+      - **Type:** Is this a string, integer, list or object as expected?
+
+      - **Shape:** Does it have the required keys and no unexpected structure?
+
+      - **Format:** Does an email, date or identifier follow the required syntax?
+
+      - **Range:** Is a number within the permitted minimum and maximum?
+
+      - **Size:** Is the string, list, file or request body small enough to process safely?
+
+
+      Prefer an allow-list of valid values when the domain is known. Reject malformed values clearly rather
+
+      than trying to remove suspicious characters and hoping the result becomes safe. Do not use
+
+      `assert` for production input validation: Python can remove assert statements when optimisation
+      is
+
+      enabled.
+
+      '
+  - type: code
+    runnable: true
+    code: "def parse_quantity(raw):\n    if not raw.isdecimal():\n        raise ValueError(\"quantity\
+      \ must contain digits only\")\n\n    quantity = int(raw)\n    if not 1 <= quantity <= 100:\n   \
+      \     raise ValueError(\"quantity must be between 1 and 100\")\n    return quantity\n\nprint(parse_quantity(\"\
+      12\"))\ntry:\n    parse_quantity(\"1000\")\nexcept ValueError as error:\n    print(type(error).__name__)\n"
+    expectedOutput: '12
+
+      ValueError
+
+      '
+    caption: Validation checks both the representation and the business range. A real API should also
+      limit the request body before parsing it.
+  - type: callout
+    variant: warning
+    title: Validation does not replace authorisation
+    body: 'A user may submit a perfectly valid record ID that belongs to someone else. After validating
+      its
+
+      shape, the application must still check whether the authenticated caller is allowed to read or
+
+      change that record.
+
+      '
+  - type: item
+    ref: secure-assert-true-false
+- id: safe-paths
+  title: Keep user-controlled paths inside an allowed directory
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: 'A **path traversal** attack uses values such as `../private.txt` or an absolute path to escape
+      the
+
+      directory an application intended to expose. Do not join a user-supplied name to a folder and assume
+
+      the result is safe.
+
+
+      Resolve the path and check that the resolved result remains inside the trusted root. This catches
+
+      ordinary `..` traversal and existing symlinks that resolve outside the root:
+
+      '
+  - type: code
+    runnable: true
+    code: "from pathlib import Path\n\nroot = Path(\"/srv/app/uploads\").resolve()\nfor supplied in (\"\
+      report.pdf\", \"../secrets.env\", \"/etc/passwd\"):\n    candidate = (root / supplied).resolve()\n\
+      \    print(candidate.is_relative_to(root))\n"
+    expectedOutput: 'True
+
+      False
+
+      False
+
+      '
+    caption: This example resolves paths without opening or changing files. It demonstrates containment,
+      not a complete sandbox.
+  - type: markdown
+    body: "For a real upload or download feature, also:\n\n- Generate the stored filename yourself instead\
+      \ of trusting the submitted filename.\n- Restrict the allowed file types and verify content rather\
+      \ than trusting only the extension.\n- Enforce upload size, decompression and processing limits.\n\
+      - Store files outside executable application directories and use least-privilege permissions.\n\
+      - Consider symlink races: a path can change between checking it and opening it. If an attacker can\n\
+      \  modify the directory concurrently, use OS-level safe-open patterns or an isolated storage area.\n"
+  - type: item
+    ref: secure-path-predict
+- id: injection-boundaries
+  title: Keep data separate from executable instructions
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '**Injection** happens when data is interpreted as instructions because the application mixes
+      the
+
+      two together. The safe pattern is to use an API that accepts the instruction separately from its
+
+      values.
+
+
+      For SQL, use placeholders and pass values as a separate parameter sequence. Do not paste user text
+
+      into the SQL string with f-strings or concatenation:
+
+      '
+  - type: code
+    runnable: true
+    code: "import sqlite3\n\nconnection = sqlite3.connect(\":memory:\")\nconnection.execute(\"CREATE TABLE\
+      \ users (email TEXT NOT NULL)\")\nconnection.execute(\"INSERT INTO users VALUES (?)\", (\"ada@example.com\"\
+      ,))\n\nsupplied = \"' OR 1=1 --\"\nrows = connection.execute(\n    \"SELECT email FROM users WHERE\
+      \ email = ?\",\n    (supplied,),\n).fetchall()\nprint(rows)\n"
+    expectedOutput: '[]
+
+      '
+    caption: The database treats the supplied text as a value, not as part of the SQL grammar.
+  - type: markdown
+    body: 'The same principle applies when launching a program. Prefer a fixed executable and a list of
+
+      arguments with `shell=False` (the default). Avoid constructing a shell command from user input:
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "import subprocess\n\nuser_filename = \"monthly report.csv\"\nresult = subprocess.run(\n   \
+      \ [\"python\", \"process_report.py\", \"--input\", user_filename],\n    check=True,\n    capture_output=True,\n\
+      \    text=True,\n    timeout=10,\n    shell=False,\n)\n"
+    caption: This is a local-process example. subprocess is not available in the WebAssembly playground.
+      A list of arguments with shell=False avoids asking a shell to interpret metacharacters, but you
+      must still validate the argument for the called program's own rules and permissions.
+  - type: callout
+    variant: warning
+    title: Avoid eval and exec on untrusted strings
+    body: '`eval()` and `exec()` interpret strings as Python expressions or statements. Never pass untrusted
+
+      input to them. Replacing `eval()` with `pickle.loads()` is not a fix: unpickling untrusted data
+      can
+
+      execute arbitrary code too.
+
+      '
+  - type: item
+    ref: secure-sql-lookup
+- id: serialization
+  title: Deserialize only formats and sources you trust
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '**Deserialization** turns stored or transmitted bytes/text back into data structures. Python''s
+
+      `pickle` can reconstruct complex Python objects, but its format can also invoke code while loading.
+
+      Never unpickle data that came from an untrusted source or could have been tampered with.
+
+
+      JSON is a data-interchange format and does not itself provide pickle''s arbitrary-code execution
+
+      behaviour. That does not mean every JSON document is safe: validate its schema and limit its size,
+
+      nesting and processing cost before using it.
+
+      '
+  - type: code
+    runnable: true
+    code: "import json\n\npayload = json.loads('{\"role\": \"reader\", \"active\": true}')\nallowed_roles\
+      \ = {\"reader\", \"editor\"}\n\nif not isinstance(payload, dict) or payload.get(\"role\") not in\
+      \ allowed_roles:\n    raise ValueError(\"unsupported role\")\n\nprint(payload[\"role\"], payload[\"\
+      active\"])\n"
+    expectedOutput: 'reader True
+
+      '
+    caption: Parsing creates Python values; the application still checks the expected object shape and
+      allowed role.
+  - type: callout
+    variant: warning
+    title: Never load an untrusted pickle
+    body: 'The official Python documentation warns that malicious pickle data can execute arbitrary code
+
+      during unpickling. Use JSON or another data-only format for untrusted input, then validate it.
+
+      '
+- id: secrets-and-credentials
+  title: Generate and protect secrets
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A secret is a value that grants access: an API key, password-reset token, session identifier
+      or
+
+      signing key. Do not hardcode it in source code, commit it to version control, print it in logs or
+
+      send it to an external service without a clear reason and consent.
+
+
+      Use the `secrets` module for security-sensitive random values. The `random` module is designed for
+
+      simulation and repeatable pseudo-random sequences, not for authentication tokens. Use
+
+      `secrets.compare_digest()` or `hmac.compare_digest()` when comparing secret tokens to reduce the
+
+      risk of timing-based leakage.
+
+      '
+  - type: code
+    runnable: true
+    code: 'import secrets
+
+
+      token = secrets.token_urlsafe(32)
+
+      print(bool(token))
+
+      print(secrets.compare_digest(token, token))
+
+      '
+    expectedOutput: 'True
+
+      True
+
+      '
+    caption: The random token itself is deliberately not printed or stored in lesson output. The comparison
+      example uses the same token only to keep the result deterministic.
+  - type: markdown
+    body: 'Environment variables can keep secrets out of source files, but they are not a full secret
+      manager.
+
+      Processes with sufficient access may read them, crash dumps may expose them, and shell history can
+
+      leak values typed directly into a command. For production systems, consider a dedicated secret
+
+      store, narrow access, rotation, short-lived credentials and audit logs.
+
+
+      Passwords are different from API tokens. Never store passwords in plain text or in a reversible
+
+      format. Use a maintained password-hashing implementation (for example Argon2id, scrypt or PBKDF2
+
+      through a suitable library) with a unique salt and an appropriate work factor. Do not invent your
+
+      own password-storage scheme.
+
+      '
+  - type: item
+    ref: secure-token-mcq
+- id: resource-and-error-safety
+  title: Limit resource use and avoid leaking details
+  kind: application
+  blocks:
+  - type: markdown
+    body: 'A valid input can still be too expensive. A very large JSON document, deeply nested structure,
+
+      decompression bomb, huge upload or unbounded loop can exhaust CPU, memory, disk or worker capacity.
+
+      Apply limits before and during processing: request size, file size, number of records, nesting depth,
+
+      execution time, queue length and concurrent operations.
+
+
+      Handle expected failures at the layer that can respond safely. Show users a useful message and a
+
+      correlation ID, but keep internal stack traces and sensitive details in access-controlled logs.
+
+      Never log passwords, bearer tokens, session cookies or full private request bodies by default.
+
+      '
+  - type: callout
+    variant: production
+    title: Safe defaults matter
+    body: 'Use least-privilege file and database permissions, disable unused features, keep dependencies
+
+      updated, review dependency provenance, and test security controls. A package lockfile improves
+
+      reproducibility; it does not prove that every dependency is safe.
+
+      '
+  - type: item
+    ref: secure-resource-explain
+- id: mistakes-and-summary
+  title: Common mistakes and a practical checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: 'Common mistakes:
+
+
+      - Treating input validation as permission checking.
+
+      - Trusting a filename, file extension or MIME type supplied by a client.
+
+      - Building SQL or shell commands by concatenating untrusted strings.
+
+      - Unpickling data received from the network or an uploaded file.
+
+      - Using `random` for reset tokens or `assert` for production validation.
+
+      - Logging credentials or returning internal tracebacks to users.
+
+      - Checking a path and forgetting that symlinks or concurrent changes may alter what is opened.
+
+      - Accepting unlimited payload sizes, decompression work or concurrent tasks.
+
+
+      Before shipping a Python feature, ask: What crosses the trust boundary? What shape and size is
+
+      allowed? Who is authorised? Which interpreter or external system will process this value? What
+
+      happens on failure? Can the input exhaust resources or expose secrets? What tests prove the control?
+
+      '
+  - type: item
+    ref: secure-sql-lookup
+  - type: item
+    ref: secure-path-resolve
+  - type: item
+    ref: secure-token-mcq
+items:
+- id: secure-validation-vs-auth
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: A request contains a syntactically valid invoice ID. What must the application still check before
+    returning the invoice?
+  options:
+  - id: permission
+    text: Whether the authenticated caller is authorised to access that invoice.
+    correct: true
+    feedback: Validation checks the value's shape; authorisation checks the caller's permission for the
+      specific resource.
+  - id: digits-only
+    text: Whether the ID contains only digits, and then access is automatically allowed.
+    correct: false
+    feedback: A valid identifier does not prove that the caller owns or may read the referenced invoice.
+  - id: filename
+    text: Whether the request uses a familiar filename.
+    correct: false
+    feedback: Filenames do not establish identity or permission to access a record.
+  - id: client-check
+    text: Whether the browser hid the invoice link.
+    correct: false
+    feedback: Client-side UI checks can be bypassed. Enforce authorisation on the server or trusted application
+      boundary.
+  explanation: Validation and authorisation answer different questions. A valid ID can still refer to
+    another user's data.
+- id: secure-assert-true-false
+  type: true-false
+  skill: recognition
+  prompt: An assert statement is a reliable way to validate untrusted input in production Python code
+    because it always runs.
+  answer: false
+  explanation: Python can remove assert statements when optimisation is enabled. Use explicit condition
+    checks and raise an appropriate exception for production validation.
+- id: secure-path-predict
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: Which of these resolved paths remain inside the allowed root? What does the program print?
+  code: 'from pathlib import Path
+
+
+    root = Path("/app/data").resolve()
+
+    safe = (root / "reports" / "q1.csv").resolve()
+
+    escape = (root / ".." / "secrets.txt").resolve()
+
+    print(safe.is_relative_to(root), escape.is_relative_to(root))
+
+    '
+  answer: True False
+  wrongAnswers:
+  - answer: True True
+    feedback: The `..` component moves to the parent directory. Resolve the path before checking containment.
+  - answer: False False
+    feedback: A normal child path remains under the root after resolution; only the traversal path escapes.
+  explanation: '`resolve()` normalises the path, including `..`; `is_relative_to(root)` checks whether
+    the resolved path is still beneath the allowed root.'
+- id: secure-sql-lookup
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: 'Implement `find_email(connection, supplied_email)` using a SQL placeholder. Return the matching
+    row
+
+    from the `users` table, or None if there is no match. Never insert the supplied value into SQL text.
+
+    '
+  starterCode: "def find_email(connection, supplied_email):\n    # TODO: use a parameter placeholder and\
+    \ pass the value separately\n    return None\n"
+  solution: "def find_email(connection, supplied_email):\n    return connection.execute(\n        \"SELECT\
+    \ email FROM users WHERE email = ?\",\n        (supplied_email,),\n    ).fetchone()\n"
+  tests:
+  - name: returns the matching record
+    code: 'import sqlite3
+
+      connection = sqlite3.connect(":memory:")
+
+      connection.execute("CREATE TABLE users (email TEXT NOT NULL)")
+
+      connection.execute("INSERT INTO users VALUES (?)", ("ada@example.com",))
+
+      assert find_email(connection, "ada@example.com") == ("ada@example.com",), "the existing email should
+      be returned as a one-column row."
+
+      '
+  - name: treats an injection string as data
+    code: 'import sqlite3
+
+      connection = sqlite3.connect(":memory:")
+
+      connection.execute("CREATE TABLE users (email TEXT NOT NULL)")
+
+      connection.execute("INSERT INTO users VALUES (?)", ("ada@example.com",))
+
+      assert find_email(connection, "'' OR 1=1 --") is None, "untrusted text must not become part of the
+      SQL command."
+
+      '
+  hints:
+  - Keep the SQL statement fixed and put a question mark where the value belongs.
+  - Pass a one-item tuple as the second argument; the comma is important.
+  - Call fetchone() to return one matching row or None.
+  feedback:
+  - when:
+      codeContains: f"SELECT
+    message: Do not build SQL with an f-string. Use a fixed query with a placeholder, then pass supplied_email
+      separately.
+  explanation: The SQL statement remains fixed and the supplied email is bound as a parameter, so it is
+    treated as data rather than SQL syntax. The question-mark placeholder is the SQLite DB-API style;
+    other database drivers may use a different placeholder format.
+- id: secure-path-resolve
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: 'Implement `resolve_child(root, user_path)`. Return the resolved path only when it stays inside
+    the
+
+    resolved root directory. Raise ValueError when it escapes. This protects against ordinary `..`
+
+    traversal and existing symlinks, but it is not a complete defence against a symlink changing between
+
+    the check and a later file open.
+
+    '
+  starterCode: "from pathlib import Path\n\ndef resolve_child(root, user_path):\n    # TODO: resolve the\
+    \ root and candidate, then enforce containment\n    return Path(root) / user_path\n"
+  solution: "from pathlib import Path\n\ndef resolve_child(root, user_path):\n    base = Path(root).resolve()\n\
+    \    candidate = (base / user_path).resolve()\n    if not candidate.is_relative_to(base):\n      \
+    \  raise ValueError(\"path escapes the allowed directory\")\n    return candidate\n"
+  tests:
+  - name: accepts a normal child path
+    code: 'from pathlib import Path
+
+      assert resolve_child("/safe/uploads", "report.txt") == Path("/safe/uploads/report.txt"), "a normal
+      child path should remain inside the upload root."
+
+      '
+  - name: rejects parent traversal
+    code: "try:\n    resolve_child(\"/safe/uploads\", \"../secrets.txt\")\nexcept ValueError:\n    pass\n\
+      else:\n    raise AssertionError(\"a parent-directory path must be rejected.\")\n"
+  - name: rejects an absolute path outside the root
+    code: "try:\n    resolve_child(\"/safe/uploads\", \"/etc/passwd\")\nexcept ValueError:\n    pass\n\
+      else:\n    raise AssertionError(\"an absolute path outside the root must be rejected.\")\n"
+  hints:
+  - Resolve the trusted root once with Path(root).resolve().
+  - Resolve the candidate after joining it to the root.
+  - Use candidate.is_relative_to(base); do not use a string-prefix check.
+  feedback:
+  - when:
+      codeContains: startswith(
+    message: A string-prefix check is not a safe path-containment check. Compare resolved Path objects
+      with is_relative_to().
+  explanation: Resolve both the trusted root and the candidate path before checking containment. is_relative_to
+    compares path components rather than string prefixes, so a sibling such as /safe/uploads-old is not
+    mistaken for a child. This check does not eliminate a time-of-check/time-of-use race if a symlink
+    changes before a later open.
+- id: secure-token-mcq
+  type: mcq
+  skill: design
+  difficulty: 2
+  prompt: Which standard-library module should generate a password-reset token?
+  options:
+  - id: secrets
+    text: secrets.token_urlsafe()
+    correct: true
+    feedback: secrets uses operating-system randomness suitable for authentication tokens and similar
+      secrets.
+  - id: random
+    text: random.random()
+    correct: false
+    feedback: random is designed for simulation and modelling, not for security-sensitive values.
+  - id: time
+    text: str(time.time())
+    correct: false
+    feedback: Time values are predictable and should not be used as authentication tokens.
+  - id: hash
+    text: hash(username)
+    correct: false
+    feedback: Python's built-in hash is not a secure random token generator and may be process-randomised.
+  explanation: Use the secrets module for security-sensitive random values. Store tokens carefully, expire
+    them, and avoid logging them.
+- id: secure-resource-explain
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: Describe three resource limits you would apply to a Python endpoint that accepts uploaded archives,
+    and explain why each limit matters.
+  rubric:
+  - Limits the compressed upload size before accepting the body.
+  - Limits the number and total uncompressed size of archive entries.
+  - Limits processing time, memory or concurrent extraction work.
+  - Mentions safe extraction paths and least-privilege storage permissions.
+  modelAnswer: 'I would cap the request and compressed archive size before saving it, cap the number of
+    entries and
+
+    total uncompressed bytes to reduce archive-bomb risk, and enforce a processing timeout with bounded
+
+    concurrency. I would also resolve every extraction path under a dedicated directory and run the work
+
+    with minimal filesystem permissions.
+
+    '
+  explanation: Upload size limits reduce the amount of compressed data accepted; entry-count and uncompressed-size
+    limits reduce archive-bomb risk; time, memory and concurrency limits prevent expensive processing
+    from exhausting the service. Safe extraction paths and least privilege reduce filesystem exposure.
+- id: secure-pickle-true-false
+  type: true-false
+  skill: recognition
+  prompt: JSON parsing is safer than pickle for untrusted data because JSON does not reconstruct arbitrary
+    Python objects that can execute code during loading.
+  answer: true
+  explanation: Untrusted JSON still needs size and schema validation, but JSON deserialization does not
+    itself have pickle's arbitrary-code execution behaviour.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - secure-validation-vs-auth
+  - secure-path-predict
+  - secure-sql-lookup
+  - secure-token-mcq
+  - secure-pickle-true-false
+cheatsheet: '- Validate type, shape, range and size at every trust boundary.
+
+  - Check authorisation separately from input validation.
+
+  - Resolve and constrain user-controlled paths; account for symlink races.
+
+  - Parameterize SQL; pass values separately from query text.
+
+  - Use subprocess argument lists with shell=False; never build shell commands from untrusted input.
+
+  - Never unpickle untrusted data or pass it to eval/exec.
+
+  - Use secrets for tokens, compare_digest for secret comparisons, and a maintained password-hashing scheme
+  for passwords.
+
+  - Bound payloads, files, queues, execution time and concurrency; keep secrets out of logs.
+
+  '

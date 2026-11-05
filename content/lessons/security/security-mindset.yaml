@@ -1,0 +1,1228 @@
+id: security.security-mindset
+concept: security.security-mindset
+title: The Security Mindset
+subtitle: Thinking about how systems fail on purpose
+estimatedMinutes: 50
+reviewedOn: 2026-10-23
+summary: >-
+  Ordinary testing asks "does it work for the inputs I expect?". The security mindset asks "what is the
+  worst thing someone could make it do?". Learn the vocabulary (confidentiality, integrity, availability,
+  attack surface, trust boundaries) and the design principles that answer it — least privilege, defence in
+  depth and fail-safe defaults — by finding and fixing real insecure patterns in small Python programs.
+objectives:
+  - Classify a security incident by the property it violates - confidentiality, integrity or availability.
+  - Identify the assets, threats, attack surface and trust boundaries of a small system.
+  - Apply least privilege, defence in depth and fail-safe defaults to a design or a piece of code.
+  - Fix path traversal by resolving a path and checking it stays inside an allowed directory.
+  - Validate untrusted input at a trust boundary with an allow-list, and explain why deny-lists fail.
+sources:
+  - title: Secure design principles
+    url: https://www.ncsc.gov.uk/collection/cyber-security-design-principles
+    publisher: UK National Cyber Security Centre
+  - title: Secure by Design
+    url: https://www.cisa.gov/securebydesign
+    publisher: US Cybersecurity and Infrastructure Security Agency (CISA)
+  - title: "Glossary: least privilege"
+    url: https://csrc.nist.gov/glossary/term/least_privilege
+    publisher: NIST
+  - title: The Protection of Information in Computer Systems (Saltzer and Schroeder, 1975)
+    url: https://www.cs.virginia.edu/~evans/cs551/saltzer/
+    publisher: University of Virginia (copy of the original paper)
+  - title: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+    url: https://cwe.mitre.org/data/definitions/22.html
+    publisher: MITRE
+  - title: Input Validation Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    publisher: OWASP Cheat Sheet Series
+  - title: "pathlib: Path.resolve and PurePath.is_relative_to"
+    url: https://docs.python.org/3/library/pathlib.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why security needs its own way of thinking
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Here is a feature you could easily write after the [files lesson](concept:python.files): a web
+          app lets people download public reports by name. The developer tests it with a real report name,
+          it works, and it ships.
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          # A tiny "server": public files, plus a secret file one folder up.
+          Path("mindset_site/public").mkdir(parents=True, exist_ok=True)
+          Path("mindset_site/public/report.txt").write_text("Q3 report: sales up 12%")
+          Path("mindset_site/secrets.txt").write_text("DB_PASSWORD=hunter2")
+
+          def download(filename):
+              with open("mindset_site/public/" + filename) as f:
+                  return f.read()
+
+          print(download("report.txt"))      # what the developer tested
+          print(download("../secrets.txt"))  # what an attacker tries
+        expectedOutput: |
+          Q3 report: sales up 12%
+          DB_PASSWORD=hunter2
+        caption: The filename comes from a stranger on the internet. `..` means "the parent folder".
+        annotations:
+          - line: 9
+            text: The user's text is pasted straight into a file path. Nothing stops it from leaving the folder.
+          - line: 13
+            text: "`public/../secrets.txt` is the same file as `secrets.txt` — this is called path traversal."
+      - type: markdown
+        body: |
+          Nothing here is a typo. The code does exactly what it says; it was simply only ever imagined with
+          **friendly input**. An attacker does not use your program the way you intended — they look for the
+          inputs you never thought about. That shift of perspective is the **security mindset**:
+
+          > For every input, permission and component, ask *"what is the worst thing someone could make
+          > this do?"* — not just *"does it work?"*
+
+          The fixed version checks where the path really ends up before reading it. You will build this
+          check yourself later in the lesson:
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          Path("mindset_site/public").mkdir(parents=True, exist_ok=True)
+          Path("mindset_site/public/report.txt").write_text("Q3 report: sales up 12%")
+          Path("mindset_site/secrets.txt").write_text("DB_PASSWORD=hunter2")
+
+          PUBLIC = Path("mindset_site/public").resolve()
+
+          def download(filename):
+              target = (PUBLIC / filename).resolve()
+              if not target.is_relative_to(PUBLIC):
+                  raise ValueError(f"refusing to read outside the public folder: {filename!r}")
+              return target.read_text()
+
+          print(download("report.txt"))
+          try:
+              print(download("../secrets.txt"))
+          except ValueError as error:
+              print("Blocked:", error)
+        expectedOutput: |
+          Q3 report: sales up 12%
+          Blocked: refusing to read outside the public folder: '../secrets.txt'
+        annotations:
+          - line: 10
+            text: "`resolve()` turns the path into an absolute one and removes every `..`."
+          - line: 11
+            text: Only then can we check, folder by folder, that it is still inside `public`.
+      - type: callout
+        variant: misconception
+        title: '"We are too small to be a target"'
+        body: |
+          Most attacks are automated. Bots scan every reachable address for known weaknesses — exposed
+          databases, default passwords, `../` in URLs — without caring whose system it is. If it is on the
+          internet, assume it is being probed within minutes.
+
+  - id: cia
+    title: "What we protect: confidentiality, integrity and availability"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Security people describe what can go wrong with three properties, often called the
+          [CIA triad](glossary:cia-triad):
+
+          | Property | Meaning | Violated when… |
+          |---|---|---|
+          | **Confidentiality** | Only authorised people can *read* the data | the path traversal above leaks `DB_PASSWORD`; a laptop with customer data is stolen |
+          | **Integrity** | Data cannot be *changed* without authorisation (and changes are detected) | someone edits another user's delivery address; a downloaded installer was tampered with |
+          | **Availability** | The system *works* when it is needed | a flood of requests takes the booking site down; ransomware locks the files |
+
+          Naming the property tells you which defences matter. Encryption protects confidentiality but does
+          nothing for availability; backups protect availability but do nothing for confidentiality.
+          Some frameworks add more properties — for example *authenticity* (you know who sent something) and
+          *accountability* (actions can be traced to who did them) — but the three above are the core.
+      - type: item
+        ref: cia-classify
+
+  - id: assets-threats
+    title: Assets, threats, vulnerabilities and risk
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Four words you will hear in every security conversation:
+
+          - An **asset** is anything worth protecting: customer data, money, credentials, compute time,
+            your reputation, people's safety.
+          - A **threat** is something or someone that could harm an asset: a criminal group, a curious
+            insider, a buggy deploy, a flood.
+          - A [vulnerability](glossary:vulnerability) is a weakness a threat can exploit: the missing path
+            check above, a default password, an unpatched library.
+          - **Risk** combines how likely an attack is with how bad the result would be. You cannot fix
+            everything at once, so you rank.
+
+          A rough but common way to rank is likelihood × impact on a 1–5 scale. It is a *triage* tool, not
+          precise maths — the point is to argue about the numbers and fix the biggest risks first.
+      - type: code
+        runnable: true
+        code: |
+          threats = [
+              ("Leaked database backup", 2, 5),
+              ("Password guessing on the login page", 4, 3),
+              ("Defaced marketing page", 2, 2),
+              ("Path traversal in file download", 3, 5),
+          ]
+
+          # Rough triage: likelihood (1-5) x impact (1-5). Fix the biggest first.
+          for name, likelihood, impact in sorted(threats, key=lambda t: t[1] * t[2], reverse=True):
+              print(f"{likelihood * impact:>2}  {name}")
+        expectedOutput: |
+          15  Path traversal in file download
+          12  Password guessing on the login page
+          10  Leaked database backup
+           4  Defaced marketing page
+      - type: markdown
+        body: |
+          Doing this systematically for a whole design — drawing the data flows and asking "what can go
+          wrong?" at each step — is called [threat modelling](concept:security.threat-modeling), the next
+          lesson in this module.
+
+  - id: mental-model
+    title: "Mental model: every input is a message from a stranger"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          A useful picture of any system is a set of **zones of trust** with walls between them. Your server
+          process trusts its own code. It should *not* trust anything arriving from outside: request bodies,
+          headers, cookies, file names, uploaded files, responses from other companies' APIs, even data in
+          your own database that a user originally typed.
+
+          A [trust boundary](glossary:trust-boundary) is any place where data or control passes from a
+          less-trusted zone to a more-trusted one. Boundaries are where checks belong. The set of all the
+          places an attacker can reach and send input to is your [attack surface](glossary:attack-surface).
+      - type: visualization
+        component: step-diagram
+        title: Trust boundaries in a small web app
+        caption: Every arrow that crosses into the app (or out of it with the app's authority) is a trust boundary — and a place to check something.
+        props:
+          width: 760
+          height: 300
+          nodes:
+            - { id: user, label: Internet user, x: 100, y: 150, shape: actor }
+            - { id: app, label: Web app (API), x: 360, y: 150 }
+            - { id: db, label: Database, x: 640, y: 60, shape: store }
+            - { id: files, label: Upload folder, x: 640, y: 150, shape: store }
+            - { id: pay, label: Payment provider, x: 640, y: 245 }
+          edges:
+            - { id: e-req, from: user, to: app, label: HTTPS request }
+            - { id: e-db, from: app, to: db, label: SQL }
+            - { id: e-files, from: app, to: files, label: read / write }
+            - { id: e-pay, from: app, to: pay, label: API call + webhook }
+          steps:
+            - title: Draw the zones
+              body: The app's own code is the most trusted zone. The internet is the least trusted. The database, the file system and third-party services sit in between, each with its own level of trust.
+              active: [user, app, db, files, pay]
+            - title: "Boundary 1: the internet"
+              body: Everything in a request is controlled by whoever sent it — body, headers, cookies, file names, even "hidden" form fields. Authenticate the caller, check they are allowed to do this specific action, and validate every field here, on the server.
+              active: [user, e-req, app]
+              payload: 'POST /orders  {"quantity": "12; DROP TABLE orders", "price": -1}'
+            - title: "Boundary 2: the database"
+              body: Send user data as query parameters, never pasted into SQL text. Connect with an account that can only do what the app needs — least privilege — so a bug cannot drop tables.
+              active: [app, e-db, db]
+              payload: "GRANT SELECT, INSERT ON orders TO shop_app;   -- not ALL PRIVILEGES"
+            - title: "Boundary 3: the file system"
+              body: A file name from a user is untrusted input. Resolve the final path and check it is still inside the allowed folder before opening it.
+              active: [app, e-files, files]
+            - title: "Boundary 4: other services"
+              body: Responses and webhooks from third parties are input too. Verify webhook signatures, set timeouts, and never assume a response has the shape you expect.
+              active: [app, e-pay, pay]
+            - title: "Shrink the surface"
+              body: Every endpoint, open port, debug page and credential is something an attacker can reach. Remove what you do not need — the safest code is code that is not running.
+              active: [user, app, e-req]
+      - type: markdown
+        body: |
+          Listing the attack surface is often humbling. Here is an honest inventory of a small service:
+      - type: code
+        runnable: true
+        code: |
+          service = {
+              "POST /login": "used",
+              "GET /files/<name>": "used",
+              "GET /debug/vars": "left on from development",
+              "port 5432 (database) open to the internet": "not needed",
+              "admin API key with full access": "used by one nightly job",
+          }
+          for entry, note in service.items():
+              print(f"- {entry}: {note}")
+          print(len(service), "things an attacker can reach")
+        expectedOutput: |
+          - POST /login: used
+          - GET /files/<name>: used
+          - GET /debug/vars: left on from development
+          - port 5432 (database) open to the internet: not needed
+          - admin API key with full access: used by one nightly job
+          5 things an attacker can reach
+        caption: Two entries can simply be removed; one (the admin key) is far more powerful than its job needs.
+      - type: callout
+        variant: misconception
+        title: Security through obscurity is not a control
+        body: |
+          A hidden URL like `/admin-7f3k2`, an unusual port or a secret file format slows nobody down for
+          long: URLs leak in logs, browser history and referrer headers, and scanners try everything.
+          Design as if the attacker has read your source code — Saltzer and Schroeder called this **open
+          design** in 1975. Secrecy should live only in keys and passwords, which are easy to change.
+      - type: item
+        ref: tf-obscurity
+
+  - id: least-privilege
+    title: Least privilege
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Least privilege](glossary:least-privilege) means every user, program, service account and token
+          gets **only the permissions it needs, for only as long as it needs them**. You met the mechanics
+          in [file permissions](concept:foundations.permissions); the principle applies everywhere — database
+          accounts, cloud roles, API keys, the tools you give an AI agent.
+
+          Why it matters: you will never remove every bug, so plan for one being exploited. Least privilege
+          limits the **blast radius**. If the nightly report job can only read files, a bug in it can leak
+          files — but it cannot delete them, change users or touch billing.
+
+          Sets make "what does this hold that it does not need?" a one-liner:
+      - type: code
+        runnable: true
+        code: |
+          granted = {"files:read", "files:write", "files:delete", "users:admin", "billing:read"}
+          needed = {"files:read"}            # the nightly report job only reads files
+
+          excess = granted - needed
+          print("excess:", sorted(excess))
+          print("least privilege?", not excess)
+        expectedOutput: |
+          excess: ['billing:read', 'files:delete', 'files:write', 'users:admin']
+          least privilege? False
+        annotations:
+          - line: 4
+            text: Set difference - everything granted that the job does not need.
+          - line: 5
+            text: "`sorted()` because the order of a set of strings is not guaranteed."
+      - type: callout
+        variant: production
+        title: Least privilege in practice
+        body: |
+          - Prefer **scoped, short-lived** credentials (a token that can read one bucket for one hour) over
+            long-lived admin keys.
+          - Separate **read** from **write** roles so the common path cannot do damage.
+          - Review grants regularly; permissions tend to pile up and never get removed.
+          - Run services as an unprivileged user, never as root or Administrator.
+      - type: item
+        ref: least-privilege-mcq
+
+  - id: fail-safe
+    title: "Fail-safe defaults: deny unless explicitly allowed"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          [Fail-safe defaults](glossary:fail-safe-defaults) means that when a decision is uncertain — an
+          unknown role, a missing field, an error while checking — the answer is **no**. Base decisions on
+          an explicit list of what is allowed (an [allow-list](glossary:allow-list)), not on a list of what
+          is forbidden.
+
+          First, predict what a typical deny-list style check returns for some unexpected inputs:
+      - type: item
+        ref: predict-fail-open
+      - type: visualization
+        component: python-tracer
+        title: A check that fails open
+        caption: Watch `role` on the second call. It is None, the `if` does not match, and execution falls through to `return True`.
+        props:
+          code: |
+            def can_delete(user):
+                role = user.get("role")
+                if role == "guest":
+                    return False
+                return True
+
+            print(can_delete({"name": "ana", "role": "guest"}))
+            print(can_delete({"name": "mallory"}))
+      - type: markdown
+        body: |
+          The function lists what is **forbidden** (`guest`) and allows everything else, so any case the
+          author did not foresee — no role, a misspelt role, a brand-new role — gets delete rights. Flip it
+          around: list what is **allowed**, and let everything else fall through to "no".
+      - type: code
+        runnable: true
+        code: |
+          ALLOWED_TO_DELETE = {"admin", "editor"}
+
+          def can_delete(user):
+              return user.get("role") in ALLOWED_TO_DELETE   # allow-list: deny unless listed
+
+          print(can_delete({"role": "editor"}))
+          print(can_delete({"role": "guest"}))
+          print(can_delete({"name": "mallory"}))         # no role at all
+          print(can_delete({"role": "Admin "}))          # unexpected spelling
+        expectedOutput: |
+          True
+          False
+          False
+          False
+      - type: callout
+        variant: warning
+        title: Errors must fail closed too
+        body: |
+          A common fail-open bug hides in exception handlers: `except Exception: return True` "so users are
+          not blocked when the permission service is down". That turns every outage — or every input that
+          makes the check crash — into full access. When a security check cannot complete, deny and log.
+
+  - id: defence-in-depth
+    title: Defence in depth
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Defence in depth](glossary:defence-in-depth) means layering **independent** controls so that one
+          failure does not become a breach: authentication, then authorisation, then input validation, then
+          a least-privilege database account, then monitoring and alerts. Each layer assumes the ones before
+          it might fail.
+      - type: code
+        runnable: true
+        code: |
+          def authenticated(req):
+              return req.get("session") == "valid"
+
+          def authorised(req):
+              return req.get("role") == "admin"
+
+          def valid_input(req):
+              return req.get("amount", 0) <= 10_000
+
+          LAYERS = [authenticated, authorised, valid_input]
+
+          def handle(req):
+              for check in LAYERS:
+                  if not check(req):
+                      return f"blocked by {check.__name__}"
+              return "allowed"
+
+          print(handle({"session": "valid", "role": "admin", "amount": 50}))
+          print(handle({"session": "stolen", "role": "admin", "amount": 50}))
+          print(handle({"session": "valid", "role": "admin", "amount": 99_999}))
+        expectedOutput: |
+          allowed
+          blocked by authenticated
+          blocked by valid_input
+        caption: Even a genuine admin session cannot push through an absurd amount — the validation layer catches what authentication cannot.
+        annotations:
+          - line: 10
+            text: Functions are objects, so the layers can live in a list.
+          - line: 15
+            text: "`check.__name__` is the function's name, handy for logging which layer fired."
+      - type: markdown
+        body: |
+          Why layers help, in numbers: if each layer independently misses 10% of attacks, an attack must
+          slip past all of them.
+      - type: code
+        runnable: true
+        code: |
+          miss = 0.10                       # each independent layer misses 10% of attacks
+          for layers in range(1, 4):
+              print(layers, "layer(s): attack gets through", f"{miss ** layers:.1%}", "of the time")
+        expectedOutput: |
+          1 layer(s): attack gets through 10.0% of the time
+          2 layer(s): attack gets through 1.0% of the time
+          3 layer(s): attack gets through 0.1% of the time
+      - type: callout
+        variant: note
+        title: The word "independent" is doing the work
+        body: |
+          The multiplication only holds if the layers fail for different reasons. Three checks that all
+          trust the same `role` field from the client, or all depend on one shared library, can fail
+          together. Good layers use different mechanisms (network rules, authentication, validation, database
+          permissions, monitoring).
+      - type: item
+        ref: explain-defence-in-depth
+
+  - id: boundary-validation
+    title: Validate at the trust boundary
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Back to the download bug. The tempting fix is a **deny-list**: block the trick you know about.
+          First, a prediction about how `pathlib` joins paths:
+      - type: item
+        ref: predict-join
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          def naive_download_path(filename):
+              if ".." in filename:                       # deny-list: block the known trick
+                  raise ValueError("no '..' allowed")
+              return Path("/home/pyodide/uploads") / filename
+
+          print(naive_download_path("report.txt"))
+          print(naive_download_path("/etc/passwd"))      # absolute path: base is discarded
+        expectedOutput: |
+          /home/pyodide/uploads/report.txt
+          /etc/passwd
+        caption: The deny-list stops `..` but not an absolute path. Attackers also try URL-encoded `%2e%2e%2f`, backslashes on Windows and symbolic links.
+      - type: markdown
+        body: |
+          A deny-list has to anticipate every trick; the attacker needs only one you missed. Instead, check
+          the **outcome**: compute where the path really points, then require that it is inside the allowed
+          folder.
+
+          1. Join the base folder and the user's text with `/`.
+          2. Call `.resolve()` — it makes the path absolute, removes `..` and follows symbolic links.
+          3. Check `target.is_relative_to(base)` — true only if `base` is one of `target`'s parent folders
+             (comparing whole folder names, not characters).
+          4. Only then open the file.
+
+          The same idea works for any untrusted value: **define what is valid (an allow-list of type,
+          length, range and characters), reject everything else, and convert only after checking.** Here is
+          a quantity field from an order form:
+      - type: code
+        runnable: true
+        code: |
+          def parse_quantity(text):
+              """Validate untrusted input at the boundary: allow-list, then convert."""
+              text = text.strip()
+              if not (text.isascii() and text.isdigit()):
+                  raise ValueError(f"quantity must be a whole number, got {text!r}")
+              quantity = int(text)
+              if not 1 <= quantity <= 100:
+                  raise ValueError(f"quantity must be between 1 and 100, got {quantity}")
+              return quantity
+
+          for raw in ["3", " 42 ", "0", "-5", "1e9", "12; DROP TABLE"]:
+              try:
+                  print(repr(raw), "->", parse_quantity(raw))
+              except ValueError as error:
+                  print(repr(raw), "-> rejected:", error)
+        expectedOutput: |
+          '3' -> 3
+          ' 42 ' -> 42
+          '0' -> rejected: quantity must be between 1 and 100, got 0
+          '-5' -> rejected: quantity must be a whole number, got '-5'
+          '1e9' -> rejected: quantity must be a whole number, got '1e9'
+          '12; DROP TABLE' -> rejected: quantity must be a whole number, got '12; DROP TABLE'
+        annotations:
+          - line: 4
+            text: "`isdigit()` alone also accepts non-ASCII digits such as '٣' (Arabic-Indic three), so the allow-list adds `isascii()`."
+          - line: 7
+            text: A range check - a quantity of 0 or 10 million is valid syntax but not a valid order.
+      - type: callout
+        variant: warning
+        title: Validate on the server, not only in the browser
+        body: |
+          Checks in a web form's JavaScript improve the user experience, but anyone can skip the form and
+          send a request directly (with `curl`, a script, or the browser's developer tools). The server is
+          the trust boundary, so the server must validate. Validation is also not the whole story: SQL needs
+          parameterised queries and HTML needs output encoding, covered in
+          [input validation and output encoding](concept:security.input-handling).
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How `resolve()` and `is_relative_to()` divide the work.** `PurePath.is_relative_to()` is purely
+          string-based: the Python docs say it "neither accesses the filesystem nor treats `..` segments
+          specially". `Path("uploads/../etc").is_relative_to("uploads")` is therefore `True`. That is why
+          you must `resolve()` first: `resolve()` is the method that removes `..` and follows symbolic
+          links. With the default `strict=False` it also works for paths that do not exist yet (useful for
+          uploads), resolving as far as it can.
+
+          **Symbolic links.** A symlink inside the upload folder can point anywhere. Only the resolved path
+          reveals that:
+      - type: code
+        runnable: true
+        code: |
+          import os
+          from pathlib import Path
+
+          base = Path("mindset_links/uploads")
+          base.mkdir(parents=True, exist_ok=True)
+          Path("mindset_links/private.txt").write_text("not for you")
+          link = base / "innocent.txt"
+          if not link.is_symlink():
+              os.symlink(Path("mindset_links/private.txt").resolve(), link)
+
+          print(link.is_relative_to(base))                        # lexical check only
+          print(link.resolve().is_relative_to(base.resolve()))    # resolve follows the link
+        expectedOutput: |
+          True
+          False
+      - type: markdown
+        body: |
+          **Time of check vs time of use (TOCTOU).** Between your check and the `open()`, another process
+          could swap a file for a symlink. On shared systems, defend further with least privilege (the
+          process cannot read sensitive files at all), by not following symlinks when opening, or by
+          serving files by an ID you map to a path yourself instead of by user-supplied names.
+
+          **Platform quirks.** On Windows, paths can use `\` or `/`, start with a drive (`C:`), or be UNC
+          paths (`\\server\share`); web frameworks may decode `%2e%2e%2f` into `../` before your code sees
+          it. Resolving and checking the *final* path is robust to all of these; string checks are not.
+
+          **The classic principles.** Saltzer and Schroeder's 1975 paper listed eight design principles that
+          still read well today: *economy of mechanism* (keep it simple), *fail-safe defaults*, *complete
+          mediation* (check every access, not just the first), *open design*, *separation of privilege*
+          (require two conditions for sensitive actions), *least privilege*, *least common mechanism*
+          (minimise shared components) and *psychological acceptability* (security people will actually
+          use). Modern guidance such as the UK NCSC's secure design principles and CISA's Secure by Design
+          builds on the same ideas.
+
+  - id: mistakes
+    title: Common mistakes and how to spot them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Cause | Fix |
+          |---|---|---|
+          | A file outside the folder can be read with `../` | User input joined straight into a path | Resolve the final path and check `is_relative_to(base)` |
+          | `"/etc/passwd"` gets through a `".." in name` check | Deny-list; joining an absolute path discards the base | Check the resolved outcome, not the input text |
+          | `uploads_backup/` passes a `startswith("uploads")` check | Comparing characters instead of path components | Use `is_relative_to`, which compares whole folder names |
+          | Users with no role (or a new role) get access | Fail-open default (`return True` at the end) | Allow-list; the last line of a permission check returns `False` |
+          | Everyone gets in when the auth service is down | `except Exception: return True` | Fail closed in error handlers; log the failure |
+          | A token or key can do far more than its job | Convenience grants (admin "for now") | Scope each credential to the job; review grants |
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          base = Path("/home/pyodide/uploads")
+          sneaky = Path("/home/pyodide/uploads_backup/passwords.txt")
+
+          print(str(sneaky).startswith(str(base)))   # string prefix: WRONG
+          print(sneaky.is_relative_to(base))          # path components: right
+        expectedOutput: |
+          True
+          False
+        caption: "`uploads_backup` starts with the characters `uploads`, but it is a different folder."
+      - type: markdown
+        body: |
+          When a safe path check rejects input, raise an exception with a clear message and let the web
+          layer turn it into a `400 Bad Request` (or `404`, to avoid confirming which files exist). Run
+          this to see the error your own check produces:
+      - type: code
+        runnable: true
+        code: |
+          from pathlib import Path
+
+          BASE = Path("/home/pyodide/uploads").resolve()
+
+          def safe_path(user_path):
+              target = (BASE / user_path).resolve()
+              if not target.is_relative_to(BASE):
+                  raise ValueError(f"path escapes the upload folder: {user_path!r}")
+              return target
+
+          safe_path("../../etc/passwd")
+        expectError: ValueError
+        caption: "Expected: ValueError: path escapes the upload folder: '../../etc/passwd'"
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise is a small, real pattern from production code. The checks try the inputs an attacker
+          would try, so a solution that only handles the friendly case will not pass.
+      - type: item
+        ref: safe-path
+      - type: item
+        ref: debug-fail-open
+      - type: item
+        ref: validate-username
+      - type: item
+        ref: parsons-safe-check
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Security mindset:** ask what the worst thing someone could make your code do is — attackers
+            choose the inputs, not you.
+          - **CIA:** confidentiality (who can read), integrity (who can change), availability (does it work
+            when needed).
+          - **Assets, threats, vulnerabilities, risk:** rank risks (roughly likelihood × impact) and fix the
+            biggest first.
+          - **Attack surface and trust boundaries:** list everything reachable, remove what you do not need,
+            and check data wherever it crosses into a more trusted zone.
+          - **Least privilege:** each credential gets only what its job needs, for as short a time as possible.
+          - **Defence in depth:** independent layers, so one failure is not a breach.
+          - **Fail-safe defaults:** allow-lists; unknown cases and errors are denied.
+          - **Paths:** `(base / name).resolve()` then `is_relative_to(base)` — never string prefixes or
+            deny-lists.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Explain least privilege and defence in depth with an example from a system you built." Give a
+          concrete design: a reporting job with a read-only, short-lived credential (least privilege), behind
+          authentication, authorisation, validation and a restricted database account, with alerts on
+          unusual access (defence in depth). Then say what happens when one layer fails.
+
+items:
+  - id: cia-classify
+    type: mcq
+    skill: recognition
+    prompt: A bug lets any logged-in user change another customer's delivery address. Which property is violated first and foremost?
+    explanation: >-
+      Unauthorised modification of data is an integrity failure. Confidentiality is about who can read data and
+      availability is about whether the system works when needed.
+    options:
+      - id: a
+        text: Confidentiality
+        feedback: Confidentiality is about reading data. Here the attacker is changing it, although the bug might reveal addresses too.
+      - id: b
+        text: Integrity
+        correct: true
+        feedback: Right. Data was changed by someone not authorised to change it.
+      - id: c
+        text: Availability
+        feedback: The site still works for everyone; nothing was made unavailable.
+      - id: d
+        text: None - the attacker was logged in, so it is allowed
+        feedback: Being logged in proves who you are (authentication), not what you may change (authorisation). Every object needs its own permission check.
+
+  - id: tf-obscurity
+    type: true-false
+    skill: explanation
+    prompt: "True or false: moving the admin page to a long random URL such as `/admin-7f3k2q9` is enough to protect it, as long as the URL is never published."
+    answer: false
+    explanation: >-
+      Hidden URLs leak through logs, browser history, referrer headers, screenshots and former employees, and
+      scanners guess common paths. A secret URL can be one extra hurdle, but the admin page still needs
+      authentication and authorisation on every request (open design - assume the attacker knows how the
+      system works).
+
+  - id: least-privilege-mcq
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: A nightly CI job must read one storage bucket to build a report. Which credential best follows least privilege?
+    explanation: >-
+      The job needs to read one bucket, for the duration of one run. A short-lived, read-only credential scoped to
+      that bucket gives it exactly that, so a compromised job can leak at most that bucket's contents.
+    options:
+      - id: a
+        text: The cloud account's admin key, stored as a CI secret
+        feedback: Admin access means any bug or leaked log in the job can delete or change everything in the account.
+      - id: b
+        text: A read-write key for all buckets, "in case the report needs more later"
+        feedback: Permissions "for later" are exactly the excess least privilege removes. Add permissions when a real need appears.
+      - id: c
+        text: A short-lived, read-only credential limited to that one bucket
+        correct: true
+        feedback: Correct - minimal actions (read), minimal scope (one bucket), minimal time (short-lived).
+      - id: d
+        text: The personal access key of the developer who wrote the job
+        feedback: Personal keys carry all of that person's permissions, are hard to rotate, and make audit logs blame the wrong actor.
+
+  - id: predict-fail-open
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      def can_view(user):
+          if user.get("banned"):
+              return False
+          return True
+
+      print(can_view({"banned": True}), can_view({}), can_view({"banned": "no"}))
+    answer: "False True False"
+    explanation: >-
+      The first user is banned, so False. The second has no "banned" key, so `get` returns None, which is falsy,
+      and the function falls through to True. The third is the surprise: the string "no" is non-empty, so it is
+      truthy and the user is treated as banned. A check that depends on how unexpected values happen to behave
+      is fragile; an explicit allow-list makes intent clear.
+    wrongAnswers:
+      - answer: "False True True"
+        feedback: >-
+          The string "no" is truthy (any non-empty string is), so `if user.get("banned")` is satisfied and the
+          function returns False.
+      - answer: "False False False"
+        feedback: >-
+          For `{}`, `get("banned")` returns None, which is falsy, so the `if` is skipped and the function reaches
+          `return True`. That fall-through is the fail-open pattern.
+
+  - id: explain-defence-in-depth
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate says: "We validate every request in the API layer, so the database account does not need
+      restricted permissions." Explain why defence in depth disagrees, using a concrete failure.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - States that any single layer can fail (a bug, a missed endpoint, a new code path, a dependency flaw).
+      - Gives a concrete failure, e.g. a SQL injection in one endpoint or a leaked database password.
+      - Explains that a least-privilege database account limits the damage when the API layer fails (blast radius).
+      - Mentions that layers should be independent so they do not fail for the same reason.
+    modelAnswer: |
+      Validation in the API is a good layer, but it is one layer. One day someone adds an endpoint and forgets
+      to validate, or a library has an injection bug, or the database password leaks from a log. If the app's
+      database account can do anything, that single failure lets an attacker drop tables or read every
+      customer record. If the account can only SELECT and INSERT on the tables the app uses, the same failure
+      does far less damage. Defence in depth means planning for each layer to fail and making sure the next,
+      independent layer still limits what an attacker can do.
+
+  - id: predict-join
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output. (Hint - read what `/` does when the right-hand side is an absolute path.)
+    code: |
+      from pathlib import Path
+      print(Path("/srv/app/uploads") / "/etc/passwd")
+    answer: "/etc/passwd"
+    explanation: >-
+      When a segment is an absolute path, pathlib (like `os.path.join`) discards everything before it. So a user
+      who types an absolute path escapes the base folder without ever using `..` - one reason a deny-list of
+      `..` is not enough.
+    wrongAnswers:
+      - answer: "/srv/app/uploads/etc/passwd"
+        feedback: >-
+          That is what most people expect, which is exactly why it is dangerous. An absolute right-hand side
+          replaces the left side entirely.
+      - answer: "/srv/app/uploads//etc/passwd"
+        feedback: pathlib never produces a double slash here; it treats "/etc/passwd" as a new absolute path and drops the base.
+
+  - id: safe-path
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `safe_path(base, user_path)` for a file-download endpoint. It must:
+
+      1. return the **resolved** (absolute) `Path` of `user_path` inside the folder `base`, and
+      2. raise `ValueError` if the result would be outside `base` — whether through `..`, an absolute path,
+         or a sibling folder whose name merely starts with the same letters.
+
+      Harmless `..` that stays inside the folder (for example `"a/../b.txt"`) should be allowed.
+    starterCode: |
+      from pathlib import Path
+
+      def safe_path(base, user_path):
+          # Return the resolved path of user_path inside base.
+          # Raise ValueError if it would end up outside base.
+          return Path(base) / user_path
+    solution: |
+      from pathlib import Path
+
+      def safe_path(base, user_path):
+          base = Path(base).resolve()
+          target = (base / user_path).resolve()
+          if not target.is_relative_to(base):
+              raise ValueError(f"path escapes {base}: {user_path!r}")
+          return target
+    tests:
+      - name: Allows normal and nested files
+        code: |
+          from pathlib import Path
+          got = safe_path("/home/pyodide/uploads", "report.txt")
+          assert got == Path("/home/pyodide/uploads/report.txt"), f"safe_path('/home/pyodide/uploads', 'report.txt') should return Path('/home/pyodide/uploads/report.txt'), got {got!r}."
+          got = safe_path("/home/pyodide/uploads", "2026/q3/report.txt")
+          assert got == Path("/home/pyodide/uploads/2026/q3/report.txt"), f"Nested files inside the folder must be allowed, got {got!r}."
+      - name: Returns a resolved path
+        code: |
+          from pathlib import Path
+          got = safe_path("/home/pyodide/uploads", "a/../b.txt")
+          assert got == Path("/home/pyodide/uploads/b.txt"), f"Call .resolve() so that 'a/../b.txt' becomes /home/pyodide/uploads/b.txt; got {got!r}."
+          got = safe_path("uploads", "r.txt")
+          assert got == Path.cwd() / "uploads" / "r.txt", f"With a relative base, resolve both base and target to absolute paths; got {got!r}."
+      - name: Blocks .. escapes
+        code: |
+          for attempt in ["../secret.txt", "../../etc/passwd", "a/../../x.txt"]:
+              try:
+                  safe_path("/home/pyodide/uploads", attempt)
+              except ValueError:
+                  continue
+              raise AssertionError(f"safe_path must raise ValueError for {attempt!r}, which resolves outside the folder.")
+      - name: Blocks absolute paths
+        code: |
+          try:
+              safe_path("/home/pyodide/uploads", "/etc/passwd")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("An absolute path like '/etc/passwd' replaces the base when joined - it must raise ValueError.")
+      - name: Blocks sibling folders with a similar name
+        code: |
+          try:
+              safe_path("/home/pyodide/uploads", "../uploads_backup/passwords.txt")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("'/home/pyodide/uploads_backup' is a different folder that merely starts with the same letters. Compare path components with is_relative_to, not string prefixes.")
+    hints:
+      - "Build the candidate with `Path(base) / user_path`, then call `.resolve()` on it so `..` and absolute paths are applied."
+      - "`target.is_relative_to(base)` is True only if `base` is one of `target`'s parent folders."
+      - Resolve `base` too, so a relative base like "uploads" is compared as an absolute path.
+    feedback:
+      - when: { codeContains: "startswith" }
+        message: >-
+          A string prefix check accepts sibling folders such as "uploads_backup". Compare path components
+          with `is_relative_to` after resolving.
+      - when: { codeContains: "\"..\" in" }
+        message: >-
+          Searching for ".." is a deny-list - an absolute path such as "/etc/passwd" contains no "..". Check
+          where the resolved path ends up instead.
+    explanation: >-
+      Resolving applies every `..`, absolute segment and symlink, so the check sees where the path really points.
+      `is_relative_to` then compares whole components, which rejects `uploads_backup`. Checking the outcome is
+      robust against tricks you have not thought of; checking the input text is not.
+
+  - id: debug-fail-open
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      The rules for approving refunds are: **finance** staff can approve any amount; **managers** can approve
+      up to 1000; **nobody else** can approve anything. This function was written with a deny-list and fails
+      open — a contractor, a user with no role, or a mistyped role can approve refunds. Rewrite it so that
+      anything not explicitly allowed is denied.
+    starterCode: |
+      def can_approve_refund(user, amount):
+          role = user.get("role")
+          if role == "intern":
+              return False
+          if role == "manager" and amount > 1000:
+              return False
+          return True
+    solution: |
+      def can_approve_refund(user, amount):
+          role = user.get("role")
+          if role == "finance":
+              return True
+          if role == "manager":
+              return amount <= 1000
+          return False
+    tests:
+      - name: Allowed cases still work
+        code: |
+          assert can_approve_refund({"role": "finance"}, 50_000) is True, "Finance can approve any amount."
+          assert can_approve_refund({"role": "manager"}, 500) is True, "A manager can approve 500."
+          assert can_approve_refund({"role": "manager"}, 1000) is True, "A manager can approve exactly 1000."
+      - name: Managers are limited
+        code: |
+          assert can_approve_refund({"role": "manager"}, 1001) is False, "A manager must not approve more than 1000."
+      - name: Unknown and missing roles are denied
+        code: |
+          for user in [{"role": "intern"}, {"role": "contractor"}, {}, {"role": None}, {"role": "Finance"}, {"role": "finance "}]:
+              assert can_approve_refund(user, 10) is False, f"{user!r} is not on the allow-list, so it must be denied (return False)."
+    hints:
+      - Which roles are allowed at all? Check for those, and make everything else fall through.
+      - The last line of the function should be `return False` - the safe default.
+    feedback:
+      - when: { codeMatches: "return True\\s*$" }
+        message: >-
+          The function still ends with `return True`, so any case you did not list is allowed. End with
+          `return False` and return True only for the allowed roles.
+    explanation: >-
+      The original listed what was forbidden and allowed everything else. The fix lists what is allowed (finance;
+      manager up to 1000) and denies the rest, so a new or misspelt role, or a missing one, is safe by default.
+      Exact matching is deliberate: "Finance" with a capital F is denied rather than guessed at.
+
+  - id: validate-username
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A sign-up API receives usernames from the internet. Write `validate_username(raw)` that returns `raw`
+      unchanged if it is valid and raises `ValueError` otherwise. Valid means **all** of:
+
+      - 3 to 20 characters long,
+      - only lowercase ASCII letters `a`–`z`, digits `0`–`9` and underscore `_`,
+      - starts with a letter.
+
+      Use an allow-list of characters. Do not strip or "repair" the input — reject it.
+    starterCode: |
+      def validate_username(raw):
+          # Allow-list: 3-20 characters, lowercase a-z, digits 0-9 and "_",
+          # starting with a letter. Raise ValueError for anything else.
+          return raw
+    solution: |
+      import string
+
+      ALLOWED = set(string.ascii_lowercase + string.digits + "_")
+
+      def validate_username(raw):
+          if not 3 <= len(raw) <= 20:
+              raise ValueError("username must be 3-20 characters")
+          if not set(raw) <= ALLOWED:
+              raise ValueError("username may only contain a-z, 0-9 and _")
+          if not raw[0].isalpha():
+              raise ValueError("username must start with a letter")
+          return raw
+    tests:
+      - name: Accepts valid usernames
+        code: |
+          for ok in ["ada", "ada_99", "grace_hopper_1906", "x" * 20]:
+              assert validate_username(ok) == ok, f"{ok!r} is valid and should be returned unchanged."
+      - name: Rejects bad lengths
+        code: |
+          for bad in ["", "ab", "a" * 21]:
+              try:
+                  validate_username(bad)
+              except ValueError:
+                  continue
+              raise AssertionError(f"{bad!r} has length {len(bad)}; usernames must be 3-20 characters.")
+      - name: Rejects characters outside the allow-list
+        code: |
+          for bad in ["Ada", "ada!", "ada lovelace", "ada-l", "ádá", "ada\n", "abc٣"]:
+              try:
+                  validate_username(bad)
+              except ValueError:
+                  continue
+              raise AssertionError(f"{bad!r} contains a character outside a-z, 0-9 and _. Check every character against an explicit allow-list (isalnum() also accepts letters like 'á' and digits like '٣').")
+      - name: Must start with a letter
+        code: |
+          for bad in ["9lives", "_ada"]:
+              try:
+                  validate_username(bad)
+              except ValueError:
+                  continue
+              raise AssertionError(f"{bad!r} does not start with a letter, so it must be rejected.")
+    hints:
+      - "Build the allow-list once: `set(string.ascii_lowercase + string.digits + \"_\")`."
+      - "`set(raw) <= ALLOWED` is True when every character of raw is in the allow-list."
+      - Check the length first, then the characters, then the first character.
+    feedback:
+      - when: { codeContains: "isalnum" }
+        message: >-
+          `str.isalnum()` accepts any Unicode letter or digit ('á', '٣', 'ß'…). An explicit set of allowed
+          characters says exactly what you mean.
+      - when: { codeContains: "strip" }
+        message: Don't repair untrusted input - reject it. Stripping hides odd input instead of refusing it.
+    explanation: >-
+      An allow-list states precisely what is acceptable, so surprising input (Unicode look-alikes, control
+      characters, spaces) is rejected without anyone having to imagine it in advance. Rejecting rather than
+      repairing keeps the rule simple and the behaviour predictable.
+
+  - id: parsons-safe-check
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a program that checks whether a user-supplied path stays inside the upload
+      folder, and prints `True`, `False`, `False`. Two lines are distractors.
+    solution: |
+      from pathlib import Path
+      BASE = Path("/home/pyodide/parsons_uploads").resolve()
+      def is_safe(user_path):
+          target = (BASE / user_path).resolve()
+          return target.is_relative_to(BASE)
+      print(is_safe("notes/today.txt"))
+      print(is_safe("../../etc/passwd"))
+      print(is_safe("../parsons_uploads_old/x.txt"))
+    distractors:
+      - "    return str(target).startswith(str(BASE))"
+      - "    target = BASE + \"/\" + user_path"
+    expectedOutput: |
+      True
+      False
+      False
+    explanation: >-
+      Define the base first, then the function: resolve the joined path, then check its components with
+      `is_relative_to`. The `startswith` distractor would wrongly accept the sibling folder
+      `parsons_uploads_old`, and `+` cannot join a Path and a string.
+
+  # ----- Mastery check (new items) -----
+  - id: m-cia-scenario
+    type: mcq
+    skill: transfer
+    prompt: >-
+      Through a bug, an attacker reads customers' order histories. A week later the same attacker floods the
+      checkout API with requests so that nobody can pay. Which properties were attacked?
+    explanation: >-
+      Reading data you are not authorised to read breaks confidentiality; preventing legitimate users from
+      paying breaks availability. Nothing was modified, so integrity was not the main target.
+    options:
+      - id: a
+        text: Integrity, then availability
+        feedback: Reading order histories does not change them. Unauthorised reading is a confidentiality failure.
+      - id: b
+        text: Confidentiality, then availability
+        correct: true
+        feedback: Right - first data was disclosed, then the service was made unusable.
+      - id: c
+        text: Confidentiality, then integrity
+        feedback: A flood that stops people paying is about the system working when needed - availability.
+      - id: d
+        text: Only availability; reading data through a bug is not an attack
+        feedback: Exploiting a bug to read other people's data is a breach of confidentiality, whatever the method.
+
+  - id: m-predict-resolve
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      from pathlib import Path
+
+      base = Path("/data/app")
+      target = (base / "images/../../etc/hosts").resolve()
+      print(target, target.is_relative_to(base))
+    answer: "/data/etc/hosts False"
+    explanation: >-
+      Joining gives /data/app/images/../../etc/hosts. The first `..` cancels `images` and the second cancels
+      `app`, leaving /data/etc/hosts - outside /data/app, so the check is False.
+    wrongAnswers:
+      - answer: "/data/app/etc/hosts True"
+        feedback: There are two `..` segments. The second one climbs out of `app` as well.
+      - answer: "/data/app/images/../../etc/hosts True"
+        feedback: "`resolve()` removes `..` segments - that is exactly why you call it before checking."
+
+  - id: m-design-boundary
+    type: mcq
+    skill: design
+    prompt: >-
+      A sign-up form checks in the browser (JavaScript) that age is between 18 and 120 before sending it to
+      your API. Where must the age also be validated?
+    explanation: >-
+      The trust boundary is where the request reaches your server. Anyone can send a request without your form,
+      so the server must validate; browser checks are for a good user experience only.
+    options:
+      - id: a
+        text: Nowhere else - the form already checks it
+        feedback: Attackers do not have to use your form. curl, scripts and developer tools send any value they like.
+      - id: b
+        text: In the API on the server, before the value is used or stored
+        correct: true
+        feedback: Correct. Validate where data crosses into your trusted zone.
+      - id: c
+        text: Only in the database, with a CHECK constraint
+        feedback: A database constraint is a good extra layer (defence in depth), but the API should reject bad input with a clear error before it gets that far.
+      - id: d
+        text: In a second JavaScript check that runs just before submitting
+        feedback: Any code running in the browser is under the user's control, so it cannot be the security check.
+
+  - id: m-review-grant
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Before a token is issued to a job, a reviewer compares what was **requested** with what the job
+      actually **needs**. Write `review_grant(granted, needed)` that returns a dictionary:
+
+      - `"missing"`: sorted list of needed permissions that are not granted,
+      - `"excess"`: sorted list of granted permissions that are not needed,
+      - `"ok"`: `True` only when both lists are empty.
+
+      `granted` and `needed` may be lists or sets of strings.
+    starterCode: |
+      def review_grant(granted, needed):
+          # Return {"missing": [...], "excess": [...], "ok": ...}
+          return {"missing": [], "excess": [], "ok": True}
+    solution: |
+      def review_grant(granted, needed):
+          granted, needed = set(granted), set(needed)
+          missing = sorted(needed - granted)
+          excess = sorted(granted - needed)
+          return {"missing": missing, "excess": excess, "ok": not missing and not excess}
+    tests:
+      - name: Detects excess permissions
+        code: |
+          got = review_grant({"files:read", "files:delete", "users:admin"}, {"files:read"})
+          assert got == {"missing": [], "excess": ["files:delete", "users:admin"], "ok": False}, f"Expected excess ['files:delete', 'users:admin'] and ok False, got {got!r}."
+      - name: Detects missing permissions
+        code: |
+          got = review_grant(["files:read"], ["files:read", "reports:write"])
+          assert got == {"missing": ["reports:write"], "excess": [], "ok": False}, f"Expected missing ['reports:write'], got {got!r}."
+      - name: Exact match is ok
+        code: |
+          got = review_grant(["b:read", "a:read"], {"a:read", "b:read"})
+          assert got == {"missing": [], "excess": [], "ok": True}, f"An exact match should give empty lists and ok True, got {got!r}."
+      - name: Lists are sorted
+        code: |
+          got = review_grant(["z", "m", "a"], [])
+          assert got["excess"] == ["a", "m", "z"], f"Return sorted lists (set order is not guaranteed), got {got['excess']!r}."
+    hints:
+      - Convert both inputs with `set()` so lists and sets behave the same.
+      - "Set difference: `needed - granted` is what is missing; `granted - needed` is the excess."
+    feedback:
+      - when: { errorType: TypeError }
+        message: Make sure both arguments are converted to sets before subtracting - lists do not support `-`.
+    explanation: >-
+      Set difference answers both questions directly. Sorting the results makes them stable and readable, and
+      `ok` is True only when the grant matches the need exactly - least privilege with nothing missing.
+
+  - id: m-debug-except-allow
+    type: debug
+    skill: debugging
+    prompt: |
+      `can_export` should allow only admins and analysts to export data. Unknown users make
+      `lookup_role` raise `KeyError`, and the handler was written to "not block people when the lookup
+      breaks". Fix it so that the check **fails closed**.
+    starterCode: |
+      ROLES = {"u1": "admin", "u2": "viewer", "u3": "analyst"}
+
+      def lookup_role(user_id):
+          return ROLES[user_id]          # KeyError for unknown users
+
+      def can_export(user_id):
+          try:
+              return lookup_role(user_id) in {"admin", "analyst"}
+          except Exception:
+              return True
+    solution: |
+      ROLES = {"u1": "admin", "u2": "viewer", "u3": "analyst"}
+
+      def lookup_role(user_id):
+          return ROLES[user_id]          # KeyError for unknown users
+
+      def can_export(user_id):
+          try:
+              return lookup_role(user_id) in {"admin", "analyst"}
+          except KeyError:
+              return False
+    tests:
+      - name: Known users get the right answer
+        code: |
+          assert can_export("u1") is True, "u1 is an admin and may export."
+          assert can_export("u3") is True, "u3 is an analyst and may export."
+          assert can_export("u2") is False, "u2 is a viewer and may not export."
+      - name: Unknown users are denied
+        code: |
+          for user_id in ["ghost", "", None]:
+              assert can_export(user_id) is False, f"can_export({user_id!r}) must return False - when the check cannot complete, deny."
+    hints:
+      - What does the `except` branch return? Is that safe when you do not know who the user is?
+      - Catching the specific `KeyError` (rather than every Exception) also stops real bugs being hidden.
+    explanation: >-
+      The error handler turned "we could not check" into "allowed". Returning False makes failures safe. Catching
+      KeyError specifically is better still: an unexpected error elsewhere is then reported instead of silently
+      changing a security decision.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-cia-scenario, m-predict-resolve, m-design-boundary, m-review-grant, m-debug-except-allow]
+
+cheatsheet: |
+  ```python
+  # Safe file path from user input
+  base = Path("uploads").resolve()
+  target = (base / user_path).resolve()      # applies .., absolute paths, symlinks
+  if not target.is_relative_to(base):        # compares whole folder names
+      raise ValueError("path escapes the folder")
+
+  # Fail-safe default: allow-list, deny everything else
+  return user.get("role") in {"admin", "editor"}
+
+  # Least privilege check
+  excess = set(granted) - set(needed)
+  ```
+  - CIA: confidentiality (read) · integrity (change) · availability (works when needed)
+  - Attack surface = everything reachable · trust boundary = where to check
+  - Least privilege · defence in depth (independent layers) · fail closed on errors
+  - Validate on the server with allow-lists; never rely on obscurity or deny-lists

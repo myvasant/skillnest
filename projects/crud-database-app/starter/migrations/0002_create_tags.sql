@@ -1,0 +1,15 @@
+-- 0002: tags, and which notes carry them (a many-to-many relationship).
+--
+-- TODO(milestone 3): replace these comments with two CREATE TABLE statements.
+--
+-- 1. tags: an INTEGER PRIMARY KEY `id`, and a `name` that is TEXT, NOT NULL and UNIQUE
+--    (each tag name is stored once).
+--
+-- 2. note_tags: links notes to tags.
+--    * note_id  INTEGER NOT NULL, REFERENCES notes (id) ON DELETE CASCADE
+--    * tag_id   INTEGER NOT NULL, REFERENCES tags (id) ON DELETE CASCADE
+--    * position INTEGER NOT NULL  (keeps tags in the order the client sent them; rows have no order)
+--    * PRIMARY KEY (note_id, tag_id)  (a note cannot carry the same tag twice)
+--
+-- ON DELETE CASCADE only works when the connection ran PRAGMA foreign_keys = ON (milestone 1).
+-- Do not write BEGIN or COMMIT here: the migration runner wraps every file in a transaction.

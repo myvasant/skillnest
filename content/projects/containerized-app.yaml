@@ -1,0 +1,225 @@
+id: containerized-app
+title: "Containerised app: health checks and a production Dockerfile"
+track: production
+level: intermediate
+estimatedHours: 6
+summary: >-
+  Prepare a small FastAPI service for a container platform: environment-based configuration, liveness
+  and readiness probes, a multi-stage non-root Dockerfile with a pinned base image, a tight
+  .dockerignore, and a hardened compose file with a data volume.
+problem: |
+  Your team's service runs fine with `uvicorn` on a laptop. The platform team will only accept it as a
+  container image that:
+
+  * is configured entirely through **environment variables** (no edits to code per environment),
+  * tells the orchestrator **"I'm alive"** (`/healthz`, restart me if this fails) separately from
+    **"I'm ready for traffic"** (`/readyz`, stop routing to me if this fails),
+  * is **small, reproducible and least-privilege**: multi-stage build, pinned base image, non-root user,
+    no secrets in any layer, a healthcheck, and a process that shuts down cleanly on `SIGTERM`.
+
+  You are given a service skeleton and a Dockerfile that *works* but makes every classic mistake
+  (`python:latest`, `COPY . .`, runs as root, shell-form `CMD`, test tools in the image). Fix the code,
+  then fix the packaging.
+
+  **Endpoints**
+
+  | Request | Response |
+  |---|---|
+  | `GET /` | `{"service": "container-service", "version": "0.1.0"}` |
+  | `POST /api/visits`, `GET /api/visits` | `{"visits": 3}`, stored in `$DATA_DIR/visits.txt` |
+  | `GET /healthz` | always `200 {"status": "ok"}` while the process serves HTTP |
+  | `GET /readyz` | `200 {"status": "ready", "checks": {...}}` or `503 {"status": "not ready", "failing": [...]}` |
+
+  **Example session** (after milestone 5):
+
+  ```text
+  $ docker build -t container-service:0.1.0 ./starter
+  $ docker run --rm -d --name cs -p 127.0.0.1:8000:8000 container-service:0.1.0
+  $ curl -s http://127.0.0.1:8000/readyz
+  {"status":"ready","checks":{"data_dir":"ok"}}
+  $ docker exec cs id
+  uid=10001(app) gid=10001(app) groups=10001(app)
+  $ docker inspect --format "{{.State.Health.Status}}" cs
+  healthy
+  ```
+
+  **Note:** the automated tests check the service and the *structure* of the Dockerfile, `.dockerignore`
+  and `compose.yaml`. Building and running the image needs Docker and is a documented manual step
+  (milestone 5) that the tests cannot verify.
+concepts:
+  - mlops.docker
+  - mlops.containers
+  - mlops.environment-config
+  - backend.fastapi-basics
+  - tooling.linux-permissions
+acceptanceCriteria:
+  - "`ServiceSettings.from_env` returns documented defaults for an empty environment, reads `SERVICE_NAME`, `SERVICE_VERSION` and `DATA_DIR`, and raises `ValueError` naming the variable for invalid values."
+  - "`/healthz` returns 200 without running any readiness check; `/readyz` returns 200 when every check passes and 503 listing the failing check names when any check fails or raises, without exposing exception messages."
+  - "The visit counter persists in `DATA_DIR` with an atomic write (temporary file + `os.replace`), so the count survives an app restart."
+  - "The Dockerfile has a builder and a runtime stage, pins every base image to an explicit non-`latest` tag, installs pinned runtime requirements with `--no-cache-dir` before copying code, sets `PYTHONUNBUFFERED`/`PYTHONDONTWRITEBYTECODE`, runs as a non-root `USER`, has a `HEALTHCHECK` on `/healthz`, and starts uvicorn with an exec-form `CMD`."
+  - "No `ENV`/`ARG` has a secret-like name, no `.env` file is copied, and `.dockerignore` excludes `.env`, `.git`, `.venv`, `__pycache__` and `tests`."
+  - "`compose.yaml` builds the image, publishes port 8000 on 127.0.0.1 only, mounts a named volume at `/app/data`, sets a restart policy, and runs with `read_only: true`, `cap_drop: [ALL]` and `no-new-privileges`."
+  - "(Manual) `docker build` succeeds, `docker exec <container> id` shows a non-root uid, and the container reports `healthy`."
+architecture: |
+  ```text
+   docker build ./starter                         docker run / compose up
+  +------------------------------+      +----------------------------------------------+
+  | stage "builder"              |      | runtime image (python:3.13-slim-bookworm)    |
+  |  python -m venv /opt/venv    | ---> |  /opt/venv  (copied from builder)            |
+  |  pip install -r requirements |      |  /app/container_service.py  (owned by root)  |
+  +------------------------------+      |  /app/data  (owned by app, volume mounted)   |
+                                        |  USER 10001   HEALTHCHECK -> /healthz        |
+                                        |  CMD ["uvicorn", "--factory", ...]           |
+                                        +----------------------------------------------+
+                                               | env: SERVICE_NAME, SERVICE_VERSION, DATA_DIR
+                                               v
+                       create_app(settings, checks) -> FastAPI: /, /api/visits, /healthz, /readyz
+  ```
+
+  * **ServiceSettings** (frozen dataclass): parsed once at startup by `from_env`; invalid configuration
+    stops the container immediately with a clear message, instead of failing on the first request.
+  * **create_app(settings=None, checks=None)**: the uvicorn factory. Readiness checks are injected as
+    `name -> callable` so tests (and later, a database ping) plug in without changing the app.
+  * **Probes**: liveness is deliberately dumb, so a dependency outage does not make the orchestrator
+    restart every replica; readiness runs the checks and turns exceptions into "failing".
+  * **Image**: the builder stage holds pip and build artefacts; only the virtual environment and the code
+    reach the runtime stage. Code is read-only for the app user; `/app/data` is the only writable path.
+environment: local
+starterKit: projects/containerized-app
+setup: |
+  You need Python 3.11 or newer. Docker is only needed for the manual milestone 5.
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\containerized-app
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/containerized-app
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Run the service locally (create the data directory first, or `/readyz` reports 503):
+
+  ```powershell
+  mkdir data -Force; python -m uvicorn --factory container_service:create_app --app-dir starter --reload
+  ```
+
+  ```bash
+  mkdir -p data && python -m uvicorn --factory container_service:create_app --app-dir starter --reload
+  ```
+
+  For milestone 5 install Docker Desktop (Windows/macOS, free for personal and small-business use) or
+  Docker Engine (Linux). `starter/` is the build context: `docker build -t container-service:0.1.0 ./starter`.
+milestones:
+  - id: m1-config-and-service
+    title: Configuration from the environment
+    description: |
+      Implement `ServiceSettings.from_env` (defaults, `SERVICE_NAME` / `SERVICE_VERSION` / `DATA_DIR`,
+      validation with a message that names the variable) and the `VisitCounter` that stores its count in
+      `DATA_DIR` using a temporary file and `os.replace`.
+
+      **Tests (`TestMilestone1Service`)** check defaults, reading a mapping and `os.environ`, fail-fast
+      errors for bad values, `GET /`, and that the visit count survives creating a new app on the same
+      data directory.
+  - id: m2-probes
+    title: Liveness and readiness probes
+    description: |
+      Implement `/healthz` (no dependency checks), `/readyz` (200 or 503 with the failing names),
+      `run_checks` (exceptions count as failures and are logged, never returned to the client),
+      `data_dir_is_writable` and `default_checks`.
+
+      **Tests (`TestMilestone2Probes`)** inject passing, failing and crashing checks, assert liveness never
+      calls them, assert the response does not leak the exception text, and check the default `data_dir`
+      check against a missing and an existing directory.
+  - id: m3-dockerfile
+    title: A production-grade Dockerfile
+    description: |
+      Rewrite `starter/Dockerfile` and `starter/requirements-runtime.txt`: builder + runtime stages,
+      pinned `python:3.13-slim-bookworm` base, requirements copied and installed (`--no-cache-dir`) before
+      the code, `PYTHONUNBUFFERED` and `PYTHONDONTWRITEBYTECODE`, a non-root user with a fixed UID,
+      `HEALTHCHECK` on `/healthz`, exec-form `CMD`, exact `==` pins and no test tools in the image.
+
+      **Tests (`TestMilestone3Dockerfile`)** parse the Dockerfile as text (joining `\` continuations) and
+      check each of these rules, plus that no `ENV`/`ARG` name looks like a secret and no `.env` is copied.
+  - id: m4-context-and-compose
+    title: Build context and compose file
+    description: |
+      Complete `starter/.dockerignore` and `starter/compose.yaml`: exclude secrets, VCS data, virtual
+      environments, caches and tests from the context; publish `127.0.0.1:8000:8000`; mount a named volume
+      at `/app/data`; add a restart policy and `read_only`, `cap_drop: [ALL]`, `no-new-privileges`.
+
+      **Tests (`TestMilestone4BuildContextAndCompose`)** check the ignore patterns and use simple
+      line-based checks of the compose file (no YAML library), ignoring comments.
+  - id: m5-build-and-run
+    title: Build, run and inspect the image (manual)
+    description: |
+      With Docker installed, build the image from `starter/`, run it, and verify by hand: `/readyz`
+      answers, `docker exec <name> id` is not root, `docker inspect` reports `healthy`, `docker stop`
+      returns quickly (SIGTERM reached uvicorn), and with `docker compose` the visit count survives a
+      restart. Compare the image size with the naive starter image.
+
+      **No automated tests**: this milestone needs Docker, which the test suite cannot assume. Tick it
+      off yourself once every check in the README's milestone 5 section behaves as described.
+testing: |
+  From `projects/containerized-app` (tests target `starter/` by default):
+
+  ```bash
+  python -m pytest                 # milestones 1-4
+  python -m pytest -k Milestone3   # just the Dockerfile checks
+  ```
+
+  Against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The app tests use FastAPI's `TestClient`, `tmp_path` for the data directory and injected readiness
+  checks, so they need no network and no Docker. The Dockerfile and compose checks are static: they read
+  the files as text. They cannot prove that the image builds or that the container starts. That is
+  milestone 5, done by hand with `docker build` and `docker run`.
+security:
+  - "Running as root: a compromised process in a root container has root inside it and an easier path to the host. Create a dedicated user with a fixed UID, `USER 10001`, and keep the code owned by root so the app cannot rewrite itself."
+  - "Secrets in images: anything in `ENV`, `ARG` or a copied file lives in the image layers and history (`docker history`). Pass secrets at runtime (environment from a secrets manager, Docker/Kubernetes secrets) and exclude `.env` in `.dockerignore`."
+  - "Unpinned base images and dependencies: `python:latest` and unpinned `pip install` change silently and can pull in breaking or malicious versions. Pin tags (and ideally digests) and exact versions; rebuild regularly to pick up security patches."
+  - "Over-exposed ports: `-p 8000:8000` listens on every host interface, and on Linux Docker's rules can bypass a host firewall. Publish on `127.0.0.1` unless the service really must be public."
+  - "Excess privileges: drop all Linux capabilities, set `no-new-privileges`, use a read-only root filesystem with a single writable volume, and never use `privileged: true`."
+  - "Information leaks from probes: readiness responses list check names only; exception text (hostnames, usernames) goes to the logs, not to an unauthenticated endpoint."
+extensions:
+  - "Pin the base image by digest (`python:3.13-slim-bookworm@sha256:...`) and add a scheduled job or Dependabot/Renovate config that proposes updates."
+  - "Generate a hashed lock file (`pip-compile --generate-hashes` or `uv pip compile`) and install it with `pip install --require-hashes`."
+  - "Add graceful shutdown: on SIGTERM, make `/readyz` return 503 first (draining), then let uvicorn finish in-flight requests within a timeout."
+  - "Scan the image with Trivy or Docker Scout in CI and fail the build on critical vulnerabilities; compare the slim image with a distroless or Chainguard base."
+  - "Write a Kubernetes Deployment with `livenessProbe`, `readinessProbe`, `securityContext.runAsNonRoot: true` and resource limits, and test it with kind or minikube."
+rubric:
+  - criterion: Configuration and probes
+    needsWork: Values are hard-coded, or a single health endpoint checks everything (so outages cause restart storms).
+    meets: Environment-based settings with clear fail-fast errors; separate liveness and readiness with 503 and failing check names.
+    exceeds: Readiness also covers shutdown draining, and probes and settings are documented for operators.
+  - criterion: Image quality
+    needsWork: Single stage, `latest` tags, `COPY . .`, test tools or caches in the image.
+    meets: Multi-stage build, pinned base and dependencies, cached dependency layer, lean runtime image.
+    exceeds: Digest-pinned base, hashed lock file, image size and vulnerability scan results recorded.
+  - criterion: Least privilege and secrets
+    needsWork: Runs as root, secrets in ENV/ARG or copied files, ports published on all interfaces.
+    meets: Non-root fixed UID, no secrets in the image or compose file, loopback port, dropped capabilities, read-only filesystem.
+    exceeds: Also documents a runtime secret mechanism and verifies the hardening with `docker inspect` / a scanner.
+  - criterion: Verification
+    needsWork: Only the automated tests were run; the image was never built.
+    meets: The manual milestone 5 checks were all performed and behave as described.
+    exceeds: The manual checks are scripted (for example a smoke-test script or CI job that builds and probes the image).

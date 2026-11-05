@@ -1,0 +1,555 @@
+id: backend
+order: 6
+title: Backend Development and APIs
+shortTitle: Backend
+summary: >-
+  Building reliable HTTP APIs in Python with FastAPI and Pydantic: routing, validation, dependency
+  injection, authentication, configuration, background work and testing.
+why: >-
+  Almost every ML model, RAG system and agent reaches users through an API. Production AI engineering is,
+  to a large extent, backend engineering.
+modules:
+  - id: api-design
+    title: API design
+    summary: What frameworks do, designing resources, errors and contracts.
+  - id: fastapi
+    title: FastAPI and Pydantic
+    summary: Routes, validation, middleware, dependency injection and async endpoints.
+  - id: auth
+    title: Authentication and authorisation
+    summary: Proving identity, controlling access and protecting secrets.
+  - id: operations
+    title: Configuration, background work and testing
+    summary: Settings, background jobs, events, caching, rate limiting and API tests.
+concepts:
+  # -------------------------------------------------------------- api-design
+  - id: backend.web-frameworks
+    title: What a web framework does
+    module: api-design
+    level: intermediate
+    priority: essential
+    summary: A framework maps HTTP requests to your functions, parses inputs, serialises outputs and runs middleware, on top of an ASGI or WSGI server.
+    why: Without a framework you would parse raw HTTP, match URLs and encode JSON by hand for every endpoint; a framework standardises that plumbing so you write only the application logic.
+    requires: [networking.http-basics, python.decorators]
+    keyIdeas:
+      - "A server (Uvicorn, Gunicorn, Hypercorn) owns the sockets and speaks HTTP; the framework (FastAPI, Flask, Django) is the application the server calls for each request."
+      - "WSGI (PEP 3333) is the synchronous interface `app(environ, start_response)`; ASGI is its async successor `async app(scope, receive, send)` and also supports WebSockets and long-lived connections."
+      - "A router matches method plus path (for example `GET /items/{id}`) to a handler; decorators such as `@app.get(...)` register that mapping."
+      - Middleware forms layers around every handler, like an onion - code runs before the request reaches the handler and again after the response leaves it.
+      - Frameworks differ in how much they bundle - Django ships an ORM, admin and auth; Flask and FastAPI are smaller and compose separate libraries.
+    misconceptions:
+      - FastAPI is not a server; you still need an ASGI server such as Uvicorn to run it.
+      - An async framework does not make code faster by itself; it helps only when requests spend their time waiting on I/O.
+    tools: [Uvicorn, Starlette]
+    interview: Expect to explain WSGI versus ASGI and what happens between a request arriving on a socket and your handler running.
+    sources:
+      - title: ASGI (Asynchronous Server Gateway Interface) Specification
+        url: https://asgi.readthedocs.io/en/latest/specs/main.html
+        publisher: ASGI project
+      - title: "PEP 3333: Python Web Server Gateway Interface v1.0.1"
+        url: https://peps.python.org/pep-3333/
+        publisher: Python Software Foundation
+      - title: Starlette documentation
+        url: https://starlette.dev/
+        publisher: Starlette project
+  - id: backend.api-design
+    title: Designing APIs
+    module: api-design
+    level: intermediate
+    priority: essential
+    summary: Consistent resource naming, request/response schemas, error formats, pagination, versioning and idempotency keys make APIs predictable and evolvable.
+    why: An API is a contract that other teams and programs build on; inconsistent naming, errors or paging force every client to special-case you, and careless changes break them.
+    requires: [networking.rest]
+    keyIdeas:
+      - "Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`, `GET /orders/{id}`, `PATCH /orders/{id}`."
+      - "Prefer cursor (keyset) pagination such as `?limit=50&cursor=...` for large or changing collections; offset pagination slows down on deep pages and skips or repeats rows when data changes."
+      - "GET, PUT and DELETE are idempotent by definition (RFC 9110); make retried POSTs safe with an `Idempotency-Key` header whose result the server stores and replays."
+      - Adding optional fields is a compatible change; removing or renaming fields or changing their types is breaking and needs a new version (for example `/v2`) plus a deprecation period.
+      - Publish the contract (OpenAPI) and use one error format and one naming style (for example snake_case) everywhere.
+    misconceptions:
+      - REST does not mean one endpoint per database table; resources should reflect what clients need, which may combine several tables.
+      - Idempotent does not mean every response is identical; it means repeating the request has the same effect on server state as sending it once.
+    interview: Expect to design endpoints for a resource and justify your pagination, versioning, idempotency and error choices.
+    production: Diff the OpenAPI spec in CI to catch accidental breaking changes, and monitor usage of old versions before retiring them.
+    sources:
+      - title: Google API Improvement Proposals (AIP)
+        url: https://google.aip.dev/
+        publisher: Google
+      - title: "RFC 9110: HTTP Semantics"
+        url: https://www.rfc-editor.org/rfc/rfc9110
+        publisher: IETF
+      - title: The Idempotency-Key HTTP Header Field
+        url: https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/
+        publisher: IETF HTTPAPI Working Group
+        note: Internet-Draft (work in progress); check its current status.
+  - id: backend.error-handling
+    title: API error handling
+    module: api-design
+    level: intermediate
+    priority: essential
+    summary: Map failures to correct status codes and structured error bodies (RFC 9457 problem details) without leaking internals.
+    why: Clients need to know whether to fix their request, retry or give up; a correct status code and a machine-readable body tell them, while stack traces in responses hand attackers a map of your system.
+    requires: [backend.fastapi-basics, python.raising-exceptions]
+    keyIdeas:
+      - "4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed, 404 not found, 409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and a retry may succeed."
+      - "RFC 9457 (which replaced RFC 7807) defines problem details: an `application/problem+json` body with `type`, `title`, `status`, `detail` and `instance`, plus your own extension members."
+      - "In FastAPI, raise `HTTPException(status_code=404, detail=...)` for expected failures and register `@app.exception_handler(MyError)` to map domain exceptions to responses in one place."
+      - "FastAPI answers invalid requests with 422 and a list of field errors; override the `RequestValidationError` handler if you need one consistent error format."
+      - Catch unexpected exceptions at the edge - log the full traceback with a correlation ID and return a generic 500 that contains only that ID.
+    misconceptions:
+      - "Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status codes."
+      - 401 means the caller is not authenticated; 403 means they are authenticated but not permitted. They are not interchangeable.
+      - Different login errors for "unknown user" and "wrong password" let attackers enumerate accounts; return one generic message.
+    interview: Expect to choose status codes for specific failure cases and explain how you keep internal details out of error responses.
+    production: Alert on the 5xx rate rather than on individual errors, and put a correlation ID in every error body and log line so a user report can be traced to its logs.
+    sources:
+      - title: "RFC 9457: Problem Details for HTTP APIs"
+        url: https://www.rfc-editor.org/rfc/rfc9457
+        publisher: IETF
+      - title: Handling Errors
+        url: https://fastapi.tiangolo.com/tutorial/handling-errors/
+        publisher: FastAPI
+      - title: Error Handling Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
+        publisher: OWASP
+  # ----------------------------------------------------------------- fastapi
+  - id: backend.fastapi-basics
+    title: FastAPI fundamentals
+    module: fastapi
+    level: intermediate
+    priority: technology-specific
+    summary: Declare routes with path and query parameters and type hints; FastAPI validates input, serialises output and generates OpenAPI documentation.
+    why: FastAPI turns ordinary type-hinted Python functions into validated, documented HTTP endpoints, removing most hand-written parsing and documentation work.
+    requires: [backend.web-frameworks, python.type-hints]
+    keyIdeas:
+      - "`app = FastAPI()` plus `@app.get(\"/items/{item_id}\")` registers a path operation; parameters named in the path are path parameters, other simple types are query parameters, and Pydantic-model parameters are read from the JSON body."
+      - "Type hints drive conversion and validation: with `item_id: int`, the string `\"42\"` becomes `42` and `\"abc\"` is rejected with a 422."
+      - "`response_model` (or a return type annotation) validates and filters output, so internal fields such as password hashes are not returned."
+      - "Interactive docs are generated from the OpenAPI schema at `/docs` (Swagger UI) and `/redoc`; the raw schema is served at `/openapi.json`."
+      - "Run locally with `fastapi dev main.py` (or `uvicorn main:app --reload`); auto-reload is for development only."
+    misconceptions:
+      - In FastAPI, type hints are not just documentation; they change runtime behaviour (parsing, validation and generated docs).
+      - Returning an ORM object or a dict with extra fields leaks those fields unless you declare a response model.
+    tools: [FastAPI, Uvicorn]
+    interview: Expect to explain how FastAPI uses type hints for validation and docs, and the difference between path, query and body parameters.
+    production: Run several worker processes behind a reverse proxy or load balancer, and protect or disable `/docs` for internal APIs. FastAPI evolves quickly, so check the release notes when upgrading.
+    sources:
+      - title: FastAPI Tutorial - User Guide
+        url: https://fastapi.tiangolo.com/tutorial/
+        publisher: FastAPI
+      - title: Response Model - Return Type
+        url: https://fastapi.tiangolo.com/tutorial/response-model/
+        publisher: FastAPI
+      - title: OpenAPI Specification (latest)
+        url: https://spec.openapis.org/oas/latest.html
+        publisher: OpenAPI Initiative
+  - id: backend.pydantic-validation
+    title: Validation and serialisation with Pydantic
+    module: fastapi
+    level: intermediate
+    priority: essential
+    summary: Pydantic models parse and validate untrusted data into typed objects and serialise them back, with clear errors for bad input.
+    why: Request bodies, config files, queue messages and LLM outputs are all untrusted; validating them at the boundary turns a crash deep inside your code into one clear error at the door.
+    requires: [python.type-hints, python.classes, networking.json-apis]
+    keyIdeas:
+      - "Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)` or `User.model_validate(data)`."
+      - "Pydantic v2 validates in lax mode by default, so `\"3\"` becomes `3` for an `int` field; use `strict=True` or strict types when coercion is unwanted."
+      - "Constraints and custom rules: `Field(gt=0, max_length=50)`, `@field_validator` for one field, `@model_validator` for checks across fields."
+      - "Invalid data raises `ValidationError` listing every failing field with its location and message; FastAPI turns this into a 422 response."
+      - "Serialise with `model_dump()` (dict) or `model_dump_json()`; unknown fields are ignored by default, and `model_config = ConfigDict(extra=\"forbid\")` rejects them."
+    misconceptions:
+      - Type hints on a plain class or dataclass are not checked at runtime; only a validation library such as Pydantic enforces them.
+      - "Pydantic v1 methods such as `.dict()` and `.parse_obj()` are deprecated in v2; use `model_dump()` and `model_validate()`."
+    tools: [Pydantic]
+    interview: Expect questions on validation versus serialisation, lax versus strict mode, and where to put cross-field validation.
+    production: Keep separate input and output models so internal fields never leak, and validate every boundary (requests, config, messages, structured LLM output).
+    sources:
+      - title: "Pydantic: Models"
+        url: https://pydantic.dev/docs/validation/latest/concepts/models/
+        publisher: Pydantic
+      - title: "Pydantic: Validators"
+        url: https://pydantic.dev/docs/validation/latest/concepts/validators/
+        publisher: Pydantic
+      - title: Request Body
+        url: https://fastapi.tiangolo.com/tutorial/body/
+        publisher: FastAPI
+  - id: backend.routing-middleware
+    title: Routing and middleware
+    module: fastapi
+    level: intermediate
+    priority: essential
+    summary: Routers organise endpoints; middleware wraps every request for logging, timing, CORS, compression or authentication.
+    why: Once an API grows past a handful of endpoints it needs to be split into modules, and cross-cutting concerns such as logging, CORS and timing should be written once rather than in every handler.
+    requires: [backend.fastapi-basics]
+    keyIdeas:
+      - "`router = APIRouter(prefix=\"/users\", tags=[\"users\"])` groups related endpoints in their own module; `app.include_router(router)` mounts them."
+      - "`@app.middleware(\"http\")` receives the request and `call_next`; code before `await call_next(request)` runs on the way in and code after it on the way out."
+      - Order matters - each added middleware wraps the previous ones, so the last one added is the outermost and sees the request first and the response last.
+      - "`CORSMiddleware` tells browsers which other origins may call your API; list explicit origins, because browsers reject a wildcard origin when credentials are allowed."
+      - Use dependencies rather than middleware for concerns that apply to some routes only, such as authentication on selected endpoints.
+    misconceptions:
+      - CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it entirely.
+      - Middleware that reads the whole request body or buffers responses can break streaming and add memory pressure.
+    interview: Expect to explain when to use middleware versus dependencies, and how CORS preflight (OPTIONS) requests work.
+    production: Put request IDs, access logs, timing and compression in middleware, and keep it fast and non-blocking because it runs on every request.
+    sources:
+      - title: Bigger Applications - Multiple Files
+        url: https://fastapi.tiangolo.com/tutorial/bigger-applications/
+        publisher: FastAPI
+      - title: Middleware
+        url: https://fastapi.tiangolo.com/tutorial/middleware/
+        publisher: FastAPI
+      - title: CORS (Cross-Origin Resource Sharing)
+        url: https://fastapi.tiangolo.com/tutorial/cors/
+        publisher: FastAPI
+  - id: backend.dependency-injection
+    title: Dependency injection
+    module: fastapi
+    level: intermediate
+    priority: essential
+    summary: Endpoints declare what they need (database sessions, current user, settings) and the framework provides it, which keeps code testable.
+    why: Hard-coding database connections or user lookup inside handlers repeats setup code and makes handlers impossible to test in isolation; declared dependencies centralise setup and let tests swap it.
+    requires: [backend.fastapi-basics, cs.design-patterns]
+    keyIdeas:
+      - "Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session = Depends(get_db)` form also works)."
+      - Dependencies can depend on other dependencies; FastAPI resolves the whole graph and, by default, calls each dependency once per request and reuses the result.
+      - A dependency that uses `yield` runs its set-up before the handler and its teardown after it, which suits opening and closing a database session.
+      - "Tests replace any dependency with `app.dependency_overrides[get_db] = fake_db`."
+      - "Attach dependencies to a router or the whole app (`dependencies=[Depends(verify_key)]`) for checks that must run on every route."
+    misconceptions:
+      - Dependency injection does not need a container framework; in FastAPI it is just functions declared as parameters.
+      - Creating an engine or connection pool inside a per-request dependency defeats pooling; create shared resources once (for example in the lifespan handler) and hand out per-request sessions.
+    interview: Expect to explain how dependency injection improves testability and how a `yield` dependency manages a per-request database session.
+    production: Keep expensive objects (engines, HTTP clients, loaded models) application-scoped via the lifespan handler, and per-request objects (sessions, current user) in dependencies.
+    sources:
+      - title: Dependencies
+        url: https://fastapi.tiangolo.com/tutorial/dependencies/
+        publisher: FastAPI
+      - title: Dependencies with yield
+        url: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+        publisher: FastAPI
+      - title: Lifespan Events
+        url: https://fastapi.tiangolo.com/advanced/events/
+        publisher: FastAPI
+  - id: backend.async-endpoints
+    title: Synchronous and asynchronous endpoints
+    module: fastapi
+    level: advanced
+    priority: essential
+    summary: async endpoints handle many concurrent I/O-bound requests on one event loop — but one blocking call inside them stalls every request.
+    why: Model APIs and RAG services spend most of their time waiting on databases and other HTTP calls; async lets one process serve many such requests at once, or freezes all of them when misused.
+    requires: [backend.fastapi-basics, python.asyncio]
+    keyIdeas:
+      - "`async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies run in a thread pool, so blocking code there does not freeze the loop."
+      - "Inside `async def`, use only awaitable libraries (`httpx.AsyncClient`, asyncpg, SQLAlchemy's asyncio extension); a `time.sleep()`, `requests.get()` or synchronous database call blocks every request on that worker."
+      - "Offload unavoidable blocking calls with `await anyio.to_thread.run_sync(fn)` (or Starlette's `run_in_threadpool`); AnyIO's default limit is 40 worker threads."
+      - CPU-heavy work such as large-model inference or image processing belongs in separate processes, task workers or a dedicated model server, not on the event loop.
+      - Concurrency is per worker process; production servers run several workers to use several CPU cores.
+    misconceptions:
+      - "`async def` does not make code faster or parallel; it only lets other requests proceed while one is waiting on I/O."
+      - Plain `def` endpoints are not wrong; for blocking libraries they are the safer choice.
+    interview: Expect to explain what happens when a blocking call runs inside an async endpoint and how you would find and fix it.
+    production: Watch p99 latency and event-loop lag, enable asyncio debug mode in tests to log slow callbacks, and size thread and database pools together.
+    sources:
+      - title: Concurrency and async / await
+        url: https://fastapi.tiangolo.com/async/
+        publisher: FastAPI
+      - title: Developing with asyncio
+        url: https://docs.python.org/3/library/asyncio-dev.html
+        publisher: Python Software Foundation
+      - title: Working with threads
+        url: https://anyio.readthedocs.io/en/stable/threads.html
+        publisher: AnyIO
+  # -------------------------------------------------------------------- auth
+  - id: backend.authentication
+    title: Authentication
+    module: auth
+    level: intermediate
+    priority: essential
+    summary: Verify who a user is with hashed passwords, sessions or tokens (JWT), and delegate login to identity providers with OAuth 2.0 / OpenID Connect.
+    why: Any API that holds personal data or costs money per call must reliably know who is calling, and home-made login schemes are a leading cause of breaches.
+    requires: [backend.fastapi-basics, networking.cookies-sessions, security.cryptography-basics]
+    keyIdeas:
+      - Never store passwords; store a slow, salted password hash (OWASP recommends Argon2id, then scrypt or bcrypt) and check it with the library's verify function.
+      - "Sessions keep state on the server and give the browser an opaque ID in an `HttpOnly`, `Secure`, `SameSite` cookie; tokens such as JWTs carry signed claims the server can verify without a lookup."
+      - "Verify a JWT's signature with an allow-listed algorithm and check `exp`, `iss` and `aud`; a standard JWT is signed, not encrypted, so anyone can read its payload."
+      - OAuth 2.0 (RFC 6749) delegates authorisation; OpenID Connect adds an ID token so you can log users in through an identity provider. Use the authorisation code flow with PKCE for browser and mobile apps.
+      - Protect login with rate limiting and multi-factor authentication, and return the same generic message for an unknown user and a wrong password.
+    misconceptions:
+      - OAuth 2.0 alone is not an authentication protocol; OpenID Connect is the identity layer built on top of it.
+      - A JWT cannot be revoked before it expires without extra server-side state; keep access tokens short-lived and use refresh tokens or a deny-list.
+      - Base64 is encoding, not encryption, and fast hashes such as SHA-256 are unsuitable for passwords.
+    tools: [PyJWT, Authlib]
+    interview: Expect to compare sessions and JWTs, explain how passwords must be stored, and walk through the OAuth 2.0 authorisation code flow with PKCE.
+    production: Prefer a managed identity provider or a maintained library over hand-rolled auth, rotate signing keys (published as a JWKS), and log authentication events for incident response.
+    sources:
+      - title: Authentication Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+        publisher: OWASP
+      - title: Password Storage Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+        publisher: OWASP
+      - title: OpenID Connect Core 1.0
+        url: https://openid.net/specs/openid-connect-core-1_0.html
+        publisher: OpenID Foundation
+  - id: backend.authorization
+    title: Authorisation
+    module: auth
+    level: intermediate
+    priority: essential
+    summary: Decide what an authenticated user may do — role- and attribute-based access control, object-level checks and least privilege.
+    why: Knowing who a user is does not decide what they may touch; broken object-level authorisation (reading someone else's record by changing an ID) is the top risk in the OWASP API Security Top 10 (2023).
+    requires: [backend.authentication]
+    keyIdeas:
+      - "Check permission server-side on every request for the specific object, for example `order.owner_id == current_user.id`, not just whether the caller is logged in."
+      - RBAC grants permissions through roles (admin, editor, viewer); ABAC decides from attributes of the user, the resource and the context (department, ownership, time).
+      - Deny by default and apply least privilege, so new endpoints and roles start with no access.
+      - Centralise checks in reusable dependencies or a policy layer so they cannot be forgotten on one endpoint.
+      - Filter queries by tenant or owner inside the database query itself, so rows the user may not see are never loaded.
+    misconceptions:
+      - Hiding a button in the UI is not authorisation; the API must enforce the rule.
+      - Unguessable IDs such as UUIDs make enumeration harder but do not replace an ownership check.
+    interview: Expect to explain how you would stop one tenant reading another tenant's data, and to compare RBAC with ABAC.
+    production: Add tests that try to access other users' objects on every endpoint, and audit-log permission changes and denied requests.
+    sources:
+      - title: Authorization Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+        publisher: OWASP
+      - title: "API1:2023 Broken Object Level Authorization"
+        url: https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization/
+        publisher: OWASP API Security Project
+      - title: "NIST SP 800-162: Guide to Attribute Based Access Control (ABAC)"
+        url: https://csrc.nist.gov/pubs/sp/800/162/upd2/final
+        publisher: NIST
+  - id: backend.secrets-management
+    title: Secret management
+    module: auth
+    level: intermediate
+    priority: essential
+    summary: Keep API keys and passwords out of code and repositories, inject them at runtime, scope them narrowly and rotate them.
+    why: API keys pushed to public repositories are found by automated scanners very quickly and can run up large bills or expose data, so secrets need a lifecycle separate from code.
+    requires: [backend.configuration, tooling.gitignore-hygiene]
+    keyIdeas:
+      - "Never commit secrets; keep local ones in a git-ignored `.env`, commit a `.env.example` with placeholders, and scan commits with a tool such as gitleaks."
+      - Inject secrets at runtime from the environment or a secret manager (cloud secret managers, Vault or OpenBao, Kubernetes Secrets) rather than baking them into images.
+      - Scope each secret to one service with minimum permissions, and prefer short-lived credentials (workload identity, OIDC federation) over long-lived keys.
+      - Rotate secrets regularly and immediately after any exposure; deleting a secret in a new commit leaves it in Git history.
+      - "Keep secrets out of logs, error messages and URLs; Pydantic's `SecretStr` masks the value when printed."
+    misconceptions:
+      - Removing a leaked key from the repository is not enough; treat it as compromised and revoke it.
+      - Environment variables are not encrypted; anyone who can inspect the process, its environment or its crash dumps may read them.
+    tools: [gitleaks, SOPS]
+    interview: Expect to describe what you would do in the first hour after an API key is pushed to a public repository.
+    production: Turn on secret scanning and push protection for repositories, alert on unusual key usage, and automate rotation so it is routine rather than an emergency.
+    sources:
+      - title: Secrets Management Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+        publisher: OWASP
+      - title: About secret scanning
+        url: https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning
+        publisher: GitHub
+      - title: "The Twelve-Factor App: Config"
+        url: https://12factor.net/config
+        publisher: Adam Wiggins / Twelve-Factor
+  # -------------------------------------------------------------- operations
+  - id: backend.configuration
+    title: Application configuration
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Typed settings loaded from the environment (for example with pydantic-settings), separate per environment and validated at start-up.
+    why: The same code must run on a laptop, in CI and in production with different databases and keys; hard-coded values force code changes, and a missing setting should fail at start-up, not halfway through a request.
+    requires: [backend.fastapi-basics, python.configuration]
+    keyIdeas:
+      - Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+      - "`class Settings(BaseSettings)` from pydantic-settings reads environment variables (and optionally a `.env` file), converts types and fails fast with a clear error when a value is missing or invalid."
+      - Give non-secret settings safe defaults, but require secrets and production endpoints explicitly by giving them no default.
+      - "Create the settings object once and share it, for example through a dependency wrapped in `functools.lru_cache`, so tests can override it."
+      - "Use `env_prefix` or nested models to keep settings for different components organised."
+    misconceptions:
+      - A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+      - "Reading `os.environ` all over the code base makes settings hard to find and test; centralise them in one typed object."
+    tools: [pydantic-settings]
+    interview: Expect to explain how you structure settings across environments and make sure misconfiguration is caught early.
+    production: Validate settings at start-up so a bad deploy fails its health check instead of serving errors, and log the effective non-secret configuration.
+    sources:
+      - title: Settings Management (pydantic-settings)
+        url: https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/
+        publisher: Pydantic
+      - title: Settings and Environment Variables
+        url: https://fastapi.tiangolo.com/advanced/settings/
+        publisher: FastAPI
+      - title: "The Twelve-Factor App: Config"
+        url: https://12factor.net/config
+        publisher: Adam Wiggins / Twelve-Factor
+  - id: backend.background-jobs
+    title: Background jobs and task queues
+    module: operations
+    level: advanced
+    priority: essential
+    summary: Move slow work (emails, model inference, ingestion) out of the request with background tasks or a queue and workers, with retries and idempotency.
+    why: Requests that send emails, call slow models or ingest documents should not keep users waiting or hit timeouts; background work keeps the API responsive and lets failures be retried.
+    requires: [backend.async-endpoints, databases.redis]
+    keyIdeas:
+      - FastAPI `BackgroundTasks` run a function after the response is sent, in the same process; fine for small, non-critical work, but lost if the process restarts.
+      - A task queue (Celery, RQ, arq, Dramatiq) puts a job message on a broker such as Redis or RabbitMQ; separate worker processes pull and run jobs and can be scaled independently.
+      - Brokers usually deliver at least once, so tasks must be idempotent - running the same job twice must not charge or email twice (use job IDs and unique constraints).
+      - Retry transient failures with exponential backoff, jitter and a maximum number of attempts; move jobs that keep failing to a dead-letter queue for inspection.
+      - "For long-running work, return `202 Accepted` with a job ID and let clients poll a status endpoint or receive a webhook."
+    misconceptions:
+      - "`BackgroundTasks` is not a durable job queue; it has no persistence, retries or separate scaling."
+      - Retrying is not safe unless the task is idempotent.
+    tools: [Celery, RQ]
+    interview: Expect to design a reliable long-running job (for example document ingestion) including retries, idempotency and progress reporting.
+    production: Monitor queue depth, job latency and failure rate, set task time limits, and make workers shut down gracefully so in-flight jobs survive deploys.
+    sources:
+      - title: Background Tasks
+        url: https://fastapi.tiangolo.com/tutorial/background-tasks/
+        publisher: FastAPI
+      - title: Celery documentation
+        url: https://docs.celeryq.dev/en/stable/
+        publisher: Celery project
+      - title: Exponential Backoff And Jitter
+        url: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+        publisher: AWS Architecture Blog
+  - id: backend.event-driven
+    title: Event-driven architecture and messaging
+    module: operations
+    level: advanced
+    priority: supporting
+    summary: Services communicate through queues and pub/sub topics; at-least-once delivery means consumers must be idempotent.
+    why: When one action (an order placed, a document uploaded) must trigger work in several services, direct calls couple them so they fail together; events let producers and consumers scale and change independently.
+    requires: [backend.background-jobs]
+    keyIdeas:
+      - A queue gives each message to one consumer (work distribution); pub/sub gives each event to every subscribed consumer group (fan-out).
+      - Most brokers guarantee at-least-once delivery, so acknowledge a message only after processing it and make consumers idempotent, for example by recording processed event IDs.
+      - Ordering is usually guaranteed only within one queue or partition; Kafka orders messages within a partition chosen by the message key.
+      - The transactional outbox pattern writes the event to an outbox table in the same database transaction as the state change, and a relay publishes it, so events are neither lost nor sent for rolled-back changes.
+      - Events are a contract - version their schemas and add only optional fields so existing consumers keep working.
+    misconceptions:
+      - End-to-end exactly-once delivery across independent systems is generally not available; design for at-least-once delivery plus idempotent processing.
+      - Event-driven does not mean everything should be asynchronous; use a direct call when the caller needs an immediate answer.
+    tools: [Apache Kafka, RabbitMQ, NATS]
+    interview: Expect to explain at-least-once delivery, idempotent consumers and the transactional outbox pattern.
+    production: Monitor consumer lag and dead-letter queues, and make consumers tolerate duplicates, replays and out-of-order events.
+    sources:
+      - title: What do you mean by "Event-Driven"?
+        url: https://martinfowler.com/articles/201701-event-driven.html
+        publisher: Martin Fowler
+      - title: "Pattern: Transactional outbox"
+        url: https://microservices.io/patterns/data/transactional-outbox.html
+        publisher: microservices.io (Chris Richardson)
+      - title: Reliability Guide
+        url: https://www.rabbitmq.com/docs/reliability
+        publisher: RabbitMQ
+  - id: backend.caching-strategies
+    title: Caching strategies
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Cache-aside, TTLs, invalidation and HTTP caching trade freshness for speed and cost.
+    why: Repeating expensive work (database queries, embeddings, LLM calls) costs latency and money; caching reuses results at the price of sometimes serving stale data.
+    requires: [databases.redis, networking.http-semantics]
+    keyIdeas:
+      - Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return it. On writes, update the database and then delete the cache key.
+      - "Give every entry an expiry (`SET key value EX 300` in Redis) and a key that includes everything the result depends on (user, parameters, data or model version)."
+      - "HTTP caching (RFC 9111): `Cache-Control: max-age=60` allows reuse, `no-store` forbids storing, and `ETag` plus `If-None-Match` lets clients revalidate cheaply with `304 Not Modified`."
+      - Prevent stampedes, where many requests miss at once and all hit the database, with request coalescing or locks, early refresh or jittered TTLs.
+      - Measure the hit ratio; a cache that rarely hits adds latency and complexity for nothing.
+    misconceptions:
+      - "`Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store` to forbid storage."
+      - Caching is not free - stale data, invalidation bugs and extra infrastructure are real costs.
+    interview: Expect to compare cache-aside with write-through, explain invalidation, and describe how to prevent a cache stampede.
+    production: Never put per-user responses in a shared cache without the user in the key, set a memory limit and eviction policy, and make sure the app still works when the cache is empty.
+    sources:
+      - title: "RFC 9111: HTTP Caching"
+        url: https://www.rfc-editor.org/rfc/rfc9111
+        publisher: IETF
+      - title: HTTP caching
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching
+        publisher: Mozilla (MDN)
+      - title: Caching Best Practices
+        url: https://aws.amazon.com/caching/best-practices/
+        publisher: Amazon Web Services
+  - id: backend.rate-limiting
+    title: Rate limiting
+    module: operations
+    level: intermediate
+    priority: supporting
+    summary: Token-bucket and sliding-window limits protect services and budgets; clients should back off on 429 responses.
+    why: Without limits, one buggy client, scraper or attacker can exhaust your servers, or your LLM token budget, for everyone else.
+    requires: [backend.routing-middleware, databases.redis]
+    keyIdeas:
+      - Token bucket - a bucket holds up to N tokens and refills at R per second; each request takes a token, allowing bursts of up to N while capping the average rate at R.
+      - Fixed windows are simple but allow up to twice the limit around a window boundary; sliding-window logs or counters smooth this out.
+      - "With several app instances, keep counters in a shared store such as Redis and update them atomically (`INCR` with `EXPIRE`, or a Lua script)."
+      - "Reject excess requests with `429 Too Many Requests` (RFC 6585) and a `Retry-After` header; clients should back off exponentially with jitter."
+      - Limit per API key or user rather than only per IP address, and give expensive endpoints (login, LLM calls) their own tighter limits.
+    misconceptions:
+      - Application-level rate limiting is not DDoS protection; volumetric attacks must be stopped earlier, at the CDN, load balancer or firewall.
+      - Retrying immediately after a 429 makes the overload worse.
+    interview: Expect to implement a token bucket or sliding window and explain how it works across several servers.
+    production: Tell clients their remaining quota in response headers (the IETF RateLimit header fields are still a draft, so check their status), and alert when legitimate clients hit limits.
+    sources:
+      - title: "RFC 6585: Additional HTTP Status Codes (429 Too Many Requests)"
+        url: https://www.rfc-editor.org/rfc/rfc6585
+        publisher: IETF
+      - title: Scaling your API with rate limiters
+        url: https://stripe.com/blog/rate-limiters
+        publisher: Stripe
+      - title: "API4:2023 Unrestricted Resource Consumption"
+        url: https://api-security.owasp.org/editions/2023/en/0xa4-unrestricted-resource-consumption/
+        publisher: OWASP API Security Project
+  - id: backend.api-testing
+    title: Testing APIs
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Exercise endpoints in-process with a test client, override dependencies, test error paths and keep integration tests deterministic.
+    why: APIs are contracts other code relies on; automated tests catch broken validation, status codes and permission checks before clients do, and make refactoring safe.
+    requires: [backend.dependency-injection, cs.testing-strategy]
+    keyIdeas:
+      - "`TestClient(app)` (built on HTTPX) calls the app in-process without a running server: `r = client.get(\"/items/1\")`, then assert on `r.status_code` and `r.json()`."
+      - "Use `with TestClient(app) as client:` when the app has lifespan start-up and shutdown logic, so it runs during the test."
+      - "Override dependencies (`app.dependency_overrides`) to swap databases, auth and external services for fakes, and clear the overrides after each test."
+      - Test the unhappy paths - invalid input (422), missing credentials (401), another user's object (403 or 404), not found and conflicts.
+      - Run integration tests against a real database (for example a disposable PostgreSQL container) with fixed data, rolling back or recreating state per test so results are deterministic.
+    misconceptions:
+      - Checking only the status code is not enough; also assert on the body and on side effects such as rows written or jobs queued.
+      - Mocking everything can make tests pass while the real integration is broken.
+    tools: [pytest, HTTPX]
+    interview: Expect to explain how you split unit and integration tests for an API and isolate external services.
+    production: Run the suite in CI on every change, and consider schema-driven tests generated from the OpenAPI spec (for example with Schemathesis) for public APIs.
+    sources:
+      - title: Testing
+        url: https://fastapi.tiangolo.com/tutorial/testing/
+        publisher: FastAPI
+      - title: Testing Dependencies with Overrides
+        url: https://fastapi.tiangolo.com/advanced/testing-dependencies/
+        publisher: FastAPI
+      - title: Async Tests
+        url: https://fastapi.tiangolo.com/advanced/async-tests/
+        publisher: FastAPI
+  - id: backend.streaming-responses
+    title: Streaming responses and server-sent events
+    module: fastapi
+    level: advanced
+    priority: supporting
+    summary: Send a response in pieces as they are produced — for example LLM tokens over server-sent events — instead of waiting for the whole result.
+    why: Users perceive streamed LLM answers as much faster, and long-running work can report progress without polling.
+    requires: [backend.async-endpoints, networking.api-styles]
+    keyIdeas:
+      - In FastAPI and Starlette, `StreamingResponse` sends chunks from a (preferably async) generator as they are yielded.
+      - "Server-sent events use the `text/event-stream` content type with `data:` lines separated by blank lines; browsers read them with `EventSource`."
+      - Proxies may buffer responses; disable buffering for streaming routes and send periodic keep-alive comments.
+      - Handle client disconnects so upstream work, such as a model call, is cancelled instead of wasting resources.
+    misconceptions:
+      - Streaming does not make the total work faster; it reduces the time to the first useful byte.
+    tools: [FastAPI, Starlette]
+    sources:
+      - title: "FastAPI: Custom Response - HTML, Stream, File, others"
+        url: https://fastapi.tiangolo.com/advanced/custom-response/
+        publisher: FastAPI
+      - title: "MDN: Using server-sent events"
+        url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+        publisher: Mozilla

@@ -1,0 +1,207 @@
+id: backend.caching-strategies
+concept: backend.caching-strategies
+title: Caching strategies
+subtitle: Cache-aside, TTLs, invalidation and HTTP caching trade freshness for speed and cost
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Cache-aside, TTLs, invalidation and HTTP caching trade freshness for speed and cost.
+objectives:
+- Explain the core model behind caching strategies.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'RFC 9111: HTTP Caching'
+  url: https://www.rfc-editor.org/rfc/rfc9111
+  publisher: IETF
+- title: HTTP caching
+  url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching
+  publisher: Mozilla (MDN)
+- title: Caching Best Practices
+  url: https://aws.amazon.com/caching/best-practices/
+  publisher: Amazon Web Services
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Cache-aside, TTLs, invalidation and HTTP caching trade freshness for speed and cost. Repeating expensive
+      work (database queries, embeddings, LLM calls) costs latency and money; caching reuses results at the price
+      of sometimes serving stale data.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return
+      it. On writes, update the database and then delete the cache key.
+
+      - Give every entry an expiry (`SET key value EX 300` in Redis) and a key that includes everything the result
+      depends on (user, parameters, data or model version).
+
+      - HTTP caching (RFC 9111): `Cache-Control: max-age=60` allows reuse, `no-store` forbids storing, and `ETag`
+      plus `If-None-Match` lets clients revalidate cheaply with `304 Not Modified`.
+
+      - Prevent stampedes, where many requests miss at once and all hit the database, with request coalescing or
+      locks, early refresh or jittered TTLs.
+
+      - Measure the hit ratio; a cache that rarely hits adds latency and complexity for nothing.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- `Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store`
+      to forbid storage.
+
+      - Caching is not free - stale data, invalidation bugs and extra infrastructure are real costs.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def cache_is_fresh(created_at, now, ttl):\n    return 0 <= now - created_at < ttl\n\nprint(cache_is_fresh(100,\
+      \ 115, 30), cache_is_fresh(100, 140, 30))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: caching-strategies-code
+  - type: item
+    ref: caching-strategies-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return it.
+      On writes, update the database and then delete the cache key.
+
+      - Give every entry an expiry (`SET key value EX 300` in Redis) and a key that includes everything the result
+      depends on (user, parameters, data or model version).
+
+      - HTTP caching (RFC 9111): `Cache-Control: max-age=60` allows reuse, `no-store` forbids storing, and `ETag`
+      plus `If-None-Match` lets clients revalidate cheaply with `304 Not Modified`.
+
+      - Prevent stampedes, where many requests miss at once and all hit the database, with request coalescing or
+      locks, early refresh or jittered TTLs.
+
+      - Measure the hit ratio; a cache that rarely hits adds latency and complexity for nothing.
+
+
+      **Avoid**
+
+      - `Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store` to
+      forbid storage.
+
+      - Caching is not free - stale data, invalidation bugs and extra infrastructure are real costs.'
+  - type: item
+    ref: caching-strategies-mcq
+  - type: item
+    ref: caching-strategies-tf
+  - type: item
+    ref: caching-strategies-code
+items:
+- id: caching-strategies-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of caching strategies?
+  explanation: Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return
+    it. On writes, update the database and then delete the cache key.
+  options:
+  - id: a
+    text: Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return it.
+      On writes, update the database and then delete the cache key.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: '`Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store`
+      to forbid storage.'
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: caching-strategies-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store`
+    to forbid storage.'
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: caching-strategies-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing caching strategies in a real application. What design decisions would you make, what
+    failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: caching-strategies-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for caching strategies. Implement the stated rule and make sure both ordinary and
+    edge-case tests pass.
+  starterCode: "def cache_is_fresh(created_at, now, ttl):\n    raise NotImplementedError('Complete this function')"
+  solution: "def cache_is_fresh(created_at, now, ttl):\n    return 0 <= now - created_at < ttl"
+  tests:
+  - name: Core behaviour
+    code: assert cache_is_fresh(100, 115, 30) is True
+  - name: Edge cases
+    code: 'assert cache_is_fresh(100, 130, 30) is False
+
+      assert cache_is_fresh(100, 90, 30) is False'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - caching-strategies-mcq
+  - caching-strategies-tf
+  - caching-strategies-code
+cheatsheet: '**Core model**
+
+  - Cache-aside - read the cache; on a miss load from the source, store the result with a TTL and return it. On
+  writes, update the database and then delete the cache key.
+
+  - Give every entry an expiry (`SET key value EX 300` in Redis) and a key that includes everything the result depends
+  on (user, parameters, data or model version).
+
+  - HTTP caching (RFC 9111): `Cache-Control: max-age=60` allows reuse, `no-store` forbids storing, and `ETag` plus
+  `If-None-Match` lets clients revalidate cheaply with `304 Not Modified`.
+
+  - Prevent stampedes, where many requests miss at once and all hit the database, with request coalescing or locks,
+  early refresh or jittered TTLs.
+
+  - Measure the hit ratio; a cache that rarely hits adds latency and complexity for nothing.
+
+
+  **Common mistakes**
+
+  - `Cache-Control: no-cache` does not mean do not cache; it means revalidate before reuse. Use `no-store` to forbid
+  storage.
+
+  - Caching is not free - stale data, invalidation bugs and extra infrastructure are real costs.'

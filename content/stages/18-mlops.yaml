@@ -1,0 +1,703 @@
+id: mlops
+order: 18
+title: MLOps, LLMOps and Production Engineering
+shortTitle: MLOps & Production
+summary: >-
+  Shipping and running software and models: containers, CI/CD, releases, experiment tracking with MLflow,
+  versioning, serving, observability, monitoring, LLMOps, scaling, fault tolerance, cost and incidents.
+why: >-
+  A model in a notebook helps nobody. Production engineering makes systems deployable, observable,
+  affordable and recoverable when — not if — they fail.
+modules:
+  - id: delivery
+    title: Packaging and delivery
+    summary: Containers, Docker, CI/CD, environments and release strategies.
+  - id: ml-lifecycle
+    title: The ML lifecycle
+    summary: Experiment tracking, versioning, serving and training pipelines.
+  - id: operations
+    title: Observing and operating
+    summary: Logging, tracing, metrics, monitoring, incidents and reliability.
+  - id: scale
+    title: Scale, resilience and cost
+    summary: Performance, scaling, fault tolerance, queues, Kubernetes, infrastructure as code and cost.
+  - id: llmops
+    title: LLMOps
+    summary: Operating LLM applications — prompts, evaluations, tracing and cost in production.
+concepts:
+  # ---------------------------------------------------------------- delivery
+  - id: mlops.containers
+    title: Containers
+    module: delivery
+    level: intermediate
+    priority: essential
+    summary: A container packages an application with its dependencies and runs it isolated on a shared kernel — lighter than a virtual machine.
+    why: >-
+      "It works on my machine" failures come from different OS libraries, runtimes and settings. A container ships
+      the app with its exact user-space environment, so it runs the same on a laptop, in CI and in production.
+    requires: [tooling.linux-processes]
+    keyIdeas:
+      - A container is an ordinary process isolated by Linux kernel features - namespaces limit what it can see (processes, network, mounts) and cgroups limit what it can use (CPU, memory).
+      - An image is a read-only, layered filesystem plus metadata (entrypoint, environment); a container is a running instance of an image with a thin writable layer on top.
+      - Containers share the host kernel, so they start in seconds or less and use far less memory than virtual machines; Docker Desktop on Windows and macOS runs Linux containers inside a small Linux VM.
+      - The Open Container Initiative (OCI) standardises image and runtime formats, so an image built with Docker also runs under Podman, containerd or Kubernetes.
+      - Containers are disposable - anything written inside is lost when the container is removed unless it is stored in a volume or an external service.
+    misconceptions:
+      - Containers are not lightweight VMs with their own kernel; isolation is weaker than a VM, and a privileged container or kernel exploit can affect the host.
+      - An image is not a container; one image can run as many containers at once.
+    interview: Explain the difference between a container and a virtual machine, and what namespaces and cgroups do.
+    production: Run containers as a non-root user with CPU and memory limits, and keep them stateless so any instance can be replaced at any time.
+    sources:
+      - title: What is a container?
+        url: https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-container/
+        publisher: Docker
+      - title: Open Container Initiative
+        url: https://opencontainers.org/
+        publisher: Open Container Initiative (Linux Foundation)
+      - title: Containers
+        url: https://kubernetes.io/docs/concepts/containers/
+        publisher: The Kubernetes Authors
+  - id: mlops.docker
+    title: Docker
+    module: delivery
+    level: intermediate
+    priority: technology-specific
+    summary: Write Dockerfiles, build layered images, run containers with ports, volumes and environment variables, and compose multi-service apps.
+    why: Docker is the most widely used tool for building and running container images, and a Dockerfile turns your environment into reviewable, reproducible code.
+    requires: [mlops.containers]
+    keyIdeas:
+      - A Dockerfile lists build steps (`FROM`, `COPY`, `RUN`, `CMD`); each instruction creates a cached layer, so put rarely changing steps (installing dependencies) before often changing ones (copying source code).
+      - "`docker build -t app:1.0 .` builds an image; `docker run -p 8000:8000 -e LOG_LEVEL=info -v data:/data app:1.0` runs it with a published port, an environment variable and a named volume."
+      - Multi-stage builds install or compile in a build stage and copy only the results into a slim runtime image, which shrinks size and attack surface.
+      - A `.dockerignore` file keeps `.git`, virtual environments and secrets out of the build context; Docker Compose (`compose.yaml`, `docker compose up`) runs multi-service apps such as an API plus a database.
+      - Pin base images to a specific version (or digest) rather than `latest` so builds are reproducible.
+    misconceptions:
+      - "`EXPOSE` only documents a port; you still need `-p host:container` to reach the container from your machine."
+      - Deleting a secret in a later layer does not remove it from the image, because earlier layers still contain it; use build secrets instead.
+      - Inside a container, `localhost` is the container itself, not your machine or another container; in Compose, use the service name as the hostname.
+    tools: [Docker, Docker Compose, Podman]
+    interview: Walk through optimising a Dockerfile for a Python service - layer order, slim base image, multi-stage build and a non-root user.
+    production: Scan images for known vulnerabilities, rebuild regularly to pick up base-image patches, and tag images immutably (for example with the git commit SHA).
+    sources:
+      - title: What is Docker?
+        url: https://docs.docker.com/get-started/docker-overview/
+        publisher: Docker
+      - title: Building best practices
+        url: https://docs.docker.com/build/building/best-practices/
+        publisher: Docker
+      - title: Multi-stage builds
+        url: https://docs.docker.com/build/building/multi-stage/
+        publisher: Docker
+  - id: mlops.ci-cd
+    title: Continuous integration and delivery
+    module: delivery
+    level: intermediate
+    priority: essential
+    summary: Every push runs linting, tests and builds automatically; delivery pipelines promote verified artefacts to environments.
+    why: Manual testing and deployment are slow and error-prone; automating them on every push catches mistakes within minutes and makes releasing routine instead of risky.
+    requires: [tooling.pull-requests, python.testing]
+    extends: [tooling.ci-basics]
+    keyIdeas:
+      - Continuous integration means merging small changes into the main branch often, with every push or pull request running lint, type checks, tests and a build; a broken main build is fixed first.
+      - Continuous delivery keeps main always releasable by producing a versioned artefact (such as an image tagged with the commit SHA); continuous deployment goes further and releases every passing change automatically.
+      - In GitHub Actions, a workflow file in `.github/workflows/` is triggered by the events listed under `on` (such as `push` and `pull_request`) and runs jobs made of steps on runners; jobs run in parallel unless linked with `needs`.
+      - Build once, deploy many - the exact artefact tested in CI is the one promoted to staging and production; rebuilding per environment ships something untested.
+      - Keep pipelines fast (a common target is about ten minutes) with dependency caching and parallel jobs, or people start bypassing them.
+    misconceptions:
+      - CI is not just owning a build server; it is the practice of integrating small changes frequently.
+      - Continuous delivery does not mean every commit goes straight to production; that is continuous deployment.
+    tools: [GitHub Actions]
+    interview: Describe the pipeline you would set up for a Python service and how you would keep it fast and trustworthy.
+    production: Give workflows least-privilege tokens (the `permissions` key), keep credentials in encrypted secrets or use OIDC federation, and pin third-party actions to a commit SHA.
+    sources:
+      - title: Understanding GitHub Actions
+        url: https://docs.github.com/en/actions/get-started/understand-github-actions
+        publisher: GitHub
+      - title: Continuous Integration
+        url: https://martinfowler.com/articles/continuousIntegration.html
+        publisher: Martin Fowler
+      - title: Secure use reference (GitHub Actions)
+        url: https://docs.github.com/en/actions/reference/security/secure-use
+        publisher: GitHub
+  - id: mlops.environment-config
+    title: Environments and configuration promotion
+    module: delivery
+    level: intermediate
+    priority: essential
+    summary: Dev, staging and production differ only in configuration; feature flags decouple deploying code from releasing features.
+    why: If staging differs from production in more than configuration, a passing staging test proves little; separating config from code lets one artefact run safely everywhere.
+    requires: [backend.configuration, mlops.ci-cd]
+    keyIdeas:
+      - Twelve-factor rule - store anything that varies between deploys (URLs, credentials, limits) in the environment, not in code, so the same build runs in every environment.
+      - Keep development, staging and production as similar as possible (same backing services and versions) to avoid surprises that only appear in production.
+      - Promote, do not rebuild - move the same versioned artefact from dev to staging to production, changing only configuration.
+      - Feature flags separate deploying code from releasing a feature - ship it switched off, enable it for a percentage of users, and switch it off instantly without a redeploy.
+      - Validate configuration at startup and fail fast on missing or malformed values.
+    misconceptions:
+      - Feature flags are not free; stale flags add code paths and test combinations, so remove each flag once its rollout is complete.
+      - A separate settings file per environment checked into the code is not config separation; it couples code to deployments and tends to leak secrets.
+    interview: How do you make staging a good predictor of production, and how do feature flags change the release process?
+    production: Treat configuration changes like code changes - reviewed, versioned and rolled out gradually - because bad config pushes cause many outages.
+    sources:
+      - title: "The Twelve-Factor App: III. Config"
+        url: https://12factor.net/config
+        publisher: 12factor.net
+      - title: "The Twelve-Factor App: X. Dev/prod parity"
+        url: https://12factor.net/dev-prod-parity
+        publisher: 12factor.net
+      - title: Feature Toggles (aka Feature Flags)
+        url: https://martinfowler.com/articles/feature-toggles.html
+        publisher: Martin Fowler (Pete Hodgson)
+  - id: mlops.release-strategies
+    title: Release strategies
+    module: delivery
+    level: advanced
+    priority: supporting
+    summary: Rolling, blue–green and canary releases limit the blast radius of a bad version and make rollback fast.
+    why: Even well-tested releases sometimes fail in production; release strategies limit how many users see a bad version and make going back quick.
+    requires: [mlops.ci-cd]
+    keyIdeas:
+      - Rolling update - replace instances a few at a time (the Kubernetes Deployment default, tuned with `maxSurge` and `maxUnavailable`); old and new versions briefly serve traffic together.
+      - Blue-green - run the new version (green) beside the old (blue), switch all traffic at the router, and switch back to roll back.
+      - Canary - send a small share of traffic (for example 1-5%) to the new version, compare its errors and latency with the current version, then widen the rollout or abort.
+      - Because versions overlap, changes must be backward compatible; use expand-then-contract database migrations (add the new column, deploy, backfill, and only later remove the old one).
+      - Define automatic rollback criteria from metrics instead of relying on someone watching a dashboard.
+    misconceptions:
+      - Rolling back code does not roll back data; a destructive schema migration can make rollback impossible.
+      - A canary only helps if its metrics are actually compared with the baseline before the rollout widens.
+    interview: Compare rolling, blue-green and canary releases, and explain how you would handle a database migration during one.
+    production: For ML models, shadow traffic (mirroring real requests to the new version without returning its answers) is a safe step before a canary.
+    sources:
+      - title: Deployments (rolling updates)
+        url: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+        publisher: The Kubernetes Authors
+      - title: "The Site Reliability Workbook: Canarying Releases"
+        url: https://sre.google/workbook/canarying-releases/
+        publisher: Google
+      - title: Blue Green Deployment
+        url: https://martinfowler.com/bliki/BlueGreenDeployment.html
+        publisher: Martin Fowler
+  # ------------------------------------------------------------ ml-lifecycle
+  - id: mlops.experiment-tracking
+    title: Experiment tracking
+    module: ml-lifecycle
+    level: intermediate
+    priority: essential
+    summary: Log parameters, metrics, code versions, data versions and artefacts for every run so results can be compared and reproduced.
+    why: ML work involves many runs with different data, code and settings; without a record you cannot tell which change helped or rebuild the best model.
+    requires: [ml.reproducibility]
+    keyIdeas:
+      - For every run, log parameters (hyperparameters, config), metrics (per step and final), the code version (git commit), the data version, the environment and artefacts such as model files and plots.
+      - Group related runs into experiments and compare them in tables and charts to see which change caused which effect.
+      - A run is reproducible only if code, data, configuration, environment and random seeds are all captured.
+      - Prefer automatic logging (framework autologging, a shared training script) so the record does not depend on discipline.
+    misconceptions:
+      - A spreadsheet of final accuracies is not experiment tracking; without code and data versions the result cannot be reproduced.
+      - The best validation score out of hundreds of runs is optimistically biased; confirm the chosen model once on a held-out test set.
+    tools: [MLflow]
+    interview: How would you make an experiment from three months ago exactly reproducible?
+    sources:
+      - title: ML Experiment Tracking
+        url: https://mlflow.org/docs/latest/ml/tracking/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: Rules of Machine Learning
+        url: https://developers.google.com/machine-learning/guides/rules-of-ml
+        publisher: Google
+  - id: mlops.mlflow
+    title: MLflow
+    module: ml-lifecycle
+    level: intermediate
+    priority: technology-specific
+    summary: An open-source platform for tracking experiments, packaging models and managing them in a registry, runnable entirely locally.
+    why: MLflow gives you tracking, model packaging and a model registry in one free, self-hostable tool, so you can practise the whole model lifecycle on a laptop.
+    requires: [mlops.experiment-tracking]
+    keyIdeas:
+      - Tracking - inside a `with mlflow.start_run()` block, call `mlflow.log_param()`, `mlflow.log_metric()` and `mlflow.log_artifact()`; `mlflow.autolog()` captures many frameworks automatically, and `mlflow ui` shows runs at http://localhost:5000 by default.
+      - Models are saved in the MLflow Model format with "flavors" (such as sklearn or the generic pyfunc) and their dependencies, so they can be reloaded with `mlflow.pyfunc.load_model()` or served with `mlflow models serve`.
+      - The Model Registry gives each registered model numbered versions; aliases such as `champion` point to a version, so deployments can load `models:/MyModel@champion` and you can roll back by moving the alias.
+      - Storage is pluggable - a local folder or SQLite file for one person, or a database plus object storage behind `mlflow server` for a team.
+      - MLflow 3 added GenAI features (tracing, prompt registry, LLM evaluation); APIs change between major versions, so check the docs for the version you install.
+    misconceptions:
+      - MLflow does not train models; it records, packages and serves what your own code produces.
+      - A self-hosted tracking server has no access control by default; do not expose it to the internet unprotected.
+    tools: [MLflow]
+    interview: How would you use a model registry to promote a new model version and roll it back if it misbehaves?
+    production: Back up the tracking database and artefact store, and pin the MLflow version so the client and server stay compatible.
+    sources:
+      - title: MLflow documentation
+        url: https://mlflow.org/docs/latest/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: ML Model Registry
+        url: https://mlflow.org/docs/latest/ml/model-registry/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+  - id: mlops.data-model-versioning
+    title: Data and model versioning
+    module: ml-lifecycle
+    level: intermediate
+    priority: essential
+    summary: Version datasets and models alongside code (DVC, registries, immutable artefact storage) so any prediction can be traced to its inputs.
+    why: A model's behaviour depends as much on its data as on its code; if you cannot reconstruct the exact data and model behind a prediction, you cannot debug, audit or roll back.
+    requires: [mlops.experiment-tracking, tooling.git-basics]
+    keyIdeas:
+      - Git handles large binary files badly; DVC stores small `.dvc` pointer files (content hashes) in Git and keeps the data itself in a cache and a remote (S3, GCS, SSH or a shared folder).
+      - Typical DVC loop - `dvc add data/raw`, `git commit`, `dvc push`; later `git checkout <commit>` followed by `dvc checkout` (or `dvc pull`) restores the matching data.
+      - Treat artefacts as immutable and content-addressed - never overwrite `model.pkl`; publish a new version and record which data, code and config produced it (lineage).
+      - Model version, training run, data version and git commit linked together give end-to-end traceability from any prediction back to its inputs.
+    misconceptions:
+      - Versioning data does not mean copying the whole dataset for each change; content-addressed storage only stores files that changed.
+      - Committing large datasets straight into Git is not versioning; it bloats the repository permanently.
+    tools: [DVC, Git LFS]
+    interview: A model in production starts behaving oddly - how would you find the exact data and code that trained it?
+    production: Versioned copies of personal data still count as personal data; plan how retention limits and deletion requests apply to old versions.
+    sources:
+      - title: DVC documentation
+        url: https://doc.dvc.org/
+        publisher: DVC (Iterative)
+      - title: Get Started with DVC
+        url: https://doc.dvc.org/start
+        publisher: DVC (Iterative)
+  - id: mlops.model-serving
+    title: Model serving
+    module: ml-lifecycle
+    level: intermediate
+    priority: essential
+    summary: Batch scoring vs online inference behind an API, model loading, input validation, versioned endpoints and shadow deployments.
+    why: A model only creates value when other systems can use its predictions reliably, within their latency and cost limits.
+    requires: [backend.fastapi-basics, ml.ml-pipelines]
+    keyIdeas:
+      - Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference answers each request through an API within a latency budget.
+      - Load the model once at startup, not per request; validate inputs with a schema (for example Pydantic) and return the model version with every prediction.
+      - Apply exactly the same preprocessing as in training, ideally the same code or a saved pipeline object, to avoid training-serving skew.
+      - Version the API or the model (for example `/v1/predict`) and provide health and readiness endpoints so deploys do not break clients.
+      - A shadow deployment sends real traffic to a new model and logs its predictions without returning them, so it can be compared safely with the live model.
+    misconceptions:
+      - Online serving is not always better; if predictions can be computed in advance, batch is cheaper and more reliable.
+      - A pickled model is executable code; never load a pickle from an untrusted source.
+    interview: Design an endpoint that serves a model with a p99 latency under 100 ms - discuss loading, batching, scaling and versioning.
+    production: Log inputs, outputs and model version for each prediction (within privacy rules) so you can monitor drift and debug later.
+    sources:
+      - title: ML Model Serving
+        url: https://mlflow.org/docs/latest/ml/deployment/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: Rules of Machine Learning (training-serving skew)
+        url: https://developers.google.com/machine-learning/guides/rules-of-ml
+        publisher: Google
+      - title: FastAPI deployment
+        url: https://fastapi.tiangolo.com/deployment/
+        publisher: FastAPI
+  - id: mlops.training-pipelines
+    title: Training and retraining pipelines
+    module: ml-lifecycle
+    level: advanced
+    priority: supporting
+    summary: Automate data preparation, training, evaluation gates and registration, triggered on schedule or by drift.
+    why: Retraining by hand is slow and inconsistent; an automated pipeline makes retraining repeatable, testable and safe to run without someone watching.
+    requires: [mlops.model-serving, de.orchestration]
+    keyIdeas:
+      - A training pipeline is a DAG of steps - ingest and validate data, build features, train, evaluate, register - each with versioned inputs and outputs.
+      - Evaluation gates block promotion unless the candidate beats the current model on agreed metrics, including important data slices, and the input data passes validation checks.
+      - Triggers include a schedule, the arrival of new data, a drift alert, and a manual run for rebuilds.
+      - "Google's MLOps levels: level 0 is a manual process, level 1 automates the training pipeline (continuous training), level 2 adds CI/CD for the pipeline code itself."
+      - Make each step idempotent so a failed run can be retried safely.
+    misconceptions:
+      - Retraining more often is not automatically better; without evaluation gates it can push a worse model to production.
+      - Automating training without validating the incoming data just automates garbage in, garbage out.
+    interview: How would you decide when to retrain, and what checks must pass before a retrained model is deployed?
+    production: Alert on pipeline failures and record lineage for every automated run; a silently failing retraining job leaves a stale model in production.
+    sources:
+      - title: "MLOps: Continuous delivery and automation pipelines in machine learning"
+        url: https://docs.cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning?hl=en
+        publisher: Google Cloud
+      - title: Hidden Technical Debt in Machine Learning Systems
+        url: https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html
+        publisher: NeurIPS 2015 (Sculley et al.)
+  # -------------------------------------------------------------- operations
+  - id: mlops.logging-tracing
+    title: Structured logging and distributed tracing
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Machine-readable logs with request IDs and OpenTelemetry traces show what happened across services for each request.
+    why: When a request fails somewhere across several services, scattered free-text logs are nearly useless; structured logs and traces let you follow one request end to end.
+    requires: [python.logging, backend.routing-middleware]
+    keyIdeas:
+      - Structured logs are key-value records (usually JSON) with a timestamp, level, message and fields such as `request_id`, `user_id` and `duration_ms`, so they can be filtered and aggregated.
+      - Create or accept a request ID at the edge, pass it to every downstream call and include it in every log line.
+      - A trace is a tree of spans, one per operation, each with a start time, duration, attributes and status; context propagation carries the trace ID between services in the W3C `traceparent` header.
+      - OpenTelemetry is the vendor-neutral standard (APIs, SDKs and the Collector) for producing traces, metrics and logs and exporting them to any backend.
+      - Log meaningful events at meaningful levels (DEBUG, INFO, WARNING, ERROR), not every line executed.
+    misconceptions:
+      - More logs do not mean better observability; noisy, high-volume logs are expensive and bury the signal.
+      - Logs are not private; never log passwords, tokens, API keys or unredacted personal data.
+    tools: [OpenTelemetry, structlog]
+    interview: How would you find out why one particular user's request was slow in a system of five services?
+    production: Sample traces under high traffic and set log retention limits; observability data is often a large part of the cloud bill.
+    sources:
+      - title: Observability primer
+        url: https://opentelemetry.io/docs/concepts/observability-primer/
+        publisher: OpenTelemetry (CNCF)
+      - title: Traces
+        url: https://opentelemetry.io/docs/concepts/signals/traces/
+        publisher: OpenTelemetry (CNCF)
+      - title: Trace Context
+        url: https://www.w3.org/TR/trace-context/
+        publisher: W3C
+  - id: mlops.observability
+    title: Observability — metrics, logs and traces
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Instrument services with the RED/USE metrics, dashboards and actionable alerts tied to service-level objectives.
+    why: You cannot fix what you cannot see; observability tells you when users are affected and helps you find out why, ideally before they report it.
+    requires: [mlops.logging-tracing]
+    keyIdeas:
+      - Metrics are cheap numeric time series (counters, gauges, histograms); logs record individual events; traces follow single requests. Use all three together.
+      - RED for request-driven services is Rate, Errors and Duration; USE for resources is Utilisation, Saturation and Errors; Google SRE's four golden signals are latency, traffic, errors and saturation.
+      - Prometheus scrapes metrics from `/metrics` endpoints and queries them with PromQL, for example `rate(http_requests_total[5m])`; Grafana builds dashboards and alerts on top.
+      - Record latency in histograms and report percentiles (p50, p95, p99), because averages hide slow tail requests.
+      - Alert on user-facing symptoms (error rate, latency, SLO burn), not on every possible cause such as CPU at 80%; every page should require action.
+    misconceptions:
+      - High-cardinality labels such as user IDs or request IDs explode Prometheus storage; put those in logs and traces instead.
+      - A dashboard is not monitoring; without alerts someone has to be watching it.
+    tools: [Prometheus, Grafana]
+    interview: Which metrics would you put on a dashboard for a web API, and which would you alert on?
+    production: Review alerts regularly and delete ones nobody acts on; alert fatigue makes on-call engineers miss the real incident.
+    sources:
+      - title: "Site Reliability Engineering: Monitoring Distributed Systems"
+        url: https://sre.google/sre-book/monitoring-distributed-systems/
+        publisher: Google
+      - title: Prometheus overview
+        url: https://prometheus.io/docs/introduction/overview/
+        publisher: Prometheus (CNCF)
+      - title: Instrumentation best practices
+        url: https://prometheus.io/docs/practices/instrumentation/
+        publisher: Prometheus (CNCF)
+  - id: mlops.model-monitoring
+    title: Model monitoring and drift
+    module: operations
+    level: advanced
+    priority: essential
+    summary: Watch input distributions, prediction distributions and delayed ground truth to detect data drift, concept drift and silent degradation.
+    why: Models degrade silently - the API keeps returning 200 OK while predictions get worse because the world changed. Only monitoring data and predictions catches this.
+    requires: [mlops.model-serving, mlops.observability, math.hypothesis-testing]
+    keyIdeas:
+      - Data drift (covariate shift) is a change in the input distribution; concept drift is a change in the relationship between inputs and the target; prediction drift is a change in the output distribution.
+      - Compare a recent production window with a reference window (often the training data) per feature, using measures such as the population stability index, the Kolmogorov-Smirnov test or Jensen-Shannon distance; alert on sustained shifts, not single blips.
+      - True labels often arrive late (days or months); track real performance when they arrive and rely on drift and proxy metrics in the meantime.
+      - Monitor data quality too - missing values, schema changes and out-of-range values cause many apparent drift incidents.
+      - Track performance per segment (region, device, user group), because an overall metric can hide one failing slice.
+    misconceptions:
+      - Drift does not automatically mean the model got worse; confirm with labels or business metrics before retraining.
+      - With large samples, statistical tests flag tiny, harmless differences; use effect sizes and thresholds that matter for the business.
+    tools: [Evidently]
+    interview: How would you detect that a fraud model is degrading when fraud labels only arrive 30 days later?
+    production: Connect every drift alert to a runbook (investigate, retrain or roll back) so alerts lead to action rather than noise.
+    sources:
+      - title: Evidently documentation
+        url: https://docs.evidentlyai.com/introduction
+        publisher: Evidently AI
+      - title: "Failing Loudly: An Empirical Study of Methods for Detecting Dataset Shift"
+        url: https://arxiv.org/abs/1810.11953
+        publisher: arXiv (Rabanser et al., NeurIPS 2019)
+      - title: "The ML Test Score: A Rubric for ML Production Readiness and Technical Debt Reduction"
+        url: https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/
+        publisher: Google Research
+  - id: mlops.incident-response
+    title: Incident response and postmortems
+    module: operations
+    level: intermediate
+    priority: essential
+    summary: Detect, triage, mitigate, communicate, then write a blameless postmortem with concrete follow-ups.
+    why: Every production system eventually fails; a practised response shortens outages, and a good postmortem stops the same failure from happening again.
+    requires: [mlops.observability]
+    keyIdeas:
+      - Mitigate user impact first (roll back, switch a feature flag off, fail over), then look for the root cause.
+      - Assign clear roles - an incident commander who coordinates, an operations lead who makes changes, a communications lead who updates stakeholders - and keep a timestamped log.
+      - Declare incidents early and post regular status updates, even when the update is "still investigating".
+      - A blameless postmortem records impact, timeline, contributing causes, what went well and concrete follow-up actions with owners, focusing on systems rather than individuals.
+      - Runbooks and on-call rotations turn tribal knowledge into repeatable steps.
+    misconceptions:
+      - Incidents rarely have a single root cause; most have several contributing factors.
+      - Blameless does not mean no accountability; it means people can report mistakes honestly so the system can be fixed.
+    interview: Tell me about an incident you handled - how it was detected, how you mitigated it and what changed afterwards.
+    production: Track postmortem actions to completion; a postmortem whose action items are never done is just a story.
+    sources:
+      - title: "Site Reliability Engineering: Managing Incidents"
+        url: https://sre.google/sre-book/managing-incidents/
+        publisher: Google
+      - title: "Site Reliability Engineering: Postmortem Culture - Learning from Failure"
+        url: https://sre.google/sre-book/postmortem-culture/
+        publisher: Google
+      - title: "The Site Reliability Workbook: Incident Response"
+        url: https://sre.google/workbook/incident-response/
+        publisher: Google
+  - id: mlops.reliability-engineering
+    title: Reliability engineering — SLIs, SLOs and error budgets
+    module: operations
+    level: advanced
+    priority: supporting
+    summary: Define what "working" means numerically, budget acceptable failure, and use the budget to balance features against stability.
+    why: Perfect reliability is impossible and endlessly expensive; an SLO gives a numeric target so teams know when to ship features and when to invest in reliability.
+    requires: [mlops.observability, mlops.incident-response]
+    keyIdeas:
+      - An SLI measures user-visible behaviour, usually as a ratio - good events divided by valid events (for example requests answered successfully in under 300 ms).
+      - An SLO is a target for an SLI over a window (for example 99.9% over 28 days); an SLA is a contract with penalties and should be looser than the internal SLO.
+      - The error budget is 1 minus the SLO; 99.9% allows 0.1% bad requests, which is about 43 minutes of total downtime in 30 days.
+      - An error budget policy says what happens when the budget runs out - for example freeze risky releases and prioritise reliability work until it recovers.
+      - Alert on burn rate (how fast the budget is being consumed) rather than on fixed raw thresholds.
+    misconceptions:
+      - More nines are not always better; each extra nine costs far more and users may not notice beyond the reliability of their own network.
+      - Server-side health checks (process up, CPU fine) are not user-centric SLIs; measure what users experience.
+    interview: Define SLIs and SLOs for an LLM-backed chat API and explain how an error budget would change release decisions.
+    production: Start with a few SLOs based on current performance, agree them with product owners, and refine them over time.
+    sources:
+      - title: "Site Reliability Engineering: Service Level Objectives"
+        url: https://sre.google/sre-book/service-level-objectives/
+        publisher: Google
+      - title: "The Site Reliability Workbook: Implementing SLOs"
+        url: https://sre.google/workbook/implementing-slos/
+        publisher: Google
+      - title: "The Site Reliability Workbook: Example Error Budget Policy"
+        url: https://sre.google/workbook/error-budget-policy/
+        publisher: Google
+  # ------------------------------------------------------------------- scale
+  - id: mlops.performance-scaling
+    title: Performance, load testing and scaling
+    module: scale
+    level: advanced
+    priority: essential
+    summary: Measure latency percentiles and throughput under load, find the bottleneck, then scale vertically, horizontally or with autoscaling.
+    why: Systems that work for ten users often collapse at a thousand; measuring under realistic load shows where they break before users find out.
+    requires: [mlops.observability, networking.proxies-load-balancers]
+    keyIdeas:
+      - Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because one user request often fans out to many backend calls.
+      - Load test with realistic traffic (k6, Locust) - ramp up gradually, find the throughput at which latency or error rate breaks the target, and watch resource saturation.
+      - Find the bottleneck before optimising (CPU, memory, I/O, database, locks, an external API); Little's law (requests in flight = throughput x latency) helps size worker pools and connection pools.
+      - Vertical scaling (a bigger machine) is simple but capped; horizontal scaling (more instances behind a load balancer) needs stateless services; autoscaling adds instances based on metrics such as CPU or queue length.
+      - Scaling one tier usually moves the bottleneck to the next one, often the database or a downstream dependency.
+    misconceptions:
+      - Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+      - Autoscaling is not instant; new instances take time to start, so keep headroom for sudden spikes.
+    tools: [k6, Locust]
+    interview: Your API's p99 latency doubled after a release - how would you investigate?
+    production: Load test a production-like environment, and never point a load test at third-party APIs or shared services without permission.
+    sources:
+      - title: The Tail at Scale
+        url: https://research.google/pubs/the-tail-at-scale/
+        publisher: Google Research (Dean and Barroso, CACM 2013)
+      - title: Grafana k6 documentation
+        url: https://grafana.com/docs/k6/latest/
+        publisher: Grafana Labs
+      - title: Horizontal Pod Autoscaling
+        url: https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/
+        publisher: The Kubernetes Authors
+  - id: mlops.caching-queues
+    title: Caching and queues in production
+    module: scale
+    level: advanced
+    priority: supporting
+    summary: Put caches in front of expensive work and queues in front of slow work to absorb spikes and protect dependencies.
+    why: Expensive or slow work (model inference, third-party APIs, heavy queries) limits throughput; caches avoid repeating it and queues smooth bursts so dependencies are not overwhelmed.
+    requires: [backend.caching-strategies, backend.event-driven]
+    keyIdeas:
+      - Cache-aside - read the cache, and on a miss compute the value and store it with a TTL; choose the TTL from how stale the data may be, and invalidate or update entries on writes.
+      - Guard against cache stampedes (many simultaneous misses after an entry expires) with request coalescing, jittered TTLs or serving stale data while one request refreshes it.
+      - A queue decouples producers from consumers - accept work quickly, process it at a sustainable rate, and scale workers on queue depth and message age.
+      - Most queues deliver at least once, so consumers must be idempotent; move repeatedly failing messages to a dead-letter queue.
+      - Bound queues and monitor the age of the oldest message; a huge backlog means users wait for results that may already be useless.
+    misconceptions:
+      - A cache is not the source of truth; the system must still work, more slowly, when the cache is empty or down.
+      - A queue does not add capacity; if consumers are slower than producers on average, the backlog grows forever.
+    tools: [Redis, RabbitMQ]
+    interview: How would you put a cache in front of an LLM or model endpoint, and what would the cache key be?
+    production: Track hit rate, evictions, queue depth and message age; a sudden drop in hit rate can overload the backend behind the cache.
+    sources:
+      - title: Caching challenges and strategies
+        url: https://builder.aws.com/content/3K9TeXp6strMiJ4vhakpRD7BQWO/caching-challenges-and-strategies
+        publisher: Amazon Builders' Library
+      - title: Avoiding insurmountable queue backlogs
+        url: https://builder.aws.com/content/3EuRcgkTP1MI0c7zM8W6HL3WIqA/avoiding-insurmountable-queue-backlogs
+        publisher: Amazon Builders' Library
+  - id: mlops.fault-tolerance
+    title: Fault tolerance
+    module: scale
+    level: advanced
+    priority: essential
+    summary: Timeouts everywhere, retries with exponential backoff and jitter, circuit breakers, bulkheads and graceful degradation.
+    why: In a distributed system something is always failing; without defences, one slow dependency can tie up every worker and take the whole system down (a cascading failure).
+    requires: [mlops.performance-scaling]
+    keyIdeas:
+      - Put a timeout on every network call, sized from the dependency's latency percentiles; a call without a timeout can hang forever.
+      - Retry only transient failures and only idempotent operations, with capped exponential backoff plus random jitter and a limited retry budget, to avoid retry storms.
+      - A circuit breaker stops calling a failing dependency for a cool-down period and fails fast, then lets a trial request through (half-open) to test recovery.
+      - Bulkheads isolate resources (separate connection pools or workers per dependency) so one failing dependency cannot consume everything.
+      - Graceful degradation returns cached, default or partial results (or uses a simpler model) when a non-critical part fails, instead of an error.
+    misconceptions:
+      - Retries are not free resilience; three retries at each of three layers can turn one request into 64 calls to the bottom service.
+      - Waiting is not kinder than failing; a fast error lets callers fall back while a slow one ties up their resources.
+    interview: A downstream service has become slow and your API is timing out - which patterns would you apply, and in what order?
+    production: Test failure handling on purpose (fault injection, game days); fallbacks that are never exercised tend to fail when needed.
+    sources:
+      - title: Timeouts, retries, and backoff with jitter
+        url: https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter
+        publisher: Amazon Builders' Library
+      - title: "Site Reliability Engineering: Addressing Cascading Failures"
+        url: https://sre.google/sre-book/addressing-cascading-failures/
+        publisher: Google
+      - title: Circuit Breaker
+        url: https://martinfowler.com/bliki/CircuitBreaker.html
+        publisher: Martin Fowler
+  - id: mlops.kubernetes
+    title: Kubernetes basics
+    module: scale
+    level: advanced
+    priority: supporting
+    summary: Pods, deployments, services, config maps and probes orchestrate containers across machines; often more than a small team needs.
+    why: Running many containers on many machines needs scheduling, restarts, rolling updates and service discovery; Kubernetes automates these from declarative configuration.
+    requires: [mlops.docker, networking.proxies-load-balancers]
+    keyIdeas:
+      - You declare the desired state in YAML and apply it (`kubectl apply -f app.yaml`); controllers continuously reconcile the actual state towards it.
+      - A Pod is one or more containers scheduled together; a Deployment manages replicated Pods and rolling updates; a Service gives a set of Pods a stable name and load-balances across them.
+      - ConfigMaps and Secrets inject configuration; resource requests and limits tell the scheduler how much CPU and memory each container needs.
+      - Probes - liveness restarts a stuck container, readiness removes a Pod from Service traffic until it can serve, and startup gives slow-starting apps time before liveness checks begin.
+      - Learn locally with kind or minikube; managed offerings (EKS, GKE, AKS) run the control plane for you.
+    misconceptions:
+      - Kubernetes Secrets are only base64-encoded by default, not encrypted; enable encryption at rest and restrict who can read them.
+      - Kubernetes does not make an application scalable by itself; the app still has to be stateless and handle shutdown signals.
+      - A liveness probe that checks a shared dependency such as the database can restart every Pod at once during a database outage.
+    tools: [Kubernetes, kind, minikube]
+    interview: Explain the difference between liveness and readiness probes, and what happens to traffic during a rolling update.
+    production: For a small team, a managed container platform or serverless containers often costs far less effort than running a cluster.
+    sources:
+      - title: Overview
+        url: https://kubernetes.io/docs/concepts/overview/
+        publisher: The Kubernetes Authors
+      - title: Learn Kubernetes Basics
+        url: https://kubernetes.io/docs/tutorials/kubernetes-basics/
+        publisher: The Kubernetes Authors
+      - title: Liveness, Readiness, and Startup Probes
+        url: https://kubernetes.io/docs/concepts/workloads/pods/probes/
+        publisher: The Kubernetes Authors
+  - id: mlops.infrastructure-as-code
+    title: Infrastructure as code
+    module: scale
+    level: advanced
+    priority: supporting
+    summary: Declare infrastructure in version-controlled files (Terraform/OpenTofu) so environments are reviewable, repeatable and disposable.
+    why: Infrastructure created by clicking in a console is unreviewable, undocumented and hard to recreate; as code it becomes versioned, reviewed and repeatable.
+    requires: [architecture.cloud-fundamentals, tooling.git-basics]
+    keyIdeas:
+      - Declarative IaC describes the resources you want, such as `resource "aws_s3_bucket" "data" { ... }`, and the tool works out which changes to make.
+      - The core workflow is `tofu init` (download providers), `tofu plan` (preview changes) and `tofu apply` (make them); Terraform uses the same subcommands with `terraform`.
+      - A state file maps your code to real resources; keep it in remote storage with locking and protect it, because it can contain secrets.
+      - Modules package reusable infrastructure; variables and separate state per environment keep dev and production alike but isolated.
+      - OpenTofu is an open-source (MPL-2.0) fork of Terraform, created after HashiCorp moved Terraform to the Business Source License in 2023.
+    misconceptions:
+      - Editing resources by hand in the console causes drift; the next apply may silently revert or conflict with the change.
+      - A clean plan is not a guarantee; quota, permission and naming errors may only appear during apply.
+    tools: [OpenTofu, Terraform]
+    interview: How do you manage infrastructure state for a team, and what goes wrong if two people apply at the same time?
+    production: Run plan automatically on every pull request and apply only from the pipeline, using least-privilege, short-lived credentials.
+    sources:
+      - title: OpenTofu documentation
+        url: https://opentofu.org/docs/
+        publisher: OpenTofu
+      - title: State
+        url: https://opentofu.org/docs/language/state/
+        publisher: OpenTofu
+      - title: Terraform documentation
+        url: https://developer.hashicorp.com/terraform/docs
+        publisher: HashiCorp
+  - id: mlops.cost-estimation
+    title: Resource and cost estimation
+    module: scale
+    level: intermediate
+    priority: essential
+    summary: Estimate compute, storage, GPU and token costs before building, and track unit economics (cost per request or per user) afterwards.
+    why: Cloud and model costs grow with usage and surprise teams; estimating before building avoids unaffordable designs, and tracking unit cost shows whether growth is sustainable.
+    requires: [mlops.performance-scaling, genai.cost-latency]
+    keyIdeas:
+      - Estimate from cost drivers - requests per day x cost per request (compute time, tokens, storage, data transfer), sized for peak rather than average load.
+      - LLM cost per call is roughly input tokens x input price + output tokens x output price; prices change often and vary by model and provider, so check current pricing pages.
+      - Track unit economics such as cost per request, per active user or per prediction, and set budgets and billing alerts from day one.
+      - Big levers are right-sizing instances, switching off idle resources, using smaller models where quality allows, caching, batching and choosing storage tiers by access frequency.
+      - Idle GPUs are expensive; utilisation matters more than the hourly price.
+    misconceptions:
+      - A free tier is not a cost plan; limits and terms change, so check current terms and set billing alerts anyway.
+      - Data egress, logging and monitoring are often overlooked but large costs.
+    interview: Estimate the monthly cost of a RAG chatbot serving 10,000 users a day and identify the biggest cost driver.
+    production: Tag resources by team and project so costs can be attributed, and review spend regularly as a shared engineering and finance practice (FinOps).
+    sources:
+      - title: Cost Optimization Pillar - AWS Well-Architected Framework
+        url: https://docs.aws.amazon.com/wellarchitected/latest/cost-optimization-pillar/welcome.html
+        publisher: Amazon Web Services
+      - title: What is FinOps?
+        url: https://www.finops.org/introduction/what-is-finops/
+        publisher: FinOps Foundation
+  # ------------------------------------------------------------------ llmops
+  - id: mlops.llmops
+    title: LLMOps
+    module: llmops
+    level: advanced
+    priority: essential
+    summary: Version prompts and model configurations, run evaluations in CI, trace production calls, monitor quality, cost and latency, and roll back safely.
+    why: LLM features change behaviour when you edit a prompt, switch models or a provider updates a model; without versioning, evals and tracing, regressions reach users unnoticed.
+    requires: [genai.evaluation, mlops.observability, mlops.ci-cd]
+    keyIdeas:
+      - Treat prompts, model identifiers, parameters (temperature, max tokens) and tool definitions as versioned configuration, reviewed and deployed like code.
+      - Run an evaluation suite in CI on every prompt or model change (golden datasets, assertions, LLM-as-judge with calibrated rubrics) and block merges on regressions.
+      - Trace each call with its inputs, retrieved context, tool calls, output, token counts, latency, cost and model version, linked to the user request; OpenTelemetry's GenAI semantic conventions standardise these attribute names.
+      - Pin dated model versions where the provider allows it, and re-run evals before moving to a new one.
+      - Plan for provider problems - timeouts, rate limits (HTTP 429), fallback models, and per-user or per-feature token budgets.
+    misconceptions:
+      - A prompt edit is not a harmless text change; it can alter behaviour as much as a code change.
+      - A model alias that always points to the newest version can change behaviour underneath you.
+    tools: [MLflow, Langfuse, OpenTelemetry]
+    interview: How would you safely roll out a new prompt or model version for an LLM feature used by thousands of people?
+    production: Traces contain user data - apply redaction, access control and retention limits to them.
+    sources:
+      - title: MLflow for Agents and LLMs
+        url: https://mlflow.org/docs/latest/genai/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: Prompt Registry
+        url: https://mlflow.org/docs/latest/genai/prompt-registry/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: Semantic conventions for generative AI
+        url: https://github.com/open-telemetry/semantic-conventions-genai
+        publisher: OpenTelemetry (CNCF)
+  - id: mlops.production-evaluation
+    title: Evaluation in production
+    module: llmops
+    level: advanced
+    priority: essential
+    summary: Online metrics, user feedback, sampling traces for review, A/B tests and guardrail triggers close the loop between offline evals and reality.
+    why: Offline evaluation sets never fully match real users; evaluating in production shows whether the system actually helps people and catches failures offline tests missed.
+    requires: [mlops.llmops, math.hypothesis-testing]
+    keyIdeas:
+      - Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment, escalation to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+      - Sample production traces for human review regularly, label the failures and add them to the offline eval set, so each failure becomes a regression test.
+      - An A/B test compares variants on randomly assigned users; fix the primary metric and sample size in advance and do not stop as soon as the result looks significant (peeking inflates false positives).
+      - Watch guardrail metrics (latency, cost, refusal rate, safety flags) next to the primary metric so a win on one does not hide harm on another.
+      - Online LLM judges cost money and make mistakes; calibrate them against human labels.
+    misconceptions:
+      - Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+      - Statistical significance is not practical significance; a tiny lift may not justify extra cost or latency.
+    interview: How would you show that a new retriever improved the product for users, not just the offline score?
+    production: Reviewing real conversations needs privacy safeguards - consent where required, redaction of personal data and limited access.
+    sources:
+      - title: LLM and Agent Evaluation
+        url: https://mlflow.org/docs/latest/genai/eval-monitor/
+        publisher: MLflow (Linux Foundation)
+        version: "3.x"
+      - title: Define success criteria and build evaluations
+        url: https://platform.claude.com/docs/en/test-and-evaluate/develop-tests
+        publisher: Anthropic
+      - title: How Not To Run an A/B Test
+        url: https://www.evanmiller.org/how-not-to-run-an-ab-test.html
+        publisher: Evan Miller

@@ -1,0 +1,210 @@
+id: model-evaluation-app
+title: "Model Evaluation App: Fairness, Calibration and the Cost of Mistakes"
+track: data-ml
+level: advanced
+estimatedHours: 10
+environment: local
+starterKit: projects/model-evaluation-app
+summary: >-
+  Evaluate a saved loan-default model across groups — slice metrics, fairness gaps, confusion
+  matrices, calibration and a cost-based decision threshold — load it with an integrity check, and
+  publish a Markdown evaluation report.
+concepts:
+  - ml.evaluation-metrics
+  - ml.fairness
+  - ml.imbalanced-data
+  - ml.ml-pipelines
+  - security.responsible-ai
+  - security.supply-chain
+problem: |
+  A lender's data-science team hands you `model.pkl` and says "ROC-AUC is 0.82, ship it". Before it
+  makes decisions about people, someone must answer harder questions:
+
+  * Does it work equally well for every group of applicants — and if not, which gaps matter?
+    ([fairness](concept:ml.fairness))
+  * When it says "30% risk", do 30% of those applicants actually default? (calibration)
+  * A missed default costs five times more than wrongly flagging a good applicant. Is 0.5 the right
+    threshold? ([evaluation metrics](concept:ml.evaluation-metrics))
+  * Is the file we are about to unpickle the file that was reviewed? (supply chain)
+
+  **Input.** A pickled scikit-learn model with a `.sha256` sidecar, a validation set and a test set
+  from the provided synthetic loan data (`income, debt_ratio, years_employed, prior_defaults, group,
+  default`). The model never sees `group`; the data contains an omitted risk factor for group B.
+
+  **Output.** Functions that return DataFrames and dicts the tests check, and a Markdown report.
+
+  **Example session** (after you finish):
+
+  ```text
+  $ python starter/model_evaluation.py --out-dir evaluation --cost-fn 5
+  Model saved to evaluation/model.pkl; report written to evaluation/report.md
+  $ head -20 evaluation/report.md
+  # Model evaluation report
+
+  ## Summary
+  - Model file SHA-256: `b8e8442c...`
+  - Threshold chosen on validation (1500 rows) for costs FP = 1, FN = 5: **0.16**
+  - Test set: 1500 rows. Expected cost per decision: 0.469 at the chosen threshold vs 0.786 at 0.5.
+  - Brier score 0.162, expected calibration error 0.025.
+
+  ## Performance by group
+  | group | n | base_rate | selection_rate | tpr | fpr | precision | accuracy |
+  |---|---|---|---|---|---|---|---|
+  | A | 1022 | 0.283 | 0.679 | 0.945 | 0.574 | 0.393 | 0.572 |
+  | B | 478 | 0.546 | 0.868 | 0.969 | 0.747 | 0.610 | 0.644 |
+  | overall | 1500 | 0.367 | 0.739 | 0.956 | 0.614 | 0.474 | 0.595 |
+  ...
+  - Group **B**: mean predicted risk 0.491 vs observed default rate 0.546 — the model under-predicts risk by 0.055.
+  ```
+
+  Overall calibration looks excellent (ECE 0.025) while each group is off by about 0.05 in opposite
+  directions — exactly the kind of problem a single headline number hides.
+acceptanceCriteria:
+  - "`save_model` writes the pickle and a `sha256sum`-style sidecar; `load_model` refuses to unpickle when the digest is missing or does not match, hashing and unpickling the same bytes."
+  - "`slice_metrics` reproduces hand-computed per-group base rate, selection rate, TPR, FPR, precision and accuracy, and returns NaN (not 0) for undefined rates."
+  - "`fairness_gaps` reports demographic parity difference, disparate impact ratio, equal opportunity, FPR and equalized odds differences that match a worked example."
+  - "`calibration_table` uses equal-width bins with 1.0 in the last bin and omits empty bins; Brier score and ECE match hand-computed values (0.200475 and 0.2075 on the four-point example)."
+  - "`select_threshold` minimises average cost per decision, breaks ties towards the smaller threshold, and on perfectly calibrated data lands within 0.05 of cost_fp / (cost_fp + cost_fn)."
+  - "`evaluate_saved_model` chooses the threshold on validation data and reports everything on test data; the chosen threshold costs less than 0.5 on test."
+  - "The Markdown report contains Summary, Performance by group, Fairness gaps (with gaps above tolerance flagged), Confusion matrices, Calibration, Threshold selection and Limitations."
+architecture: |
+  ```text
+                 ┌────────────── model.pkl ──────────────┐
+  save_model ───►│ pickle bytes          model.pkl.sha256 │──► load_model: read bytes once,
+                 └────────────────────────────────────────┘    compare SHA-256, then unpickle
+                                     │
+           validation ──► predict ──► select_threshold(cost_fp, cost_fn) ──► t
+                                     │
+           test ──► predict ──► slice_metrics(t) ──► fairness_gaps
+                            ├─► confusion_matrices(t)
+                            ├─► calibration_table / brier_score / ECE / calibration_by_group
+                            └─► expected_cost(t) vs expected_cost(0.5)
+                                     │
+                         EvaluationResult (frozen) ──► render_report ──► report.md
+  ```
+
+  Every metric is a small pure function over arrays, so it can be hand-checked on four or eight
+  points. `EvaluationResult` collects the numbers; `render_report` only formats them, so the report can
+  never disagree with what the tests verified. The threshold is chosen on validation and *measured* on
+  test, the same separation that prevents [leakage](concept:ml.data-leakage) in training.
+setup: |
+  You need Python 3.11+ and the folder `projects/model-evaluation-app`.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/model-evaluation-app
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/model-evaluation-app
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  ```
+
+  `requirements.txt` installs numpy, pandas, scikit-learn and pytest. No plotting library is
+  needed: reliability curves are reported as tables.
+milestones:
+  - id: save-and-load
+    title: Save and load with an integrity check
+    description: |
+      Implement `save_model` (pickle plus `<file>.sha256` in `sha256sum` format) and `load_model`,
+      which verifies the digest with `hmac.compare_digest` before unpickling and raises
+      `IntegrityError` otherwise.
+
+      **Tests check** the round trip gives identical predictions, the sidecar format, that a
+      one-byte change, a wrong digest or a missing checksum all refuse to load, and that hex case
+      does not matter.
+  - id: slices-and-fairness
+    title: Slice metrics, confusion matrices and fairness gaps
+    description: |
+      Implement `confusion_counts`, `rates`, `slice_metrics`, `confusion_matrices` and
+      `fairness_gaps`. Positive predictions (`score >= threshold`) are the adverse decision, so the
+      selection rate is "how often this group is flagged".
+
+      **Tests check** an eight-row worked example (group A selection rate 0.75 vs B 0.25,
+      disparate impact 1/3), NaN for undefined rates, the inclusive threshold, matrix layout, and that
+      the loan model flags group B far more often although it never sees the group.
+  - id: calibration
+    title: Calibration
+    description: |
+      Implement `calibration_table` (equal-width bins, empty bins omitted, 1.0 in the last bin),
+      `brier_score`, `expected_calibration_error` and `calibration_by_group`.
+
+      **Tests check** the four-point example bin by bin, bin edges at 0.1 and 1.0, input validation,
+      Brier 0.200475 and ECE 0.2075, and that the loan model under-predicts group B's risk while
+      over-predicting A's even though overall ECE is small.
+  - id: threshold-by-cost
+    title: Choose the threshold by cost
+    description: |
+      Implement `expected_cost`, `cost_curve`, `select_threshold` and `bayes_threshold`. Average cost
+      per decision is `(FP × cost_fp + FN × cost_fn) / n`.
+
+      **Tests check** hand-computed costs (0.25 vs 1.25), that swapping the costs swaps the choice,
+      tie-breaking, the default 101-point grid, cost validation, agreement with the Bayes threshold
+      on calibrated data, and that expensive misses push the threshold below 0.5.
+  - id: evaluation-report
+    title: Evaluate the saved model and write the report
+    description: |
+      Implement `evaluate_saved_model` (threshold from validation, everything else on test),
+      `render_report` and `write_report`. Flag fairness gaps above a tolerance and a
+      disparate-impact ratio below 0.8 as **review**, and explain each group's calibration in a
+      sentence.
+
+      **Tests check** every field of the result, that tampered models are refused, that the chosen
+      threshold beats 0.5 on test, the report's sections and flags, and the written file.
+testing: |
+  From `projects/model-evaluation-app` with your virtual environment active:
+
+  ```bash
+  python -m pytest                  # tests your code in starter/
+  python -m pytest -k Milestone2    # one milestone
+  ```
+
+  To compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Formula tests use tiny hand-computed arrays; behaviour tests use the seeded loan data. Models and
+  reports are written only to pytest's temporary folders.
+security:
+  - "Unpickling executes code chosen by the file's author. Only load models you trust; verify a SHA-256 recorded somewhere the author cannot change, and hash and unpickle the same bytes."
+  - "Prefer non-executable formats (for example ONNX or skops with an allow-list) when models cross trust boundaries."
+  - "Group labels are sensitive personal data. Use them for evaluation under clear governance, restrict access, and never add them to the model's features without legal review."
+  - "Fairness metrics can be gamed or cherry-picked; publish all of them with group sizes, and treat choosing which gap matters as a documented policy decision with accountable owners."
+  - "Reports leave the team: keep them aggregate (no row-level data), and suppress groups too small to report without re-identifying people."
+extensions:
+  - "Add bootstrap confidence intervals (seeded) for each group's TPR and FPR, and only flag gaps whose interval excludes zero."
+  - "Choose a separate threshold per group to equalise FPR, report the cost of doing so, and write down why this may or may not be acceptable."
+  - "Recalibrate the model on validation data (`CalibratedClassifierCV` with isotonic or sigmoid) and compare Brier, ECE and per-group calibration on test."
+  - "Add intersectional slices (group × income band) with a minimum slice size."
+  - "Replace pickle with skops.io (optional dependency) and an explicit list of trusted types."
+rubric:
+  - criterion: Metric correctness
+    needsWork: Formulas differ from the definitions, or undefined rates are reported as 0.
+    meets: All hand-computed examples pass; NaN marks undefined rates; bins and ties follow the documented rules.
+    exceeds: Uncertainty (bootstrap intervals or group sizes) accompanies every per-group metric.
+  - criterion: Fairness reasoning
+    needsWork: Reports one fairness number or none.
+    meets: Reports several gap definitions, flags large ones, and notes they conflict when base rates differ.
+    exceeds: Proposes and evaluates a mitigation, quantifying its cost and who it affects.
+  - criterion: Decision-making under cost
+    needsWork: Uses 0.5 by default.
+    meets: Chooses the threshold on validation by expected cost and reports its effect on test.
+    exceeds: Shows how the threshold and outcomes change across a range of plausible cost ratios.
+  - criterion: Safe model handling and reporting
+    needsWork: Unpickles files without checks; report numbers are typed by hand.
+    meets: Integrity-checked loading, generated report sections, clear limitations.
+    exceeds: Uses a safer serialisation format or a signed manifest, and the report is reviewable by a non-specialist.

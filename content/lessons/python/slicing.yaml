@@ -1,0 +1,944 @@
+id: python.slicing
+concept: python.slicing
+title: Indexing and Slicing Sequences
+subtitle: "seq[start:stop:step] on strings and lists"
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  One syntax, seq[start:stop:step], takes any part of a string or list: the first few items, the last
+  few, every second one, or everything reversed. Learn the rules for omitted and negative bounds, why
+  slices never raise IndexError, why slicing a list makes a new (shallow) list, and how slice
+  assignment edits a list in place.
+objectives:
+  - Predict the result of slices with positive and negative bounds, omitted bounds and steps, on strings and lists.
+  - Explain the half-open rule (start included, stop excluded) and the "fence post" picture of indexes.
+  - Use slicing to take prefixes, suffixes, middles, every n-th item and reversed copies — without loops.
+  - Explain why slices clip out-of-range bounds instead of raising IndexError, and when that can hide a bug.
+  - Explain that slicing a list creates a new, shallow list, and use slice assignment to replace, insert or delete parts of a list.
+sources:
+  - title: "Built-in Types: Common Sequence Operations"
+    url: https://docs.python.org/3/library/stdtypes.html#common-sequence-operations
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Text (indexing and slicing strings)"
+    url: https://docs.python.org/3/tutorial/introduction.html#text
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Lists"
+    url: https://docs.python.org/3/tutorial/introduction.html#lists
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Slicings"
+    url: https://docs.python.org/3/reference/expressions.html#slicings
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: slice()"
+    url: https://docs.python.org/3/library/functions.html#slice
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Mutable Sequence Types"
+    url: https://docs.python.org/3/library/stdtypes.html#mutable-sequence-types
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why slicing?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Programs constantly need **part** of a sequence: the first three letters of a name, the last
+          four digits of a card number, the year from `"2026-10-22"`, the top five scores. With indexing
+          and a loop you can build that part one item at a time:
+      - type: code
+        runnable: true
+        code: |
+          word = "Groundwork"
+          first_three = ""
+          for i in range(3):
+              first_three += word[i]
+          print(first_three)
+        expectedOutput: |
+          Gro
+        caption: Four lines and an accumulator to copy three characters.
+      - type: markdown
+        body: |
+          A [slice](glossary:slice) says the same thing in a few characters, and works the same way on
+          strings and lists:
+      - type: code
+        runnable: true
+        code: |
+          word = "Groundwork"
+          print(word[:3], word[-4:])
+        expectedOutput: |
+          Gro work
+        caption: '"Up to index 3" and "the last four". No loop, no counter, no off-by-one to get wrong in a loop.'
+
+  - id: indexes-recap
+    title: "Indexes, one more time: they label the gaps"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Strings and lists are both **sequences**: ordered collections whose items are numbered from 0.
+          You already know `seq[i]` (one item) and negative indexes (counting from the end) from
+          [strings](concept:python.strings) and [lists](concept:python.lists).
+
+          For slicing, it helps to picture the indexes **between** the items, like fence posts, as the
+          [Python tutorial](https://docs.python.org/3/tutorial/introduction.html#text) does:
+
+          ```text
+           +---+---+---+---+---+---+
+           | P | y | t | h | o | n |
+           +---+---+---+---+---+---+
+           0   1   2   3   4   5   6
+          -6  -5  -4  -3  -2  -1
+          ```
+
+          `word[i]` is the item **just right of** post `i`. A slice `word[i:j]` is **everything between
+          post `i` and post `j`**. So `word[2:5]` is `"tho"`, and `word[0:6]` is the whole word — there are
+          7 posts for 6 letters. (This picture is exact for slices with a positive step. For negative
+          steps, below, think "start at item `start` and walk left, stopping before item `stop`".)
+
+  - id: basic-slices
+    title: "seq[start:stop]"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Rules** ([common sequence operations](https://docs.python.org/3/library/stdtypes.html#common-sequence-operations)):
+
+          - `start` is **included**, `stop` is **excluded** — the same half-open rule as `range()`.
+          - Omit `start` to begin at the beginning; omit `stop` to go to the end. `seq[:]` is everything.
+          - Negative bounds count from the end, exactly like negative indexes: `seq[-3:]` is the last three
+            items, `seq[:-1]` is everything except the last.
+          - For in-range bounds, the result has `stop - start` items, and `seq[:n] + seq[n:]` is always
+            the whole sequence.
+          - The result has the **same type** as the original: slicing a string gives a string, slicing a
+            list gives a **new** list (slicing a `range` even gives a range).
+      - type: code
+        runnable: true
+        code: |
+          word = "Python"
+          print(word[0:2], word[2:5], word[:2], word[4:], word[-2:], word[:-1])
+          print(word[:3] + word[3:])
+          nums = [10, 20, 30, 40, 50]
+          print(nums[1:4], nums[:2], nums[-2:])
+          print(range(10)[2:5])
+        expectedOutput: |
+          Py tho Py on on Pytho
+          Python
+          [20, 30, 40] [10, 20] [40, 50]
+          range(2, 5)
+        annotations:
+          - line: 2
+            text: "word[2:5] is the items at indexes 2, 3 and 4 — 5 - 2 = 3 characters."
+          - line: 3
+            text: Cutting at any position n and joining the two halves gives back the original.
+          - line: 5
+            text: The same syntax on a list returns a list.
+      - type: callout
+        variant: tip
+        title: Read slices as "first n" and "from n"
+        body: |
+          `s[:n]` is "the first n items", `s[n:]` is "everything after the first n", `s[-n:]` is "the
+          last n items" and `s[:-n]` is "everything except the last n". Most everyday slices are one of
+          these four.
+      - type: item
+        ref: predict-basic-slices
+
+  - id: step
+    title: Steps and negative steps
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A third number, `seq[start:stop:step]`, takes every `step`-th item. The default step is 1.
+
+          - `seq[::2]` — every second item, starting from the first; `seq[1::2]` — every second item
+            starting from index 1.
+          - A **negative step walks right to left**. Then the defaults flip: an omitted `start` means
+            "from the last item" and an omitted `stop` means "through the first item". So `seq[::-1]` is
+            the whole sequence **reversed**.
+          - With a negative step, `start` should be to the **right** of `stop`: `s[7:2:-1]` takes indexes
+            7, 6, 5, 4, 3 (stop 2 still excluded). The other way round gives an empty result.
+          - A step of 0 is an error: `ValueError: slice step cannot be zero`.
+      - type: code
+        runnable: true
+        code: |
+          digits = "0123456789"
+          print(digits[::2], digits[1::2], digits[::3])
+          print(digits[::-1], digits[7:2:-1], digits[-1:-4:-1])
+          print(digits[2:7:-1] == "")
+        expectedOutput: |
+          02468 13579 0369
+          9876543210 76543 987
+          True
+        annotations:
+          - line: 3
+            text: "[::-1] reverses. [7:2:-1] goes 7, 6, 5, 4, 3. [-1:-4:-1] is the last three, in reverse order."
+          - line: 4
+            text: Walking left from 2 can never reach 7, so the slice is empty — not an error.
+      - type: item
+        ref: predict-negative-step
+
+  - id: forgiving
+    title: Slices never raise IndexError
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Indexing a position that does not exist raises [IndexError](glossary:index-error). Slicing does
+          not: bounds beyond either end are simply **clipped** to the ends of the sequence, and a slice
+          whose start is not before its stop (for a positive step) is just **empty**.
+      - type: code
+        runnable: true
+        code: |
+          word = "cat"
+          print(word[1:100])
+          print(word[5:10] == "")
+          print([1, 2, 3][-100:2])
+          print(len(word[2:1]))
+        expectedOutput: |
+          at
+          True
+          [1, 2]
+          0
+        annotations:
+          - line: 2
+            text: 100 is clipped to len(word), 3.
+          - line: 5
+            text: Start 2 is after stop 1 with a positive step, so the slice is empty (length 0).
+      - type: markdown
+        body: |
+          This is convenient — `name[:10]` safely means "at most the first 10 characters", even for
+          shorter names — but it can also **hide bugs**. A wrong bound gives a quietly wrong (often
+          empty) result instead of an error, so check slice results while debugging.
+      - type: code
+        runnable: true
+        code: |
+          word = "cat"
+          print(word[3])
+        expectError: IndexError
+        caption: "Indexing is strict: IndexError: string index out of range. Compare with word[3:], which is simply \"\"."
+      - type: item
+        ref: mcq-out-of-range
+
+  - id: new-list
+    title: Slicing a list makes a new list
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A slice of a list is a **new list object** containing references to the same items. Changing
+          the new list (assigning to its slots, appending) does not touch the original. That makes
+          `lst[:]` a common way to copy a list — unlike `b = a`, which only adds a second name for the
+          **same** list ([aliasing](glossary:aliasing)).
+      - type: visualization
+        component: python-tracer
+        title: A slice is a separate list
+        caption: >-
+          After line 2 there are two list objects. Line 3 changes only part, and line 5 changes only
+          copy; original keeps its four items throughout.
+        props:
+          code: |
+            original = [1, 2, 3, 4]
+            part = original[1:3]
+            part[0] = 99
+            copy = original[:]
+            copy.append(5)
+            print(original, part, copy)
+      - type: markdown
+        body: |
+          **But the copy is shallow.** The new list holds references to the **same item objects**. For
+          numbers and strings that never matters, because they cannot be changed. If the items are
+          themselves lists, both outer lists share the inner lists — change an inner list through one, and
+          the other sees it:
+      - type: code
+        runnable: true
+        code: |
+          grid = [[1, 2], [3, 4]]
+          top = grid[:1]
+          top[0][0] = 99
+          print(grid)
+          print(top)
+        expectedOutput: |
+          [[99, 2], [3, 4]]
+          [[99, 2]]
+        annotations:
+          - line: 2
+            text: A new outer list with one slot — referring to the SAME inner list [1, 2] as grid[0].
+          - line: 3
+            text: Changes that shared inner list, so grid shows the change too.
+      - type: callout
+        variant: note
+        title: Copies in depth come later
+        body: |
+          This is the difference between a **shallow** copy (new outer container, shared items) and a
+          **deep** copy (everything copied). The full story — including `copy.deepcopy()` — is in
+          [shallow and deep copies](concept:python.copying), building on
+          [mutability](concept:python.mutability).
+      - type: item
+        ref: predict-slice-copy
+
+  - id: slice-assignment
+    title: Slice assignment and deleting slices
+    kind: concept
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Lists are mutable, so a slice can also appear on the **left** of `=`. This is
+          [slice assignment](glossary:slice-assignment): the selected part of the list is replaced, in
+          place, by the items of the right-hand side — which may be **longer or shorter** than the part it
+          replaces. `del lst[i:j]` removes a slice.
+      - type: code
+        runnable: true
+        code: |
+          letters = ["a", "b", "c", "d", "e"]
+          letters[1:3] = ["X", "Y", "Z"]
+          print(letters)
+          letters[1:1] = ["new"]
+          print(letters)
+          letters[2:5] = []
+          print(letters)
+          del letters[::2]
+          print(letters)
+        expectedOutput: |
+          ['a', 'X', 'Y', 'Z', 'd', 'e']
+          ['a', 'new', 'X', 'Y', 'Z', 'd', 'e']
+          ['a', 'new', 'd', 'e']
+          ['new', 'e']
+        annotations:
+          - line: 2
+            text: Two items (b, c) replaced by three. The list grows by one.
+          - line: 4
+            text: An empty slice [1:1] selects the gap before index 1, so assigning to it inserts.
+          - line: 6
+            text: Assigning an empty list deletes the selected items.
+          - line: 8
+            text: del with a step removes every second item (indexes 0, 2, 4).
+      - type: markdown
+        body: |
+          Two rules to remember:
+
+          - With a **step** (an *extended slice*), the replacement must have **exactly** as many items as
+            the slice selects: `nums[::2] = [0, 0]` on five items raises
+            `ValueError: attempt to assign sequence of size 2 to extended slice of size 3`.
+          - Strings are immutable, so they support **no** assignment at all — not to an index, not to a
+            slice (`TypeError: 'str' object does not support item assignment`). Build a new string
+            instead: `s = s[:1] + "EY" + s[3:]`.
+
+          **`lst[:] = ...` versus `lst = ...`.** Slice assignment changes the existing list, so every
+          name that refers to it sees the new contents. Plain assignment just rebinds one name:
+      - type: code
+        runnable: true
+        code: |
+          a = [1, 2, 3]
+          b = a
+          a[:] = [9, 9]
+          print(b)
+          a = [7]
+          print(a, b)
+        expectedOutput: |
+          [9, 9]
+          [7] [9, 9]
+        caption: "a[:] = ... replaced the contents of the shared list (b sees it). a = [7] only moved the name a to a new list."
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Slice is one item short | Forgot that `stop` is excluded, e.g. `s[-3:-1]` for "the last three" | Omit the bound to go to the end: `s[-3:]`. |
+          | Slice is unexpectedly empty | `start` after `stop` with a positive step, e.g. `s[5:1]` | For a reversed part, use a negative step: `s[5:1:-1]`. |
+          | No error, but the result is wrong | Out-of-range bounds are clipped silently | Print the slice and its `len()` while debugging. |
+          | `ValueError: slice step cannot be zero` | `s[::0]` | Use a non-zero step. |
+          | `TypeError: 'str' object does not support item assignment` | Assigning to a slice (or index) of a string | Build a new string from slices. |
+          | `ValueError: attempt to assign sequence of size … to extended slice of size …` | Slice with a step on the left, wrong-length right side | Make the lengths match, or use a loop. |
+          | Changing the "copy" changed the original | `b = a` is not a copy | Copy with `a[:]` (shallow). |
+          | A nested list changed in both copies | A slice copy is shallow | See [shallow and deep copies](concept:python.copying). |
+          | `print(lst.reverse())` shows None | `reverse()` works in place and returns None | Use `lst[::-1]` for a reversed **copy**. |
+      - type: code
+        runnable: true
+        code: |
+          print("abc"[::0])
+        expectError: ValueError
+        caption: "ValueError: slice step cannot be zero."
+      - type: code
+        runnable: true
+        code: |
+          s = "hello"
+          s[1:3] = "EY"
+        expectError: TypeError
+        caption: Strings are immutable, so no part of one can be replaced in place.
+      - type: item
+        ref: debug-file-extension
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises are about slicing, so solve them **without loops**. Each one is also run with
+          other inputs to check that your slices work in general.
+      - type: item
+        ref: code-palindrome
+      - type: item
+        ref: parsons-date
+      - type: item
+        ref: code-email-parts
+      - type: item
+        ref: explain-half-open
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Slice objects.** The colon syntax is shorthand. `s[1:4]` builds a `slice(1, 4, None)` object
+          and passes it to the sequence's `__getitem__` method — the same method that handles `s[1]`.
+          A slice object can be created and stored by hand, which is useful to **name** the fields of
+          fixed-width text. Its `indices(length)` method shows how Python normalises the bounds for a
+          sequence of that length: clipping out-of-range values and filling in defaults.
+      - type: code
+        runnable: true
+        code: |
+          record = "ID00042  Ada       "
+          ID = slice(0, 7)
+          NAME = slice(9, 19)
+          print(record[ID], record[NAME].strip())
+          print(slice(1, 100, 2).indices(6))
+        expectedOutput: |
+          ID00042 Ada
+          (1, 6, 2)
+        caption: indices(6) turned stop 100 into 6 — the clipping rule in action. The parenthesised result is a tuple, which you will meet soon.
+      - type: markdown
+        body: |
+          **Negative zero.** Negative bounds are converted by adding `len(seq)`, but `-0` is just `0`,
+          so `s[-0:]` is the **whole** string, not "the last zero characters". Code that computes
+          `s[-n:]` for the last n items breaks when n is 0; `s[len(s) - n:]` does not.
+
+          **Cost.** Slicing copies the selected references into a new object, so it takes time and memory
+          proportional to the length of the **slice** (not the original). `big[:10]` is cheap even when
+          `big` is huge; `big[1:]` copies almost everything — avoid it inside loops over large lists.
+          Strings and lists do not offer "views" that share memory; `memoryview` provides views for
+          binary data such as `bytes`.
+
+          **Identity of string slices (implementation detail).** Because strings are immutable, CPython
+          can skip copying when the slice is the whole string and returns the original object. A list
+          slice must always be a new list, because lists can be changed:
+      - type: code
+        runnable: true
+        code: |
+          text = "hello"
+          print(text[:] is text)
+          items = [1, 2]
+          print(items[:] is items, items[:] == items)
+        expectedOutput: |
+          True
+          False True
+        caption: The first result is a CPython optimisation, not a language guarantee — never rely on `is` with strings. The list result is guaranteed.
+      - type: markdown
+        body: |
+          **Same syntax for tuples, ranges and your own types.** Tuples, ranges and `bytes` all support
+          the same slicing. In the [data model](concept:python.data-model) lessons you will see how your
+          own classes can support `obj[a:b]` by handling slice objects in `__getitem__`.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `seq[start:stop:step]` works on strings, lists (and tuples, ranges). **start included, stop
+            excluded**; omitted start/stop mean "from the beginning"/"to the end".
+          - Negative bounds count from the end: `s[-3:]` = last three, `s[:-1]` = all but the last.
+          - Negative step walks right to left; `s[::-1]` reverses. Step 0 is a ValueError.
+          - Slices **never raise IndexError** — bounds are clipped; impossible ranges give an empty
+            result.
+          - Slicing a list creates a **new, shallow** list; `lst[:]` copies the outer list only.
+          - Lists support slice assignment and `del lst[i:j]`; strings support neither.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Classic quick questions: "Reverse a string" (`s[::-1]`), "check for a palindrome", "what does
+          `lst[:]` do and is it a deep copy?" (a shallow copy), "why doesn't `s[10:]` crash on a short
+          string?" (clipping). A strong answer also mentions that slicing copies k items (O(k)) and that
+          extended slices on the left of `=` need matching lengths.
+
+items:
+  - id: predict-basic-slices
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      word = "keyboard"
+      print(word[:3], word[3:], word[-4:-1])
+    answer: key board oar
+    explanation: >-
+      word[:3] is indexes 0–2, "key". word[3:] is everything from index 3, "board". word[-4:-1] starts
+      four from the end (index 4, "o") and stops before the last item (index 7 is excluded): "oar".
+    wrongAnswers:
+      - answer: key board oard
+        feedback: The stop is excluded even when it is negative, so [-4:-1] leaves out the last character. Use [-4:] to include it.
+      - answer: keyb board oar
+        feedback: "[:3] stops BEFORE index 3, so it has three characters: k, e, y."
+      - answer: key oard oar
+        feedback: "[3:] starts AT index 3 (the b), because start is included."
+
+  - id: predict-negative-step
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      s = "abcdef"
+      print(s[::-1], s[4:1:-1], s[::-2])
+    answer: fedcba edc fdb
+    explanation: >-
+      [::-1] walks the whole string backwards. [4:1:-1] starts at index 4 ("e") and walks left, stopping
+      before index 1: e, d, c. [::-2] starts at the last character and takes every second one going left:
+      f, d, b.
+    wrongAnswers:
+      - answer: fedcba edcb fdb
+        feedback: With a negative step the stop is still excluded, so [4:1:-1] stops before index 1 ("b").
+      - answer: fedcba bcde fdb
+        feedback: A negative step walks right to left, so the result starts with the item at index 4 and goes backwards.
+      - answer: fedcba edc eca
+        feedback: With a negative step and no start, the slice begins at the LAST item, f, then takes every second one.
+
+  - id: mcq-out-of-range
+    type: mcq
+    skill: recognition
+    prompt: What is the value of `"cat"[1:10]`?
+    explanation: >-
+      Slices clip out-of-range bounds to the ends of the sequence, so stop 10 becomes 3 and the result is
+      the characters from index 1 to the end.
+    options:
+      - id: a
+        text: It raises IndexError, because "cat" has only 3 characters.
+        feedback: Only indexing raises IndexError. Slice bounds beyond the end are clipped silently.
+      - id: b
+        text: '"at"'
+        correct: true
+        feedback: Right. The stop is clipped to 3, giving indexes 1 and 2.
+      - id: c
+        text: '"" (an empty string)'
+        feedback: The start, 1, is inside the string, so the slice contains everything from there to the end.
+      - id: d
+        text: '"cat"'
+        feedback: Start 1 is included as the beginning of the slice, so the c at index 0 is left out.
+
+  - id: predict-slice-copy
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      a = [1, 2, 3]
+      b = a
+      c = a[:]
+      a.append(4)
+      print(len(b), len(c))
+    answer: "4 3"
+    explanation: >-
+      b = a makes a second name for the same list, so b sees the append. a[:] creates a new list with the
+      same three items, so appending to a does not affect c.
+    wrongAnswers:
+      - answer: "4 4"
+        feedback: a[:] is a slice, and slicing a list always creates a NEW list. Only b refers to the same list as a.
+      - answer: "3 3"
+        feedback: b = a does not copy anything. b and a are two names for one list, so b sees the appended item.
+      - answer: "3 4"
+        feedback: It is the other way round — b is the alias (sees the change) and c is the copy (does not).
+
+  - id: debug-file-extension
+    type: debug
+    skill: debugging
+    prompt: |
+      This program splits a file name with a **three-letter extension** into its name and extension. For
+      `report.pdf` it should print `Name: report` and `Extension: pdf`, but the extension comes out as
+      `pd`. Fix the slice so it works for any such file name.
+    stdin: |
+      report.pdf
+    starterCode: |
+      filename = input("File: ")
+      name = filename[:-4]
+      extension = filename[-3:-1]
+      print("Name:", name)
+      print("Extension:", extension)
+    solution: |
+      filename = input("File: ")
+      name = filename[:-4]
+      extension = filename[-3:]
+      print("Name:", name)
+      print("Extension:", extension)
+    expectedOutput: |
+      File: Name: report
+      Extension: pdf
+    tests:
+      - name: report.pdf
+        code: |
+          assert output_lines() == ["File: Name: report", "Extension: pdf"], f"Expected Name: report and Extension: pdf, got {output_lines()}."
+      - name: other file names
+        code: |
+          for typed, name, ext in [("photo.png\n", "photo", "png"), ("a.txt\n", "a", "txt"), ("archive.tar.zip\n", "archive.tar", "zip")]:
+              lines = run_program(typed).strip().split("\n")
+              assert lines == [f"File: Name: {name}", f"Extension: {ext}"], f"For {typed.strip()} expected name {name!r} and extension {ext!r}, got {lines}."
+      - name: uses slicing
+        code: |
+          import ast
+          assert any(isinstance(node, ast.Slice) for node in ast.walk(ast.parse(source))), "Keep using slices to cut the file name."
+    hints:
+      - Which index does the slice [-3:-1] stop before?
+      - The stop is excluded, so -1 leaves out the last character. How do you say "to the very end"?
+      - Leave the stop out — filename[-3:] is the last three characters.
+    feedback:
+      - when: { outputContains: "Extension: pd\n" }
+        message: Still one character short. A stop of -1 excludes the last character; omit the stop to go to the end.
+    explanation: >-
+      A slice's stop is excluded, even when it is negative: [-3:-1] takes the third- and second-last
+      characters only. Omitting the stop means "to the end", so [-3:] is the last three characters. The
+      name slice [:-4] already works: it keeps everything except the last four characters (".pdf").
+
+  - id: code-palindrome
+    type: code
+    skill: implementation
+    prompt: |
+      A palindrome reads the same forwards and backwards. Read a word and print `palindrome` or
+      `not a palindrome`, **ignoring upper/lower case** (so `Racecar` is a palindrome). Use slicing, not
+      a loop.
+    stdin: |
+      Racecar
+    starterCode: |
+      word = input("Word: ")
+      # Compare the lower-case word with its reverse.
+    solution: |
+      word = input("Word: ")
+      lower = word.lower()
+      if lower == lower[::-1]:
+          print("palindrome")
+      else:
+          print("not a palindrome")
+    expectedOutput: |
+      Word: palindrome
+    tests:
+      - name: uses a slice and no loop
+        code: |
+          import ast
+          assert any(isinstance(node, ast.Slice) for node in ast.walk(ast.parse(source))), "Reverse the word with a slice, such as [::-1]."
+          assert not uses("For", "While"), "Solve this with slicing instead of a loop."
+      - name: Racecar is a palindrome
+        code: |
+          out = output().strip()
+          assert out.endswith("palindrome") and not out.endswith("not a palindrome"), f"Racecar is a palindrome when case is ignored. Your program printed {out!r}."
+      - name: other words
+        code: |
+          for typed, yes in [("level\n", True), ("Hello\n", False), ("Noon\n", True), ("ab\n", False), ("a\n", True)]:
+              out = run_program(typed).strip()
+              ok = out.endswith("not a palindrome") if not yes else (out.endswith("palindrome") and not out.endswith("not a palindrome"))
+              assert ok, f"For {typed.strip()} expected {'palindrome' if yes else 'not a palindrome'}, but got {out!r}."
+    hints:
+      - "`word[::-1]` is the word reversed."
+      - Convert to one case first with .lower(), then compare the word with its reverse using ==.
+    feedback:
+      - when: { outputEquals: "Word: not a palindrome\n" }
+        message: Racecar should count as a palindrome. Did you compare without converting the case first? "R" and "r" are different characters.
+    explanation: >-
+      word.lower() removes the case difference, and [::-1] produces the reversed copy. If the two strings
+      are equal, the word reads the same both ways.
+
+  - id: parsons-date
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program turns the ISO date `"2026-10-22"` into `22/10/2026`. Two lines are
+      distractors.
+    solution: |
+      date = "2026-10-22"
+      year = date[:4]
+      month = date[5:7]
+      day = date[8:]
+      print(day + "/" + month + "/" + year)
+    distractors:
+      - month = date[5:6]
+      - day = date[-2:-1]
+    expectedOutput: |
+      22/10/2026
+    explanation: >-
+      The year is the first four characters ([:4]). The month sits at indexes 5 and 6, so [5:7] — stop 7
+      is excluded. The day is everything from index 8. Both distractors stop one character too early.
+
+  - id: code-email-parts
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Read an email address and print the part before the `@` and the part after it:
+
+      ```text
+      User: ada.lovelace
+      Domain: example.org
+      ```
+
+      Find the position of the `@` with `email.index("@")` (a string method that returns the index of
+      the first `@`), then use **slices**. Do not use `split()`.
+    stdin: |
+      ada.lovelace@example.org
+    starterCode: |
+      email = input("Email: ")
+      at = email.index("@")
+      # Use slices of email around position at.
+
+    solution: |
+      email = input("Email: ")
+      at = email.index("@")
+      user = email[:at]
+      domain = email[at + 1:]
+      print("User:", user)
+      print("Domain:", domain)
+    expectedOutput: |
+      Email: User: ada.lovelace
+      Domain: example.org
+    tests:
+      - name: uses slices, not split
+        code: |
+          import ast
+          assert any(isinstance(node, ast.Slice) for node in ast.walk(ast.parse(source))), "Cut the address with slices around the @."
+          assert not calls("split"), "Solve it with slices instead of split()."
+      - name: example address
+        code: |
+          assert output_lines() == ["Email: User: ada.lovelace", "Domain: example.org"], f"Expected User: ada.lovelace and Domain: example.org, got {output_lines()}."
+      - name: other addresses
+        code: |
+          for typed, user, domain in [("grace@navy.mil\n", "grace", "navy.mil"), ("x@y.io\n", "x", "y.io")]:
+              lines = run_program(typed).strip().split("\n")
+              assert lines == [f"Email: User: {user}", f"Domain: {domain}"], f"For {typed.strip()} expected user {user!r} and domain {domain!r}, got {lines}."
+    hints:
+      - Everything before the @ is a slice that stops at position at.
+      - The domain starts one position after the @.
+      - "`email[:at]` and `email[at + 1:]`."
+    feedback:
+      - when: { outputContains: "Domain: @" }
+        message: The domain includes the @. Start the domain slice one position after it, at at + 1.
+    explanation: >-
+      index("@") finds the boundary. Because a slice's stop is excluded, email[:at] ends just before the
+      @, and email[at + 1:] starts just after it. The same "find a position, then slice around it" idea
+      parses file names, URLs and log lines.
+
+  - id: explain-half-open
+    type: explain
+    skill: explanation
+    prompt: |
+      Python slices include `start` and exclude `stop`. Explain why this "half-open" design is
+      convenient, using at least two concrete examples.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Notes that the length of s[a:b] is simply b - a (for in-range bounds).
+      - Notes that s[:n] + s[n:] == s — splitting at n leaves no overlap and no gap.
+      - Mentions that s[:n] is exactly the first n items, and that this matches range(), whose stop is also excluded.
+      - Gives concrete examples (for instance word[:3] and word[3:] on a real string).
+    modelAnswer: |
+      Because stop is excluded, the number of items in s[a:b] is just b - a: "Python"[2:5] has 5 - 2 = 3
+      characters, "tho". Cutting at the same index twice splits a sequence cleanly into two parts with no
+      overlap and nothing missing — "Python"[:2] + "Python"[2:] is "Py" + "thon", the original word. And
+      s[:n] is exactly "the first n items", with no + 1 or - 1 adjustments. It is the same rule as
+      range(a, b), so range(len(s)) produces exactly the valid indexes of s, and the slice and range
+      rules never have to be translated into each other.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-step-mix
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      nums = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      print(nums[2:8:3], nums[8:2:-3], nums[-3:])
+    answer: "[2, 5] [8, 5] [7, 8, 9]"
+    explanation: >-
+      [2:8:3] takes indexes 2 and 5 (8 is excluded). [8:2:-3] walks left from 8: indexes 8 and 5 (2 is
+      excluded). [-3:] is the last three items.
+    wrongAnswers:
+      - answer: "[2, 5, 8] [8, 5, 2] [7, 8, 9]"
+        feedback: The stop is excluded in both directions, so 8 is not in the first slice and 2 is not in the second.
+      - answer: "[2, 5] [] [7, 8, 9]"
+        feedback: With a negative step, a start to the right of the stop is exactly what you want, so [8:2:-3] is not empty.
+      - answer: "[2, 5] [8, 5] [7, 8]"
+        feedback: "[-3:] has no stop, so it runs to the end and includes the last item, 9."
+
+  - id: m-tf-indexerror
+    type: true-false
+    skill: recognition
+    prompt: 'True or false: `"cat"[2:50]` raises IndexError because index 50 does not exist.'
+    answer: false
+    explanation: >-
+      Slice bounds are clipped to the sequence, so "cat"[2:50] is simply "t". Only indexing a single
+      position, like "cat"[50], raises IndexError.
+
+  - id: m-mcq-shallow
+    type: mcq
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      What does this program print?
+
+      ```python
+      rows = [[1, 2], [3, 4]]
+      copy = rows[:]
+      copy.append([5, 6])
+      copy[0].append(99)
+      print(rows)
+      ```
+    explanation: >-
+      rows[:] makes a new outer list that refers to the same two inner lists. Appending to the outer copy
+      does not affect rows, but copy[0] IS rows[0], so appending 99 to it is visible through rows.
+    options:
+      - id: a
+        text: "`[[1, 2], [3, 4]]`"
+        feedback: That would be true for a deep copy. A slice copies only the outer list; the inner lists are shared.
+      - id: b
+        text: "`[[1, 2, 99], [3, 4]]`"
+        correct: true
+        feedback: Right. The outer lists are separate, so [5, 6] is only in copy, but the inner list [1, 2] is shared.
+      - id: c
+        text: "`[[1, 2, 99], [3, 4], [5, 6]]`"
+        feedback: That would happen if copy were just another name for rows. A slice creates a new outer list.
+      - id: d
+        text: "`[[1, 2], [3, 4], [5, 6]]`"
+        feedback: The append to the outer copy does not affect rows; the change to the shared inner list does.
+
+  - id: m-code-middle
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Read a word of at least 3 letters. Print the word **without its first and last characters**, and
+      on the next line print that middle part **reversed**. Use slices only — no loops.
+
+      For `abcdefgh`:
+
+      ```text
+      bcdefg
+      gfedcb
+      ```
+    stdin: |
+      abcdefgh
+    starterCode: |
+      word = input("Word: ")
+      # middle = ...
+    solution: |
+      word = input("Word: ")
+      middle = word[1:-1]
+      print(middle)
+      print(middle[::-1])
+    expectedOutput: |
+      Word: bcdefg
+      gfedcb
+    tests:
+      - name: uses slices and no loop
+        code: |
+          import ast
+          assert any(isinstance(node, ast.Slice) for node in ast.walk(ast.parse(source))), "Use slices to cut and reverse the word."
+          assert not uses("For", "While"), "Use slices instead of a loop."
+      - name: abcdefgh
+        code: |
+          lines = output_lines()
+          assert len(lines) >= 2 and lines[-2].endswith("bcdefg") and lines[-1] == "gfedcb", f"Expected bcdefg then gfedcb, got {lines}."
+      - name: other words
+        code: |
+          for typed, middle in [("python\n", "ytho"), ("cat\n", "a"), ("level\n", "eve")]:
+              lines = run_program(typed).strip().split("\n")
+              assert len(lines) >= 2 and lines[-2].endswith(middle) and lines[-1] == middle[::-1], f"For {typed.strip()} expected {middle} then {middle[::-1]}, got {lines}."
+    hints:
+      - Start at index 1 to drop the first character. Which negative stop drops the last one?
+      - "`word[1:-1]` is the middle; a step of -1 reverses any slice."
+    feedback:
+      - when: { outputContains: "bcdefgh" }
+        message: The last character is still there. A stop of -1 leaves out the final character.
+    explanation: >-
+      [1:-1] starts after the first character and stops before the last one. Slicing that result with
+      [::-1] walks it backwards, producing a reversed copy.
+
+  - id: m-debug-backup-alias
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should keep an **unsorted backup** of a list before sorting the original, printing:
+
+      ```text
+      original: [1, 2, 3]
+      backup: [3, 1, 2]
+      ```
+
+      But the backup comes out sorted too. Fix it.
+    starterCode: |
+      original = [3, 1, 2]
+      backup = original
+      original.sort()
+      print("original:", original)
+      print("backup:", backup)
+    solution: |
+      original = [3, 1, 2]
+      backup = original[:]
+      original.sort()
+      print("original:", original)
+      print("backup:", backup)
+    expectedOutput: |
+      original: [1, 2, 3]
+      backup: [3, 1, 2]
+    tests:
+      - name: prints the sorted original and the unsorted backup
+        code: |
+          assert output_lines() == ["original: [1, 2, 3]", "backup: [3, 1, 2]"], f"Got {output_lines()}."
+      - name: backup is a separate list
+        code: |
+          assert backup is not original, "backup must be a different list object from original — make a copy, for example original[:]."
+      - name: works for another list
+        code: |
+          import re, io, contextlib
+          changed = re.sub(r"original\s*=\s*\[[^\]]*\]", "original = [9, 7, 8]", source, count=1)
+          assert changed != source, "Keep the first line that creates original."
+          ns = {}
+          with contextlib.redirect_stdout(io.StringIO()):
+              exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("backup") == [9, 7, 8] and ns.get("original") == [7, 8, 9], "The backup should be a copy of whatever original starts as."
+    hints:
+      - After `backup = original`, how many list objects are there?
+      - A slice of a list is a new list. Which slice contains every item?
+    feedback:
+      - when: { outputContains: "backup: [1, 2, 3]" }
+        message: backup is still another name for the same list, so it sees the sort. Make a copy with original[:].
+    explanation: >-
+      `backup = original` creates a second name for one list, so sorting through either name changes the
+      list both names see. `original[:]` builds a new list with the same items, so sorting original
+      leaves the copy in its old order. (For lists of lists you would need to think about shallow versus
+      deep copies.)
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-step-mix, m-tf-indexerror, m-mcq-shallow, m-code-middle, m-debug-backup-alias]
+
+cheatsheet: |
+  ```python
+  s = "Python"            #  P  y  t  h  o  n
+                          #  0  1  2  3  4  5  (6)   / -6 ... -1
+  s[1:4]     # 'yth'      start included, stop excluded
+  s[:2]      # 'Py'       first 2
+  s[2:]      # 'thon'     all but the first 2
+  s[-2:]     # 'on'       last 2
+  s[:-1]     # 'Pytho'    all but the last
+  s[::2]     # 'Pto'      every 2nd
+  s[::-1]    # 'nohtyP'   reversed
+  s[4:1:-1]  # 'oht'      walk left from 4, stop before 1
+  s[1:100]   # 'ython'    bounds are clipped: never IndexError
+  copy = lst[:]           # NEW list (shallow copy)
+  lst[1:3] = ["x"]        # replace part of a list in place (lists only)
+  del lst[::2]            # delete every 2nd item
+  ```
+  - Length of `s[a:b]` = b − a (in range) · `s[:n] + s[n:] == s`
+  - Negative step: start should be right of stop · step 0 → ValueError
+  - Strings: no slice assignment (TypeError) — build a new string

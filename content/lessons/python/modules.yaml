@@ -1,0 +1,1117 @@
+id: python.modules
+concept: python.modules
+title: Modules and Imports
+subtitle: Reusing code across files, the import system, and __main__
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Every .py file is a module. Learn the import forms, what import actually does (find, run once, cache in
+  sys.modules, bind a name), where Python looks for modules, how `if __name__ == "__main__":` separates
+  script code from library code, why a file called random.py breaks your program, and a first tour of
+  math, random and datetime.
+objectives:
+  - Use `import x`, `from x import y` and `as` aliases, and predict which names each form binds.
+  - Explain that a module's code runs once per process, and that later imports reuse the cached module in sys.modules.
+  - Describe the module search order (sys.modules, built-ins, sys.path) and diagnose ModuleNotFoundError and shadowing.
+  - Write code that runs as a script but stays silent when imported, using `if __name__ == "__main__":`.
+  - Use math, random (with a seed) and datetime for everyday tasks.
+sources:
+  - title: "The Python Tutorial: Modules"
+    url: https://docs.python.org/3/tutorial/modules.html
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The import system"
+    url: https://docs.python.org/3/reference/import.html
+    publisher: Python Software Foundation
+  - title: "__main__ — Top-level code environment"
+    url: https://docs.python.org/3/library/__main__.html
+    publisher: Python Software Foundation
+  - title: "The initialization of the sys.path module search path"
+    url: https://docs.python.org/3/library/sys_path_init.html
+    publisher: Python Software Foundation
+  - title: "What's New in Python 3.13: Improved error messages"
+    url: https://docs.python.org/3/whatsnew/3.13.html#improved-error-messages
+    publisher: Python Software Foundation
+  - title: "sys.modules"
+    url: https://docs.python.org/3/library/sys.html#sys.modules
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why split code into modules?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          As programs grow, keeping everything in one file stops working: it gets too long to navigate,
+          and the useful function you wrote for one project has to be copy-pasted into the next (and then
+          fixed in two places). Python's answer is the [module](glossary:module): **any `.py` file can be
+          imported by another file**, which then uses its functions and variables.
+
+          Python also ships with hundreds of ready-made modules — the *standard library*. Before writing
+          something tricky yourself, check whether a module already does it. Counting the days between two
+          dates by hand means handling month lengths and leap years; with the `datetime` module it is one
+          line:
+      - type: code
+        runnable: true
+        code: |
+          from datetime import date
+
+          today = date(2026, 10, 22)
+          holiday = date(2026, 12, 25)
+          print((holiday - today).days, "days to go")
+        expectedOutput: |
+          64 days to go
+        annotations:
+          - line: 1
+            text: Load the datetime module and bind the name date to its date type.
+          - line: 5
+            text: Subtracting two dates gives a timedelta; .days is the whole number of days.
+      - type: markdown
+        body: |
+          In this lesson you will learn how `import` really works, so that errors like
+          `ModuleNotFoundError` or a module that "doesn't have" a function you just saw in the docs stop
+          being mysterious.
+
+  - id: import-forms
+    title: The three import forms
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An [import statement](glossary:import-statement) does two things: it makes sure the module is
+          loaded, and it **binds a name** in your file's namespace — exactly like an assignment. The form
+          you choose decides *which* name:
+
+          | Statement | Name(s) bound in your file | How you use it |
+          |---|---|---|
+          | `import math` | `math` → the module object | `math.sqrt(16)` |
+          | `from math import sqrt, pi` | `sqrt` and `pi` only | `sqrt(16)` — but `math` is **not** defined |
+          | `import datetime as dt` | `dt` → the datetime module | `dt.date(2026, 1, 1)` |
+          | `from math import sqrt as root` | `root` → the sqrt function | `root(16)` |
+
+          A module is an ordinary object (of type `module`); its functions and variables are its
+          *attributes*, reached with a dot.
+      - type: visualization
+        component: python-tracer
+        title: Imports bind names to objects
+        caption: >-
+          After line 1 the global frame has a name math referring to a module object. Line 2 adds sqrt
+          (a function) and pi (a float) — taken from that module. Line 3 binds dt to the datetime module.
+        props:
+          code: |
+            import math
+            from math import sqrt, pi
+            import datetime as dt
+
+            root = sqrt(16)
+            print(root, pi == math.pi)
+            print(dt.date(2026, 1, 1).year)
+      - type: markdown
+        body: |
+          **Which form should you use?** `import math` keeps the origin visible at every use
+          (`math.sqrt` tells the reader where `sqrt` comes from) and avoids clashes with your own names.
+          `from x import y` is fine for a few frequently used names. Aliases are conventions for long
+          names (`import numpy as np` in data science). Avoid `from math import *`, which dumps every
+          public name into your file so readers (and tools) can no longer tell where a name came from.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          print(type(math).__name__)
+          print(math.floor(7.8), math.ceil(7.2))
+          print("sqrt" in dir(math))
+        expectedOutput: |
+          module
+          7 8
+          True
+        annotations:
+          - line: 5
+            text: dir(module) lists the names a module defines — handy for exploring.
+      - type: item
+        ref: import-binding-mcq
+
+  - id: own-modules
+    title: Your own module, and what import really does
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A module is just a `.py` file, so the file `greetings.py` is the module `greetings`. On your own
+          computer you would create the file in your editor next to your main script. In this browser we
+          create it with `open()` — the virtual file system works the same way.
+
+          When Python executes `import greetings` for the first time, it:
+
+          1. **Finds** `greetings.py` (where it looks is covered below).
+          2. **Creates** an empty module object and stores it in [sys.modules](glossary:module-cache), a
+             dictionary of every module loaded so far.
+          3. **Runs** the file's code from top to bottom inside that module object. Every `def` and
+             assignment at the top level becomes an attribute of the module.
+          4. **Binds** the name `greetings` in the importing file.
+
+          The second time, step 1 starts by checking `sys.modules` — the module is already there, so
+          Python **skips straight to step 4**. The module's code runs once per program run, no matter how
+          many times it is imported.
+      - type: code
+        runnable: true
+        code: |
+          import sys, importlib
+
+          with open("greetings.py", "w", encoding="utf-8") as f:
+              f.write('print("greetings.py is running")\n')
+              f.write('def hello(name):\n')
+              f.write('    return f"Hello, {name}!"\n')
+
+          sys.modules.pop("greetings", None)   # start fresh on every Run (see note)
+          importlib.invalidate_caches()        # a new .py file appeared while running
+
+          import greetings
+          import greetings                      # cached: does not run the file again
+          from greetings import hello           # also cached
+
+          print(greetings.hello("Ada"))
+          print(hello is greetings.hello, "greetings" in sys.modules)
+        expectedOutput: |
+          greetings.py is running
+          Hello, Ada!
+          True True
+        annotations:
+          - line: 3
+            text: Writes a three-line module file into the current folder.
+          - line: 8
+            text: This browser keeps one Python running between Runs, so we remove any cached copy to make every Run behave like a fresh program.
+          - line: 9
+            text: Tells the import system to look at the folder again, because the file was created after Python started.
+          - line: 11
+            text: The only import that runs the module's code — "greetings.py is running" prints once.
+          - line: 16
+            text: Both names refer to the same function object inside the one cached module.
+      - type: callout
+        variant: misconception
+        title: '"Importing a module twice runs it twice"'
+        body: |
+          It doesn't. The first import runs the module and caches it in `sys.modules`; every later import —
+          in the same file or any other module of the same program — gets the cached object. The flip side:
+          if you **edit** a module while a program (or an interactive session) is running, `import` will
+          not pick up the change. Restart the program, or (rarely) use `importlib.reload(module)`.
+      - type: item
+        ref: predict-import-twice
+
+  - id: search-path
+    title: Where Python looks for modules
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For `import name`, Python checks, in order, and **stops at the first match**:
+
+          1. `sys.modules` — already imported?
+          2. **Built-in modules** compiled into the interpreter itself, such as `sys` (and, in this browser,
+             `math`).
+          3. Each folder in the list [sys.path](glossary:module-search-path), in order:
+             - the folder containing the script you ran (or the current directory for the interactive
+               shell, `python -c` and `python -m`),
+             - folders listed in the `PYTHONPATH` environment variable, if set,
+             - the standard library,
+             - `site-packages`, where `pip` installs third-party packages.
+
+          If nothing matches you get `ModuleNotFoundError: No module named '...'`.
+      - type: code
+        runnable: true
+        code: |
+          import sys
+
+          for folder in sys.path:
+              print(repr(folder))
+        expectedOutput: |
+          '/home/pyodide/groundwork'
+          ''
+          '/lib/python314.zip'
+          '/lib/python3.14/lib-dynload'
+          '/lib/python3.14/site-packages'
+        caption: >-
+          In this browser: the first folder holds this website's own runner; '' means "the current
+          directory" (/home/pyodide), which is why greetings.py could be imported; then the standard
+          library (stored as a zip file), compiled extension modules, and installed packages. On your own
+          computer the first entry is your script's folder.
+      - type: callout
+        variant: production
+        title: '"I installed it, but Python says No module named ..."'
+        body: |
+          Each Python installation (and each [virtual environment](concept:python.virtual-environments))
+          has its own `site-packages`. If `pip` installed the package for a different Python than the one
+          running your code, the folder is simply not on this `sys.path`. Install with
+          `python -m pip install package` using the same `python` you run, and check `sys.executable` to
+          see which interpreter that is.
+      - type: markdown
+        body: |
+          Because your script's folder comes **before** the standard library, a file of yours can
+          accidentally *shadow* a standard module — the classic mistake covered in the next section but
+          one.
+
+  - id: main-guard
+    title: Scripts vs modules — `if __name__ == "__main__":`
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Every module has a variable `__name__`. Python sets it to:
+
+          - the module's name (`"greetings"`) when the file is **imported**, and
+          - the special string `"__main__"` when the file is **run directly** as the program.
+      - type: item
+        ref: predict-name
+      - type: markdown
+        body: |
+          That difference lets one file be both a useful **library** and a runnable **script**. Put the
+          code that should only run as a program under the [main guard](glossary:main-guard):
+      - type: code
+        runnable: true
+        code: |
+          import sys, importlib
+
+          with open("temperature.py", "w", encoding="utf-8") as f:
+              f.write(
+                  "def to_fahrenheit(c):\n"
+                  "    return c * 9 / 5 + 32\n"
+                  "\n"
+                  'if __name__ == "__main__":\n'
+                  '    print("Demo: 100 C =", to_fahrenheit(100), "F")\n'
+              )
+
+          sys.modules.pop("temperature", None)
+          importlib.invalidate_caches()
+
+          import temperature                 # __name__ is "temperature": the demo is skipped
+          print(temperature.to_fahrenheit(37))
+        expectedOutput: |
+          98.6
+        annotations:
+          - line: 8
+            text: Inside temperature.py, this condition is only True when someone runs `python temperature.py`.
+          - line: 14
+            text: Imported, so __name__ is "temperature" and the demo print never runs.
+      - type: markdown
+        body: |
+          The usual layout puts the program's steps in a `main()` function and calls it from the guard. Step
+          through it: `def` lines only **create** functions; nothing inside them runs until the guard calls
+          `main()`.
+      - type: visualization
+        component: python-tracer
+        title: Definitions first, then the guard calls main()
+        caption: >-
+          Lines 1 and 4 bind area and main to function objects. Line 7 checks __name__ (it is "__main__"
+          because this is the program being run), then main() gets its own frame and calls area().
+        props:
+          code: |
+            def area(width, height):
+                return width * height
+
+            def main():
+                print("Area:", area(3, 4))
+
+            if __name__ == "__main__":
+                main()
+      - type: callout
+        variant: tip
+        title: Why bother?
+        body: |
+          Without the guard, `import temperature` from another program — or from a test file — would run
+          the demo and print output nobody asked for (or, worse, start a long job or delete files). Testing
+          tools such as [pytest](concept:python.testing) import your modules, so the guard matters as soon
+          as you write tests.
+
+  - id: shadowing
+    title: Shadowing the standard library (the random.py trap)
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          A learner writes a dice game and saves it as **`random.py`**:
+
+          ```python
+          # random.py
+          import random
+
+          print(random.randint(1, 6))
+          ```
+
+          Running it fails. `import random` searches `sys.path`, and the **first** folder is the script's
+          own folder, which contains… `random.py`. So the program imports **itself** instead of the
+          standard module, and that file has no `randint`. Python 3.13 and later even point at the cause:
+      - type: code
+        language: text
+        code: |
+          $ python random.py
+          Traceback (most recent call last):
+            File "/home/me/random.py", line 1, in <module>
+              import random
+            File "/home/me/random.py", line 4, in <module>
+              print(random.randint(1, 6))
+                    ^^^^^^^^^^^^^^
+          AttributeError: module 'random' has no attribute 'randint' (consider renaming '/home/me/random.py' since it has the same name as the standard library module named 'random' and prevents importing that standard library module)
+        caption: Output of Python 3.13+ on a computer (the hint in brackets is new in 3.13).
+      - type: markdown
+        body: |
+          You can reproduce it here. The extra lines simulate "a project folder whose script directory comes
+          first on sys.path", then put everything back so the real `random` keeps working in this browser:
+      - type: code
+        runnable: true
+        code: |
+          import os, sys, importlib
+
+          os.makedirs("my_project", exist_ok=True)
+          with open("my_project/random.py", "w", encoding="utf-8") as f:
+              f.write('print("Oops - running my_project/random.py!")\n')
+
+          folder = os.path.abspath("my_project")
+          saved = sys.modules.pop("random", None)   # forget the real module for this demo
+          sys.path.insert(0, folder)                 # my_project is now searched first
+          importlib.invalidate_caches()
+          try:
+              import random
+              print("random was loaded from", random.__file__)
+              print(random.randint(1, 6))
+          finally:                                   # undo the demo
+              sys.path.remove(folder)
+              sys.modules.pop("random", None)
+              if saved:
+                  sys.modules["random"] = saved
+        expectError: AttributeError
+        expectedOutput: |
+          Oops - running my_project/random.py!
+          random was loaded from /home/pyodide/my_project/random.py
+        annotations:
+          - line: 13
+            text: "The best diagnostic: module.__file__ shows which file was really imported."
+          - line: 14
+            text: AttributeError — the module you got has no randint. (The browser build does not add the 3.13 hint.)
+      - type: markdown
+        body: |
+          **The fix:** rename your file (`dice_game.py`). A leftover `__pycache__/random.cpython-314.pyc` is
+          harmless: Python 3 ignores cached bytecode in `__pycache__` once its source file is gone. Common
+          culprits: `random.py`, `math.py`, `json.py`, `csv.py`, `email.py`, `test.py`, `string.py`,
+          `statistics.py` — and third-party names such as `requests.py` or `numpy.py`. (Modules that are
+          built into the interpreter, like `sys`, are found before `sys.path` and cannot be shadowed this
+          way.)
+      - type: item
+        ref: explain-shadowing
+
+  - id: mistakes
+    title: Other import errors and how to fix them
+    kind: debugging
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `ModuleNotFoundError: No module named 'maths'` | Typo, or the package is not installed for *this* Python | Fix the name; `python -m pip install ...` for the interpreter you run |
+          | `ImportError: cannot import name 'sqroot' from 'math'` | The module exists but has no such name | Check spelling and the module's docs (`dir(module)`) |
+          | `NameError: name 'math' is not defined` after `from math import sqrt` | `from` imports bind only the listed names | Add `import math`, or import the extra names too |
+          | `AttributeError: module 'random' has no attribute 'randint'` | Your own file shadows the module (or a circular import) | Print `module.__file__`; rename your file |
+          | `TypeError: 'module' object is not callable` | `import datetime` then `datetime(...)` — the module, not the class | `from datetime import datetime`, or `datetime.datetime(...)` |
+          | Output appears when you import a file | Script code at the top level | Move it under `if __name__ == "__main__":` |
+          | Edits to a module have no effect | The old version is cached in `sys.modules` | Restart the program (or the interactive session) |
+      - type: code
+        runnable: true
+        code: |
+          import maths
+        expectError: ModuleNotFoundError
+        caption: Run it. The error names exactly the module Python could not find.
+      - type: code
+        runnable: true
+        code: |
+          from math import sqroot
+        expectError: ImportError
+        caption: The module was found, but it has no name sqroot. (The real name is sqrt.)
+      - type: item
+        ref: debug-import-name
+
+  - id: stdlib-tour
+    title: A quick tour of math, random and datetime
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Three modules you will use constantly (the [standard library lesson](concept:python.stdlib) goes
+          much further):
+
+          - **`math`** — `sqrt`, `floor`, `ceil`, `gcd`, `isclose`, constants `pi` and `e`.
+          - **`random`** — pseudo-random numbers: `randint(a, b)` (both ends included), `choice(seq)`,
+            `shuffle(list)`, `random()` for a float in [0, 1). `random.seed(n)` makes the sequence
+            **repeatable**, which is what you want in tests and examples.
+          - **`datetime`** — `date`, `datetime` and `timedelta` for calendar arithmetic and formatting.
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+          from datetime import date, timedelta
+
+          print(math.sqrt(81), math.floor(7.8), math.ceil(7.2))
+          print(math.pi)
+
+          random.seed(42)            # same seed -> same sequence on every run
+          print(random.randint(1, 6), random.randint(1, 6))
+          print(random.choice(["rock", "paper", "scissors"]))
+
+          launch = date(2026, 10, 22)
+          print(launch + timedelta(days=30))
+          print(launch.strftime("%A, %d %B %Y"))
+          print((date(2026, 12, 25) - launch).days, "days until 25 December")
+        expectedOutput: |
+          9.0 7 8
+          3.141592653589793
+          6 1
+          rock
+          2026-11-21
+          Thursday, 22 October 2026
+          64 days until 25 December
+        annotations:
+          - line: 8
+            text: Remove this line and the numbers change on every run.
+          - line: 13
+            text: timedelta handles month lengths and leap years for you.
+          - line: 14
+            text: "strftime formats a date: %A weekday, %d day, %B month name, %Y year."
+      - type: callout
+        variant: warning
+        title: random is not for secrets
+        body: |
+          `random` is predictable by design — anyone who learns the seed (or enough outputs) can predict
+          the rest. For passwords, tokens and anything security-related use the `secrets` module
+          (`secrets.token_hex(16)`). Likewise `date.today()` and `datetime.now()` give the current date and
+          time; examples here use fixed dates so their output never changes.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: days-between
+      - type: item
+        ref: main-guard-exercise
+      - type: item
+        ref: parsons-guard
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Finders and loaders.** The import system is itself written in Python (`importlib`). For a name
+          not yet in `sys.modules`, it asks each *finder* in `sys.meta_path` in turn: first the one for
+          built-in modules, then frozen modules (a few start-up modules stored inside the interpreter), then
+          the path-based finder that scans `sys.path`. A finder returns a *module spec* saying which
+          *loader* can create the module — a source file, compiled bytecode, a zip archive or a C extension.
+
+          **Bytecode cache.** After compiling `greetings.py`, CPython normally saves the bytecode in
+          `__pycache__/greetings.cpython-314.pyc` and reuses it on the next run if the source's modification
+          time and size are unchanged. (This browser build sets `sys.dont_write_bytecode`, so it skips that.)
+
+          **Registered before it runs.** The new module is put into `sys.modules` *before* its code executes.
+          That is what makes circular imports possible at all — and what produces this error when module `a`
+          imports `b` while `b` (still loading) tries to take a name from the half-finished `a`:
+      - type: code
+        language: text
+        code: |
+          ImportError: cannot import name 'helper' from partially initialized module 'a'
+          (most likely due to a circular import)
+        caption: The cure is usually to move the shared code into a third module that both import.
+      - type: markdown
+        body: |
+          **`from` imports copy a reference.** `from greetings import hello` binds your own name `hello` to
+          the function object that exists *at that moment*. If the module later rebinds its `hello`, or you
+          `importlib.reload()` it, your name still refers to the old object — the same names-and-objects rule
+          as for any assignment:
+      - type: code
+        runnable: true
+        code: |
+          import sys, importlib
+
+          with open("config_mod.py", "w", encoding="utf-8") as f:
+              f.write('LEVEL = "info"\n')
+
+          sys.modules.pop("config_mod", None)
+          importlib.invalidate_caches()
+
+          import config_mod
+          from config_mod import LEVEL
+
+          config_mod.LEVEL = "debug"     # rebinds the name inside the module
+          print(config_mod.LEVEL, LEVEL)
+        expectedOutput: |
+          debug info
+        caption: Your LEVEL name still refers to the original string; only the module's attribute was rebound.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Every `.py` file is a **module**; `import` makes its names available to another file.
+          - `import math` binds `math`; `from math import sqrt` binds only `sqrt`; `as` picks another name.
+          - The first import **runs** the module once and caches it in `sys.modules`; later imports reuse it.
+          - Search order: `sys.modules` → built-in modules → each folder in `sys.path` (your script's folder
+            first, then the standard library, then `site-packages`). First match wins.
+          - Never name your files after modules you use (`random.py`, `json.py`…). `module.__file__` reveals
+            what was really imported.
+          - `__name__` is `"__main__"` only for the program being run: put script-only code under
+            `if __name__ == "__main__":`.
+          - `random.seed(n)` makes randomness reproducible; use `secrets` for security; datetime does calendar
+            arithmetic.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What happens when you import a module twice?" and "What does `if __name__ == '__main__'` do?" are
+          staples. Explain find → create → register in `sys.modules` → execute → bind, that a second import
+          only binds, and that `__name__` distinguishes running from importing. Mentioning shadowing and
+          circular imports shows real-world experience.
+
+items:
+  - id: import-binding-mcq
+    type: mcq
+    skill: recognition
+    prompt: "A file starts with `from math import sqrt`. Which of these lines will then work?"
+    explanation: >-
+      A from-import binds only the names listed — here sqrt. The name math is not bound, so math.pi raises
+      NameError, and pi was never imported.
+    options:
+      - id: a
+        text: "`print(sqrt(25))`"
+        correct: true
+        feedback: Right. sqrt is the only name this statement binds in your file.
+      - id: b
+        text: "`print(math.sqrt(25))`"
+        feedback: "`from math import sqrt` does not bind the name math. You would get NameError: name 'math' is not defined."
+      - id: c
+        text: "`print(pi)`"
+        feedback: Only listed names are imported. Write `from math import sqrt, pi` to get pi too.
+      - id: d
+        text: All three, because the whole math module is loaded anyway.
+        feedback: The module is loaded (and cached), but your file only gets the names you asked for.
+
+  - id: predict-import-twice
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (The first lines just create a module file `counter_mod.py`.)
+    code: |
+      import sys, importlib
+
+      with open("counter_mod.py", "w", encoding="utf-8") as f:
+          f.write('print("counter_mod loaded")\ncount = 0\n')
+      sys.modules.pop("counter_mod", None)
+      importlib.invalidate_caches()
+
+      import counter_mod
+      counter_mod.count += 1
+      import counter_mod
+      counter_mod.count += 1
+      print(counter_mod.count)
+    answer: |
+      counter_mod loaded
+      2
+    explanation: >-
+      The first import runs the module (printing once) and caches it. The second import finds it in
+      sys.modules and only binds the name again — the code does not rerun, so count is not reset to 0.
+      Both += 1 updates act on the same module object: 2.
+    wrongAnswers:
+      - answer: |
+          counter_mod loaded
+          counter_mod loaded
+          1
+        feedback: >-
+          Importing again does not run the module's code again, so it neither prints a second time nor
+          resets count to 0.
+      - answer: |
+          counter_mod loaded
+          counter_mod loaded
+          2
+        feedback: The module's code runs only on the first import; the print happens once.
+      - answer: |
+          2
+        feedback: The first import does run the module's top-level code, including its print.
+
+  - id: predict-name
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (Two lines — think about the order.)
+    code: |
+      import sys, importlib
+
+      with open("namecheck.py", "w", encoding="utf-8") as f:
+          f.write('print("in the module:", __name__)\n')
+      sys.modules.pop("namecheck", None)
+      importlib.invalidate_caches()
+
+      import namecheck
+      print("in the program:", __name__)
+    answer: |
+      in the module: namecheck
+      in the program: __main__
+    explanation: >-
+      The import runs namecheck.py first, where __name__ is the module's name, "namecheck". The program
+      being run is always called "__main__".
+    wrongAnswers:
+      - answer: |
+          in the module: __main__
+          in the program: __main__
+        feedback: Only the file that is being run as the program gets "__main__". An imported module's __name__ is its own name.
+      - answer: |
+          in the program: __main__
+          in the module: namecheck
+        feedback: The import statement runs the module's code at that point, before the next line of the program.
+      - answer: |
+          in the module: namecheck.py
+          in the program: __main__
+        feedback: The module name has no .py extension — the file namecheck.py is the module namecheck.
+
+  - id: explain-shadowing
+    type: explain
+    skill: explanation
+    prompt: >-
+      A classmate saved their program as `json.py`. It contains `import json` and then
+      `json.dumps({"a": 1})`, which fails with `AttributeError: module 'json' has no attribute 'dumps'`.
+      Explain step by step why, and how to fix it.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that import searches the folders in sys.path in order and uses the first match.
+      - Says the script's own folder comes first, so their json.py is found before the standard library's json.
+      - Explains that the imported "json" module is therefore their own file, which has no dumps.
+      - Gives the fix - rename the file - and mentions json.__file__ as a way to confirm which file was imported.
+    modelAnswer: |
+      When Python runs `import json` it looks for a module called json in each folder of sys.path, in
+      order, and takes the first one it finds. The first folder is the one containing the script being
+      run — and that folder contains their own json.py. So `json` refers to their program, not the
+      standard library module, and their file defines no dumps function, hence the AttributeError.
+      Printing json.__file__ would show the path of their own file. Renaming the program (for example
+      to save_data.py) fixes it.
+
+  - id: debug-import-name
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `5.0` and then `12.57`, but it crashes with
+      `NameError: name 'math' is not defined`. Fix the import so both functions work.
+    starterCode: |
+      from math import sqrt
+
+
+      def hypotenuse(a, b):
+          return sqrt(a ** 2 + b ** 2)
+
+
+      def circle_area(radius):
+          return math.pi * radius ** 2
+
+
+      print(hypotenuse(3, 4))
+      print(round(circle_area(2), 2))
+    solution: |
+      import math
+      from math import sqrt
+
+
+      def hypotenuse(a, b):
+          return sqrt(a ** 2 + b ** 2)
+
+
+      def circle_area(radius):
+          return math.pi * radius ** 2
+
+
+      print(hypotenuse(3, 4))
+      print(round(circle_area(2), 2))
+    expectedOutput: |
+      5.0
+      12.57
+    tests:
+      - name: prints both results
+        code: |
+          assert output_lines() == ["5.0", "12.57"], f"Expected 5.0 and 12.57, but got {output()!r}."
+      - name: functions still compute their results
+        code: |
+          import math as _m
+          assert hypotenuse(5, 12) == 13.0, "hypotenuse(5, 12) should be 13.0."
+          assert _m.isclose(circle_area(1), _m.pi), "circle_area(1) should equal pi — use the pi from the math module, not a typed-in approximation."
+          assert "3.14" not in source, "Use math.pi (or import pi) instead of typing 3.14."
+    hints:
+      - "`from math import sqrt` binds the name sqrt — and nothing else."
+      - Which name does circle_area use that was never bound?
+      - Add `import math` at the top, or change the first line to `from math import sqrt, pi` and use pi.
+    feedback:
+      - when: { errorType: NameError, errorMessageContains: "'pi'" }
+        message: You switched to pi, but it is not imported yet. Use `from math import sqrt, pi`.
+      - when: { errorType: NameError }
+        message: A name is used that no import statement bound. `from math import sqrt` does not bind math.
+    explanation: >-
+      A from-import only binds the listed names. circle_area refers to math, which was never bound, so the
+      lookup fails at call time. `import math` (or importing pi directly) binds the missing name; the
+      module itself is loaded only once either way.
+
+  - id: days-between
+    type: code
+    skill: implementation
+    prompt: |
+      Write `days_between(start, end)` that takes two dates as ISO strings such as `"2026-10-22"` and
+      **returns** the number of days from `start` to `end` (negative if `end` is earlier). Use the
+      datetime module — do not calculate month lengths yourself.
+    starterCode: |
+      from datetime import date
+
+
+      def days_between(start, end):
+          # Turn both strings into date objects, subtract them, and return the days.
+          pass
+
+
+      print(days_between("2026-10-22", "2026-12-25"))
+    solution: |
+      from datetime import date
+
+
+      def days_between(start, end):
+          first = date.fromisoformat(start)
+          last = date.fromisoformat(end)
+          return (last - first).days
+
+
+      print(days_between("2026-10-22", "2026-12-25"))
+    expectedOutput: |
+      64
+    tests:
+      - name: 64 days from 22 October to 25 December
+        code: |
+          result = days_between("2026-10-22", "2026-12-25")
+          assert result == 64, f"days_between('2026-10-22', '2026-12-25') should be 64, but got {result!r}."
+      - name: handles leap years
+        code: |
+          result = days_between("2028-02-28", "2028-03-01")
+          assert result == 2, f"2028 is a leap year (29 February exists), so the answer is 2, but got {result!r}. Let datetime do the calendar maths."
+      - name: negative when end is earlier
+        code: |
+          result = days_between("2026-01-10", "2026-01-01")
+          assert result == -9, f"Going backwards 9 days should give -9, but got {result!r}."
+      - name: returns an int
+        code: |
+          result = days_between("2026-01-01", "2026-01-02")
+          assert isinstance(result, int), f"Return the number of days as an int (use .days), not {type(result).__name__}."
+    hints:
+      - "`date.fromisoformat(\"2026-10-22\")` turns the string into a date object."
+      - Subtracting one date from another gives a timedelta.
+      - "A timedelta's .days attribute is the whole number of days. Return it."
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "unsupported operand" }
+        message: You are subtracting strings. Convert both with date.fromisoformat() first.
+      - when: { outputContains: "days," }
+        message: You returned the timedelta itself. Return its .days attribute.
+      - when: { outputEquals: "None\n" }
+        message: days_between must return the result.
+    explanation: >-
+      date.fromisoformat parses the strings; subtracting dates gives a timedelta whose .days is an int.
+      The datetime module knows every month length and leap year, so the function is correct for any pair
+      of dates.
+
+  - id: main-guard-exercise
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      This file should work both ways: when **run**, it prints the three demo lines; when **imported**
+      by another program, it should only define the two functions and print nothing. Change it so that
+      importing it is silent. (The checks really import your code as a module.)
+    starterCode: |
+      def celsius_to_fahrenheit(c):
+          return c * 9 / 5 + 32
+
+
+      def fahrenheit_to_celsius(f):
+          return (f - 32) * 5 / 9
+
+
+      print("Demo:")
+      print(celsius_to_fahrenheit(100))
+      print(fahrenheit_to_celsius(32))
+    solution: |
+      def celsius_to_fahrenheit(c):
+          return c * 9 / 5 + 32
+
+
+      def fahrenheit_to_celsius(f):
+          return (f - 32) * 5 / 9
+
+
+      if __name__ == "__main__":
+          print("Demo:")
+          print(celsius_to_fahrenheit(100))
+          print(fahrenheit_to_celsius(32))
+    expectedOutput: |
+      Demo:
+      212.0
+      0.0
+    tests:
+      - name: running it prints the demo
+        code: |
+          assert output_lines() == ["Demo:", "212.0", "0.0"], f"When run directly, the program should print the three demo lines, but printed {output()!r}."
+      - name: importing it prints nothing
+        code: |
+          import sys, importlib, io, contextlib
+          with open("temperature_check.py", "w", encoding="utf-8") as module_file:
+              module_file.write(source)
+          sys.modules.pop("temperature_check", None)
+          importlib.invalidate_caches()
+          captured = io.StringIO()
+          with contextlib.redirect_stdout(captured):
+              module = importlib.import_module("temperature_check")
+          assert captured.getvalue() == "", f'Importing your file printed {captured.getvalue()!r}. Put the demo lines under if __name__ == "__main__":'
+          assert module.celsius_to_fahrenheit(0) == 32, "The functions must still be defined when the file is imported."
+          assert module.fahrenheit_to_celsius(212) == 100, "fahrenheit_to_celsius should still work when imported."
+    hints:
+      - When the file is imported, __name__ is the module's name; when it is run, it is "__main__".
+      - "Add `if __name__ == \"__main__\":` above the demo lines."
+      - Indent the three print lines so they are inside the if block. Keep the two functions outside it.
+    feedback:
+      - when: { outputEquals: "" }
+        message: >-
+          Now nothing prints even when the file is run. Check the spelling — two underscores on each side:
+          if __name__ == "__main__":
+      - when: { errorType: IndentationError }
+        message: The lines inside the if block must all be indented by the same amount (four spaces).
+    explanation: >-
+      Under the guard, the demo runs only when __name__ == "__main__", i.e. when the file is the program
+      being run. Imported, its __name__ is "temperature_check", so only the def statements execute and the
+      functions become available silently.
+
+  - id: parsons-guard
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a module that defines `area()` and a `main()` function, and calls `main()`
+      only when the file is run directly. It should print `3.14`. One line is a distractor.
+    solution: |
+      import math
+      def area(radius):
+          return math.pi * radius ** 2
+      def main():
+          print(round(area(1), 2))
+      if __name__ == "__main__":
+          main()
+    distractors:
+      - 'if __name__ == "main":'
+    expectedOutput: |
+      3.14
+    explanation: >-
+      The import comes first so math exists when area runs; functions are defined before the guard calls
+      main(). The distractor compares with "main" — but the program's __name__ is "__main__" with double
+      underscores, so that condition would be False and nothing would print.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-from-rebind
+    type: predict-output
+    skill: transfer
+    difficulty: 3
+    prompt: What does this program print? (The first lines create the module `taxes.py`.)
+    code: |
+      import sys, importlib
+
+      with open("taxes.py", "w", encoding="utf-8") as f:
+          f.write("RATE = 0.2\n\ndef with_tax(amount):\n    return amount * (1 + RATE)\n")
+      sys.modules.pop("taxes", None)
+      importlib.invalidate_caches()
+
+      from taxes import RATE, with_tax
+      RATE = 0.5
+      print(with_tax(100))
+    answer: "120.0"
+    explanation: >-
+      `from taxes import RATE` binds a new name RATE in the program to the same float. `RATE = 0.5` rebinds
+      only the program's name. with_tax looks up RATE in its own module's namespace, where it is still 0.2,
+      so the result is 100 * 1.2 = 120.0.
+    wrongAnswers:
+      - answer: "150.0"
+        feedback: >-
+          Rebinding your own RATE does not change the module's RATE. with_tax reads the name in the taxes
+          module's namespace. (Setting taxes.RATE = 0.5 would change it.)
+      - answer: "120"
+        feedback: "1 + RATE is a float (1.2), so the result is the float 120.0."
+
+  - id: m-pip-mismatch
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      You ran `pip install requests` successfully, but `python app.py` fails with
+      `ModuleNotFoundError: No module named 'requests'`. What is the most likely cause?
+    explanation: >-
+      pip installed into the site-packages of some Python installation or virtual environment, but app.py
+      is run by a different interpreter whose sys.path does not include that folder.
+    options:
+      - id: a
+        text: The package was installed for a different Python interpreter or environment than the one running app.py.
+        correct: true
+        feedback: Right. Use `python -m pip install requests` with the same python, or activate the right virtual environment.
+      - id: b
+        text: Third-party packages must be imported with `from requests import *`.
+        feedback: Third-party modules are imported exactly like standard ones; the import form is not the problem.
+      - id: c
+        text: You must restart the computer after installing.
+        feedback: Installing only copies files into site-packages. A new Python process sees them immediately — if it searches that folder.
+      - id: d
+        text: Modules are cached in sys.modules, so Python remembers that requests was missing.
+        feedback: sys.modules caches only within one running program; each `python app.py` starts fresh.
+
+  - id: m-tf-edit-reimport
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: in an interactive Python session, if you edit `helpers.py` and then type
+      `import helpers` again, Python loads your edited version.
+    answer: false
+    explanation: >-
+      The module is already in sys.modules, so the second import just returns the cached (old) module.
+      Restart the session, or use importlib.reload(helpers) — and remember that names you imported with
+      from-imports still refer to the old objects.
+
+  - id: m-code-dice
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `roll_dice(n, seed)` that seeds the random module with `seed` and **returns** a list of `n`
+      die rolls (integers from 1 to 6). Calling it twice with the same seed must give the same list.
+    starterCode: |
+      import random
+
+
+      def roll_dice(n, seed):
+          # Seed the generator, then roll n times and collect the results in a list.
+          pass
+
+
+      print(roll_dice(5, 42))
+    solution: |
+      import random
+
+
+      def roll_dice(n, seed):
+          random.seed(seed)
+          rolls = []
+          for _ in range(n):
+              rolls.append(random.randint(1, 6))
+          return rolls
+
+
+      print(roll_dice(5, 42))
+    expectedOutput: |
+      [6, 1, 1, 6, 3]
+    tests:
+      - name: returns n rolls between 1 and 6
+        code: |
+          rolls = roll_dice(20, 7)
+          assert isinstance(rolls, list), f"roll_dice should return a list, but returned {rolls!r}."
+          assert len(rolls) == 20, f"roll_dice(20, 7) should return 20 rolls, but returned {len(rolls)}."
+          assert all(isinstance(r, int) and 1 <= r <= 6 for r in rolls), f"Every roll must be an int from 1 to 6: {rolls!r}."
+      - name: same seed gives the same rolls
+        code: |
+          assert roll_dice(10, 1) == roll_dice(10, 1), "With the same seed, roll_dice must return the same list. Call random.seed(seed) inside the function."
+      - name: different seeds give different rolls
+        code: |
+          assert roll_dice(10, 1) != roll_dice(10, 2), "Different seeds should give different rolls — use the seed parameter, not a fixed number."
+      - name: uses random.seed and random.randint
+        code: |
+          assert calls("seed"), "Call random.seed(seed) so the results are repeatable."
+          assert calls("randint") or calls("randrange") or calls("choice"), "Roll each die with random.randint(1, 6)."
+    hints:
+      - Call random.seed(seed) at the start of the function.
+      - "random.randint(1, 6) returns a whole number from 1 to 6 — both ends included."
+      - Build the list with a for loop over range(n) and append, then return it.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: roll_dice must return the list of rolls.
+      - when: { errorType: NameError, errorMessageContains: "randint" }
+        message: randint lives in the random module. Write random.randint(1, 6) (or import randint from random).
+    explanation: >-
+      Seeding resets the pseudo-random generator to a known state, so the same seed always produces the
+      same sequence — perfect for tests and reproducible simulations. randint includes both ends.
+
+  - id: m-debug-datetime
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `64` (days from 22 October to 25 December 2026) but crashes with
+      `TypeError: 'module' object is not callable`. Fix the import without changing the dates.
+    starterCode: |
+      import datetime
+
+      launch = datetime(2026, 12, 25)
+      today = datetime(2026, 10, 22)
+      print((launch - today).days)
+    solution: |
+      from datetime import datetime
+
+      launch = datetime(2026, 12, 25)
+      today = datetime(2026, 10, 22)
+      print((launch - today).days)
+    expectedOutput: |
+      64
+    tests:
+      - name: prints 64
+        code: |
+          assert output().strip() == "64", f"Expected 64, but got {output()!r}."
+      - name: launch and today are datetime objects
+        code: |
+          import datetime as _dt
+          assert isinstance(launch, _dt.date), "launch should be created with the datetime class (or date), not typed as a number."
+          assert isinstance(today, _dt.date), "today should be created with the datetime class (or date)."
+      - name: computes from the dates
+        code: |
+          import io, contextlib
+          changed = source.replace("2026, 12, 25", "2026, 12, 31")
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue().strip() == "70", "Compute the difference from the two dates rather than printing a fixed number."
+    hints:
+      - "`import datetime` binds the name datetime to the module. What is inside the module?"
+      - The module contains a class that is also called datetime.
+      - Use `from datetime import datetime`, or call `datetime.datetime(2026, 12, 25)`.
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "module" }
+        message: >-
+          The name datetime still refers to the module. Import the class: from datetime import datetime.
+    explanation: >-
+      The datetime module contains a class with the same name. `import datetime` binds the module, which
+      cannot be called. `from datetime import datetime` binds the class instead (or use
+      datetime.datetime(...)). This module/class name clash catches experienced developers too.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-from-rebind, m-pip-mismatch, m-tf-edit-reimport, m-code-dice, m-debug-datetime]
+
+cheatsheet: |
+  ```python
+  import math                  # binds math          -> math.sqrt(16)
+  from math import sqrt, pi    # binds sqrt, pi only -> sqrt(16)
+  import datetime as dt        # binds dt            -> dt.date(2026, 1, 1)
+  from datetime import date    # the class inside the module
+
+  import sys
+  sys.modules                  # cache: name -> module (code runs once)
+  sys.path                     # folders searched, script folder first
+  module.__file__              # which file was really imported?
+
+  def main():
+      ...
+  if __name__ == "__main__":   # True only when this file is run directly
+      main()
+
+  random.seed(42)              # reproducible random numbers (not for security)
+  ```
+  - ModuleNotFoundError → typo, or installed for another Python (`python -m pip`)
+  - AttributeError on a stdlib module → your file shadows it (random.py, json.py…)
+  - `TypeError: 'module' object is not callable` → `from datetime import datetime`

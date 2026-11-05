@@ -1,0 +1,68 @@
+# Reference CI workflow for the ci_textkit library (Groundwork project: ci-pipeline).
+#
+# GitHub only runs workflows stored in .github/workflows/ at the ROOT of a repository.
+# Inside the Groundwork repository this file is never executed; the kit's tests check
+# its structure instead. Copy the kit into its own repository to see it run (README).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: the jobs only read the code. Nothing here needs secrets.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Ruff lint
+        run: ruff check --output-format=github .
+      - name: Ruff format check
+        run: ruff format --check .
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      # Let every version finish so one failure does not hide another.
+      fail-fast: false
+      matrix:
+        # Quoted on purpose: unquoted 3.10 would be read as the number 3.1.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests with a coverage gate
+        run: python -m pytest --cov=ci_textkit --cov-report=term-missing --cov-fail-under=90

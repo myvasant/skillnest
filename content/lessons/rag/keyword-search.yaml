@@ -1,0 +1,1203 @@
+id: rag.keyword-search
+concept: rag.keyword-search
+title: Keyword Search — Inverted Indexes, TF-IDF and BM25
+subtitle: The fast, explainable baseline every retriever must beat
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Classic search finds documents that share words with the query and ranks them by how often and how
+  rare those words are. You will tokenise and normalise text, build an inverted index, score with TF-IDF,
+  implement BM25 from scratch (checking it by hand on three documents), and see where keyword search
+  shines (codes, names) and where it fails (synonyms).
+objectives:
+  - Tokenise and normalise text consistently for documents and queries, and explain the trade-offs of stop words and stemming.
+  - Build an inverted index and use its postings lists to find candidate documents without scanning everything.
+  - Compute TF-IDF and BM25 scores, explaining the roles of IDF, k1 (saturation) and b (length normalisation).
+  - Implement a small BM25 search engine that returns the top-k documents for a query.
+  - Predict when keyword search beats semantic search (exact identifiers) and when it fails (vocabulary mismatch).
+sources:
+  - title: "The Probabilistic Relevance Framework: BM25 and Beyond (Robertson and Zaragoza, 2009)"
+    url: https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf
+    publisher: Foundations and Trends in Information Retrieval (author copy)
+  - title: Similarity settings (BM25 parameters)
+    url: https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity
+    publisher: Elastic
+  - title: SQLite FTS5 extension (includes the bm25() ranking function)
+    url: https://www.sqlite.org/fts5.html
+    publisher: SQLite
+  - title: "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+    url: https://arxiv.org/abs/2104.08663
+    publisher: arXiv (Thakur et al.)
+sections:
+  - id: why
+    title: Why "does the text contain the query?" is not search
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          [RAG](concept:rag.why-rag) answers are only as good as the passages retrieved for them. The most
+          naive retriever checks every document for the query string:
+      - type: code
+        runnable: true
+        code: |
+          docs = ["Error E1042: payment declined", "Category list for the catalogue", "How to reset a password"]
+          print([d for d in docs if "cat" in d.lower()])
+          print([d for d in docs if "reset password" in d.lower()])
+        expectedOutput: |
+          ['Category list for the catalogue']
+          []
+        caption: '"cat" matches inside "Category"; "reset password" misses "reset a password". And every query reads every document.'
+      - type: markdown
+        body: |
+          Substring matching has three problems: it matches **inside** unrelated words, it misses
+          documents that contain the words in a different order or with other words between them, and it
+          gives **no ranking** — every match counts the same. It also reads every document on every
+          query.
+
+          Real keyword search fixes all three: it splits text into **terms**, keeps an **index** from each
+          term to the documents that contain it, and **scores** documents by how well their terms match.
+          This is how Elasticsearch, OpenSearch and SQLite's full-text search work, and it is still the
+          baseline every RAG retriever should beat.
+
+  - id: analysis
+    title: Tokenising and normalising text
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Text analysis** turns raw text into the terms that will be matched. A minimal analyser:
+
+          1. **lowercase** everything, so "Password" matches "password";
+          2. **split** on anything that is not a letter or digit;
+          3. drop **[stop words](glossary:stop-words)** — very common words such as "the" and "to" that
+             appear everywhere and carry little meaning for matching.
+      - type: code
+        runnable: true
+        id: tokenize
+        code: |
+          STOP_WORDS = {"a", "an", "and", "be", "for", "how", "is", "of", "the", "to", "your"}
+
+          def tokenize(text):
+              cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+              return [word for word in cleaned.split() if word not in STOP_WORDS]
+
+          print(tokenize("How to reset your Password?"))
+          print(tokenize("Error E-1042: payment DECLINED."))
+          print(tokenize("Wi-Fi router's password"))
+        expectedOutput: |
+          ['reset', 'password']
+          ['error', 'e', '1042', 'payment', 'declined']
+          ['wi', 'fi', 'router', 's', 'password']
+        annotations:
+          - line: 4
+            text: Every character that is not a letter or digit becomes a space, so punctuation separates terms.
+          - line: 9
+            text: '"E-1042" becomes two terms, "e" and "1042". Whether that is right depends on your data — product codes often need a custom rule.'
+      - type: markdown
+        body: |
+          **Stemming** goes further and reduces words to a common stem so that "passwords" matches
+          "password". Real stemmers (such as the Porter stemmer) use dozens of rules; even a one-rule toy
+          shows the trade-off:
+      - type: code
+        runnable: true
+        code: |
+          def stem(word):  # a toy: strip one trailing "s"
+              if len(word) > 3 and word.endswith("s"):
+                  return word[:-1]
+              return word
+
+          for word in ["passwords", "routers", "news", "status", "glass"]:
+              print(word, "->", stem(word))
+        expectedOutput: |
+          passwords -> password
+          routers -> router
+          news -> new
+          status -> statu
+          glass -> glas
+        caption: Helpful for plurals, harmful for "news" (now matches "new"). Every analysis step trades recall (finding more) against precision (finding the right things).
+      - type: callout
+        variant: warning
+        title: Analyse queries and documents the same way
+        body: |
+          If documents are lowercased and stemmed but the query is not, "Passwords" will never match
+          anything. Use **one** analyser function for both, and re-index if you change it.
+
+  - id: inverted-index
+    title: The inverted index
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An **[inverted index](glossary:inverted-index)** maps each term to its
+          **[postings list](glossary:postings-list)**: the documents that contain the term (here with how
+          many times). It is "inverted" because a document maps to words, while the index maps words to
+          documents — like the index at the back of a book.
+
+          Here is the corpus we will use for the rest of the lesson:
+      - type: code
+        runnable: true
+        id: build-index
+        code: |
+          STOP_WORDS = {"a", "an", "and", "be", "for", "how", "is", "of", "the", "to", "your"}
+
+          def tokenize(text):
+              cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+              return [word for word in cleaned.split() if word not in STOP_WORDS]
+
+          docs = {
+              "d1": "How to reset your password",
+              "d2": "Password rules: a password must be long",
+              "d3": "How to change the Wi-Fi router password",
+          }
+          docs_terms = {doc_id: tokenize(text) for doc_id, text in docs.items()}
+          for doc_id, terms in docs_terms.items():
+              print(doc_id, terms)
+
+          index = {}
+          for doc_id, terms in docs_terms.items():
+              for term in terms:
+                  postings = index.setdefault(term, {})
+                  postings[doc_id] = postings.get(doc_id, 0) + 1
+
+          for term in sorted(index):
+              print(f"{term:9} -> {index[term]}")
+        expectedOutput: |
+          d1 ['reset', 'password']
+          d2 ['password', 'rules', 'password', 'must', 'long']
+          d3 ['change', 'wi', 'fi', 'router', 'password']
+          change    -> {'d3': 1}
+          fi        -> {'d3': 1}
+          long      -> {'d2': 1}
+          must      -> {'d2': 1}
+          password  -> {'d1': 1, 'd2': 2, 'd3': 1}
+          reset     -> {'d1': 1}
+          router    -> {'d3': 1}
+          rules     -> {'d2': 1}
+          wi        -> {'d3': 1}
+        annotations:
+          - line: 19
+            text: "`setdefault` returns the term's postings dict, creating an empty one the first time the term is seen."
+          - line: 20
+            text: Count how often the term occurs in this document — its term frequency (tf).
+      - type: visualization
+        component: python-tracer
+        title: Watch postings lists form
+        caption: Two tiny documents. Each term gets an entry the first time it is seen; later occurrences update the count.
+        props:
+          code: |
+            docs = {"a": "red apple", "b": "red red wine"}
+            index = {}
+            for doc_id, text in docs.items():
+                for term in text.split():
+                    postings = index.setdefault(term, {})
+                    postings[doc_id] = postings.get(doc_id, 0) + 1
+            print(index)
+      - type: markdown
+        body: |
+          To answer a query, look up only the query's terms. Their postings lists name every
+          **candidate** document; documents sharing no term are never touched. With millions of
+          documents that is the difference between milliseconds and minutes. (Production indexes also
+          store each term's **positions** in the document, which enables phrase queries such as
+          `"reset password"`.)
+      - type: code
+        runnable: true
+        code: |
+          index = {
+              "password": {"d1": 1, "d2": 2, "d3": 1},
+              "reset": {"d1": 1},
+              "router": {"d3": 1},
+          }
+          query_terms = ["reset", "password"]
+          candidates = set()
+          for term in query_terms:
+              candidates |= set(index.get(term, {}))
+          print(sorted(candidates))
+        expectedOutput: |
+          ['d1', 'd2', 'd3']
+        caption: An OR query takes the union of postings lists. Every document mentions "password", so all three are candidates — now we need to rank them.
+      - type: item
+        ref: predict-postings
+
+  - id: tf-idf
+    title: "Ranking, step 1: TF-IDF"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two intuitions drive keyword ranking:
+
+          - **Term frequency (tf):** a document that mentions a query term more often is more likely to
+            be about it.
+          - **Inverse document frequency (idf):** a term that appears in *few* documents is more
+            informative than one that appears everywhere. "reset" narrows things down; "password" does
+            not in this corpus.
+
+          **[TF-IDF](glossary:tf-idf)** multiplies them. A common form is
+          *idf(t) = ln(N / df(t))*, where *N* is the number of documents and *df(t)* the number containing
+          *t*, and a document's score is the [sum](concept:math.summation-notation) over query terms:
+
+          *score(d, q) = Σ_{t ∈ q} tf(t, d) · idf(t)*
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          index = {
+              "password": {"d1": 1, "d2": 2, "d3": 1},
+              "reset": {"d1": 1},
+              "router": {"d3": 1},
+          }
+          N = 3
+
+          def idf(term):
+              return math.log(N / len(index[term]))
+
+          for term in ["reset", "password", "router"]:
+              print(f"idf({term}) = ln({N}/{len(index[term])}) = {idf(term):.4f}")
+
+          query = ["reset", "password"]
+          for doc_id in ["d1", "d2", "d3"]:
+              score = sum(index[t].get(doc_id, 0) * idf(t) for t in query if t in index)
+              print(doc_id, round(score, 4))
+        expectedOutput: |
+          idf(reset) = ln(3/1) = 1.0986
+          idf(password) = ln(3/3) = 0.0000
+          idf(router) = ln(3/1) = 1.0986
+          d1 1.0986
+          d2 0.0
+          d3 0.0
+        caption: '"password" is in every document, so its idf is ln(1) = 0 and it contributes nothing. Only the rare term "reset" separates the documents.'
+      - type: markdown
+        body: |
+          TF-IDF works, but it has two weaknesses. Term frequency counts **linearly** — a document that
+          repeats "password" 20 times scores 20 times higher than one that says it once, which rewards
+          keyword stuffing. And **long documents** naturally contain more occurrences of everything.
+          BM25 fixes both.
+      - type: item
+        ref: predict-idf-zero
+
+  - id: bm25
+    title: "Ranking, step 2: BM25"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[BM25](glossary:bm25)** comes from the probabilistic relevance framework developed by
+          Robertson, Spärck Jones and others; Robertson and Zaragoza's review
+          ([2009](https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf)) is the
+          standard reference. Per query term it multiplies an IDF weight by a **saturating**,
+          **length-normalised** term-frequency component:
+
+          *score(d, q) = Σ_{t ∈ q} IDF(t) · tf · (k₁ + 1) / (tf + k₁ · (1 − b + b · dl / avgdl))*
+
+          | Symbol | Meaning |
+          |---|---|
+          | *tf* | how often term *t* occurs in document *d* |
+          | *dl*, *avgdl* | length of *d* in terms, and the average length over the collection |
+          | **k₁** | **saturation**: how quickly extra occurrences stop helping. k₁ = 0 ignores tf (present or not); large k₁ makes tf nearly linear. Common default 1.2. |
+          | **b** | **length normalisation**, from 0 to 1: how much long documents are penalised. b = 0 ignores length; b = 1 fully normalises. Common default 0.75. |
+
+          For the IDF part, the classic weight without relevance information is
+          *ln((N − df + 0.5) / (df + 0.5))*. It turns **negative** for terms in more than half the
+          documents, so Lucene-based engines (Elasticsearch, OpenSearch) use
+          *ln(1 + (N − df + 0.5) / (df + 0.5))*, which is always positive. We use that variant.
+          Implementations differ in such small details — for example, some drop the constant (k₁ + 1)
+          factor, which does not change the ranking — so scores from different engines are not directly
+          comparable.
+
+          Elasticsearch documents its defaults as k₁ = 1.2 and b = 0.75
+          ([similarity settings](https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity)),
+          and SQLite's FTS5 hard-codes the same values.
+      - type: code
+        runnable: true
+        id: bm25
+        code: |
+          import math
+          from collections import Counter
+
+          def bm25_scores(query_terms, docs_terms, k1=1.2, b=0.75):
+              N = len(docs_terms)
+              avgdl = sum(len(terms) for terms in docs_terms.values()) / N
+              df = Counter()
+              for terms in docs_terms.values():
+                  df.update(set(terms))              # each document counts once per term
+              scores = {}
+              for doc_id, terms in docs_terms.items():
+                  tf = Counter(terms)
+                  norm = k1 * (1 - b + b * len(terms) / avgdl)
+                  score = 0.0
+                  for q in query_terms:
+                      if tf[q] == 0:
+                          continue
+                      idf = math.log(1 + (N - df[q] + 0.5) / (df[q] + 0.5))
+                      score += idf * tf[q] * (k1 + 1) / (tf[q] + norm)
+                  scores[doc_id] = score
+              return scores
+
+          docs_terms = {
+              "d1": ["reset", "password"],
+              "d2": ["password", "rules", "password", "must", "long"],
+              "d3": ["change", "wi", "fi", "router", "password"],
+          }
+          scores = bm25_scores(["reset", "password"], docs_terms)
+          for doc_id in sorted(scores, key=scores.get, reverse=True):
+              print(doc_id, round(scores[doc_id], 4))
+        expectedOutput: |
+          d1 1.4009
+          d2 0.1715
+          d3 0.1211
+        annotations:
+          - line: 9
+            text: "`set(terms)` so a term repeated in one document only adds 1 to its document frequency."
+          - line: 13
+            text: "The length-normalised k1 term: equals k1 exactly when the document has average length."
+          - line: 19
+            text: The BM25 term weight. Its tf part can never exceed k1 + 1, however often the term repeats.
+      - type: markdown
+        body: |
+          **Check it by hand.** The token lists have lengths 2, 5 and 5, so *avgdl* = 12 / 3 = **4**,
+          and *N* = 3.
+
+          | Quantity | Calculation | Value |
+          |---|---|---|
+          | IDF(reset), df = 1 | ln(1 + (3 − 1 + 0.5) / (1 + 0.5)) = ln(2.6667) | **0.9808** |
+          | IDF(password), df = 3 | ln(1 + (3 − 3 + 0.5) / (3 + 0.5)) = ln(1.1429) | **0.1335** |
+          | norm(d1), dl = 2 | 1.2 × (1 − 0.75 + 0.75 × 2/4) = 1.2 × 0.625 | **0.75** |
+          | norm(d2) = norm(d3), dl = 5 | 1.2 × (0.25 + 0.75 × 5/4) = 1.2 × 1.1875 | **1.425** |
+          | score(d1) | 0.9808 × (1 × 2.2)/(1 + 0.75) + 0.1335 × (1 × 2.2)/(1 + 0.75) = 1.2330 + 0.1679 | **1.4009** |
+          | score(d2) | 0.1335 × (2 × 2.2)/(2 + 1.425) = 0.1335 × 1.2847 | **0.1715** |
+          | score(d3) | 0.1335 × (1 × 2.2)/(1 + 1.425) = 0.1335 × 0.9072 | **0.1211** |
+
+          The rare term "reset" decides the ranking. d2 beats d3 because it says "password" twice — but
+          only by about 40%, not 100%, because of saturation.
+
+          **Saturation (k₁).** Compare the tf part of TF-IDF (linear) and BM25 for a document of average
+          length (where the tf part is tf · 2.2 / (tf + 1.2)):
+      - type: code
+        runnable: true
+        code: |
+          k1 = 1.2
+          print("tf  tf-idf  bm25")
+          for tf in (1, 2, 3, 5, 10, 20):
+              print(f"{tf:<4}{tf:<8}{tf * (k1 + 1) / (tf + k1):.2f}")
+        expectedOutput: |
+          tf  tf-idf  bm25
+          1   1       1.00
+          2   2       1.38
+          3   3       1.57
+          5   5       1.77
+          10  10      1.96
+          20  20      2.08
+        caption: BM25's tf part approaches k1 + 1 = 2.2 and never exceeds it — repeating a word 20 times barely helps more than repeating it 5 times.
+      - type: markdown
+        body: |
+          **Length normalisation (b).** The tf part for a single occurrence (tf = 1) in documents of
+          different lengths, when the average length is 4:
+      - type: code
+        runnable: true
+        code: |
+          avgdl = 4
+          print("dl:     " + "  ".join(f"{dl:4}" for dl in (2, 4, 8, 16)))
+          for b in (0.0, 0.75, 1.0):
+              row = []
+              for dl in (2, 4, 8, 16):
+                  norm = 1.2 * (1 - b + b * dl / avgdl)
+                  row.append(f"{1 * 2.2 / (1 + norm):4.2f}")
+              print(f"b={b:<4}: " + "  ".join(row))
+        expectedOutput: |
+          dl:        2     4     8    16
+          b=0.0 : 1.00  1.00  1.00  1.00
+          b=0.75: 1.26  1.00  0.71  0.45
+          b=1.0 : 1.38  1.00  0.65  0.38
+        caption: With b = 0 a mention in a 16-term document counts as much as in a 2-term one. With b = 0.75 the long document's mention is worth less — it is more likely to be incidental.
+      - type: item
+        ref: mcq-k1-b
+
+  - id: strengths-weaknesses
+    title: Where keyword search wins and where it fails
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Strengths.** Keyword search finds **exact identifiers** — error codes (`E1042`), product
+          names, people's names, clause numbers, function names — that embedding models tend to blur. It
+          needs no model, indexes quickly, runs cheaply on a CPU, and is **explainable**: you can show
+          exactly which terms matched and why a document ranked first. On the BEIR benchmark, BM25 was a
+          robust baseline that many neural retrievers did not beat on out-of-domain data
+          ([Thakur et al., 2021](https://arxiv.org/abs/2104.08663)).
+
+          **Weakness: vocabulary mismatch.** If the user's words differ from the document's words, the
+          score is zero, no matter how related the meaning:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          from collections import Counter
+
+          def bm25_scores(query_terms, docs_terms, k1=1.2, b=0.75):
+              N = len(docs_terms)
+              avgdl = sum(len(t) for t in docs_terms.values()) / N
+              df = Counter()
+              for terms in docs_terms.values():
+                  df.update(set(terms))
+              scores = {}
+              for doc_id, terms in docs_terms.items():
+                  tf = Counter(terms)
+                  norm = k1 * (1 - b + b * len(terms) / avgdl)
+                  scores[doc_id] = sum(
+                      math.log(1 + (N - df[q] + 0.5) / (df[q] + 0.5)) * tf[q] * (k1 + 1) / (tf[q] + norm)
+                      for q in query_terms if tf[q]
+                  )
+              return scores
+
+          docs_terms = {
+              "d1": ["reset", "password"],
+              "d2": ["password", "rules", "password", "must", "long"],
+              "d3": ["change", "wi", "fi", "router", "password"],
+          }
+          print(bm25_scores(["forgot", "login"], docs_terms))
+        expectedOutput: |
+          {'d1': 0, 'd2': 0, 'd3': 0}
+        caption: '"forgot login" means the same as "reset password" to a person, but shares no term with any document.'
+      - type: markdown
+        body: |
+          Fixes within keyword search include stemming, synonym lists and query expansion, but they are
+          manual and brittle. **Embeddings** handle paraphrases by comparing meaning instead of words —
+          see [vector similarity search](concept:rag.vector-similarity) — and they fail in *other* ways.
+          That is why production systems often combine both in [hybrid search](concept:rag.hybrid-search).
+      - type: item
+        ref: mcq-keyword-vs-semantic
+
+  - id: in-practice
+    title: Keyword search in real systems
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          You rarely write BM25 yourself in production — search engines and databases provide it. SQLite
+          ships a full-text search extension, FTS5, with a built-in `bm25()` ranking function, and
+          Python's `sqlite3` module can use it (it works in this browser runtime too). FTS5's
+          documentation states that better matches get numerically **lower** values (it multiplies the
+          score by −1), so you sort ascending, and that whitespace-separated query terms are combined
+          with an implicit AND.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE VIRTUAL TABLE docs USING fts5(body)")
+          con.executemany("INSERT INTO docs(body) VALUES (?)", [
+              ("How to reset your password",),
+              ("Password rules: a password must be long",),
+              ("How to change the Wi-Fi router password",),
+          ])
+
+          query = "SELECT rowid, round(bm25(docs), 4) FROM docs WHERE docs MATCH ? ORDER BY bm25(docs)"
+          print("reset password    ", con.execute(query, ("reset password",)).fetchall())
+          print("reset OR password ", con.execute(query, ("reset OR password",)).fetchall())
+        expectedOutput: |
+          reset password     [(1, -0.569)]
+          reset OR password  [(1, -0.569), (2, -0.0), (3, -0.0)]
+        annotations:
+          - line: 11
+            text: The query text is passed as a parameter (?), never pasted into the SQL string.
+          - line: 12
+            text: Implicit AND — only row 1 contains both terms.
+          - line: 13
+            text: With OR, rows 2 and 3 match "password" only. That term is in every row, so it adds essentially nothing (shown as -0.0).
+        caption: >-
+          Lower is better in FTS5, so the best match comes first with ORDER BY bm25(docs). The numbers
+          differ from our toy because FTS5 has its own tokeniser (no stop words) and IDF details — scores
+          are only comparable within one engine.
+      - type: markdown
+        body: |
+          Engines such as Elasticsearch and OpenSearch add configurable analysers (language-specific
+          stemming, synonyms), field boosts, phrase and fuzzy queries, and distributed indexes. The
+          concepts — analysis, postings, IDF, saturation, length normalisation — are the ones you just
+          built.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | A query with capitals or plurals finds nothing | Query analysed differently from documents | Run the same `tokenize` (and stemmer) on both. |
+          | `ZeroDivisionError` in TF-IDF | Computing ln(N / df) for a query term no document contains (df = 0) | Skip query terms that are not in the index. |
+          | Common words dominate the ranking | IDF missing, or stop words kept with plain tf | Multiply by IDF; consider stop words. |
+          | Long documents always win | No length normalisation | Use BM25 with b around 0.75. |
+          | The worst results come first | Sorted ascending — or an engine like FTS5 where lower is better was sorted descending | Check the score direction of your engine and sort accordingly. |
+          | Product code `E-1042` never matches `E1042` | The tokeniser splits on `-` | Add a custom rule or a normalisation step for identifiers. |
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          index = {"password": {"d1": 1, "d2": 2}, "reset": {"d1": 1}}
+          N = 2
+          query = ["reset", "username"]
+          for term in query:
+              df = len(index.get(term, {}))
+              print(term, math.log(N / df))
+        expectError: ZeroDivisionError
+        caption: '"username" is in no document, so df = 0 and N / df divides by zero. Guard with `if term in index`.'
+
+  - id: practice
+    title: "Practice: build a mini search engine"
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build the pieces, then put them together into a working BM25 search engine. The checks run
+          your code on other documents and queries, so it must really compute the results.
+      - type: item
+        ref: code-build-index
+      - type: item
+        ref: parsons-index
+      - type: item
+        ref: code-bm25-term
+      - type: item
+        ref: debug-query-analysis
+      - type: item
+        ref: code-mini-search
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Analysis** (lowercase, split, stop words, stemming) decides what counts as a match. Apply
+            the same analyser to documents and queries.
+          - An **inverted index** maps each term to a postings list, so a query only touches documents
+            that share its terms.
+          - **TF-IDF** = term frequency × rarity; a term in every document gets idf 0.
+          - **BM25** adds saturation (k₁ ≈ 1.2) and length normalisation (b ≈ 0.75) and uses an IDF that
+            stays positive in Lucene-style engines.
+          - Keyword search excels at exact names, codes and jargon and is explainable; it fails on
+            synonyms and paraphrases, where embeddings help — hence hybrid search.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Explain BM25." — Score = sum over query terms of IDF (rare terms matter more) × a tf component
+          that saturates (k₁: the tenth occurrence adds little) and is normalised by document length (b:
+          long documents do not win just by being long). Then say when it beats vector search (exact
+          identifiers, out-of-domain text, explainability) and when it loses (vocabulary mismatch).
+
+items:
+  - id: predict-postings
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      docs = {"a": "red apple", "b": "green apple pie", "c": "red red wine"}
+      index = {}
+      for doc_id, text in docs.items():
+          for term in text.split():
+              index.setdefault(term, {})
+              index[term][doc_id] = index[term].get(doc_id, 0) + 1
+      print(index["red"])
+      print(index["apple"])
+    answer: |
+      {'a': 1, 'c': 2}
+      {'a': 1, 'b': 1}
+    explanation: >-
+      "red" appears once in a and twice in c, so its postings list is {'a': 1, 'c': 2}; b does not appear
+      because it does not contain "red". "apple" appears once each in a and b.
+    wrongAnswers:
+      - answer: |
+          {'a': 1, 'b': 0, 'c': 2}
+          {'a': 1, 'b': 1, 'c': 0}
+        feedback: A postings list only contains documents that have the term. That is what makes the index fast — absent documents are never stored or visited.
+      - answer: |
+          {'a': 1, 'c': 1}
+          {'a': 1, 'b': 1}
+        feedback: The index counts every occurrence. "red red wine" contains "red" twice, so c has a count of 2.
+
+  - id: predict-idf-zero
+    type: predict-output
+    skill: prediction
+    prompt: '"cat" occurs twice in the third document. What is its TF-IDF weight there?'
+    code: |
+      import math
+
+      docs = [["cat", "sat"], ["cat", "ran"], ["cat", "cat", "slept"]]
+      N = len(docs)
+      df = sum(1 for d in docs if "cat" in d)
+      print(docs[2].count("cat") * math.log(N / df))
+    answer: "0.0"
+    explanation: >-
+      "cat" is in all 3 documents, so idf = ln(3 / 3) = ln(1) = 0, and any tf times 0 is 0. A term that
+      appears everywhere cannot distinguish documents.
+    wrongAnswers:
+      - answer: "2"
+        feedback: That is the term frequency alone. TF-IDF multiplies it by idf, which is ln(3/3) = 0 here.
+      - answer: "2.1972245773362196"
+        feedback: That would be 2 × ln(3), the idf of a term that occurs in only one document. df here is 3.
+
+  - id: mcq-k1-b
+    type: mcq
+    skill: explanation
+    prompt: In BM25, what does the parameter **b** control?
+    explanation: >-
+      b sets how strongly the term-frequency component is normalised by document length relative to the
+      average: b = 0 ignores length, b = 1 normalises fully. k1 controls saturation.
+    options:
+      - id: a
+        text: How much a document's length (relative to the average) reduces its term-frequency credit.
+        correct: true
+        feedback: Right — with b = 0.75, a mention in a long document is worth less than one in a short document.
+      - id: b
+        text: How quickly repeated occurrences of a term stop adding to the score.
+        feedback: That is k1, the saturation parameter.
+      - id: c
+        text: How rare a term must be before it counts.
+        feedback: Rarity is handled by the IDF factor, which has no tunable parameter in this formula.
+      - id: d
+        text: The maximum number of documents returned.
+        feedback: That is the k in top-k, chosen by the caller. b is part of the scoring formula.
+
+  - id: mcq-keyword-vs-semantic
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: For which query is BM25 keyword search most likely to beat embedding-based semantic search over a support knowledge base?
+    explanation: >-
+      Exact identifiers such as error codes are where keyword search shines: the code is a rare term with
+      high IDF and must match exactly. Embeddings may place E1042 near similar-looking codes or generic
+      "error" passages. The paraphrase queries are where semantic search helps.
+    options:
+      - id: a
+        text: "\"What does error E1042 mean?\""
+        correct: true
+        feedback: Right — an exact, rare identifier gets a high IDF and an exact match.
+      - id: b
+        text: "\"I can't get into my account\" (documents say \"reset your password\")"
+        feedback: No words in common, so BM25 scores zero. This vocabulary mismatch is where embeddings help.
+      - id: c
+        text: "\"how do I get my money back\" (documents say \"refund policy\")"
+        feedback: Another paraphrase with no shared terms — semantic search is the better tool here.
+      - id: d
+        text: "\"is it cold outside\" (documents are about the office heating policy)"
+        feedback: The relation is about meaning, not shared words; keyword search will struggle.
+
+  - id: code-build-index
+    type: code
+    skill: implementation
+    prompt: |
+      Write `build_index(docs)`. `docs` maps document IDs to **lists of terms** (already tokenised).
+      Return an inverted index: a dict mapping each term to a dict `{doc_id: count}` of the documents that
+      contain it. Documents without the term must not appear in its postings.
+    starterCode: |
+      def build_index(docs):
+          index = {}
+          # For each document and each term in it, add 1 to index[term][doc_id].
+          return index
+
+      docs = {"d1": ["reset", "password"], "d2": ["password", "rules", "password"]}
+      print(build_index(docs))
+    solution: |
+      def build_index(docs):
+          index = {}
+          for doc_id, terms in docs.items():
+              for term in terms:
+                  postings = index.setdefault(term, {})
+                  postings[doc_id] = postings.get(doc_id, 0) + 1
+          return index
+
+      docs = {"d1": ["reset", "password"], "d2": ["password", "rules", "password"]}
+      print(build_index(docs))
+    expectedOutput: |
+      {'reset': {'d1': 1}, 'password': {'d1': 1, 'd2': 2}, 'rules': {'d2': 1}}
+    tests:
+      - name: builds the example index
+        code: |
+          result = build_index({"d1": ["reset", "password"], "d2": ["password", "rules", "password"]})
+          expected = {"reset": {"d1": 1}, "password": {"d1": 1, "d2": 2}, "rules": {"d2": 1}}
+          assert result == expected, f"Expected {expected}, got {result}."
+      - name: only documents containing the term appear
+        code: |
+          result = build_index({"a": ["x"], "b": ["y"], "c": ["x", "x", "x"]})
+          assert result.get("x") == {"a": 1, "c": 3}, f"'x' is in a once and c three times, and not in b; got {result.get('x')}."
+          assert result.get("y") == {"b": 1}, f"'y' is only in b; got {result.get('y')}."
+      - name: empty documents add nothing
+        code: |
+          result = build_index({"empty": [], "one": ["solo"]})
+          assert result == {"solo": {"one": 1}}, f"An empty document contributes no terms; got {result}."
+    hints:
+      - Loop over `docs.items()`, then over each document's terms.
+      - "`index.setdefault(term, {})` returns the postings dict for the term, creating it if needed."
+      - "Increment with `postings[doc_id] = postings.get(doc_id, 0) + 1`."
+    feedback:
+      - when: { errorType: KeyError }
+        message: You are adding to index[term] or index[term][doc_id] before it exists. Use setdefault for the term and .get(doc_id, 0) for the count.
+      - when: { outputEquals: "{}\n" }
+        message: The index is still empty. Loop over every document and every term in it.
+    explanation: >-
+      The inverted index is a dict of dicts: term → {doc_id: tf}. Building it is one pass over the corpus;
+      afterwards, each query term's candidates are a single dictionary lookup away.
+
+  - id: parsons-index
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to find the documents containing **every** query term (an AND query) by
+      intersecting postings lists. It should print `['d1']`. One line is a distractor.
+    solution: |
+      index = {"reset": {"d1": 1, "d4": 1}, "password": {"d1": 1, "d2": 2, "d3": 1}}
+      query = ["reset", "password"]
+      matches = set(index[query[0]])
+      for term in query[1:]:
+          matches &= set(index.get(term, {}))
+      print(sorted(matches))
+    distractors:
+      - "    matches |= set(index.get(term, {}))"
+    expectedOutput: |
+      ['d1']
+    explanation: >-
+      Start from the first term's documents and intersect (`&=`) with each other term's documents. Union
+      (`|=`) would give an OR query: every document containing any term.
+
+  - id: code-bm25-term
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `bm25_term(tf, df, N, dl, avgdl, k1=1.2, b=0.75)`, the BM25 contribution of **one** query term
+      to **one** document, using the Lucene-style IDF:
+
+      *IDF = ln(1 + (N − df + 0.5) / (df + 0.5))*
+
+      *contribution = IDF · tf · (k1 + 1) / (tf + k1 · (1 − b + b · dl / avgdl))*
+
+      Check: `bm25_term(1, 1, 3, 2, 4)` should be about `1.2330` ("reset" in d1 from the lesson).
+    starterCode: |
+      import math
+
+      def bm25_term(tf, df, N, dl, avgdl, k1=1.2, b=0.75):
+          idf = 0.0     # replace with the IDF formula
+          norm = 0.0    # replace with k1 * (1 - b + b * dl / avgdl)
+          return 0.0    # replace with the BM25 term weight
+
+      print(round(bm25_term(1, 1, 3, 2, 4), 4))
+    solution: |
+      import math
+
+      def bm25_term(tf, df, N, dl, avgdl, k1=1.2, b=0.75):
+          idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+          norm = k1 * (1 - b + b * dl / avgdl)
+          return idf * tf * (k1 + 1) / (tf + norm)
+
+      print(round(bm25_term(1, 1, 3, 2, 4), 4))
+    expectedOutput: |
+      1.233
+    tests:
+      - name: matches the hand calculation
+        code: |
+          import math
+          assert math.isclose(bm25_term(1, 1, 3, 2, 4), 1.2330, abs_tol=1e-3), f"bm25_term(1, 1, 3, 2, 4) should be about 1.2330, got {bm25_term(1, 1, 3, 2, 4)}."
+          assert math.isclose(bm25_term(2, 3, 3, 5, 4), 0.1715, abs_tol=1e-3), f"bm25_term(2, 3, 3, 5, 4) ('password' in d2) should be about 0.1715, got {bm25_term(2, 3, 3, 5, 4)}."
+      - name: works on other numbers
+        code: |
+          import math
+          got = bm25_term(3, 2, 10, 50, 100)
+          assert math.isclose(got, 2.6076, abs_tol=1e-3), f"bm25_term(3, 2, 10, 50, 100) should be about 2.6076, got {got}."
+      - name: k1 = 0 ignores term frequency
+        code: |
+          import math
+          expected_idf = math.log(1 + 8.5 / 2.5)
+          for tf in (1, 5):
+              got = bm25_term(tf, 2, 10, 50, 100, k1=0)
+              assert math.isclose(got, expected_idf, abs_tol=1e-6), f"With k1 = 0 the tf part is 1, so the result should equal the IDF ({expected_idf:.4f}) for any tf; got {got} for tf={tf}."
+      - name: b = 0 ignores document length
+        code: |
+          import math
+          short, long = bm25_term(1, 2, 10, 5, 100, b=0), bm25_term(1, 2, 10, 500, 100, b=0)
+          assert math.isclose(short, long), f"With b = 0 document length should not matter, but dl=5 gave {short} and dl=500 gave {long}."
+    hints:
+      - "`math.log` is the natural logarithm (ln)."
+      - "Compute `norm = k1 * (1 - b + b * dl / avgdl)` first; it equals k1 for a document of average length."
+      - "Return `idf * tf * (k1 + 1) / (tf + norm)`."
+    feedback:
+      - when: { outputEquals: "0.0\n" }
+        message: The function still returns 0.0. Fill in idf, norm and the returned weight.
+      - when: { outputContains: "0.5108" }
+        message: That is the classic IDF ln((N − df + 0.5)/(df + 0.5)) without the "1 +". Use the Lucene-style ln(1 + (N − df + 0.5)/(df + 0.5)).
+    explanation: >-
+      The IDF rewards rare terms, `norm` scales k1 by relative document length, and the tf fraction
+      saturates toward k1 + 1. With k1 = 0 the fraction is always 1 (pure presence), and with b = 0 length
+      plays no part.
+
+  - id: debug-query-analysis
+    type: debug
+    skill: debugging
+    prompt: |
+      This search finds `d1` for `"reset password"` but finds **nothing** for `"Reset PASSWORD!"`. Fix the
+      bug so both queries return `['d1', 'd2']` (documents containing any query term, sorted).
+    starterCode: |
+      def tokenize(text):
+          cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+          return cleaned.split()
+
+      docs = {"d1": "Reset your password", "d2": "Password rules", "d3": "Router setup"}
+      index = {}
+      for doc_id, text in docs.items():
+          for term in tokenize(text):
+              index.setdefault(term, set()).add(doc_id)
+
+      def search(query):
+          matches = set()
+          for term in query.split():
+              matches |= index.get(term, set())
+          return sorted(matches)
+
+      print(search("reset password"))
+      print(search("Reset PASSWORD!"))
+    solution: |
+      def tokenize(text):
+          cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+          return cleaned.split()
+
+      docs = {"d1": "Reset your password", "d2": "Password rules", "d3": "Router setup"}
+      index = {}
+      for doc_id, text in docs.items():
+          for term in tokenize(text):
+              index.setdefault(term, set()).add(doc_id)
+
+      def search(query):
+          matches = set()
+          for term in tokenize(query):
+              matches |= index.get(term, set())
+          return sorted(matches)
+
+      print(search("reset password"))
+      print(search("Reset PASSWORD!"))
+    expectedOutput: |
+      ['d1', 'd2']
+      ['d1', 'd2']
+    tests:
+      - name: both queries match
+        code: |
+          assert search("reset password") == ["d1", "d2"], f"search('reset password') should be ['d1', 'd2'], got {search('reset password')}."
+          assert search("Reset PASSWORD!") == ["d1", "d2"], f"search('Reset PASSWORD!') should be ['d1', 'd2'], got {search('Reset PASSWORD!')}. Analyse the query the same way as the documents."
+      - name: other messy queries
+        code: |
+          assert search("ROUTER, setup?") == ["d3"], f"search('ROUTER, setup?') should be ['d3'], got {search('ROUTER, setup?')}."
+          assert search("unicorn") == [], "A query with no indexed terms should return []."
+      - name: uses the shared analyser
+        code: |
+          import ast
+          tree = ast.parse(source)
+          fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "search")
+          called = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+          assert "tokenize" in called, "Inside search(), call tokenize(query) so the query is analysed exactly like the documents."
+    hints:
+      - "Print the terms the query produces and the keys of `index`. Do they look alike?"
+      - The documents went through `tokenize`. Did the query?
+    feedback:
+      - when: { outputEquals: "['d1', 'd2']\n[]\n" }
+        message: The second query still finds nothing. "Reset" and "PASSWORD!" are not the indexed terms "reset" and "password" — run the query through tokenize().
+    explanation: >-
+      Documents were lowercased and split on punctuation, but the query was only split on spaces, so
+      "Reset" and "PASSWORD!" never matched the indexed terms. Using one analyser for both sides is a
+      basic rule of search.
+
+  - id: code-mini-search
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Put it all together. Write `search(query, docs, k=3)` that:
+
+      1. tokenises every document and the query with the provided `tokenize`;
+      2. builds an inverted index and computes `N`, each document's length and `avgdl`;
+      3. scores documents with the provided `bm25_term`, using only documents in the query terms'
+         postings lists and skipping query terms that are in no document;
+      4. returns the top `k` results as a list of `(doc_id, score)` tuples, highest score first (ties by
+         `doc_id`). Documents with no matching term are not returned.
+    starterCode: |
+      import math
+
+      STOP_WORDS = {"a", "an", "and", "be", "for", "how", "is", "of", "the", "to", "your"}
+
+      def tokenize(text):
+          cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+          return [w for w in cleaned.split() if w not in STOP_WORDS]
+
+      def bm25_term(tf, df, N, dl, avgdl, k1=1.2, b=0.75):
+          idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+          norm = k1 * (1 - b + b * dl / avgdl)
+          return idf * tf * (k1 + 1) / (tf + norm)
+
+      def search(query, docs, k=3):
+          # 1. tokenise docs; 2. build index, N, lengths, avgdl; 3. score; 4. sort and cut to k
+          return []
+
+      docs = {
+          "d1": "How to reset your password",
+          "d2": "Password rules: a password must be long",
+          "d3": "How to change the Wi-Fi router password",
+      }
+      for doc_id, score in search("reset password", docs):
+          print(doc_id, round(score, 4))
+    solution: |
+      import math
+
+      STOP_WORDS = {"a", "an", "and", "be", "for", "how", "is", "of", "the", "to", "your"}
+
+      def tokenize(text):
+          cleaned = "".join(ch if ch.isalnum() else " " for ch in text.lower())
+          return [w for w in cleaned.split() if w not in STOP_WORDS]
+
+      def bm25_term(tf, df, N, dl, avgdl, k1=1.2, b=0.75):
+          idf = math.log(1 + (N - df + 0.5) / (df + 0.5))
+          norm = k1 * (1 - b + b * dl / avgdl)
+          return idf * tf * (k1 + 1) / (tf + norm)
+
+      def search(query, docs, k=3):
+          docs_terms = {doc_id: tokenize(text) for doc_id, text in docs.items()}
+          N = len(docs_terms)
+          avgdl = sum(len(terms) for terms in docs_terms.values()) / N
+          index = {}
+          for doc_id, terms in docs_terms.items():
+              for term in terms:
+                  postings = index.setdefault(term, {})
+                  postings[doc_id] = postings.get(doc_id, 0) + 1
+          scores = {}
+          for term in tokenize(query):
+              postings = index.get(term)
+              if not postings:
+                  continue
+              for doc_id, tf in postings.items():
+                  dl = len(docs_terms[doc_id])
+                  scores[doc_id] = scores.get(doc_id, 0.0) + bm25_term(tf, len(postings), N, dl, avgdl)
+          ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+          return ranked[:k]
+
+      docs = {
+          "d1": "How to reset your password",
+          "d2": "Password rules: a password must be long",
+          "d3": "How to change the Wi-Fi router password",
+      }
+      for doc_id, score in search("reset password", docs):
+          print(doc_id, round(score, 4))
+    expectedOutput: |
+      d1 1.4009
+      d2 0.1715
+      d3 0.1211
+    tests:
+      - name: ranks the lesson corpus correctly
+        code: |
+          import math
+          result = search("reset password", docs)
+          ids = [d for d, _ in result]
+          assert ids == ["d1", "d2", "d3"], f"Expected the order ['d1', 'd2', 'd3'], got {ids}."
+          assert math.isclose(result[0][1], 1.4009, abs_tol=1e-3), f"d1 should score about 1.4009 (the hand calculation), got {result[0][1]}."
+      - name: works on a different corpus
+        code: |
+          faq = {
+              "f1": "Refunds are issued within 14 days",
+              "f2": "Error E1042 means the card was declined",
+              "f3": "To get a refund, contact support with your order number",
+              "f4": "Delivery takes 3 to 5 days",
+          }
+          result = search("refund error E1042", faq)
+          ids = [d for d, _ in result]
+          assert ids == ["f2", "f3"], f"'refund error E1042' should return f2 (two rare matching terms) then f3; got {ids}. Note f1 says 'Refunds', which does not match 'refund' without stemming."
+      - name: respects k and skips unknown terms
+        code: |
+          faq = {"f1": "Delivery takes 3 to 5 days", "f2": "Refunds take 14 days", "f3": "Contact support"}
+          result = search("days unicorn", faq, k=1)
+          assert len(result) == 1, f"With k=1 return exactly one result, got {result}."
+          assert search("unicorn", faq) == [], "A query whose terms are in no document should return []."
+      - name: results are (doc_id, score) tuples, best first
+        code: |
+          result = search("password", docs)
+          assert all(isinstance(r, tuple) and len(r) == 2 for r in result), f"Return a list of (doc_id, score) tuples, got {result}."
+          scores = [s for _, s in result]
+          assert scores == sorted(scores, reverse=True), f"Scores must be in descending order, got {scores}."
+    hints:
+      - Reuse your `build_index` logic on the tokenised documents, and compute `avgdl` as total terms / N.
+      - "For each query term, `postings = index.get(term)`; the document frequency is `len(postings)`; loop over `postings.items()` to get each document's tf."
+      - "Sort with `sorted(scores.items(), key=lambda item: (-item[1], item[0]))` for score-descending, then doc_id; slice `[:k]`."
+    feedback:
+      - when: { outputEquals: "" }
+        message: search() returns an empty list. Build the index and add each matching term's bm25_term to the document's score.
+      - when: { outputEquals: "d3 0.1211\nd2 0.1715\nd1 1.4009\n" }
+        message: The results are in ascending order. Higher BM25 scores are better — sort descending.
+      - when: { errorType: ZeroDivisionError }
+        message: Something divides by zero — check avgdl (N must be the number of documents) and that you skip terms not in the index.
+    explanation: >-
+      This is a real (if small) search engine: analysis, an inverted index, BM25 scoring over postings
+      only, and top-k ranking. The FAQ test also shows a classic keyword limitation — "Refunds" and
+      "refund" are different terms without stemming.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-saturation
+    type: predict-output
+    skill: prediction
+    prompt: For a document of average length, what is BM25's tf component when the term occurs once, and when it occurs 4 times (k1 = 1.2)?
+    code: |
+      k1 = 1.2
+      for tf in (1, 4):
+          print(round(tf * (k1 + 1) / (tf + k1), 2))
+    answer: |
+      1.0
+      1.69
+    explanation: >-
+      tf = 1 gives 2.2 / 2.2 = 1.0. tf = 4 gives 8.8 / 5.2 ≈ 1.69. Four times the occurrences earn only
+      69% more credit — saturation.
+    wrongAnswers:
+      - answer: |
+          1.0
+          4.0
+        feedback: That is linear term frequency, as in plain TF-IDF. BM25 saturates, approaching k1 + 1 = 2.2.
+      - answer: |
+          2.2
+          8.8
+        feedback: Those are only the numerators. Divide by tf + k1 (2.2 and 5.2).
+
+  - id: m-k1-zero
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: You set **k1 = 0** in BM25 (b unchanged). How does ranking behave?
+    explanation: >-
+      With k1 = 0 the tf component is tf · 1 / (tf + 0) = 1 whenever the term is present. Documents are
+      scored only by which query terms they contain (weighted by IDF), not how often — and length
+      normalisation has no effect either, since it only scales k1.
+    options:
+      - id: a
+        text: Only whether each query term is present matters (weighted by IDF); how often it occurs no longer counts.
+        correct: true
+        feedback: Right — binary matching. Large k1 moves toward linear tf instead.
+      - id: b
+        text: Term frequency counts linearly, as in TF-IDF.
+        feedback: That is the behaviour as k1 grows very large, not at 0.
+      - id: c
+        text: All documents get a score of 0.
+        feedback: The tf component becomes 1, not 0, so the IDF weights still apply.
+      - id: d
+        text: Long documents are penalised more strongly.
+        feedback: Length normalisation multiplies k1; with k1 = 0 it has no effect at all.
+
+  - id: m-and-query
+    type: code
+    skill: implementation
+    prompt: |
+      Write `and_query(index, terms)` that returns a **sorted list** of the document IDs containing
+      **every** term in `terms`, using the inverted index (`term -> {doc_id: count}`). Return `[]` if any
+      term is missing from the index or if `terms` is empty.
+    starterCode: |
+      def and_query(index, terms):
+          # Intersect the postings lists of all the terms.
+          return []
+
+      index = {
+          "reset": {"d1": 1, "d4": 1},
+          "password": {"d1": 1, "d2": 2, "d4": 3},
+          "router": {"d3": 1, "d4": 1},
+      }
+      print(and_query(index, ["reset", "password"]))
+    solution: |
+      def and_query(index, terms):
+          if not terms:
+              return []
+          matches = None
+          for term in terms:
+              docs = set(index.get(term, {}))
+              matches = docs if matches is None else matches & docs
+          return sorted(matches)
+
+      index = {
+          "reset": {"d1": 1, "d4": 1},
+          "password": {"d1": 1, "d2": 2, "d4": 3},
+          "router": {"d3": 1, "d4": 1},
+      }
+      print(and_query(index, ["reset", "password"]))
+    expectedOutput: |
+      ['d1', 'd4']
+    tests:
+      - name: two terms
+        code: |
+          assert and_query(index, ["reset", "password"]) == ["d1", "d4"], f"d1 and d4 contain both 'reset' and 'password'; got {and_query(index, ['reset', 'password'])}."
+      - name: three terms and one term
+        code: |
+          assert and_query(index, ["reset", "password", "router"]) == ["d4"], f"Only d4 contains all three terms; got {and_query(index, ['reset', 'password', 'router'])}."
+          assert and_query(index, ["password"]) == ["d1", "d2", "d4"], f"A single term returns its whole postings list, sorted; got {and_query(index, ['password'])}."
+      - name: missing terms and empty queries
+        code: |
+          assert and_query(index, ["reset", "unicorn"]) == [], "If any term is in no document, no document can contain all terms: return []."
+          assert and_query(index, []) == [], "An empty query should return []."
+      - name: works with another index
+        code: |
+          other = {"x": {"a": 1, "b": 1, "c": 1}, "y": {"b": 2, "c": 1}, "z": {"c": 5}}
+          assert and_query(other, ["y", "x"]) == ["b", "c"], f"Expected ['b', 'c'], got {and_query(other, ['y', 'x'])}."
+    hints:
+      - "`set(index.get(term, {}))` gives the set of documents for a term (empty if the term is unknown)."
+      - Start from the first term's set and intersect with `&` for each remaining term.
+      - Handle the empty-query case first; return `sorted(...)` at the end.
+    feedback:
+      - when: { outputEquals: "['d1', 'd2', 'd4']\n" }
+        message: That is the union (documents with ANY term). An AND query needs the intersection (&).
+      - when: { errorType: KeyError }
+        message: index[term] fails for unknown terms. Use index.get(term, {}).
+    explanation: >-
+      An AND query intersects postings lists. Engines intersect starting from the shortest list (the
+      rarest term) because the result can never be larger than it.
+
+  - id: m-tf-obsolete
+    type: true-false
+    skill: recognition
+    prompt: "True or false: now that embedding models exist, BM25 keyword search is obsolete for RAG retrieval."
+    answer: false
+    explanation: >-
+      BM25 remains a strong, cheap and explainable baseline, is better for exact identifiers, and was
+      robust out of domain on benchmarks such as BEIR. Many production systems combine it with vector
+      search (hybrid search) rather than replacing it.
+
+  - id: m-explain-bm25
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a teammate, without the formula, why BM25 ranks "How to reset your password" above
+      "Password rules: a password must be long" for the query "reset password", even though the second
+      document says "password" twice.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that "reset" is rare in the collection, so it has a much higher IDF weight than "password", which appears in every document.
+      - Explains saturation — the second occurrence of "password" adds much less than the first.
+      - Mentions length normalisation — the second document is longer than average, so its matches count for less.
+      - Concludes that matching the rare term outweighs repeating the common one.
+    modelAnswer: |
+      BM25 cares most about rare words. "password" appears in every document, so matching it says little
+      and earns a small weight, while "reset" appears in only one document and earns a large weight. The
+      first document is the only one matching "reset", so it gets a big boost. The second document does
+      say "password" twice, but BM25 saturates term frequency — the second occurrence adds much less than
+      the first — and it is also longer than average, which reduces its credit. So one rare match beats
+      two common ones.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-saturation, m-k1-zero, m-and-query, m-tf-obsolete, m-explain-bm25]
+
+cheatsheet: |
+  ```python
+  def tokenize(text):                                   # same for docs AND queries
+      cleaned = "".join(c if c.isalnum() else " " for c in text.lower())
+      return [w for w in cleaned.split() if w not in STOP_WORDS]
+
+  index.setdefault(term, {})[doc_id] = index[term].get(doc_id, 0) + 1   # term -> {doc: tf}
+
+  idf_tfidf = math.log(N / df)                          # 0 for a term in every doc
+  idf_bm25  = math.log(1 + (N - df + 0.5) / (df + 0.5)) # Lucene-style, always > 0
+  norm = k1 * (1 - b + b * dl / avgdl)                  # k1≈1.2, b≈0.75
+  score += idf_bm25 * tf * (k1 + 1) / (tf + norm)
+  ```
+  - OR query = union of postings; AND query = intersection.
+  - k1 → saturation (0 = presence only); b → length normalisation (0 = ignore length).
+  - Great for codes, names, jargon; blind to synonyms → combine with vectors (hybrid search).

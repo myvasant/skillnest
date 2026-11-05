@@ -1,0 +1,245 @@
+id: log-analyzer
+title: Streaming Access-Log Analyzer
+track: python-intermediate
+level: intermediate
+estimatedHours: 7
+environment: local
+starterKit: projects/log-analyzer
+summary: >-
+  Parse web-server access logs with a compiled regular expression into immutable records, stream
+  them through generators so file size never matters, and report status codes, top paths and
+  error rates per hour, treating malformed lines as data rather than crashes.
+concepts:
+  - python.regex
+  - python.generators
+  - python.dataclasses
+  - python.files
+  - python.raising-exceptions
+  - python.cli-apps
+  - python.type-hints
+  - python.stdlib
+problem: |
+  Web servers such as nginx and Apache write one line per request in the **Common** or
+  **Combined Log Format**:
+
+  ```text
+  203.0.113.7 - - [22/Oct/2026:13:05:01 +0000] "GET /index.html HTTP/1.1" 200 2326 "-" "Mozilla/5.0"
+  198.51.100.23 - alice [22/Oct/2026:13:18:10 +0000] "GET /api/orders?page=2 HTTP/1.1" 500 87
+  ```
+
+  After an incident, someone always asks: *how many requests failed, which pages were hit most,
+  and when did the errors start?* You will build `log_analyzer.py`, a command-line tool that
+  answers these questions for logs of any size.
+
+  **Input** is a log file (or standard input with `-`). Real logs are messy: truncated lines,
+  attack probes, a date such as `32/Oct`, binary garbage, a UTF-8 byte-order mark, mixed time
+  zones. **Output** is a text report (or JSON with `--json`) with request and byte totals, status
+  codes and classes, the top N paths (query strings removed, ties alphabetical), and requests,
+  errors and error rate per UTC hour. Malformed lines are counted and, with `--show-malformed`,
+  listed with their line numbers, safely escaped.
+
+  ```text
+  > python log_analyzer.py access.log --top 3
+  Access log report
+  =================
+  Requests:        9
+  Malformed lines: 1
+  Bytes sent:      7,730
+  Error rate:      22.2% (status >= 500)
+
+  Status codes:
+    200         3
+    201         1
+    ...
+  Top 3 paths:
+    /api/orders  3
+    /index.html  3
+    /api/orders/7  1
+
+  Errors per hour (UTC):
+    2026-10-22 13:00       5 requests      1 errors   20.0%
+    2026-10-22 14:00       4 requests      1 errors   25.0%
+  > python log_analyzer.py access.log --json --since 2026-10-22T14:00 --error-threshold 400
+  { "requests": 4, "malformed": 1, "error_threshold": 400, "error_rate": 0.5, ... }
+  > python log_analyzer.py nope.log
+  error: cannot read nope.log: No such file or directory
+  ```
+acceptanceCriteria:
+  - "`parse_line` uses one compiled, ReDoS-safe regex with named groups and returns a frozen `LogRecord` with a timezone-aware timestamp; malformed lines raise `LogParseError` (a `ValueError`) with a reason that mentions format, timestamp or status."
+  - "`read_lines` is a generator that opens the file lazily, accepts a UTF-8 byte-order mark and replaces undecodable bytes instead of crashing."
+  - "`parse_records` skips blank lines, reports each malformed line with its 1-based line number through a callback, and never reads ahead of the record it yields."
+  - "`filter_records` keeps `since <= timestamp < until` across time zones and rejects naive datetimes immediately."
+  - "`LogStats` aggregates in one pass with memory bounded by distinct paths and hours: status counts and classes, top paths (query stripped, ties alphabetical), hourly error rates in UTC, an overall error rate (0.0 for no requests) and at most 20 malformed examples."
+  - "The CLI supports `-` for stdin, `--top`, `--error-threshold {400,500}`, `--since`/`--until` (ISO, naive means UTC), `--json` and `--show-malformed`; it exits 0, 1 with `error: ...` on stderr for unreadable files, or 2 for usage errors."
+  - "Untrusted text is printed only through `safe_excerpt`, which escapes control characters such as ESC."
+  - "All 65 tests pass with `GW_TARGET=solution`, and the code is typed, documented and ruff-clean."
+architecture: |
+  A pipeline of small, lazy stages. Each stage pulls one item at a time from the previous one, so
+  the whole tool holds one line in memory plus the running totals.
+
+  ```text
+   file ──► read_lines() ──► parse_records() ──► filter_records() ──► LogStats.add()
+            (generator,       (generator:          (generator           (Counters, hourly
+             utf-8-sig,        parse_line per        expression:          buckets, bounded
+             errors=replace)   line; malformed ──┐   since/until)         malformed examples)
+                                                 │                              │
+                                LogStats.add_malformed() ◄──┘                   ▼
+                                                                  format_report() / report_to_dict()
+                                                                                │
+                                                     main(argv) ── argparse ────┘──► stdout / stderr, exit code
+  ```
+
+  * **Parsing** ([regular expressions](concept:python.regex)): one compiled `LOG_LINE` pattern
+    with named groups, used with `fullmatch`. Every repeated part is a negated class such as
+    `[^\]]+` followed by a fixed delimiter, so the pattern cannot backtrack catastrophically.
+    `LogRecord` is a frozen, slotted [dataclass](concept:python.dataclasses);
+    `LogParseError` is a `ValueError` subclass with a `reason`
+    ([raising exceptions](concept:python.raising-exceptions)).
+  * **Streaming** ([generators](concept:python.generators)): `read_lines` and `parse_records` are
+    generator functions; `filter_records` validates its arguments eagerly and then returns a
+    generator expression. Malformed lines leave the stream through an `on_malformed` callback, so
+    the main stream stays a clean sequence of records.
+  * **Aggregation**: `LogStats` is an accumulator object, not global state. `collections.Counter`
+    counts statuses and paths; hours are bucketed in UTC with
+    `timestamp.astimezone(UTC).replace(minute=0, second=0, microsecond=0)`. `top_paths` sorts by
+    `(-count, path)` because `Counter.most_common` breaks ties by insertion order, which would
+    make reports depend on line order.
+  * **Interface** ([command-line apps](concept:python.cli-apps)): `build_parser` uses custom
+    argparse types (`positive_int`, `parse_cli_datetime`) so bad options fail with exit code 2
+    and a clear message; `main` is the only function that prints.
+setup: |
+  You need Python 3.11 or newer. The tool uses only the standard library; `pytest` is installed
+  just for the tests. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\log-analyzer
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+  `.\.venv\Scripts\python.exe -m pytest` without activating.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/log-analyzer
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/log_analyzer.py`. The README shows how to create a sample `access.log` and run
+  `python starter/log_analyzer.py access.log`.
+milestones:
+  - id: parse
+    title: Parse one line with a regex
+    description: |
+      Write the `LOG_LINE` pattern (named groups for ip, ident, user, timestamp, method, path,
+      protocol, status, size and the optional referrer and user agent), `parse_timestamp` (with
+      `strptime` and `%d/%b/%Y:%H:%M:%S %z`) and `parse_line`. Size `-` becomes 0, a `-` referrer
+      or user agent becomes `None`, and quotes escaped as `\"` inside the user agent are allowed.
+
+      The tests parse Common and Combined lines, IPv6 addresses, `+0530` offsets and Windows line
+      endings, check that records are immutable, and feed ten malformed lines (empty, garbage,
+      missing quote, `32/Oct`, an unknown month, no time zone, status `999`...) that must raise
+      `LogParseError` with the right reason. Run `python -m pytest -k Milestone1`.
+  - id: stream
+    title: Stream with generators
+    description: |
+      Implement `read_lines` (a generator: the file is opened on the first `next()`, with
+      `encoding="utf-8-sig"` and `errors="replace"`), `parse_records` (blank lines skipped,
+      malformed lines reported to `on_malformed` as `MalformedLine(line_number, reason, text)`)
+      and `filter_records` (`since` inclusive, `until` exclusive, naive bounds rejected at call
+      time).
+
+      The tests check laziness directly: `read_lines` on a missing file must not fail until
+      `next()`, and `parse_records` fed an endless generator must pull exactly three lines to
+      produce three records. They also cover bad bytes, a byte-order mark, line numbers and time
+      windows across time zones. Run `python -m pytest -k Milestone2`.
+  - id: aggregate
+    title: Aggregate in a single pass
+    description: |
+      Implement `strip_query`, `status_class`, `hour_bucket` and the `LogStats` accumulator:
+      `add`, `add_malformed` (keep only `max_examples`), `errors`, `error_rate`,
+      `status_classes`, `top_paths(n)` (ties alphabetical, `ValueError` for `n < 1`) and
+      `hourly_error_rates`. Validate `error_threshold` (100 to 599). Then write `analyze`, which
+      wires the three generators into `LogStats` in one pass.
+
+      The tests check exact totals on a 12-line sample log, that the top paths do not depend on
+      line order, UTC bucketing of a `+0200` timestamp, thresholds 500 and 400, time windows and
+      the empty log. Run `python -m pytest -k Milestone3`.
+  - id: report-cli
+    title: Reports and command line
+    description: |
+      Implement `safe_excerpt` (escape non-printable characters, truncate to 80 characters),
+      `format_report`, `report_to_dict`, the argparse types `parse_cli_datetime` (naive means
+      UTC) and `positive_int`, `build_parser` and `main`. The README lists the exact report lines
+      and JSON keys.
+
+      The tests read the report with whitespace normalised, round-trip the JSON, pipe the log
+      through a fake `sys.stdin`, check that an ESC character from a log line never reaches the
+      terminal, that a missing file gives exit code 1 and `error: cannot read ...` on stderr, and
+      that `--top 0`, `--error-threshold 450`, an invalid date and an empty time window exit
+      with code 2. Run `python -m pytest -k Milestone4`.
+testing: |
+  The kit ships 65 pytest tests in `tests/test_log_analyzer.py`, one class per milestone
+  (`TestMilestone1Parsing` … `TestMilestone4ReportAndCli`). By default they import your
+  `starter/` code:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone2   # one milestone
+  python -m pytest -x -q           # stop at the first failure, short output
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The tests are deterministic: logs are written to pytest's `tmp_path`, every timestamp is fixed,
+  stdin is replaced with `io.StringIO` through `monkeypatch`, and the CLI runs in-process with
+  `capsys`. Many tests use `pytest.mark.parametrize` with readable ids, so a failure such as
+  `test_malformed_lines_raise_with_a_reason[day-32]` tells you exactly which input broke. When you
+  add a feature, add its test to the matching class first.
+security:
+  - Every field in a log line is controlled by whoever sent the request. Never eval it, never build shell commands, SQL or file paths from it, and treat it as data only.
+  - Escape untrusted text before printing it to a terminal. An ESC character in a user agent can clear the screen or fake output; safe_excerpt shows it as \x1b instead.
+  - Avoid ReDoS. Nested quantifiers such as (a+)+ or several .* in one pattern can take exponential time on a crafted line; use negated character classes with fixed delimiters so matching stays linear.
+  - IP addresses and user names are personal data in many jurisdictions. Report aggregates, keep raw malformed lines out of the JSON output, and limit who can read raw logs.
+  - Bound memory for hostile input. Stream the file, strip query strings before counting paths so random parameters cannot grow the table, and keep only a fixed number of malformed examples.
+extensions:
+  - Add a --format option for the nginx default log format or a custom pattern, with tests that the custom pattern is still ReDoS-safe on long lines.
+  - Read gzip-compressed rotated logs (access.log.1.gz) transparently with the gzip module, still as a stream.
+  - Add percentiles (p50, p95) of response size per path using a bounded-memory approach, and explain the trade-off.
+  - Detect suspicious clients, for example more than N 404 responses per minute from one IP, and report them without printing full IP addresses (mask the last octet).
+  - Add a --follow mode that keeps reading new lines as the server appends them, updating the hourly table.
+rubric:
+  - criterion: Parsing robustness
+    needsWork: Uses split() on spaces or a regex that crashes or mis-parses quoted fields; malformed lines raise unhandled exceptions.
+    meets: One compiled named-group regex with fullmatch, aware timestamps, and LogParseError with a clear reason for every malformed case in the tests.
+    exceeds: The pattern is documented part by part, proven linear on long hostile lines, and easy to extend to other formats.
+  - criterion: Streaming design
+    needsWork: Reads the whole file with read() or readlines(), or builds full lists of records.
+    meets: read_lines and parse_records are generators, malformed lines leave via a callback, and analyze makes a single pass.
+    exceeds: Memory use is bounded and documented, and every stage can be reused on its own (for example with stdin or gzip input).
+  - criterion: Correct statistics
+    needsWork: Tie order depends on input order, time zones are ignored, or empty logs divide by zero.
+    meets: Exact totals, alphabetical ties, UTC hour buckets, configurable error threshold and 0.0 for empty input.
+    exceeds: You added tests for your own edge cases such as daylight-saving offsets or paths with encoded characters.
+  - criterion: CLI and safety
+    needsWork: Tracebacks for missing files or bad options, or raw log text printed to the terminal.
+    meets: Exit codes 0, 1 and 2 as specified, errors on stderr, JSON output, and escaped excerpts.
+    exceeds: Help text is clear, options are validated by argparse types, and the README explains the privacy implications.

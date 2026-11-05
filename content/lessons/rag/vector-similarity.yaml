@@ -1,0 +1,1061 @@
+id: rag.vector-similarity
+concept: rag.vector-similarity
+title: Vector Similarity Search
+subtitle: Retrieval as geometry — find the nearest vectors
+estimatedMinutes: 50
+reviewedOn: 2026-10-23
+summary: >-
+  Once text is turned into vectors, retrieval means finding the stored vectors closest to the query's
+  vector. Using small hand-made "embeddings" and a toy hashing embedder, you will implement dot product,
+  cosine similarity and Euclidean distance, see why normalisation makes them agree, write exact
+  k-nearest-neighbour search, and compare how semantic and keyword search fail.
+objectives:
+  - Compute dot product, cosine similarity and Euclidean distance in plain Python and explain what each one measures.
+  - Normalise vectors to unit length and explain why dot product, cosine and L2 distance then rank results identically.
+  - Implement exact (brute-force) top-k nearest-neighbour search and estimate its cost.
+  - Explain what a toy hashing-trick embedder can and cannot capture, compared with a learned embedding model.
+  - Predict how semantic search and keyword search fail differently, and choose between them or combine them.
+sources:
+  - title: MetricType and distances
+    url: https://github.com/facebookresearch/faiss/wiki/MetricType-and-distances
+    publisher: Meta (FAISS wiki)
+  - title: pgvector README (distance operators)
+    url: https://github.com/pgvector/pgvector
+    publisher: pgvector
+  - title: Sentence Transformers documentation
+    url: https://sbert.net/
+    publisher: Sentence Transformers (Hugging Face)
+  - title: Feature Hashing for Large Scale Multitask Learning
+    url: https://arxiv.org/abs/0902.2206
+    publisher: arXiv (Weinberger et al.)
+  - title: "BEIR: A Heterogenous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+    url: https://arxiv.org/abs/2104.08663
+    publisher: arXiv (Thakur et al.)
+sections:
+  - id: why
+    title: Why measure meaning with geometry?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          In [keyword search](concept:rag.keyword-search) the query "I forgot my login" scored **zero**
+          against "Reset your password", because the two share no words. People see they mean nearly the
+          same thing; word counting cannot.
+
+          [Embedding models](concept:rag.embeddings) solve this by mapping each text to a list of numbers
+          — a **vector** — placed so that texts with similar meaning get vectors pointing in similar
+          directions. Retrieval then becomes a geometry question: **which stored vectors are closest to
+          the query's vector?**
+
+          No real embedding model can run in this lesson, so we use two clearly labelled toys:
+
+          1. **Hand-made "embeddings"** — 3 numbers per text, chosen by hand so the geometry is easy to
+             see. They show what a *learned* model provides.
+          2. **A hashing-trick embedder** — a real, simple algorithm that turns words into a vector
+             without any learning. It shows the mechanics of "text → fixed-length vector", and its
+             limits.
+
+  - id: vectors
+    title: Embeddings as vectors
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Pretend an embedding model gave us three numbers per text, roughly meaning *how much is this
+          about logging in / about money / about delivery?* (This is a toy: real embeddings have hundreds
+          to thousands of dimensions, learned from data, and individual dimensions usually have no
+          human-readable meaning.)
+
+          | Text | login | money | delivery |
+          |---|---|---|---|
+          | Reset your password | 0.95 | 0.10 | 0.00 |
+          | Change your account email | 0.50 | 0.10 | 0.20 |
+          | Our refund policy | 0.05 | 0.95 | 0.10 |
+          | Track your parcel | 0.00 | 0.10 | 0.95 |
+          | *query:* I forgot my login | 0.90 | 0.05 | 0.00 |
+
+          The query's vector points almost the same way as "Reset your password" — even though they
+          share no words. That is the whole promise of [semantic search](glossary:semantic-search). To
+          use it we need a precise measure of "points the same way".
+
+  - id: measures
+    title: Dot product, cosine similarity and Euclidean distance
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Three measures are used in practice (you met them in [vectors](concept:math.vectors)):
+
+          | Measure | Formula | Range | Better match |
+          |---|---|---|---|
+          | **Dot product** | *a·b = Σ aᵢbᵢ* | any number | larger |
+          | **Cosine similarity** | *a·b / (‖a‖ ‖b‖)* | −1 to 1 | larger |
+          | **Euclidean (L2) distance** | *√Σ (aᵢ − bᵢ)²* | 0 or more | **smaller** |
+
+          *‖a‖ = √(a·a)* is the vector's length (its L2 norm). Cosine similarity compares **direction
+          only**; the dot product also grows with length; Euclidean distance is the straight-line gap
+          between the two points.
+      - type: code
+        runnable: true
+        id: measures
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def norm(a):
+              return math.sqrt(dot(a, a))
+
+          def cosine(a, b):
+              return dot(a, b) / (norm(a) * norm(b))
+
+          def euclidean(a, b):
+              return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+
+          a = [3, 1]
+          b = [1, 2]
+          print("dot:", dot(a, b))
+          print("cosine:", round(cosine(a, b), 4))
+          print("euclidean:", round(euclidean(a, b), 4))
+        expectedOutput: |
+          dot: 5
+          cosine: 0.7071
+          euclidean: 2.2361
+        annotations:
+          - line: 4
+            text: "`strict=True` makes zip raise ValueError if the vectors have different lengths, instead of silently ignoring the extra numbers."
+          - line: 10
+            text: Dividing by both lengths removes the effect of magnitude, leaving the cosine of the angle between the vectors.
+      - type: visualization
+        component: vector-similarity
+        title: Drag the vectors
+        caption: Make one vector longer without changing its direction — the dot product and distance change, but the cosine similarity stays the same.
+        props:
+          a: [3, 1]
+          b: [1, 2]
+      - type: markdown
+        body: |
+          The difference matters when vector lengths vary. Here `short` and `long` point in exactly the
+          same direction:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def cosine(a, b):
+              return dot(a, b) / (math.sqrt(dot(a, a)) * math.sqrt(dot(b, b)))
+
+          short, long, other = [1, 1], [10, 10], [1, 0]
+          print("short vs long :", dot(short, long), round(cosine(short, long), 4))
+          print("short vs other:", dot(short, other), round(cosine(short, other), 4))
+          print("long  vs other:", dot(long, other), round(cosine(long, other), 4))
+        expectedOutput: |
+          short vs long : 20 1.0
+          short vs other: 1 0.7071
+          long  vs other: 10 0.7071
+        caption: By dot product, "long" looks ten times more similar to "other" than "short" does; by cosine they are identical, because the angle is the same.
+      - type: item
+        ref: predict-cosine-length
+
+  - id: normalisation
+    title: Normalisation makes the measures agree
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[L2 normalisation](glossary:l2-normalisation)** divides a vector by its length, producing a
+          **unit vector** (length 1) pointing the same way. For unit vectors:
+
+          - the dot product **equals** the cosine similarity (the denominator is 1 × 1), and
+          - the squared Euclidean distance is *‖a − b‖² = 2 − 2·cos(a, b)*,
+
+          so all three measures produce **the same ranking** (distance in the opposite direction). That
+          is why many systems normalise embeddings once at indexing time and then use the cheaper dot
+          product. Check the identities on our toy vectors:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def normalize(v):
+              length = math.sqrt(dot(v, v))
+              return [x / length for x in v]
+
+          print(normalize([3, 4]))
+
+          docs = {
+              "Reset your password":       [0.95, 0.10, 0.00],
+              "Change your account email": [0.50, 0.10, 0.20],
+              "Our refund policy":         [0.05, 0.95, 0.10],
+              "Track your parcel":         [0.00, 0.10, 0.95],
+          }
+          query = [0.90, 0.05, 0.00]          # "I forgot my login"
+          q = normalize(query)
+          for text, vec in docs.items():
+              v = normalize(vec)
+              cos = dot(q, v)
+              sq_dist = sum((x - y) ** 2 for x, y in zip(q, v))
+              print(f"{text:26} cos {cos:.4f}   squared L2 {sq_dist:.4f}   2 - 2cos {2 - 2 * cos:.4f}")
+        expectedOutput: |
+          [0.6, 0.8]
+          Reset your password        cos 0.9988   squared L2 0.0024   2 - 2cos 0.0024
+          Change your account email  cos 0.9216   squared L2 0.1568   2 - 2cos 0.1568
+          Our refund policy          cos 0.1073   squared L2 1.7854   2 - 2cos 1.7854
+          Track your parcel          cos 0.0058   squared L2 1.9884   2 - 2cos 1.9884
+        caption: Highest cosine ⇔ smallest distance, row by row. The 3-4-5 triangle shows normalisation in its simplest form.
+      - type: callout
+        variant: tip
+        title: Use the metric the model was trained for
+        body: |
+          An embedding model's documentation says which measure it expects (often cosine, sometimes dot
+          product on unnormalised vectors). Vector stores make you choose: FAISS has inner-product and L2
+          indexes, and pgvector has separate operators for L2 distance (`<->`), cosine distance (`<=>`)
+          and negative inner product (`<#>`). If your vectors are normalised, they agree on ranking.
+      - type: item
+        ref: mcq-normalised
+
+  - id: knn
+    title: Exact k-nearest-neighbour search
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **[Exact k-nearest-neighbour search](glossary:exact-knn-search)** (brute force) is just a loop:
+          score the query against **every** stored vector, sort, keep the best *k*.
+      - type: code
+        runnable: true
+        id: top-k
+        code: |
+          import math
+
+          def cosine(a, b):
+              dot = sum(x * y for x, y in zip(a, b, strict=True))
+              return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+          def top_k(query, vectors, k):
+              scored = [(cosine(query, vec), doc_id) for doc_id, vec in vectors.items()]
+              scored.sort(reverse=True)            # highest similarity first
+              return scored[:k]
+
+          docs = {
+              "Reset your password":       [0.95, 0.10, 0.00],
+              "Change your account email": [0.50, 0.10, 0.20],
+              "Our refund policy":         [0.05, 0.95, 0.10],
+              "Track your parcel":         [0.00, 0.10, 0.95],
+          }
+          for score, doc_id in top_k([0.90, 0.05, 0.00], docs, 2):
+              print(f"{score:.3f}  {doc_id}")
+        expectedOutput: |
+          0.999  Reset your password
+          0.922  Change your account email
+        annotations:
+          - line: 8
+            text: One similarity per stored vector — this line is where all the work happens.
+          - line: 9
+            text: Tuples sort by their first item (the score); reverse=True puts the best first.
+      - type: visualization
+        component: python-tracer
+        title: Step through a tiny search
+        caption: Each loop pass scores one stored vector; the best-so-far is kept. (A dot product is used because these vectors are already unit length.)
+        props:
+          code: |
+            query = [0.6, 0.8]
+            stored = {"a": [1.0, 0.0], "b": [0.0, 1.0], "c": [0.8, 0.6]}
+            best_id, best_score = None, -2.0
+            for doc_id, vec in stored.items():
+                score = query[0] * vec[0] + query[1] * vec[1]
+                if score > best_score:
+                    best_id, best_score = doc_id, score
+            print(best_id, round(best_score, 2))
+      - type: markdown
+        body: |
+          **Cost.** Each query does *N × d* multiply-adds for *N* stored vectors of *d* dimensions —
+          O(N · d). That is trivial for thousands of chunks, fine for tens of thousands with NumPy, and a
+          problem at hundreds of millions:
+      - type: code
+        runnable: true
+        code: |
+          for n, d in [(10_000, 384), (1_000_000, 768), (100_000_000, 1024)]:
+              print(f"{n:,} vectors x {d} dims = {n * d:,} multiply-adds per query")
+        expectedOutput: |
+          10,000 vectors x 384 dims = 3,840,000 multiply-adds per query
+          1,000,000 vectors x 768 dims = 768,000,000 multiply-adds per query
+          100,000,000 vectors x 1024 dims = 102,400,000,000 multiply-adds per query
+        caption: Multiply by the number of queries per second, and brute force becomes too slow and expensive — which is why approximate indexes exist.
+      - type: markdown
+        body: |
+          **Approximate nearest-neighbour (ANN) indexes** such as HNSW (a navigable graph of vectors) and
+          IVF (search only the most promising clusters) avoid comparing against everything. They trade a
+          little **recall** — occasionally missing a true nearest neighbour — for very large speed-ups,
+          and they come with vector databases that add persistence and filtering. That is the topic of
+          [vector indexes and databases](concept:rag.vector-databases). Exact search remains the
+          reference you measure ANN recall against.
+      - type: code
+        status: illustrative
+        code: |
+          import numpy as np
+          from sentence_transformers import SentenceTransformer
+
+          model = SentenceTransformer("all-MiniLM-L6-v2")                   # one open embedding model
+          doc_vecs = model.encode(chunks, normalize_embeddings=True)        # shape (N, d), unit length
+          query_vec = model.encode(["I forgot my login"], normalize_embeddings=True)[0]
+
+          scores = doc_vecs @ query_vec                  # N dot products = N cosine similarities
+          best = np.argsort(-scores)[:5]                 # indices of the 5 highest scores
+        caption: >-
+          Illustrative, not executed: NumPy, sentence-transformers and a downloaded model are not
+          available in the browser runtime. This is one library's API; hosted embedding APIs return
+          similar arrays of floats. Run it locally in a virtual environment to try real embeddings.
+      - type: callout
+        variant: misconception
+        title: Similar is not the same as relevant
+        body: |
+          The nearest chunk may share the topic without answering the question ("refund policy for
+          *gift cards*" for a question about *orders*). And similarity scores are relative, not
+          calibrated probabilities: a fixed threshold such as 0.8 means different things for different
+          models. Pick thresholds, if any, by measuring on your own data.
+
+  - id: hashing-embedder
+    title: A toy embedder you can run — the hashing trick
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          How does text become a fixed-length vector at all? The **[hashing trick](glossary:hashing-trick)**
+          is the simplest real method ([Weinberger et al., 2009](https://arxiv.org/abs/0902.2206)): give
+          the vector *D* slots, hash each word to a slot number, and count. No vocabulary list and no
+          training are needed. We use `hashlib.sha256` (Python's built-in `hash()` changes between runs
+          for strings, so it would make vectors unreproducible).
+      - type: code
+        runnable: true
+        id: hash-embed
+        code: |
+          import hashlib
+          import math
+
+          def hash_embed(text, dim=97):
+              vec = [0.0] * dim
+              for word in text.lower().split():
+                  digest = hashlib.sha256(word.encode("utf-8")).digest()
+                  bucket = int.from_bytes(digest, "big") % dim
+                  vec[bucket] += 1.0
+              length = math.sqrt(sum(x * x for x in vec))
+              return [x / length for x in vec] if length else vec
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          docs = ["reset your password", "change your account email", "our refund policy", "track your parcel"]
+          for query in ["forgot your password", "forgot my login"]:
+              q = hash_embed(query)
+              print(f"query: {query!r}")
+              for text in docs:
+                  print(f"  {dot(q, hash_embed(text)):.3f}  {text}")
+        expectedOutput: |
+          query: 'forgot your password'
+            0.667  reset your password
+            0.289  change your account email
+            0.000  our refund policy
+            0.333  track your parcel
+          query: 'forgot my login'
+            0.000  reset your password
+            0.000  change your account email
+            0.000  our refund policy
+            0.000  track your parcel
+        annotations:
+          - line: 7
+            text: A stable hash of the word, turned into a slot number from 0 to dim − 1.
+          - line: 10
+            text: Normalise once, so the dot product below is the cosine similarity.
+        caption: "Toy, not a semantic model: it only sees shared words. \"your\" alone makes \"track your parcel\" look related, and \"forgot my login\" matches nothing."
+      - type: markdown
+        body: |
+          This embedder is **lexical**: it is basically keyword overlap in vector form, so it fails on
+          paraphrases exactly like BM25 (without BM25's IDF weighting, which is why "your" counts as much
+          as "password"). Hashing has a second quirk — different words can land in the **same slot**
+          (a *collision*). With only 50 slots, "reset" and "forgot" collide, and a false match appears:
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+          import math
+
+          def hash_embed(text, dim):
+              vec = [0.0] * dim
+              for word in text.lower().split():
+                  bucket = int.from_bytes(hashlib.sha256(word.encode("utf-8")).digest(), "big") % dim
+                  vec[bucket] += 1.0
+              length = math.sqrt(sum(x * x for x in vec))
+              return [x / length for x in vec] if length else vec
+
+          q = hash_embed("forgot my login", dim=50)
+          d = hash_embed("reset your password", dim=50)
+          print(round(sum(x * y for x, y in zip(q, d)), 3))
+        expectedOutput: |
+          0.333
+        caption: A similarity caused purely by a hash collision — it happens to look sensible here, but it is luck, not meaning. Real hashing systems use far more slots (often around a million) to make collisions rare.
+      - type: markdown
+        body: |
+          A **learned** embedding model is different in kind: trained on huge numbers of related text
+          pairs, it places "forgot my login" near "reset your password" because they are used in similar
+          contexts — what our hand-made vectors imitated. That is why the hashing trick is useful for fast
+          features in classic machine learning, while RAG uses trained embedding models.
+
+  - id: failure-modes
+    title: How semantic and keyword search fail differently
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | | Keyword search (BM25) | Semantic search (learned embeddings) |
+          |---|---|---|
+          | Matches | Exact terms after analysis | Overall meaning |
+          | Paraphrase, synonyms ("forgot login" vs "reset password") | **Fails** — no shared terms | Usually succeeds |
+          | Exact identifiers (`E1042` vs `E1024`, part numbers, names) | **Succeeds** — rare term, exact match | Often blurs near-identical strings |
+          | Negation, numbers ("refundable" vs "not refundable") | Matches the words either way | Vectors can be very close either way |
+          | Rare jargon, new product names, other domains | Works if the term appears | Depends on what the model learned; can degrade out of domain |
+          | Explaining a result | Shows which terms matched | Hard — "the vectors were close" |
+          | Cost | No model; tiny index | Embedding model calls; larger index |
+
+          Neither is strictly better. On the BEIR benchmark, BM25 remained a robust baseline across many
+          domains while several dense retrievers struggled out of domain
+          ([Thakur et al., 2021](https://arxiv.org/abs/2104.08663)). Because the failures are
+          *different*, combining both — [hybrid search](concept:rag.hybrid-search) — usually beats either
+          one alone.
+      - type: item
+        ref: mcq-semantic-vs-keyword
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Search returns the *worst* matches | Sorted distances in descending order (or similarities ascending) | Distances: smaller is better. Similarities: larger is better. Check what your API returns. |
+          | Similarities look random after a model upgrade | Query and documents embedded with different models or versions | Re-embed the whole corpus with the same model; store the model name with each vector. |
+          | Silently wrong scores, no error | `zip` stopped at the shorter vector (different dimensions) | Use `zip(..., strict=True)` and check dimensions when loading. |
+          | `ZeroDivisionError` in cosine | A zero vector (for example, empty text) | Skip or reject empty inputs; return 0.0 for a zero vector. |
+          | "0.8 worked with the old model" | Thresholds are model-specific | Re-tune thresholds on labelled examples for each model. |
+
+          Here is the dimension mismatch, caught by `strict=True`:
+      - type: code
+        runnable: true
+        code: |
+          query = [0.1, 0.7, 0.2]               # 3 dimensions (one model)
+          stored = [0.3, 0.1, 0.4, 0.9, 0.2]    # 5 dimensions (another model)
+          print(sum(x * y for x, y in zip(query, stored, strict=True)))
+        expectError: ValueError
+        caption: "ValueError: zip() argument 2 is longer than argument 1. Without strict=True, zip would quietly use only the first 3 numbers and print a meaningless score."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build a tiny vector search engine. The checks use several vectors and datasets, so your
+          functions must compute their results.
+      - type: item
+        ref: code-cosine
+      - type: item
+        ref: parsons-normalize
+      - type: item
+        ref: code-top-k
+      - type: item
+        ref: debug-distance-sort
+      - type: item
+        ref: code-hash-embed
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Embeddings turn text into vectors; semantic retrieval finds the vectors nearest the query's.
+          - **Cosine** compares direction; **dot product** also rewards length; **Euclidean distance** is
+            smaller-is-better. Use the measure the model was trained for.
+          - **Unit-normalised** vectors make dot = cosine and squared L2 = 2 − 2·cos, so all rank the same.
+          - **Exact k-NN** scores every vector: O(N · d) per query — fine for small corpora, the
+            baseline for measuring approximate indexes.
+          - A hashing-trick embedder is lexical (word overlap) and has collisions; learned models capture
+            meaning.
+          - Keyword search fails on paraphrases; semantic search blurs exact identifiers and negation —
+            combine them.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Implement top-k cosine search and explain normalisation." — Normalise the stored vectors once,
+          normalise the query, compute dot products (a matrix–vector product in NumPy), take the k
+          largest. Explain that for unit vectors dot product equals cosine and L2 distance gives the same
+          ranking, that exact search is O(N · d), and when you would switch to an ANN index.
+
+items:
+  - id: predict-cosine-length
+    type: predict-output
+    skill: prediction
+    prompt: "`[2, 4]` is `[1, 2]` scaled by 2. What does this print?"
+    code: |
+      import math
+
+      def dot(a, b):
+          return sum(x * y for x, y in zip(a, b))
+
+      def cosine(a, b):
+          return dot(a, b) / (math.sqrt(dot(a, a)) * math.sqrt(dot(b, b)))
+
+      print(dot([1, 2], [2, 4]), round(cosine([1, 2], [2, 4]), 4))
+    answer: "10 1.0"
+    explanation: >-
+      The dot product is 1×2 + 2×4 = 10. The vectors point in exactly the same direction, so the cosine
+      similarity is 1.0, however long they are.
+    wrongAnswers:
+      - answer: "10 0.5"
+        feedback: Cosine similarity ignores length. Scaling a vector by 2 does not change its direction, so the cosine stays 1.0.
+      - answer: "5 1.0"
+        feedback: The dot product multiplies matching elements and adds them, 1×2 + 2×4 = 10.
+      - answer: "10 10"
+        feedback: Cosine divides the dot product by both lengths (√5 × √20 = 10), giving 10 / 10 = 1.0.
+
+  - id: mcq-normalised
+    type: mcq
+    skill: recognition
+    prompt: Your embedding model returns **unit-length** vectors. Which statement is true?
+    explanation: >-
+      For unit vectors the cosine denominator is 1, so dot product equals cosine similarity, and squared
+      Euclidean distance equals 2 − 2·cosine — so all three produce the same ranking (distance ascending).
+    options:
+      - id: a
+        text: Dot product equals cosine similarity, and ranking by smallest Euclidean distance gives the same order.
+        correct: true
+        feedback: Right — that is why systems normalise once and use the cheaper dot product.
+      - id: b
+        text: Dot product and cosine similarity now give opposite rankings.
+        feedback: They are equal for unit vectors, so their rankings are identical.
+      - id: c
+        text: Euclidean distance becomes meaningless and must not be used.
+        feedback: It still works; for unit vectors it is a monotonic function of cosine (‖a − b‖² = 2 − 2·cos).
+      - id: d
+        text: All similarity scores become exactly 1.
+        feedback: Normalising sets each vector's length to 1, not the similarity between different vectors.
+
+  - id: mcq-semantic-vs-keyword
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: Which retrieval failure is typical of **embedding-based** search but not of keyword (BM25) search?
+    explanation: >-
+      Embeddings represent overall meaning, so near-identical identifiers ("E1042" and "E1024") or a
+      sentence and its negation can land very close together. Keyword search treats E1042 as an exact,
+      rare term. Missing a paraphrase is the typical keyword-search failure.
+    options:
+      - id: a
+        text: The query "error E1042" retrieves a passage about error E1024.
+        correct: true
+        feedback: Right — exact identifiers are where keyword search is stronger.
+      - id: b
+        text: The query "forgot my login" misses the passage "reset your password".
+        feedback: That vocabulary mismatch is the classic keyword-search failure; embeddings usually handle it.
+      - id: c
+        text: A query with a typo-free rare product name finds the exact page that contains it.
+        feedback: That is a success, and keyword search is especially good at it.
+      - id: d
+        text: Common words such as "the" dominate the ranking.
+        feedback: That happens with naive keyword scoring without IDF or stop words, not typically with embeddings.
+
+  - id: code-cosine
+    type: code
+    skill: implementation
+    prompt: |
+      Write `cosine_similarity(a, b)` for two lists of numbers:
+
+      - return dot(a, b) / (‖a‖ · ‖b‖);
+      - return `0.0` if either vector is all zeros (instead of dividing by zero);
+      - raise `ValueError` if the lengths differ (`zip(a, b, strict=True)` does this for you).
+    starterCode: |
+      import math
+
+      def cosine_similarity(a, b):
+          # dot product divided by the product of the lengths
+          return 0.0
+
+      print(round(cosine_similarity([3, 1], [1, 2]), 4))
+    solution: |
+      import math
+
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          norm_a = math.sqrt(sum(x * x for x in a))
+          norm_b = math.sqrt(sum(y * y for y in b))
+          if norm_a == 0 or norm_b == 0:
+              return 0.0
+          return dot / (norm_a * norm_b)
+
+      print(round(cosine_similarity([3, 1], [1, 2]), 4))
+    expectedOutput: |
+      0.7071
+    tests:
+      - name: basic values
+        code: |
+          import math
+          assert math.isclose(cosine_similarity([3, 1], [1, 2]), 0.70710678, abs_tol=1e-6), f"cosine([3,1],[1,2]) should be about 0.7071, got {cosine_similarity([3, 1], [1, 2])}."
+          assert math.isclose(cosine_similarity([1, 0], [0, 5]), 0.0, abs_tol=1e-9), "Perpendicular vectors have cosine 0."
+          assert math.isclose(cosine_similarity([1, 2, 3], [-1, -2, -3]), -1.0), "Opposite vectors have cosine -1."
+      - name: ignores length
+        code: |
+          import math
+          assert math.isclose(cosine_similarity([1, 2, 2], [10, 20, 20]), 1.0), "Vectors in the same direction have cosine 1.0, whatever their lengths."
+      - name: zero vector gives 0.0
+        code: |
+          assert cosine_similarity([0, 0, 0], [1, 2, 3]) == 0.0, "If a vector is all zeros, return 0.0 instead of dividing by zero."
+      - name: different lengths raise ValueError
+        code: |
+          try:
+              cosine_similarity([1, 2, 3], [1, 2])
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Vectors of different lengths should raise ValueError. Use zip(a, b, strict=True).")
+    hints:
+      - "Dot product: `sum(x * y for x, y in zip(a, b, strict=True))`."
+      - "Length: `math.sqrt(sum(x * x for x in a))`."
+      - Check for a zero length before dividing.
+    feedback:
+      - when: { errorType: ZeroDivisionError }
+        message: A zero vector has length 0. Return 0.0 when either length is 0, before dividing.
+      - when: { outputEquals: "0.0\n" }
+        message: The function still returns 0.0 for the example. Compute the dot product and divide by both lengths.
+    explanation: >-
+      Cosine similarity is the dot product of the two directions. Guarding the zero vector and using a
+      strict zip turn two silent failure modes (division by zero, mismatched dimensions) into explicit
+      behaviour.
+
+  - id: parsons-normalize
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to L2-normalise a vector and print it. It should print `[0.6, 0.8]`. Two lines
+      are distractors.
+    solution: |
+      import math
+      v = [3, 4]
+      length = math.sqrt(sum(x * x for x in v))
+      unit = [x / length for x in v]
+      print(unit)
+    distractors:
+      - "length = sum(v)"
+      - "unit = [x * length for x in v]"
+    expectedOutput: |
+      [0.6, 0.8]
+    explanation: >-
+      The L2 length is the square root of the sum of squares (5 for [3, 4]); dividing each element by it
+      gives a unit vector. `sum(v)` is the L1 norm for non-negative numbers (7), and multiplying makes the
+      vector longer instead of unit length.
+
+  - id: code-top-k
+    type: code
+    skill: implementation
+    prompt: |
+      Write `top_k(query, vectors, k)` — exact nearest-neighbour search. `vectors` maps IDs to vectors.
+      Return a **list of IDs** of the `k` vectors with the highest cosine similarity to `query`, best
+      first. Use the provided `cosine`.
+    starterCode: |
+      import math
+
+      def cosine(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+      def top_k(query, vectors, k):
+          # Score every vector, sort best first, return the first k IDs.
+          return []
+
+      docs = {
+          "password": [0.95, 0.10, 0.00],
+          "email": [0.50, 0.10, 0.20],
+          "refund": [0.05, 0.95, 0.10],
+          "parcel": [0.00, 0.10, 0.95],
+      }
+      print(top_k([0.90, 0.05, 0.00], docs, 2))
+    solution: |
+      import math
+
+      def cosine(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+      def top_k(query, vectors, k):
+          scored = [(cosine(query, vec), doc_id) for doc_id, vec in vectors.items()]
+          scored.sort(reverse=True)
+          return [doc_id for _, doc_id in scored[:k]]
+
+      docs = {
+          "password": [0.95, 0.10, 0.00],
+          "email": [0.50, 0.10, 0.20],
+          "refund": [0.05, 0.95, 0.10],
+          "parcel": [0.00, 0.10, 0.95],
+      }
+      print(top_k([0.90, 0.05, 0.00], docs, 2))
+    expectedOutput: |
+      ['password', 'email']
+    tests:
+      - name: the example query
+        code: |
+          assert top_k([0.90, 0.05, 0.00], docs, 2) == ["password", "email"], f"Expected ['password', 'email'], got {top_k([0.90, 0.05, 0.00], docs, 2)}."
+      - name: other queries
+        code: |
+          assert top_k([0.0, 0.2, 0.9], docs, 1) == ["parcel"], f"A delivery-like query should return ['parcel'], got {top_k([0.0, 0.2, 0.9], docs, 1)}."
+          assert top_k([0.1, 0.9, 0.0], docs, 3)[0] == "refund", "A money-like query should rank 'refund' first."
+      - name: k larger than the collection returns everything, best first
+        code: |
+          result = top_k([0.90, 0.05, 0.00], docs, 10)
+          assert result == ["password", "email", "refund", "parcel"], f"With k=10 all 4 IDs should come back in order of similarity, got {result}."
+      - name: works on another dataset
+        code: |
+          pts = {"x": [1, 0], "y": [0, 1], "z": [1, 1]}
+          assert top_k([2, 1], pts, 2) == ["z", "x"], f"For [2, 1], z (cos 0.95) then x (cos 0.89) are nearest; got {top_k([2, 1], pts, 2)}."
+    hints:
+      - "Build a list of `(score, doc_id)` tuples, one per stored vector."
+      - "`list.sort(reverse=True)` sorts by score, highest first."
+      - Return only the IDs of the first k tuples.
+    feedback:
+      - when: { outputEquals: "['parcel', 'refund']\n" }
+        message: You returned the least similar vectors. Higher cosine similarity is better — sort in descending order.
+      - when: { outputEquals: "[]\n" }
+        message: The function still returns an empty list. Score each vector, sort, and slice the first k.
+    explanation: >-
+      Exact k-NN is a scoring loop plus a sort. For very large N, `heapq.nlargest(k, ...)` avoids sorting
+      everything, and NumPy turns the loop into one matrix–vector product — but the result is the same.
+
+  - id: debug-distance-sort
+    type: debug
+    skill: debugging
+    prompt: |
+      `nearest` should return the IDs of the `k` points **closest** to the query by Euclidean distance.
+      For the example it should print `['d', 'a']`, but it returns the farthest points. Fix it.
+    starterCode: |
+      import math
+
+      def euclidean(a, b):
+          return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+
+      def nearest(query, vectors, k):
+          scored = [(euclidean(query, vec), doc_id) for doc_id, vec in vectors.items()]
+          scored.sort(reverse=True)
+          return [doc_id for _, doc_id in scored[:k]]
+
+      points = {"a": [0, 0], "b": [1, 2], "c": [5, 5], "d": [2, 0]}
+      print(nearest([1.5, 0], points, 2))
+    solution: |
+      import math
+
+      def euclidean(a, b):
+          return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+
+      def nearest(query, vectors, k):
+          scored = [(euclidean(query, vec), doc_id) for doc_id, vec in vectors.items()]
+          scored.sort()
+          return [doc_id for _, doc_id in scored[:k]]
+
+      points = {"a": [0, 0], "b": [1, 2], "c": [5, 5], "d": [2, 0]}
+      print(nearest([1.5, 0], points, 2))
+    expectedOutput: |
+      ['d', 'a']
+    tests:
+      - name: returns the closest points
+        code: |
+          assert nearest([1.5, 0], points, 2) == ["d", "a"], f"d (0.5 away) and a (1.5 away) are closest to [1.5, 0]; got {nearest([1.5, 0], points, 2)}."
+      - name: works for other queries
+        code: |
+          assert nearest([5, 4], points, 1) == ["c"], f"c is closest to [5, 4]; got {nearest([5, 4], points, 1)}."
+          assert nearest([1, 2.2], points, 1) == ["b"], f"b is closest to [1, 2.2]; got {nearest([1, 2.2], points, 1)}."
+    hints:
+      - For a distance, is a bigger or a smaller number a better match?
+      - "`sort()` without `reverse=True` puts the smallest first."
+    feedback:
+      - when: { outputContains: "'c'" }
+        message: The farthest point c is being returned. Distances are smaller-is-better — sort ascending.
+    explanation: >-
+      Similarities are larger-is-better; distances are smaller-is-better. Copying the similarity code
+      (with reverse=True) to a distance metric returns the worst matches — one of the most common vector
+      search bugs, also seen with database APIs that return distances.
+
+  - id: code-hash-embed
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Write `hash_embed(text, dim)`, the toy hashing-trick embedder:
+
+      1. start with `dim` zeros (floats);
+      2. for each word in `text.lower().split()`, compute
+         `bucket = int.from_bytes(hashlib.sha256(word.encode("utf-8")).digest(), "big") % dim`
+         and add 1.0 to that slot;
+      3. divide every slot by the vector's L2 length — unless the length is 0 (empty text), in which case
+         return the zero vector.
+    starterCode: |
+      import hashlib
+      import math
+
+      def hash_embed(text, dim):
+          vec = [0.0] * dim
+          # Hash each word to a slot, count, then L2-normalise.
+          return vec
+
+      v = hash_embed("reset your password", 97)
+      print(len(v), round(sum(x * x for x in v), 6))
+    solution: |
+      import hashlib
+      import math
+
+      def hash_embed(text, dim):
+          vec = [0.0] * dim
+          for word in text.lower().split():
+              digest = hashlib.sha256(word.encode("utf-8")).digest()
+              bucket = int.from_bytes(digest, "big") % dim
+              vec[bucket] += 1.0
+          length = math.sqrt(sum(x * x for x in vec))
+          if length == 0:
+              return vec
+          return [x / length for x in vec]
+
+      v = hash_embed("reset your password", 97)
+      print(len(v), round(sum(x * x for x in v), 6))
+    expectedOutput: |
+      97 1.0
+    tests:
+      - name: right size and unit length
+        code: |
+          import math
+          v = hash_embed("reset your password", 97)
+          assert len(v) == 97, f"The vector should have dim = 97 slots, got {len(v)}."
+          assert math.isclose(sum(x * x for x in v), 1.0), "The vector should be L2-normalised (sum of squares = 1)."
+      - name: matches the specified hashing
+        code: |
+          import hashlib, math
+          def reference(text, dim):
+              vec = [0.0] * dim
+              for word in text.lower().split():
+                  vec[int.from_bytes(hashlib.sha256(word.encode("utf-8")).digest(), "big") % dim] += 1.0
+              n = math.sqrt(sum(x * x for x in vec))
+              return [x / n for x in vec] if n else vec
+          for text, dim in [("Reset your password", 97), ("the cat and the hat", 16), ("one", 5)]:
+              got = hash_embed(text, dim)
+              assert all(math.isclose(a, b) for a, b in zip(got, reference(text, dim))), f"hash_embed({text!r}, {dim}) does not match the specified algorithm. Lowercase, split, sha256 bucket, count, normalise."
+      - name: bag of words ignores order
+        code: |
+          assert hash_embed("password reset", 97) == hash_embed("reset password", 97), "The same words in a different order should give the same vector."
+      - name: empty text gives a zero vector
+        code: |
+          v = hash_embed("", 8)
+          assert v == [0.0] * 8, f"Empty text should give 8 zeros, got {v}."
+    hints:
+      - "Loop over `text.lower().split()` and compute the bucket exactly as shown."
+      - "`vec[bucket] += 1.0` counts the word."
+      - "Compute `length = math.sqrt(sum(x * x for x in vec))`; return `vec` unchanged if it is 0."
+    feedback:
+      - when: { outputEquals: "97 0.0\n" }
+        message: The vector is still all zeros. Add 1.0 to the hashed slot for every word, then normalise.
+      - when: { errorType: ZeroDivisionError }
+        message: Empty text gives a zero-length vector. Return it unchanged instead of dividing by 0.
+      - when: { codeMatches: "\\bhash\\(" }
+        message: Python's built-in hash() is randomised for strings between runs. Use hashlib.sha256 as described so vectors are reproducible.
+    explanation: >-
+      The hashing trick maps any vocabulary into a fixed number of slots without storing a word list.
+      It is reproducible (thanks to SHA-256), order-insensitive and lexical — it captures word overlap,
+      not meaning.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-unit
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Both vectors are normalised first. What does this print?
+    code: |
+      import math
+
+      def normalize(v):
+          n = math.sqrt(sum(x * x for x in v))
+          return [x / n for x in v]
+
+      a = normalize([1, 0])
+      b = normalize([1, 1])
+      dot = sum(x * y for x, y in zip(a, b))
+      sq_dist = sum((x - y) ** 2 for x, y in zip(a, b))
+      print(round(dot, 4), round(sq_dist, 4), round(2 - 2 * dot, 4))
+    answer: "0.7071 0.5858 0.5858"
+    explanation: >-
+      The angle is 45°, so the dot product of the unit vectors is cos 45° ≈ 0.7071. For unit vectors the
+      squared distance equals 2 − 2·cos = 0.5858, so the last two numbers match.
+    wrongAnswers:
+      - answer: "1 0.5858 1"
+        feedback: "The dot product of the normalised vectors is the cosine of the angle between them (45°), about 0.7071, not the raw dot product 1."
+      - answer: "0.7071 1.0 0.5858"
+        feedback: "a = [1, 0] and b ≈ [0.7071, 0.7071]; the squared distance is (1 − 0.7071)² + 0.7071² ≈ 0.5858, the same as 2 − 2·cos."
+
+  - id: m-distance-api
+    type: mcq
+    skill: transfer
+    prompt: |
+      A vector database query returns L2 **distances**: chunk A 0.12, chunk B 0.85, chunk C 0.40. Which
+      chunk is the best match?
+    explanation: >-
+      A distance measures how far apart the vectors are, so the smallest distance is the closest match:
+      chunk A. Sorting distances in descending order would return the worst match first.
+    options:
+      - id: a
+        text: Chunk A (0.12)
+        correct: true
+        feedback: Right — for distances, smaller is better.
+      - id: b
+        text: Chunk B (0.85)
+        feedback: That would be right for a similarity score. For a distance, 0.85 is the farthest.
+      - id: c
+        text: Chunk C (0.40)
+        feedback: C is in the middle. The smallest distance, A, is closest.
+      - id: d
+        text: It cannot be decided without knowing the cosine similarities.
+        feedback: For a single metric, the ranking is clear — the smallest L2 distance wins.
+
+  - id: m-unit-search
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Speed up search by normalising once. Write:
+
+      - `build_unit_index(vectors)` — return a new dict with every vector L2-normalised;
+      - `search(query, unit_index, k)` — normalise the query, rank stored vectors by **dot product**
+        (which now equals cosine similarity), and return the top `k` IDs, best first.
+    starterCode: |
+      import math
+
+      def normalize(v):
+          length = math.sqrt(sum(x * x for x in v))
+          return [x / length for x in v]
+
+      def build_unit_index(vectors):
+          return vectors        # normalise every vector
+
+      def search(query, unit_index, k):
+          return []             # normalise query, rank by dot product
+
+      index = build_unit_index({"a": [10, 0], "b": [0, 2], "c": [3, 3]})
+      print(search([1, 0.2], index, 2))
+    solution: |
+      import math
+
+      def normalize(v):
+          length = math.sqrt(sum(x * x for x in v))
+          return [x / length for x in v]
+
+      def build_unit_index(vectors):
+          return {doc_id: normalize(vec) for doc_id, vec in vectors.items()}
+
+      def search(query, unit_index, k):
+          q = normalize(query)
+          scored = [(sum(x * y for x, y in zip(q, vec, strict=True)), doc_id) for doc_id, vec in unit_index.items()]
+          scored.sort(reverse=True)
+          return [doc_id for _, doc_id in scored[:k]]
+
+      index = build_unit_index({"a": [10, 0], "b": [0, 2], "c": [3, 3]})
+      print(search([1, 0.2], index, 2))
+    expectedOutput: |
+      ['a', 'c']
+    tests:
+      - name: stored vectors are unit length
+        code: |
+          import math
+          idx = build_unit_index({"a": [10, 0], "b": [0, 2], "c": [3, 3]})
+          assert set(idx) == {"a", "b", "c"}, "Keep the same IDs."
+          for doc_id, vec in idx.items():
+              assert math.isclose(math.sqrt(sum(x * x for x in vec)), 1.0), f"Vector {doc_id} should have length 1 after build_unit_index, got {vec}."
+      - name: ranking ignores vector length
+        code: |
+          idx = build_unit_index({"long": [100, 1], "short": [1, 1]})
+          assert search([1, 1], idx, 1) == ["short"], "[1, 1] points exactly like 'short'; length must not matter after normalisation."
+      - name: matches cosine ranking on the example
+        code: |
+          idx = build_unit_index({"a": [10, 0], "b": [0, 2], "c": [3, 3]})
+          assert search([1, 0.2], idx, 2) == ["a", "c"], f"Expected ['a', 'c'], got {search([1, 0.2], idx, 2)}."
+          assert search([0.1, 1], idx, 3) == ["b", "c", "a"], f"Expected ['b', 'c', 'a'], got {search([0.1, 1], idx, 3)}."
+      - name: does not modify the input vectors
+        code: |
+          original = {"a": [10, 0]}
+          build_unit_index(original)
+          assert original["a"] == [10, 0], "build_unit_index should return a new dict, not change the vectors you passed in."
+    hints:
+      - "`{doc_id: normalize(vec) for doc_id, vec in vectors.items()}` builds the new index."
+      - In `search`, normalise the query too, then score with a plain dot product.
+      - Sort `(score, doc_id)` tuples in descending order and return the first k IDs.
+    feedback:
+      - when: { outputEquals: "[]\n" }
+        message: search() still returns an empty list. Normalise the query, compute dot products, sort, and return k IDs.
+    explanation: >-
+      Normalising the stored vectors once at indexing time means each query needs only dot products —
+      the reason many vector stores recommend normalised embeddings with an inner-product index.
+
+  - id: m-tf-threshold
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a cosine similarity of 0.8 indicates a good match regardless of which embedding model produced the vectors."
+    answer: false
+    explanation: >-
+      Similarity scores are relative and model-specific. Some models put unrelated texts at 0.7, others
+      put close paraphrases at 0.6. Thresholds must be chosen (and re-chosen after a model change) by
+      measuring on your own labelled examples.
+
+  - id: m-design-hybrid
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Engineers search a parts catalogue both by exact part numbers (`XK-4471`) and by descriptions
+      ("battery drains overnight"). Which retrieval design fits best?
+    explanation: >-
+      Exact part numbers need keyword matching; descriptions need semantic matching. Their failure modes
+      differ, so running both and fusing the rankings (hybrid search) covers both kinds of query.
+    options:
+      - id: a
+        text: Hybrid search — run BM25 and vector search and combine their rankings.
+        correct: true
+        feedback: Right — each covers the other's blind spot.
+      - id: b
+        text: Vector search only, with a larger embedding model.
+        feedback: Even strong embedding models can blur near-identical part numbers; exact matching is keyword search's strength.
+      - id: c
+        text: BM25 only, with a long synonym list.
+        feedback: Synonym lists are brittle and incomplete for free-text descriptions; embeddings handle paraphrases better.
+      - id: d
+        text: Substring search over all documents.
+        feedback: No ranking, false matches inside words, and a full scan per query.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-unit, m-distance-api, m-unit-search, m-tf-threshold, m-design-hybrid]
+
+cheatsheet: |
+  ```python
+  dot = sum(x * y for x, y in zip(a, b, strict=True))     # strict: catch dimension mismatch
+  norm = math.sqrt(sum(x * x for x in a))
+  cos = dot / (norm_a * norm_b)                           # direction only, -1..1
+  dist = math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))  # smaller is better
+  unit = [x / norm for x in a]                            # normalise once
+
+  # exact top-k (O(N·d) per query)
+  scored = sorted(((cos(q, v), i) for i, v in vectors.items()), reverse=True)[:k]
+  ```
+  - Unit vectors: dot = cosine; ‖a − b‖² = 2 − 2·cos → same ranking.
+  - Use the metric the model expects; same model for queries and documents.
+  - Similar ≠ relevant; thresholds are model-specific.
+  - Keyword fails on paraphrase; vectors blur exact IDs → hybrid search. ANN indexes when N is large.

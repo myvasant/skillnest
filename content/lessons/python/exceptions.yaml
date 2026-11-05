@@ -1,0 +1,1314 @@
+id: python.exceptions
+concept: python.exceptions
+title: Exceptions and Tracebacks
+subtitle: Read what went wrong, handle what you can, let the rest be loud
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  When something goes wrong while a program runs, Python raises an exception. Learn to read a
+  traceback across several function calls, handle specific exceptions with try/except/else/finally,
+  re-prompt users until their input is valid, choose between EAFP and LBYL, and avoid the bare except
+  that hides bugs.
+objectives:
+  - Read a multi-frame traceback from the bottom up and locate both where an error was detected and where the bad data came from.
+  - Name the common built-in exceptions and the situations that raise them.
+  - Write try/except blocks that catch specific exceptions, and use as, else and finally correctly.
+  - Write an input loop that re-prompts until the user enters a valid value.
+  - Explain how an exception propagates up the call stack and decide where it should be handled.
+  - Explain why bare except is harmful, and compare the EAFP and LBYL styles.
+sources:
+  - title: "The Python Tutorial: Errors and Exceptions"
+    url: https://docs.python.org/3/tutorial/errors.html
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The try statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-try-statement
+    publisher: Python Software Foundation
+  - title: Built-in Exceptions
+    url: https://docs.python.org/3/library/exceptions.html
+    publisher: Python Software Foundation
+  - title: "Glossary: EAFP"
+    url: https://docs.python.org/3/glossary.html#term-EAFP
+    publisher: Python Software Foundation
+  - title: "PEP 8: Programming Recommendations"
+    url: https://peps.python.org/pep-0008/#programming-recommendations
+    publisher: Python Software Foundation
+  - title: "PEP 758: Allow except and except* expressions without parentheses"
+    url: https://peps.python.org/pep-0758/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why handle errors at all?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Real programs meet real data: users type "ten" instead of 10, a dictionary lacks a key, a list
+          is empty. Here is a program that trusts its user. Run it - the input box already contains `ten`:
+      - type: code
+        runnable: true
+        stdin: |
+          ten
+        code: |
+          age = int(input("Age: "))
+          print("Next year you will be", age + 1)
+        expectError: ValueError
+        expectedOutput: |
+          Age:
+        caption: The program crashes with a ValueError and a traceback - fine for you, baffling for a user.
+      - type: markdown
+        body: |
+          An unhandled [exception](glossary:exception) stops the program. But often you *know* what to do
+          when a particular thing goes wrong - here, ask for a number politely. `try`/`except` lets you say
+          so:
+      - type: code
+        runnable: true
+        stdin: |
+          ten
+        code: |
+          text = input("Age: ")
+          try:
+              age = int(text)
+              print("Next year you will be", age + 1)
+          except ValueError:
+              print("Please type a whole number, like 42.")
+        expectedOutput: |
+          Age: Please type a whole number, like 42.
+        annotations:
+          - line: 3
+            text: int("ten") raises ValueError. The rest of the try block is skipped...
+          - line: 5
+            text: ...and Python jumps here, because this clause handles ValueError.
+        caption: The typed input is not echoed (just like piping input into Python), so the message follows the prompt on the same line.
+      - type: markdown
+        body: |
+          This lesson is about doing that **deliberately**: reading errors well, handling the ones you
+          can do something about, and letting the others fail loudly so you can fix them.
+
+  - id: what-is-exception
+    title: What an exception is
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When an operation cannot be carried out, Python **raises** an exception:
+
+          1. It creates an **exception object** describing the problem. Its **type** names the kind of
+             problem (`ValueError`), and its **message** gives details.
+          2. It stops running the current code immediately.
+          3. It looks for a handler - an `except` clause for that type - in the current function, then in
+             the function that called it, and so on up the [call stack](glossary:call-stack).
+          4. If no handler is found, the program stops and prints a [traceback](glossary:traceback).
+
+          (A `SyntaxError` is different: Python could not even read the program, so nothing ran.)
+
+          The built-in exceptions you will meet most:
+
+          | Exception | Meaning | Example that raises it |
+          |---|---|---|
+          | `ValueError` | Right type, unsuitable value | `int("ten")` |
+          | `TypeError` | Operation not supported for this type | `"3" + 4`, `len(5)`, calling `None()` |
+          | `NameError` | Name not found in any scope | `prnt("hi")` |
+          | `UnboundLocalError` | Local name read before assignment (a kind of `NameError`) | see [scope](concept:python.scope) |
+          | `IndexError` | Sequence index out of range | `[1, 2][5]` |
+          | `KeyError` | Dictionary key not present | `{"a": 1}["b"]` |
+          | `AttributeError` | Object has no such attribute or method | `(5).append(1)` |
+          | `ZeroDivisionError` | Division or modulo by zero | `1 / 0` |
+          | `RecursionError` | Too many nested calls | a function that calls itself forever |
+          | `FileNotFoundError` | File does not exist | `open("missing.txt")` |
+          | `KeyboardInterrupt` | The user pressed Ctrl+C | — |
+
+          Exception types form a family tree: `ZeroDivisionError` is a kind of `ArithmeticError`;
+          `KeyError` and `IndexError` are kinds of `LookupError`; nearly all are kinds of `Exception`.
+          Handling a parent type also handles its children. Defining your own exception types needs
+          [classes](concept:python.classes) and is covered in
+          [raising exceptions](concept:python.raising-exceptions).
+
+  - id: tracebacks
+    title: Reading a traceback from the bottom up
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          This program loads user records through two helper functions. The second record is bad.
+      - type: code
+        runnable: true
+        code: |
+          def parse_age(text):
+              return int(text)
+
+          def load_user(record):
+              age = parse_age(record["age"])
+              return record["name"], age
+
+          users = [{"name": "Ada", "age": "36"}, {"name": "Alan", "age": "forty-one"}]
+          for user in users:
+              print(load_user(user))
+        expectError: ValueError
+        expectedOutput: |
+          ('Ada', 36)
+        caption: Run it and compare the traceback you get with the annotated copy below.
+      - type: code
+        language: text
+        code: |
+          Traceback (most recent call last):
+            File "<learner>", line 10, in <module>
+              print(load_user(user))
+                    ~~~~~~~~~^^^^^^
+            File "<learner>", line 5, in load_user
+              age = parse_age(record["age"])
+            File "<learner>", line 2, in parse_age
+              return int(text)
+          ValueError: invalid literal for int() with base 10: 'forty-one'
+        caption: >-
+          In this browser your program's file is called <learner>. On your own computer you would see the
+          script's path, for example File "/home/ada/users.py", line 10.
+      - type: markdown
+        body: |
+          A traceback is a snapshot of the call stack at the moment of the error, printed **outermost call
+          first** ("most recent call last"). Read it **from the bottom up**:
+
+          1. **Last line - what happened.** `ValueError: invalid literal for int() with base 10:
+             'forty-one'`. The type tells you the kind of problem; the message often shows the bad value.
+          2. **The frame just above - where it was detected.** Line 2, in `parse_age`: `return int(text)`.
+          3. **Walk upwards - how execution got there.** `parse_age` was called by `load_user` (line 5),
+             which was called from the main program (`<module>`, line 10). Each `File ..., line ..., in ...`
+             entry is one frame.
+          4. **Ask where the bad data came from.** The line that *detects* an error is often not the line
+             that *caused* it. `int` is working correctly; the real problem is the record with
+             `"forty-one"` - higher up, in the data.
+
+          The `~~~^^^` markers under a line highlight the exact part of it that was being evaluated
+          (Python 3.11+). They are omitted when they would just underline the whole line.
+      - type: item
+        ref: mcq-read-traceback
+
+  - id: try-except
+    title: Handling exceptions with try/except
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          ```text
+          try:
+              code that might raise
+          except SomeError:
+              what to do if SomeError is raised in the try block
+          ```
+
+          How a [try statement](glossary:try-statement) runs:
+
+          1. The `try` block runs.
+          2. If **no exception** happens, the `except` clauses are skipped.
+          3. If an exception happens, the **rest of the try block is skipped**. Python checks the `except`
+             clauses from top to bottom and runs the **first** one whose type matches. Execution then
+             continues after the whole `try` statement - the exception has been *handled*.
+          4. If no clause matches, the exception keeps travelling up the call stack, as if there were no
+             `try` at all.
+      - type: code
+        runnable: true
+        code: |
+          def safe_divide(a, b):
+              try:
+                  return a / b
+              except ZeroDivisionError:
+                  print("Cannot divide", a, "by zero")
+                  return None
+
+          print(safe_divide(10, 4))
+          print(safe_divide(1, 0))
+        expectedOutput: |
+          2.5
+          Cannot divide 1 by zero
+          None
+      - type: markdown
+        body: |
+          **Getting the exception object.** `except SomeError as name:` binds `name` to the exception
+          object, so you can show or record its message with `str(name)` or by printing it:
+      - type: code
+        runnable: true
+        code: |
+          prices = {"tea": 30, "coffee": 45}
+          for item in ["tea", "cake"]:
+              try:
+                  print(item, prices[item])
+              except KeyError as error:
+                  print("No price for", error)
+        expectedOutput: |
+          tea 30
+          No price for 'cake'
+        annotations:
+          - line: 5
+            text: error is the KeyError object; printing a KeyError shows the missing key (with quotes).
+      - type: markdown
+        body: |
+          **Several possible problems.** Add one `except` clause per type, or group types in a tuple when
+          the response is the same:
+      - type: code
+        runnable: true
+        code: |
+          def to_number(value):
+              try:
+                  return int(value)
+              except ValueError:
+                  return "not a number"
+              except TypeError:
+                  return "wrong type"
+
+          print(to_number("42"), to_number("4.2"), to_number(None))
+
+          def describe(value):
+              try:
+                  return f"{int(value)} as an int"
+              except (ValueError, TypeError) as error:
+                  return f"cannot convert: {type(error).__name__}"
+
+          print(describe("7"), "|", describe([7]))
+        expectedOutput: |
+          42 not a number wrong type
+          7 as an int | cannot convert: TypeError
+        annotations:
+          - line: 9
+            text: int("4.2") raises ValueError; int(None) raises TypeError.
+          - line: 14
+            text: A tuple of types - one handler for both.
+      - type: callout
+        variant: tip
+        title: Keep the try block small
+        body: |
+          Put **only the line that can fail** inside `try`. A large try block can catch an exception
+          from a line you did not expect to fail - and then your handler runs for the wrong reason. Also
+          order handlers from **specific to general**: the first matching clause wins, so
+          `except Exception:` placed first would swallow everything before `except ValueError:` is checked.
+      - type: item
+        ref: predict-try-flow
+
+  - id: else-finally
+    title: else and finally
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A `try` statement can have two more clauses:
+
+          - `else:` runs only if the try block finished **without** an exception. Put code there that
+            should run on success but whose own errors you do *not* want the `except` to catch - it keeps
+            the try block small.
+          - `finally:` runs **no matter what** - after success, after a handled exception, after an
+            unhandled one, and even when the try block executes `return`. Use it for clean-up that must
+            always happen (closing a connection, releasing a resource). For files there is an even better
+            tool, `with` - see [context managers](concept:python.context-managers).
+      - type: code
+        runnable: true
+        code: |
+          def read_number(text):
+              try:
+                  number = int(text)
+              except ValueError:
+                  print(f"{text!r} is not a number")
+                  return None
+              else:
+                  print(f"parsed {number}")
+                  return number
+              finally:
+                  print("done with", repr(text))
+
+          print(read_number("12"))
+          print(read_number("abc"))
+        expectedOutput: |
+          parsed 12
+          done with '12'
+          12
+          'abc' is not a number
+          done with 'abc'
+          None
+        annotations:
+          - line: 7
+            text: Reached only when int(text) succeeded.
+          - line: 10
+            text: Runs on both paths - just before the function actually returns.
+      - type: item
+        ref: predict-finally
+
+  - id: reprompt
+    title: Re-prompting until the input is valid
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The most common use of `try`/`except` for a beginner: keep asking until the user gives a usable
+          answer. The pattern is a `while True` loop that only exits once a value has passed **every**
+          check. Wrapping it in a function makes it reusable.
+      - type: code
+        runnable: true
+        stdin: |
+          two
+          0
+          3
+        code: |
+          def ask_positive_int(prompt):
+              while True:
+                  text = input(prompt)
+                  try:
+                      value = int(text)
+                  except ValueError:
+                      print(f"{text!r} is not a whole number. Try again.")
+                      continue
+                  if value > 0:
+                      return value
+                  print("It must be at least 1. Try again.")
+
+          tickets = ask_positive_int("Tickets: ")
+          print("Booking", tickets, "tickets")
+        expectedOutput: |
+          Tickets: 'two' is not a whole number. Try again.
+          Tickets: It must be at least 1. Try again.
+          Tickets: Booking 3 tickets
+        annotations:
+          - line: 7
+            text: Show the user what was wrong, including the text they typed.
+          - line: 8
+            text: continue goes straight back to the prompt.
+          - line: 10
+            text: The only way out - return leaves both the loop and the function.
+        caption: The input box holds three answers, one per line - two, 0 and 3. Change them and run again.
+      - type: callout
+        variant: production
+        title: Two kinds of check
+        body: |
+          `int()` checks the **format** (is it a whole number?) and raises if not; the `if` checks the
+          **business rule** (at least 1). Real input validation usually needs both. Keep messages
+          specific - "must be at least 1" helps far more than "invalid input".
+
+  - id: bare-except
+    title: Why a bare except is harmful
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [bare `except:`](glossary:bare-except) - with no exception type - catches **every** exception. That sounds safe, but it
+          means the handler also runs for errors you never anticipated, including your own bugs:
+      - type: code
+        runnable: true
+        code: |
+          def average(numbers):
+              try:
+                  return sum(numbers) / len(numbrs)   # typo: numbrs
+              except:
+                  return 0
+
+          print(average([2, 4, 6]))
+        expectedOutput: |
+          0
+        caption: >-
+          No error, no traceback - just a wrong answer. The NameError from the typo was swallowed, so the
+          function returns 0 for every list. With except ZeroDivisionError, the typo would have been
+          reported immediately.
+      - type: markdown
+        body: |
+          Problems with bare `except:` (and with `except Exception:` used carelessly):
+
+          - **It hides bugs.** Typos (`NameError`), wrong types (`TypeError`) and logic errors turn into
+            silent wrong behaviour that is far harder to find than a traceback.
+          - **It catches things that are not errors in your code.** A bare `except:` also catches
+            `KeyboardInterrupt` (the user pressing Ctrl+C) and `SystemExit` (the program asking to exit),
+            so a loop protected this way may refuse to stop. `except Exception:` does not catch those two,
+            because they are not subclasses of `Exception`.
+          - **The handler cannot respond sensibly.** "Return 0" is right for an empty list, wrong for a
+            typo. A handler should exist for a problem you understand.
+
+          [PEP 8](https://peps.python.org/pep-0008/#programming-recommendations) says: "When catching
+          exceptions, mention specific exceptions whenever possible instead of using a bare `except:`
+          clause." The one common, legitimate use of a broad handler is at the very **top** of a long-running
+          program (a web server, a job runner) where you record the full error and carry on with the next
+          request - never `except: pass`.
+      - type: item
+        ref: explain-bare-except
+
+  - id: eafp-lbyl
+    title: "EAFP vs LBYL: ask forgiveness or look before you leap?"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          There are two styles of dealing with something that might fail:
+
+          - [LBYL](glossary:lbyl) - **Look Before You Leap**: check first, then act.
+          - [EAFP](glossary:eafp) - **Easier to Ask Forgiveness than Permission**: just act, and handle the
+            exception if it fails.
+      - type: code
+        runnable: true
+        code: |
+          stock = {"apple": 5, "pear": 0}
+
+          # LBYL
+          if "mango" in stock:
+              print(stock["mango"])
+          else:
+              print("no mango (checked first)")
+
+          # EAFP
+          try:
+              print(stock["mango"])
+          except KeyError:
+              print("no mango (handled the KeyError)")
+        expectedOutput: |
+          no mango (checked first)
+          no mango (handled the KeyError)
+      - type: markdown
+        body: |
+          Both are fine for a dictionary lookup (and `stock.get("mango", 0)` is simpler than either). EAFP
+          is idiomatic in Python and has real advantages when the check is hard to get right or can go out
+          of date:
+      - type: code
+        runnable: true
+        code: |
+          text = "-12"
+          print(text.isdigit())
+          try:
+              print(int(text))
+          except ValueError:
+              print("not a number")
+        expectedOutput: |
+          False
+          -12
+        annotations:
+          - line: 2
+            text: The LBYL check rejects a perfectly valid number - isdigit() knows nothing about minus signs or spaces.
+          - line: 4
+            text: int() is the authority on what int() accepts. Asking it directly cannot disagree with it.
+      - type: markdown
+        body: |
+          **Choosing:**
+
+          - Prefer **EAFP** when the operation itself is the best validator (parsing numbers, dates), or
+            when the world can change between the check and the action - a file can be deleted after
+            `exists()` said it was there (a "time-of-check to time-of-use" bug).
+          - Prefer **LBYL** when the check is simple and failure is a normal, frequent case - `if items:`
+            before taking `items[0]`, `if key in d:` - or when an operation cannot be undone, so you must
+            check *before* doing it.
+          - Exceptions in CPython are cheap to *set up* but relatively expensive to *raise*, so EAFP is best
+            when failure is the exception rather than the rule.
+      - type: item
+        ref: mcq-eafp
+
+  - id: propagation
+    title: How exceptions travel up the call stack
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An exception that is not handled in the function where it happens is not lost. The function stops,
+          its frame is discarded, and the exception **propagates** to the caller - at the exact point where
+          the call was made - as if the call itself had raised it. This repeats up the stack until some
+          `try` handles it, or the program stops with a traceback. This is
+          [exception propagation](glossary:exception-propagation).
+
+          Step through it. Watch the `exception` steps: `int("x")` fails inside `parse`, `parse`'s frame is
+          removed, then `total`'s frame - neither handles `ValueError` - and finally the `except` in the
+          main program catches it.
+      - type: visualization
+        component: python-tracer
+        title: An exception unwinds two frames before it is caught
+        caption: >-
+          parse and total have no try statement, so the ValueError passes straight through them. Note
+          that print(total(...)) never prints a total - the call never returned a value.
+        props:
+          code: |
+            def parse(text):
+                return int(text)
+
+            def total(items):
+                result = 0
+                for item in items:
+                    result += parse(item)
+                return result
+
+            try:
+                print(total(["4", "x", "5"]))
+            except ValueError as e:
+                print("Caught in the caller:", e)
+      - type: markdown
+        body: |
+          **Where should you handle an exception?** Where you can do something **meaningful** about it:
+
+          - `parse` cannot know whether a bad value should be skipped, replaced, or reported - so it lets
+            the exception propagate.
+          - The code that talks to the user *can* decide: re-prompt, show a message, skip a record and
+            count it.
+
+          Low-level functions usually let exceptions propagate (or raise clearer ones - see
+          [raising exceptions](concept:python.raising-exceptions)); the code at the edges of the program -
+          user input, request handlers, the main loop - handles them. Any `finally` blocks in the frames
+          being unwound still run on the way up.
+      - type: item
+        ref: predict-propagation
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The hierarchy is real class inheritance.** Every exception type is a class, and each one's
+          `__mro__` lists its ancestors. `except ArithmeticError:` handles `ZeroDivisionError` because
+          `ZeroDivisionError` is a subclass of it. At the top sits `BaseException`; `Exception` is the
+          parent of all "normal" errors, while `KeyboardInterrupt`, `SystemExit` and `GeneratorExit`
+          derive from `BaseException` directly - which is why `except Exception:` lets Ctrl+C through.
+      - type: code
+        runnable: true
+        code: |
+          print(ZeroDivisionError.__mro__)
+          print(issubclass(KeyError, LookupError), issubclass(IndexError, LookupError))
+          print(issubclass(KeyboardInterrupt, Exception))
+        expectedOutput: |
+          (<class 'ZeroDivisionError'>, <class 'ArithmeticError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+          True True
+          False
+      - type: markdown
+        body: |
+          **The `as` name is deleted.** At the end of an `except ... as error:` clause Python deletes the
+          name `error` (an exception object holds a reference to its traceback and all its frames, and
+          keeping it alive would create reference cycles). Copy anything you need first.
+      - type: code
+        runnable: true
+        code: |
+          try:
+              1 / 0
+          except ZeroDivisionError as error:
+              message = str(error)
+          print(message)
+          print("error" in globals())
+        expectedOutput: |
+          division by zero
+          False
+      - type: markdown
+        body: |
+          **Cost.** Since CPython 3.11, entering a `try` block costs almost nothing when no exception is
+          raised ("zero-cost" exceptions); the work happens only when something is actually raised.
+
+          **Errors inside handlers chain.** If a handler itself fails, Python shows both tracebacks joined by
+          "During handling of the above exception, another exception occurred:", so the original cause is not
+          lost. `raise ... from ...` controls this explicitly (see raising exceptions).
+
+          **New in Python 3.14.** [PEP 758](https://peps.python.org/pep-0758/) allows
+          `except ValueError, TypeError:` without parentheses when there is no `as` clause (older versions
+          require the tuple form, which still works everywhere). [PEP 765](https://peps.python.org/pep-0765/)
+          makes the compiler emit a `SyntaxWarning` for `return`, `break` or `continue` that leaves a
+          `finally` block, because doing so silently discards any exception in flight:
+      - type: code
+        runnable: true
+        code: |
+          def risky():
+              try:
+                  return 1 / 0
+              finally:
+                  return "finally wins"
+
+          print(risky())
+        expectedOutput: |
+          finally wins
+        caption: >-
+          The ZeroDivisionError vanished without a trace. Python 3.14 also prints
+          "SyntaxWarning: 'return' in a 'finally' block" (on standard error) when compiling this.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `ValueError: invalid literal for int() with base 10: 'ten'` | Converting text that is not a whole number | Wrap the conversion in `try`/`except ValueError` and re-prompt or report. |
+          | Your `except` never runs; the program still crashes | You caught the wrong type (e.g. `ValueError` for a missing key) | Read the last line of the traceback and catch that exact type. |
+          | Wrong results, but no error at all | A bare `except:` or `except Exception: pass` is swallowing a bug | Catch only the specific exception you expect. |
+          | The handler runs for errors from an unrelated line | The `try` block is too big | Keep only the risky line in `try`; move the rest to `else`. |
+          | `NameError` for the exception variable after the handler | The `as` name is deleted when the `except` block ends | Save `str(error)` in another variable inside the handler. |
+          | A specific handler below `except Exception:` never runs | The first matching clause wins | Order handlers from specific to general. |
+          | `SyntaxError: expected 'except' or 'finally' block` | A `try:` with no handler | Add an `except` (or `finally`) clause. |
+          | `NameError`/`UnboundLocalError` for a variable assigned in `try` | The exception happened before the assignment | Assign a default before `try`, or use the value only in `else`. |
+      - type: code
+        runnable: true
+        code: |
+          prices = {"tea": 30}
+          try:
+              print(prices["cake"])
+          except ValueError:
+              print("No such item")
+        expectError: KeyError
+        caption: The handler is for ValueError, but a missing key raises KeyError - so it is not handled at all.
+      - type: item
+        ref: debug-bare-except
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: to-int-or-none
+      - type: item
+        ref: ask-rating
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - An **exception** is an object describing a runtime error; unhandled, it stops the program with a
+            **traceback**.
+          - Read tracebacks **bottom-up**: last line = what; the frame above = where detected; frames above
+            that = how you got there. The cause is often higher up than the detection point.
+          - `try`/`except SpecificError` handles what you can deal with; `as e` gives the object; the first
+            matching clause wins; keep the `try` block small.
+          - `else` runs only on success; `finally` runs always - even after `return`.
+          - Exceptions **propagate** up the call stack until handled; handle them where you can respond
+            meaningfully (often near the user).
+          - Never use bare `except:` - it hides bugs and catches Ctrl+C.
+          - **EAFP** (try it, handle failure) is idiomatic; **LBYL** (check first) suits simple, cheap checks.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Be ready to explain the difference between `else` and `finally`, why bare `except:` is
+          dangerous (it hides bugs and catches `KeyboardInterrupt`/`SystemExit`), and EAFP vs LBYL with an
+          example such as parsing numbers or a file disappearing between check and use. Senior candidates
+          are also asked *where* exceptions should be handled - at the boundary where a decision can be made.
+
+items:
+  - id: mcq-read-traceback
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A checkout program crashes with this traceback. Which reading is correct?
+
+      ```text
+      Traceback (most recent call last):
+        File "shop.py", line 13, in <module>
+          print(checkout(cart))
+                ~~~~~~~~^^^^^^
+        File "shop.py", line 9, in checkout
+          total += price_of(item)
+                   ~~~~~~~~^^^^^^
+        File "shop.py", line 4, in price_of
+          return PRICES[item]
+                 ~~~~~~^^^^^^
+      KeyError: 'mango'
+      ```
+    explanation: >-
+      The last line says what happened: a KeyError for the key 'mango'. The frame just above it is where it
+      was detected - line 4 in price_of, looking up PRICES[item]. The frames above show the route:
+      checkout called price_of on line 9, and the main program called checkout on line 13. The real fix is
+      probably in the data (a cart item with no price) or in how missing prices are handled.
+    options:
+      - id: a
+        text: "Line 4 in price_of failed to find the key 'mango' in PRICES; it was called from checkout (line 9), which was called from line 13."
+        correct: true
+        feedback: Correct - bottom line first, then the innermost frame, then walk up the call chain.
+      - id: b
+        text: The error is on line 13, because it is listed first.
+        feedback: The first frame is the outermost call. Python lists frames oldest first ("most recent call last"); the error was raised in the last frame.
+      - id: c
+        text: There is a typo in a variable name called mango.
+        feedback: A misspelled name would be a NameError. KeyError means a dictionary lookup used a key that is not in the dict.
+      - id: d
+        text: checkout must contain the bug because it is in the middle of the traceback.
+        feedback: Being in the middle only means checkout was on the call path. The traceback shows where the error was detected, not necessarily which function is wrong.
+
+  - id: predict-try-flow
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (Four lines.)
+    code: |
+      try:
+          print("A")
+          x = int("7")
+          print("B")
+          y = 10 / (x - 7)
+          print("C")
+      except ZeroDivisionError:
+          print("D")
+      print("E")
+    answer: |
+      A
+      B
+      D
+      E
+    explanation: >-
+      A and B print; int("7") succeeds. 10 / (7 - 7) raises ZeroDivisionError, so the rest of the try block
+      (printing C) is skipped and the matching handler prints D. Execution then continues after the try
+      statement and prints E.
+    wrongAnswers:
+      - answer: |
+          A
+          B
+          C
+          D
+          E
+        feedback: When an exception is raised, the rest of the try block is skipped. C is never printed.
+      - answer: |
+          A
+          D
+          E
+        feedback: int("7") is a valid conversion, so no exception happens there and B is printed.
+      - answer: |
+          A
+          B
+          D
+        feedback: Once the exception is handled, the program continues normally after the try statement, so E is printed.
+
+  - id: predict-finally
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Four lines.)
+    code: |
+      def check(value):
+          try:
+              number = int(value)
+          except ValueError:
+              return "bad"
+          else:
+              return "good"
+          finally:
+              print("checked", value)
+
+      print(check("5"))
+      print(check("x"))
+    answer: |
+      checked 5
+      good
+      checked x
+      bad
+    explanation: >-
+      For "5", the else clause returns "good" - but the finally clause runs first, printing "checked 5",
+      before the call actually completes and the caller prints "good". For "x", the except clause returns
+      "bad", and again finally prints before the caller prints the result.
+    wrongAnswers:
+      - answer: |
+          good
+          checked 5
+          bad
+          checked x
+        feedback: >-
+          finally runs before the function finishes returning, so its print happens before the caller
+          can print the returned value.
+      - answer: |
+          checked 5
+          good
+          bad
+        feedback: finally runs on every path, including when the except clause returns.
+
+  - id: explain-bare-except
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate wraps a whole function in `try:` ... `except: pass` "so it never crashes". Explain why
+      this is harmful and what they should write instead.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that a bare except catches every exception, including bugs such as NameError and TypeError, so they turn into silent wrong behaviour.
+      - Mentions that it also catches KeyboardInterrupt and SystemExit, so the program may not stop when asked.
+      - Says the handler (pass) cannot respond correctly to problems it did not anticipate, and that the information in the traceback is lost.
+      - Recommends catching only the specific exceptions the code can handle, with a small try block, and letting others propagate.
+    modelAnswer: |
+      `except: pass` catches everything - not only the error they expected, but also typos (NameError),
+      wrong types (TypeError) and any other bug - and then throws the information away. The function
+      silently does the wrong thing and the traceback that would have pointed straight at the bug is lost.
+      A bare except even catches KeyboardInterrupt and SystemExit, so Ctrl+C may not stop the program.
+      Instead, keep the try block around the line that can fail and catch the specific exception you
+      expect and can handle, e.g. `except ValueError:` with a useful response. Unexpected exceptions should
+      propagate so they are seen and fixed.
+
+  - id: mcq-eafp
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: >-
+      A program converts text typed by a user into an int. Inputs like "42", "-7" and " 12 " must be
+      accepted. Which approach is the most robust?
+    explanation: >-
+      int() itself is the authority on what it accepts (signs, surrounding spaces, underscores between
+      digits). Trying the conversion and handling ValueError (EAFP) can never disagree with int(), while a
+      hand-written check almost always rejects some valid input or accepts some invalid one.
+    options:
+      - id: a
+        text: "Check text.isdigit() first, and only call int(text) if it is True."
+        feedback: isdigit() is False for "-7" and " 12 ", so valid input would be rejected. The check and the real rules disagree.
+      - id: b
+        text: "Call int(text) inside try, and handle ValueError by asking again."
+        correct: true
+        feedback: Correct - EAFP. The operation is the validator, so the rules can never get out of sync.
+      - id: c
+        text: "Wrap the conversion in a bare except: so nothing can go wrong."
+        feedback: A bare except would also hide unrelated bugs and catch Ctrl+C. Catch ValueError specifically.
+      - id: d
+        text: Check that len(text) > 0, then convert.
+        feedback: A non-empty string can still be invalid ("abc"), so int() could still raise.
+
+  - id: predict-propagation
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print? (Four lines.)
+    code: |
+      def inner():
+          try:
+              print("inner start")
+              return 1 / 0
+          finally:
+              print("inner cleanup")
+
+      def outer():
+          try:
+              inner()
+              print("after inner")
+          except ZeroDivisionError:
+              print("outer handled it")
+
+      outer()
+      print("program continues")
+    answer: |
+      inner start
+      inner cleanup
+      outer handled it
+      program continues
+    explanation: >-
+      inner raises ZeroDivisionError and has no handler, but its finally runs as the exception leaves the
+      frame. The exception propagates to outer at the call inner(), so "after inner" is skipped and outer's
+      handler runs. The exception is now handled, so the program continues normally.
+    wrongAnswers:
+      - answer: |
+          inner start
+          outer handled it
+          program continues
+        feedback: finally blocks run while an exception propagates out of their frame, so "inner cleanup" is printed first.
+      - answer: |
+          inner start
+          inner cleanup
+          after inner
+          outer handled it
+          program continues
+        feedback: The exception arrives in outer at the call inner(), so the rest of outer's try block - "after inner" - is skipped.
+      - answer: |
+          inner start
+          inner cleanup
+          outer handled it
+        feedback: Once outer handles the exception, the program carries on normally, so the final print runs.
+
+  - id: debug-bare-except
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `average(numbers)` should return the mean, or `0` for an empty list - but it returns `0` for **every**
+      list. The bare `except:` is hiding the real error. Replace it with the one exception that an empty
+      list causes, run the program, read the error that appears, and fix that bug too. The program should
+      print `4.0` and then `0`.
+    starterCode: |
+      def average(numbers):
+          try:
+              return sum(numbers) / len(numbrs)
+          except:
+              return 0
+
+      print(average([2, 4, 6]))
+      print(average([]))
+    solution: |
+      def average(numbers):
+          try:
+              return sum(numbers) / len(numbers)
+          except ZeroDivisionError:
+              return 0
+
+      print(average([2, 4, 6]))
+      print(average([]))
+    expectedOutput: |
+      4.0
+      0
+    tests:
+      - name: no bare or catch-all except
+        code: |
+          import ast
+          for h in ast.walk(ast.parse(source)):
+              if isinstance(h, ast.ExceptHandler):
+                  assert h.type is not None, "Replace the bare except: with the specific exception an empty list raises."
+                  assert not (isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException")), "except Exception still catches typos. Catch ZeroDivisionError specifically."
+      - name: averages real lists
+        code: |
+          for numbers, expected in [([2, 4, 6], 4.0), ([10], 10.0), ([1, 2], 1.5)]:
+              r = average(numbers)
+              assert r == expected, f"average({numbers}) returned {r!r}; expected {expected}. Is something still hiding an error?"
+      - name: empty list gives 0
+        code: |
+          r = average([])
+          assert r == 0, f"average([]) returned {r!r}; expected 0."
+      - name: prints 4.0 and 0
+        code: |
+          assert output_lines() == ["4.0", "0"], f"Your program printed {output()!r}."
+    hints:
+      - Dividing by len([]) - which is 0 - raises which exception? Catch only that one.
+      - Once the bare except is gone, the real error appears. Read its last line.
+      - The NameError points at a misspelled variable on the return line.
+    feedback:
+      - when: { errorType: NameError }
+        message: Now the hidden bug is visible. Read the error - which name is misspelled on the return line?
+      - when: { outputEquals: "0\n0\n" }
+        message: Still 0 for a real list - an exception is still being swallowed. Check the spelling of numbers on the return line, and catch only ZeroDivisionError.
+    explanation: >-
+      The bare except caught the NameError from the typo numbrs, so every call returned 0. Catching only
+      ZeroDivisionError (the empty-list case) let the NameError surface, which pointed straight at the typo.
+      This is why handlers should name the specific exceptions they expect.
+
+  - id: to-int-or-none
+    type: code
+    skill: implementation
+    prompt: |
+      Write `to_int_or_none(text)` that returns `int(text)` when `text` is a valid whole number (as `int()`
+      defines it - surrounding spaces and a sign are fine) and `None` otherwise. Catch **only**
+      `ValueError`. The loop at the bottom should then print:
+
+      ```text
+      '42' -> 42
+      ' -7 ' -> -7
+      '4.5' -> None
+      'abc' -> None
+      ```
+    starterCode: |
+      def to_int_or_none(text):
+          return int(text)
+
+      for text in ["42", " -7 ", "4.5", "abc"]:
+          print(repr(text), "->", to_int_or_none(text))
+    solution: |
+      def to_int_or_none(text):
+          try:
+              return int(text)
+          except ValueError:
+              return None
+
+      for text in ["42", " -7 ", "4.5", "abc"]:
+          print(repr(text), "->", to_int_or_none(text))
+    expectedOutput: |
+      '42' -> 42
+      ' -7 ' -> -7
+      '4.5' -> None
+      'abc' -> None
+    tests:
+      - name: valid numbers are converted
+        code: |
+          for text, expected in [("42", 42), (" -7 ", -7), ("0", 0), ("+3", 3), ("1_000", 1000)]:
+              r = to_int_or_none(text)
+              assert r == expected, f"to_int_or_none({text!r}) returned {r!r}; expected {expected}."
+      - name: invalid text gives None
+        code: |
+          for text in ["4.5", "abc", "", "12a", " "]:
+              r = to_int_or_none(text)
+              assert r is None, f"to_int_or_none({text!r}) returned {r!r}; expected None."
+      - name: catches ValueError specifically
+        code: |
+          import ast
+          handlers = [h for h in ast.walk(ast.parse(source)) if isinstance(h, ast.ExceptHandler)]
+          assert handlers, "Use try/except around int(text)."
+          names = {n.id for h in handlers if h.type is not None for n in ast.walk(h.type) if isinstance(n, ast.Name)}
+          assert all(h.type is not None for h in handlers), "Don't use a bare except: - catch ValueError."
+          assert "ValueError" in names and not names & {"Exception", "BaseException"}, "Catch ValueError specifically (not Exception)."
+      - name: prints the four lines
+        code: |
+          assert output_lines() == ["'42' -> 42", "' -7 ' -> -7", "'4.5' -> None", "'abc' -> None"], f"Your program printed {output()!r}."
+    hints:
+      - Put `return int(text)` inside a try block.
+      - "Add `except ValueError:` and return None from it."
+    feedback:
+      - when: { errorType: ValueError }
+        message: int() still raises for invalid text. Wrap it in try/except ValueError and return None in the handler.
+    explanation: >-
+      EAFP in its simplest form: try the conversion and translate the one expected failure into None.
+      Because int() decides what is valid, inputs such as " -7 " and "1_000" are accepted without any
+      hand-written checks.
+
+  - id: ask-rating
+    type: code
+    skill: transfer
+    difficulty: 2
+    stdin: |
+      great
+      9
+      4
+    prompt: |
+      Write a program that asks `Rating (1-5): ` until the user types a whole number from 1 to 5, then
+      prints `Thanks for rating 4/5` (with the number they typed). For text that is not a whole number
+      print `Please type a number.`; for numbers outside 1-5 print `Out of range.` Use `try`/`except
+      ValueError`.
+
+      The input box contains `great`, `9` and `4`, so your program should print:
+
+      ```text
+      Rating (1-5): Please type a number.
+      Rating (1-5): Out of range.
+      Rating (1-5): Thanks for rating 4/5
+      ```
+    starterCode: |
+      text = input("Rating (1-5): ")
+      rating = int(text)
+      print(f"Thanks for rating {rating}/5")
+    solution: |
+      while True:
+          text = input("Rating (1-5): ")
+          try:
+              rating = int(text)
+          except ValueError:
+              print("Please type a number.")
+              continue
+          if 1 <= rating <= 5:
+              break
+          print("Out of range.")
+
+      print(f"Thanks for rating {rating}/5")
+    expectedOutput: |
+      Rating (1-5): Please type a number.
+      Rating (1-5): Out of range.
+      Rating (1-5): Thanks for rating 4/5
+    tests:
+      - name: handles the example input
+        code: |
+          assert output_lines() == ["Rating (1-5): Please type a number.", "Rating (1-5): Out of range.", "Rating (1-5): Thanks for rating 4/5"], f"Your program printed {output()!r}."
+      - name: accepts a valid first answer
+        code: |
+          out = run_program("5\n")
+          assert out.count("Rating (1-5): ") == 1 and out.endswith("Thanks for rating 5/5\n"), f"With input 5 your program printed {out!r}; it should ask once and thank the user."
+      - name: keeps asking through several bad answers
+        code: |
+          out = run_program("0\n-3\nfive\n1\n")
+          assert out.count("Rating (1-5): ") == 4, f"With inputs 0, -3, five, 1 the program should ask 4 times. It printed {out!r}."
+          assert out.count("Out of range.") == 2 and out.count("Please type a number.") == 1, f"Expected two 'Out of range.' and one 'Please type a number.'; got {out!r}."
+          assert out.endswith("Thanks for rating 1/5\n"), f"The last line should thank for rating 1/5; got {out!r}."
+      - name: uses try/except ValueError
+        code: |
+          import ast
+          handlers = [h for h in ast.walk(ast.parse(source)) if isinstance(h, ast.ExceptHandler)]
+          assert any(isinstance(h.type, ast.Name) and h.type.id == "ValueError" for h in handlers), "Convert with int() inside try and catch ValueError."
+    hints:
+      - Wrap everything in `while True:` - the loop ends only with break once the rating is valid.
+      - After `except ValueError:` print the message and `continue` back to the prompt.
+      - "`1 <= rating <= 5` checks the range in one expression."
+    feedback:
+      - when: { errorType: ValueError }
+        message: int() raised ValueError for "great". Put the conversion inside try and handle ValueError.
+      - when: { errorType: EOFError }
+        message: Your program asked for more input than was provided - make sure the loop stops (break) once a valid rating arrives.
+    explanation: >-
+      The loop separates two checks: int() validates the format (handled with except ValueError) and the
+      if validates the range. Only a value passing both reaches break, so the final line always has a
+      valid rating.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-else
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Four lines.)
+    code: |
+      def safe_div(a, b):
+          try:
+              result = a / b
+          except ZeroDivisionError:
+              print("divide by zero")
+              result = None
+          else:
+              print("ok")
+          return result
+
+      print(safe_div(6, 3))
+      print(safe_div(1, 0))
+    answer: |
+      ok
+      2.0
+      divide by zero
+      None
+    explanation: >-
+      For 6 / 3 no exception occurs, so the else clause prints ok and the function returns 2.0. For 1 / 0
+      the handler prints "divide by zero" and sets result to None; else is skipped because an exception
+      happened.
+    wrongAnswers:
+      - answer: |
+          ok
+          2.0
+          divide by zero
+          ok
+          None
+        feedback: else runs only when the try block finished without an exception, so it is skipped for 1 / 0.
+      - answer: |
+          2.0
+          ok
+          None
+          divide by zero
+        feedback: The prints inside safe_div run during the call, before the caller prints the returned value.
+
+  - id: m-mcq-which-exception
+    type: mcq
+    skill: recognition
+    prompt: 'Which exception does `{"tea": 30}["cake"]` raise?'
+    explanation: Looking up a key that is not in a dictionary raises KeyError, and its message is the missing key.
+    options:
+      - id: a
+        text: KeyError
+        correct: true
+        feedback: Correct. Use `in`, .get(), or except KeyError depending on what should happen.
+      - id: b
+        text: IndexError
+        feedback: IndexError is for sequence positions such as a list index that is out of range.
+      - id: c
+        text: NameError
+        feedback: NameError is for an unknown variable name. Here the dict exists; the key is missing.
+      - id: d
+        text: ValueError
+        feedback: ValueError is for a right-type, wrong-value argument, such as int("ten").
+
+  - id: m-tf-finally
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a finally clause runs even when the try block executes a return statement."
+    answer: true
+    explanation: >-
+      finally runs on every way out of the try statement - normal completion, a handled or unhandled
+      exception, return, break or continue. It runs just before the function actually returns.
+
+  - id: m-sum-valid
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `sum_valid(values)`. `values` is a list of strings. Return a tuple `(total, bad)`: `total` is
+      the sum of the strings that `int()` can convert, and `bad` is how many could not be converted. Use
+      try/except. Print `sum_valid(["4", "x", "10", "", "-2"])`, which is `(12, 2)`.
+    starterCode: |
+      def sum_valid(values):
+          total = 0
+          for v in values:
+              total += int(v)
+          return total
+
+      print(sum_valid(["4", "x", "10", "", "-2"]))
+    solution: |
+      def sum_valid(values):
+          total = 0
+          bad = 0
+          for v in values:
+              try:
+                  total += int(v)
+              except ValueError:
+                  bad += 1
+          return total, bad
+
+      print(sum_valid(["4", "x", "10", "", "-2"]))
+    expectedOutput: |
+      (12, 2)
+    tests:
+      - name: returns total and bad count
+        code: |
+          cases = [(["4", "x", "10", "", "-2"], (12, 2)), ([], (0, 0)), (["a", "b"], (0, 2)), ([" 7 ", "3"], (10, 0))]
+          for values, expected in cases:
+              r = sum_valid(values)
+              assert r == expected, f"sum_valid({values}) returned {r!r}; expected {expected}."
+      - name: catches ValueError specifically
+        code: |
+          import ast
+          handlers = [h for h in ast.walk(ast.parse(source)) if isinstance(h, ast.ExceptHandler)]
+          assert handlers and all(isinstance(h.type, ast.Name) and h.type.id == "ValueError" for h in handlers), "Wrap int(v) in try and catch ValueError (not a bare except)."
+      - name: prints (12, 2)
+        code: |
+          assert output().strip() == "(12, 2)", f"Your program printed {output()!r}."
+    hints:
+      - Keep two counters, total and bad.
+      - Put only `total += int(v)` inside the try block, so one bad value does not stop the loop.
+      - "`return total, bad` returns a tuple."
+    explanation: >-
+      The try block sits inside the loop, so each bad value is handled and counted, and the loop moves on
+      to the next one. Catching only ValueError means any other bug would still surface.
+
+  - id: m-debug-wrong-exception
+    type: debug
+    skill: debugging
+    prompt: |
+      `price_of` should return `0` for items that are not on the menu, but `price_of("cake")` crashes.
+      Fix the handler so the program prints `30` and then `0`.
+    starterCode: |
+      prices = {"tea": 30, "coffee": 45}
+
+      def price_of(item):
+          try:
+              return prices[item]
+          except ValueError:
+              return 0
+
+      print(price_of("tea"))
+      print(price_of("cake"))
+    solution: |
+      prices = {"tea": 30, "coffee": 45}
+
+      def price_of(item):
+          try:
+              return prices[item]
+          except KeyError:
+              return 0
+
+      print(price_of("tea"))
+      print(price_of("cake"))
+    expectedOutput: |
+      30
+      0
+    tests:
+      - name: known and unknown items
+        code: |
+          for item, expected in [("tea", 30), ("coffee", 45), ("cake", 0), ("", 0)]:
+              r = price_of(item)
+              assert r == expected, f"price_of({item!r}) returned {r!r}; expected {expected}."
+      - name: no bare or catch-all except
+        code: |
+          import ast
+          for h in ast.walk(ast.parse(source)):
+              if isinstance(h, ast.ExceptHandler):
+                  assert h.type is not None and not (isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException")), "Catch the specific exception a missing key raises, not everything."
+      - name: prints 30 and 0
+        code: |
+          assert output_lines() == ["30", "0"], f"Your program printed {output()!r}."
+    hints:
+      - Run it and read the last line of the traceback. Which exception type is it?
+      - The except clause must name that type for the handler to run.
+    feedback:
+      - when: { errorType: KeyError }
+        message: The missing key raises KeyError, which your handler does not catch. Name KeyError in the except clause.
+    explanation: >-
+      A missing dictionary key raises KeyError, not ValueError, so the handler never matched and the
+      exception propagated. Catching KeyError (or using prices.get(item, 0)) gives the intended default.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-else, m-mcq-which-exception, m-tf-finally, m-sum-valid, m-debug-wrong-exception]
+
+cheatsheet: |
+  ```python
+  try:
+      value = int(text)            # only the risky line
+  except ValueError as error:      # specific type; error = the exception object
+      print("Not a number:", error)
+  except (KeyError, IndexError):   # several types, one response
+      ...
+  else:
+      print("parsed", value)       # runs only if no exception
+  finally:
+      print("always runs")         # success, failure, even return
+
+  while True:                      # re-prompt pattern
+      try:
+          n = int(input("n: "))
+          break
+      except ValueError:
+          print("Try again")
+  ```
+  - Tracebacks: read bottom-up (what → where → how you got there)
+  - Never bare `except:` · catch specific → general · handle where you can respond
+  - EAFP: try it and handle failure · LBYL: check first when the check is simple

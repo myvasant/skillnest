@@ -1,0 +1,220 @@
+id: databases.migrations
+concept: databases.migrations
+title: Schema migrations
+subtitle: Version-controlled, repeatable schema changes (e
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Version-controlled, repeatable schema changes (e.g. Alembic) applied in order, with care for backwards
+  compatibility during deploys.
+objectives:
+- Explain the core model behind schema migrations.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Alembic Tutorial
+  url: https://alembic.sqlalchemy.org/en/latest/tutorial.html
+  publisher: SQLAlchemy / Alembic project
+- title: Auto Generating Migrations
+  url: https://alembic.sqlalchemy.org/en/latest/autogenerate.html
+  publisher: SQLAlchemy / Alembic project
+- title: Parallel Change (expand and contract)
+  url: https://martinfowler.com/bliki/ParallelChange.html
+  publisher: Martin Fowler
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Version-controlled, repeatable schema changes (e.g. Alembic) applied in order, with care for backwards
+      compatibility during deploys. Every environment's database must match the code that runs against it; hand-applied
+      ALTER statements drift and cannot be reviewed, repeated or reliably rolled back.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the applied
+      revision in a table (`alembic_version` for Alembic).
+
+      - Alembic workflow: `alembic revision --autogenerate -m "add users"` compares your SQLAlchemy models with
+      the database, you review the generated script, then `alembic upgrade head` applies it.
+
+      - Autogenerate cannot detect everything - a renamed column looks like a drop plus an add, and some type and
+      constraint changes need manual edits - so always read the script.
+
+      - Zero-downtime changes follow expand and contract - add the new column or table, deploy code that writes
+      both, backfill, switch reads, and remove the old column in a later release.
+
+      - Treat migrations as code - commit and review them, run them in CI against a fresh database, and never edit
+      one that has already run in production.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- A downgrade script does not bring back lost data; dropping a column destroys its contents whatever
+      your rollback plan says.
+
+      - A migration that is instant on a development database can lock a large production table for minutes; test
+      on realistic data sizes.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def migration_path(applied, target):\n    if target < applied: raise ValueError(\"Downgrade requires\
+      \ an explicit rollback plan\")\n    return list(range(applied + 1, target + 1))\n\nprint(migration_path(2,\
+      \ 5))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: migrations-code
+  - type: item
+    ref: migrations-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the applied
+      revision in a table (`alembic_version` for Alembic).
+
+      - Alembic workflow: `alembic revision --autogenerate -m "add users"` compares your SQLAlchemy models with
+      the database, you review the generated script, then `alembic upgrade head` applies it.
+
+      - Autogenerate cannot detect everything - a renamed column looks like a drop plus an add, and some type and
+      constraint changes need manual edits - so always read the script.
+
+      - Zero-downtime changes follow expand and contract - add the new column or table, deploy code that writes
+      both, backfill, switch reads, and remove the old column in a later release.
+
+      - Treat migrations as code - commit and review them, run them in CI against a fresh database, and never edit
+      one that has already run in production.
+
+
+      **Avoid**
+
+      - A downgrade script does not bring back lost data; dropping a column destroys its contents whatever your
+      rollback plan says.
+
+      - A migration that is instant on a development database can lock a large production table for minutes; test
+      on realistic data sizes.'
+  - type: item
+    ref: migrations-mcq
+  - type: item
+    ref: migrations-tf
+  - type: item
+    ref: migrations-code
+items:
+- id: migrations-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of schema migrations?
+  explanation: A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the
+    applied revision in a table (`alembic_version` for Alembic).
+  options:
+  - id: a
+    text: A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the applied
+      revision in a table (`alembic_version` for Alembic).
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: A downgrade script does not bring back lost data; dropping a column destroys its contents whatever your
+      rollback plan says.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: migrations-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: A downgrade script does not bring back lost data; dropping a column destroys its contents whatever your
+    rollback plan says.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: migrations-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing schema migrations in a real application. What design decisions would you make, what
+    failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: migrations-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for schema migrations. Implement the stated rule and make sure both ordinary and
+    edge-case tests pass.
+  starterCode: "def migration_path(applied, target):\n    raise NotImplementedError('Complete this function')"
+  solution: "def migration_path(applied, target):\n    if target < applied: raise ValueError(\"Downgrade requires\
+    \ an explicit rollback plan\")\n    return list(range(applied + 1, target + 1))"
+  tests:
+  - name: Core behaviour
+    code: assert migration_path(2, 5) == [3,4,5]
+  - name: Edge cases
+    code: 'assert migration_path(4, 4) == []
+
+      try: migration_path(5, 2)
+
+      except ValueError: pass
+
+      else: raise AssertionError("unsafe downgrade should require explicit handling")'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - migrations-mcq
+  - migrations-tf
+  - migrations-code
+cheatsheet: '**Core model**
+
+  - A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the applied revision
+  in a table (`alembic_version` for Alembic).
+
+  - Alembic workflow: `alembic revision --autogenerate -m "add users"` compares your SQLAlchemy models with the
+  database, you review the generated script, then `alembic upgrade head` applies it.
+
+  - Autogenerate cannot detect everything - a renamed column looks like a drop plus an add, and some type and constraint
+  changes need manual edits - so always read the script.
+
+  - Zero-downtime changes follow expand and contract - add the new column or table, deploy code that writes both,
+  backfill, switch reads, and remove the old column in a later release.
+
+  - Treat migrations as code - commit and review them, run them in CI against a fresh database, and never edit one
+  that has already run in production.
+
+
+  **Common mistakes**
+
+  - A downgrade script does not bring back lost data; dropping a column destroys its contents whatever your rollback
+  plan says.
+
+  - A migration that is instant on a development database can lock a large production table for minutes; test on
+  realistic data sizes.'

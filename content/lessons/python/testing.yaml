@@ -1,0 +1,1592 @@
+id: python.testing
+concept: python.testing
+title: Testing with pytest
+subtitle: Automated checks that your code does what you think
+estimatedMinutes: 60
+reviewedOn: 2026-10-22
+summary: >-
+  An automated test calls your code with known inputs and checks the result, every time you change
+  anything. Write test functions with plain assert (they run right here in the browser), choose the
+  cases that catch real bugs, learn what pytest adds — discovery, detailed failure reports, fixtures,
+  pytest.raises and parametrize — and how to run it on your own machine.
+objectives:
+  - Explain why automated tests matter and structure a test with arrange-act-assert.
+  - Write test functions with plain assert that cover typical, boundary and error cases.
+  - Write tests that pass for a correct implementation and fail for buggy ones, and recognise tests that can never fail.
+  - Explain what pytest adds — test discovery, assertion rewriting, fixtures, pytest.raises and parametrize — and run it locally.
+  - Describe the red-green-refactor cycle of test-driven development.
+sources:
+  - title: "pytest: Get Started"
+    url: https://docs.pytest.org/en/stable/getting-started.html
+    publisher: pytest-dev
+  - title: "pytest: How to write and report assertions in tests"
+    url: https://docs.pytest.org/en/stable/how-to/assert.html
+    publisher: pytest-dev
+  - title: "pytest: How to use fixtures"
+    url: https://docs.pytest.org/en/stable/how-to/fixtures.html
+    publisher: pytest-dev
+  - title: "pytest: How to parametrize fixtures and test functions"
+    url: https://docs.pytest.org/en/stable/how-to/parametrize.html
+    publisher: pytest-dev
+  - title: "pytest: Conventions for Python test discovery"
+    url: https://docs.pytest.org/en/stable/explanation/goodpractices.html#conventions-for-python-test-discovery
+    publisher: pytest-dev
+  - title: "Python Language Reference: The assert statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-assert-statement
+    publisher: Python Software Foundation
+  - title: "unittest — Unit testing framework"
+    url: https://docs.python.org/3/library/unittest.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why automated tests?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          How do you know a function works? So far: run it, look at the output, and decide whether it is
+          right.
+      - type: code
+        runnable: true
+        code: |
+          def apply_discount(price, percent):
+              return price - price * percent / 100
+
+          print(apply_discount(200, 10))
+          print(apply_discount(99.99, 0))
+          print(apply_discount(50, 100))
+        expectedOutput: |
+          180.0
+          99.99
+          0.0
+        caption: Correct — but only because you checked every line by eye, and you must do it again after every change.
+      - type: markdown
+        body: |
+          Checking by eye has three problems: you have to **remember** what the right answers are, you have
+          to **repeat** the checking after every change, and you will eventually **stop doing it**. Bugs
+          that come back after being fixed — *regressions* — slip through exactly this way.
+
+          An automated test writes the right answer down **once**, as code:
+      - type: code
+        runnable: true
+        code: |
+          def apply_discount(price, percent):
+              return price - price * percent / 100
+
+          def test_apply_discount():
+              assert apply_discount(200, 10) == 180
+              assert apply_discount(99.99, 0) == 99.99
+              assert apply_discount(50, 100) == 0
+
+          test_apply_discount()
+          print("all tests passed")
+        expectedOutput: |
+          all tests passed
+        annotations:
+          - line: 5
+            text: "assert does nothing when the condition is true..."
+          - line: 9
+            text: "...so if we reach this line, every check passed."
+      - type: markdown
+        body: |
+          Now imagine a colleague "simplifies" the function months later. Nobody has to remember anything —
+          the test fails immediately and points at the broken case:
+      - type: code
+        runnable: true
+        code: |
+          def apply_discount(price, percent):
+              return price - percent          # "simplified" — and wrong
+
+          def test_apply_discount():
+              assert apply_discount(200, 10) == 180, "10% off 200 should be 180"
+              assert apply_discount(99.99, 0) == 99.99
+              assert apply_discount(50, 100) == 0
+
+          test_apply_discount()
+          print("all tests passed")
+        expectError: AssertionError
+        caption: "Run it: AssertionError: 10% off 200 should be 180. The bug is caught seconds after it was written."
+      - type: markdown
+        body: |
+          Tests run in milliseconds, they never get bored, and they document what the code is supposed to
+          do. In professional teams, code without tests is usually not accepted, and tests run
+          automatically on every change. The standard tool for running tests in Python is **pytest**. It is
+          not available in this browser runtime, so this lesson teaches the ideas with plain test functions
+          that run here, and shows exactly how to use pytest on your own machine.
+
+  - id: assert
+    title: The assert statement
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The [assert statement](glossary:assert-statement) checks a condition:
+
+          ```text
+          assert condition, "optional message shown when it fails"
+          ```
+
+          - If the condition is **true**, nothing happens and the program continues.
+          - If it is **false**, Python raises `AssertionError` with the message.
+      - type: code
+        runnable: true
+        code: |
+          total = 2 + 2
+          assert total == 4                          # true: nothing happens
+          print("first check passed")
+          assert total == 5, f"expected 5, got {total}"
+          print("never printed")
+        expectedOutput: |
+          first check passed
+        expectError: AssertionError
+        annotations:
+          - line: 4
+            text: "False → AssertionError: expected 5, got 4. Including the actual value makes failures easy to understand."
+      - type: callout
+        variant: warning
+        title: assert is for tests, not for validating input
+        body: |
+          Running Python with the `-O` flag removes all assert statements. Inside **tests** that is fine
+          (nobody runs tests with `-O`). Inside **application code**, validate input with an explicit
+          `raise ValueError(...)` — see [raising exceptions](concept:python.raising-exceptions).
+
+  - id: test-functions
+    title: Writing test functions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [unit test](glossary:unit-test) is a small function that checks one piece of behaviour of the
+          *code under test*. The conventions (which pytest relies on, as you will see):
+
+          - The name starts with **`test_`** and describes the behaviour:
+            `test_username_is_lowercase`, not `test1`.
+          - It takes **no parameters** (pytest fixtures, later, are the exception).
+          - It **returns nothing**; it either finishes (pass) or raises (fail).
+
+          Most good tests follow the [arrange-act-assert](glossary:arrange-act-assert) shape:
+
+          1. **Arrange** — set up the inputs and objects the test needs.
+          2. **Act** — call the code under test, usually once.
+          3. **Assert** — check the result.
+      - type: code
+        runnable: true
+        code: |
+          def make_username(first, last):
+              return (first[0] + last).lower()
+
+          def test_username_uses_initial_and_last_name():
+              # Arrange
+              first, last = "Grace", "Hopper"
+              # Act
+              result = make_username(first, last)
+              # Assert
+              assert result == "ghopper", f"expected 'ghopper', got {result!r}"
+
+          def test_username_is_lowercase():
+              assert make_username("ADA", "LOVELACE") == "alovelace"
+
+          test_username_uses_initial_and_last_name()
+          test_username_is_lowercase()
+          print("all tests passed")
+        expectedOutput: |
+          all tests passed
+        annotations:
+          - line: 4
+            text: The name says what behaviour is being checked. When it fails, the name alone tells you what broke.
+          - line: 13
+            text: Short tests can do all three steps in one line.
+      - type: markdown
+        body: |
+          **Each test should be independent.** It arranges its own data and never relies on another test
+          having run first. Then tests can run in any order, alone or together, and a failure points at one
+          behaviour.
+      - type: visualization
+        component: python-tracer
+        title: A failing test, step by step
+        caption: >-
+          test_double calls double, gets 9, and the assert raises AssertionError. Watch the exception leave
+          test_double and land in the except block — this is exactly what a test runner catches.
+        props:
+          code: |
+            def double(n):
+                return n + n + 1      # bug
+
+            def test_double():
+                result = double(4)
+                assert result == 8, f"double(4) should be 8, got {result}"
+
+            try:
+                test_double()
+                print("PASS")
+            except AssertionError as err:
+                print("FAIL:", err)
+
+  - id: test-runner
+    title: "Mental model: what a test runner does"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Calling every test by hand gets tedious, and the first failure stops all the others. A
+          [test runner](glossary:test-runner) automates four steps. Here is a complete (tiny) one that runs
+          in the browser — pytest does the same things, with far more care and detail:
+      - type: code
+        runnable: true
+        code: |
+          def make_username(first, last):
+              return (first[0] + last).lower()
+
+          def test_initial_and_last_name():
+              assert make_username("Grace", "Hopper") == "ghopper"
+
+          def test_lowercase():
+              assert make_username("ADA", "LOVELACE") == "alovelace"
+
+          def test_spaces_are_removed():
+              assert make_username("Mary Ann", "Van Dyke") == "mvandyke"
+
+          def run_tests(namespace):
+              passed = failed = 0
+              for name, obj in list(namespace.items()):
+                  if name.startswith("test_") and callable(obj):     # 1. discover
+                      try:
+                          obj()                                       # 2. run
+                      except Exception as err:
+                          failed += 1
+                          print("FAILED", name, repr(err))            # 3. report
+                      else:
+                          passed += 1
+                          print("passed", name)
+              print(f"{passed} passed, {failed} failed")              # 4. summarise
+
+          run_tests(globals())
+        expectedOutput: |
+          passed test_initial_and_last_name
+          passed test_lowercase
+          FAILED test_spaces_are_removed AssertionError()
+          2 passed, 1 failed
+        annotations:
+          - line: 17
+            text: Discovery by naming convention — this is why test names must start with test_.
+          - line: 21
+            text: Any exception counts as a failure, but the runner keeps going with the next test.
+      - type: markdown
+        body: |
+          The third test found a **real bug**: `make_username` keeps the space in "Van Dyke". But look at
+          the report: `AssertionError()` — our runner cannot say *what* the values were. That is one of the
+          big things pytest adds: it shows `'mvan dyke'` vs `'mvandyke'` without you writing any message.
+
+          Keep this picture: **discover → run each test in isolation → record pass/fail → summarise.**
+      - type: item
+        ref: predict-mini-runner
+
+  - id: choosing-cases
+    title: Choosing test cases that catch bugs
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A test is only as good as the cases it checks. Ten tests of ordinary values can miss a bug that a
+          single well-chosen case would catch. For each function, think through:
+
+          1. **Typical cases** — ordinary inputs, to show the main behaviour works.
+          2. **Boundaries** — the exact values where behaviour changes, and the values just either side
+             (49, 50, 51 for a pass mark of 50). Off-by-one mistakes (`>` instead of `>=`) live here.
+          3. [Edge cases](glossary:edge-case) — empty, zero, one item, very large, unusual text.
+          4. **Error cases** — invalid input should raise the documented exception.
+          5. **Regressions** — every bug you fix gets a [regression test](glossary:regression-test), so it
+             cannot quietly return.
+      - type: code
+        runnable: true
+        code: |
+          def grade(score):
+              if not 0 <= score <= 100:
+                  raise ValueError(f"score must be between 0 and 100, got {score}")
+              if score >= 75:
+                  return "distinction"
+              if score >= 50:
+                  return "pass"
+              return "fail"
+
+          def test_typical_scores():
+              assert grade(30) == "fail"
+              assert grade(60) == "pass"
+              assert grade(90) == "distinction"
+
+          def test_boundaries():
+              assert grade(49) == "fail"
+              assert grade(50) == "pass"
+              assert grade(74) == "pass"
+              assert grade(75) == "distinction"
+              assert grade(0) == "fail"
+              assert grade(100) == "distinction"
+
+          def test_out_of_range_scores_are_rejected():
+              for bad in [-1, 101]:
+                  try:
+                      grade(bad)
+                  except ValueError:
+                      pass                      # expected: this case is fine
+                  else:
+                      raise AssertionError(f"grade({bad}) should raise ValueError")
+
+          test_typical_scores()
+          test_boundaries()
+          test_out_of_range_scores_are_rejected()
+          print("all tests passed")
+        expectedOutput: |
+          all tests passed
+        annotations:
+          - line: 16
+            text: Both sides of each boundary. Changing >= 50 to > 50 in grade would fail here.
+          - line: 25
+            text: "try / except / else: the else block runs only if NO exception was raised — which is the failure we are testing for."
+      - type: markdown
+        body: |
+          **Testing that something raises** needs the `try / except / else` shape above. Without the `else`
+          the test would pass even when `grade(101)` happily returned a value. (pytest wraps this pattern in
+          one line, `pytest.raises`, shown below.)
+
+          **Test behaviour, not implementation.** Assert on what the function *returns* or *does* that
+          callers can observe — not on how it does it internally (which helper it calls, what its local
+          variables were). Behaviour tests survive refactoring; implementation tests break every time you
+          tidy the code, even though nothing is wrong.
+
+          **Compare floats with tolerance.** Binary floating point makes exact `==` unreliable for computed
+          values. Use `math.isclose` (pytest offers `pytest.approx`):
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def average(values):
+              return sum(values) / len(values)
+
+          result = average([0.1, 0.2])
+          print(result)
+          print(result == 0.15)
+          print(math.isclose(result, 0.15))
+        expectedOutput: |
+          0.15000000000000002
+          False
+          True
+        caption: A test written with == would fail for this correct function. math.isclose compares with a tiny relative tolerance.
+      - type: item
+        ref: mcq-edge-cases
+
+  - id: pytest
+    title: Running tests with pytest
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [pytest](https://docs.pytest.org/) is the most widely used testing tool for Python. It is a
+          third-party package that is not installed in this browser runtime, and you normally run it from a
+          terminal, so the blocks below are marked illustrative. On your own machine it takes two commands.
+
+          **1. Put the code and its tests in separate files.** pytest finds test files by name:
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # pricing.py — the code under test
+          def apply_discount(price, percent):
+              return price - percent          # a bug we want the tests to find
+        caption: Illustrative — save as pricing.py in a project folder on your computer.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # test_pricing.py
+          from pricing import apply_discount
+
+          def test_zero_percent_keeps_price():
+              assert apply_discount(99.99, 0) == 99.99
+
+          def test_ten_percent_off():
+              assert apply_discount(200, 10) == 180
+        caption: Illustrative — save as test_pricing.py next to pricing.py. Plain functions and plain assert; no imports from pytest needed.
+      - type: markdown
+        body: |
+          **2. Install pytest and run it** from a terminal in that folder (ideally inside a
+          [virtual environment](concept:python.virtual-environments); on Windows you can write `py` instead
+          of `python`):
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          python -m pip install pytest       # once per environment
+          python -m pytest -q                # find and run every test below this folder
+        caption: Illustrative — terminal commands. `python -m` makes sure pip and pytest belong to the Python you are running.
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          .F                                                                   [100%]
+          ================================= FAILURES =================================
+          ___________________________ test_ten_percent_off ___________________________
+
+              def test_ten_percent_off():
+          >       assert apply_discount(200, 10) == 180
+          E       assert 190 == 180
+          E        +  where 190 = apply_discount(200, 10)
+
+          test_pricing.py:8: AssertionError
+          ========================= short test summary info ==========================
+          FAILED test_pricing.py::test_ten_percent_off - assert 190 == 180
+          1 failed, 1 passed in 0.01s
+        caption: >-
+          Illustrative pytest output. The exact layout and the timing vary between pytest versions and
+          machines.
+      - type: markdown
+        body: |
+          Read it top to bottom: one character per test (`.` passed, `F` failed); then, for each failure,
+          the test's source with `>` at the failing line and `E` lines explaining it — **the actual values**
+          (`190 == 180`) and **where they came from** (`where 190 = apply_discount(200, 10)`); then a
+          summary. You wrote no message, yet the report tells you exactly what went wrong.
+
+          **What pytest adds over our tiny runner:**
+
+          | Feature | What it does |
+          |---|---|
+          | **Discovery** | Collects files named `test_*.py` or `*_test.py`, functions whose names start with `test`, and methods starting with `test` inside classes named `Test...` (classes without an `__init__`). |
+          | **Assertion rewriting** | Rewrites the `assert` statements in test files so a failure shows the values involved — no messages required. |
+          | **Isolation and reporting** | Runs every test even after failures; reports each one separately, with exit code 0 only if all pass. |
+          | **Fixtures, raises, parametrize** | Reusable setup, expected-exception checks and table-driven tests (next section). |
+
+          Useful options: `python -m pytest -q test_pricing.py` (one file), `-k discount` (only tests whose
+          names contain "discount"), `-x` (stop at the first failure), `-v` (one line per test).
+      - type: item
+        ref: mcq-discovery
+
+  - id: pytest-features
+    title: "pytest.raises, parametrize and fixtures"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **`pytest.raises`** checks that a block raises an exception — the `try / except / else` pattern
+          in one line. `match=` checks the message with a regular expression search.
+
+          **`@pytest.mark.parametrize`** runs one test function once per row of a table of inputs — a
+          [parametrized test](glossary:parametrized-test). Each row is reported as its own test, so one bad
+          case does not hide the others.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # test_pricing.py (pricing.py now validates percent and computes correctly)
+          import pytest
+          from pricing import apply_discount
+
+          def test_rejects_percent_above_100():
+              with pytest.raises(ValueError, match="between 0 and 100"):
+                  apply_discount(50, 150)
+
+          @pytest.mark.parametrize("price, percent, expected", [
+              (200, 10, 180),
+              (99.99, 0, 99.99),
+              (50, 100, 0),
+          ])
+          def test_apply_discount(price, percent, expected):
+              assert apply_discount(price, percent) == expected
+        caption: Illustrative — needs pytest installed locally. The parametrized function runs three times, reported as test_apply_discount[200-10-180] and so on.
+      - type: markdown
+        body: |
+          **Fixtures** provide reusable setup. A [fixture](glossary:test-fixture) is a function decorated with
+          `@pytest.fixture` (yes, a [decorator](concept:python.decorators) that registers it). Any test that
+          has a **parameter with the fixture's name** receives a **fresh** return value of that fixture.
+          pytest also ships built-in fixtures, such as `tmp_path`, a new empty temporary folder for each
+          test.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import pytest
+
+          @pytest.fixture
+          def cart():
+              return {"tea": 2, "samosa": 3}        # a new dict for every test that asks for it
+
+          def test_new_cart_has_two_lines(cart):
+              assert len(cart) == 2
+
+          def test_adding_an_item(cart):
+              cart["chai"] = 1                       # changes only this test's cart
+              assert len(cart) == 3
+
+          def test_report_is_written(tmp_path):     # built-in fixture
+              report = tmp_path / "report.txt"
+              report.write_text("ok", encoding="utf-8")
+              assert report.read_text(encoding="utf-8") == "ok"
+
+          @pytest.fixture
+          def temp_log(tmp_path):
+              log = open(tmp_path / "app.log", "w", encoding="utf-8")
+              yield log                              # the test runs here
+              log.close()                            # cleanup, even if the test failed
+        caption: >-
+          Illustrative — needs pytest. A fixture that uses yield runs the code after yield as cleanup, much like a
+          context manager.
+      - type: markdown
+        body: |
+          **The same ideas in plain Python.** None of these features is magic. Here they are with plain
+          functions, running in the browser — a loop over a table, `try / except / else`, and a helper that
+          builds fresh data:
+      - type: code
+        runnable: true
+        code: |
+          def apply_discount(price, percent):
+              if not 0 <= percent <= 100:
+                  raise ValueError(f"percent must be between 0 and 100, got {percent}")
+              return price - price * percent / 100
+
+          CASES = [(200, 10, 180), (99.99, 0, 99.99), (50, 100, 0)]
+
+          def test_apply_discount_cases():                 # like parametrize
+              for price, percent, expected in CASES:
+                  got = apply_discount(price, percent)
+                  assert got == expected, f"apply_discount({price}, {percent}) = {got}, expected {expected}"
+
+          def test_rejects_percent_above_100():            # like pytest.raises
+              try:
+                  apply_discount(50, 150)
+              except ValueError as err:
+                  assert "between 0 and 100" in str(err)
+              else:
+                  raise AssertionError("expected ValueError")
+
+          def make_cart():                                 # like a fixture: fresh data per test
+              return {"tea": 2, "samosa": 3}
+
+          def test_adding_an_item():
+              cart = make_cart()
+              cart["chai"] = 1
+              assert len(cart) == 3
+
+          def test_new_cart_has_two_lines():
+              assert len(make_cart()) == 2
+
+          for test in [test_apply_discount_cases, test_rejects_percent_above_100,
+                       test_adding_an_item, test_new_cart_has_two_lines]:
+              test()
+          print("all tests passed")
+        expectedOutput: |
+          all tests passed
+        caption: The loop version stops at the first bad row; parametrize would report every row separately.
+
+  - id: tdd
+    title: Test-driven development (TDD)
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You can write the test **before** the code. [Test-driven development](glossary:test-driven-development)
+          repeats a short cycle:
+
+          1. **Red** — write a test for the next small behaviour. Run it and **watch it fail**.
+          2. **Green** — write the simplest code that makes it pass.
+          3. **Refactor** — tidy the code (and tests) while everything stays green.
+
+          Step 1 is not a formality. Seeing a test fail proves it can fail — a test you have never seen fail
+          might not be testing anything. Here is one cycle for `slugify`, which turns a title into a
+          URL-friendly name:
+      - type: code
+        runnable: true
+        code: |
+          def slugify(title):
+              return ""                        # not written yet
+
+          def test_slugify():
+              assert slugify("Hello World") == "hello-world"
+              assert slugify("  Python 3.14  ") == "python-3.14"
+
+          test_slugify()
+        expectError: AssertionError
+        caption: "Red: the test exists and fails for the right reason."
+      - type: code
+        runnable: true
+        code: |
+          def slugify(title):
+              return "-".join(title.lower().split())
+
+          def test_slugify():
+              assert slugify("Hello World") == "hello-world"
+              assert slugify("  Python 3.14  ") == "python-3.14"
+
+          test_slugify()
+          print("green: all tests passed")
+        expectedOutput: |
+          green: all tests passed
+        caption: "Green: the simplest implementation that passes. Next cycle: a red test for punctuation, e.g. 'Hello, World!'."
+      - type: markdown
+        body: |
+          TDD makes you decide **what** the code should do before deciding **how**, and leaves a full test
+          suite behind as a side effect. You do not have to work this way all the time, but writing a
+          failing test first is an excellent way to fix a bug: reproduce it in a test (red), fix it (green),
+          and the test stays as a regression test.
+      - type: item
+        ref: explain-test-must-fail
+
+  - id: under-the-hood
+    title: "Under the hood: how pytest works"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          1. **Collection.** pytest walks the directories you give it (default: the current one), selects
+             files matching `test_*.py` / `*_test.py`, **imports** them, and collects matching functions,
+             methods and `unittest.TestCase` classes. Importing means any top-level code in a test file runs
+             during collection — keep it to definitions.
+          2. **Assertion rewriting.** Before a test module is compiled, pytest's import hook rewrites its
+             `assert` statements (an AST transformation) so that on failure it can show the intermediate
+             values. Only test modules (and `conftest.py` files and plugins) are rewritten; asserts inside
+             your application modules are left alone.
+          3. **Fixture injection.** For each test, pytest reads the function's **parameter names** and calls
+             the fixture functions with those names (fixtures may themselves request other fixtures). This
+             is dependency injection by name. Fixtures default to *function scope* — a fresh value per test —
+             but can be shared per module or per session with `scope=`.
+          4. **Run and report.** Each test is called; an exception means failure, finishing normally means
+             pass. A non-zero exit code when anything failed is what lets continuous-integration systems
+             block a broken change.
+
+          **unittest — the standard library's framework.** Python ships `unittest`, a class-based framework
+          (inspired by JUnit). It needs no installation, so it **does** run in the browser. pytest can run
+          unittest-style tests too, which is why many projects contain both styles.
+      - type: code
+        runnable: true
+        code: |
+          import io
+          import unittest
+
+          def add(a, b):
+              return a + b
+
+          class AddTests(unittest.TestCase):
+              def test_small_numbers(self):
+                  self.assertEqual(add(2, 3), 5)
+
+              def test_negative_numbers(self):
+                  self.assertEqual(add(-2, -3), -4)        # wrong expectation, on purpose
+
+          suite = unittest.TestLoader().loadTestsFromTestCase(AddTests)
+          result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
+          print("ran", result.testsRun, "tests;", len(result.failures), "failed")
+          print("failed:", result.failures[0][0].id())
+          print("success:", result.wasSuccessful())
+        expectedOutput: |
+          ran 2 tests; 1 failed
+          failed: __main__.AddTests.test_negative_numbers
+          success: False
+        caption: The runner's normal report includes timings, so it is written to a StringIO here and only the counts are printed.
+      - type: markdown
+        body: |
+          Note the deliberate mistake in `test_negative_numbers`: the **test** is wrong (−2 + −3 is −5), not
+          the code. A failing test means "the code and the test disagree"; part of debugging is deciding
+          which one is right.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | A test passes even though the code is wrong | `assert (result, 5)` — asserting a non-empty **tuple**, which is always true. Python warns `SyntaxWarning: assertion is always true, perhaps remove parentheses?` | `assert result == 5, "message"` |
+          | A test passes even though the code is wrong | A comparison without `assert`: `add(2, 2) == 5` on its own line is computed and thrown away. | Put `assert` in front. |
+          | pytest says `no tests ran` | The file or function name does not start with `test`. | Rename to `test_*.py` and `def test_...`. |
+          | `ModuleNotFoundError: No module named 'pytest'` | pytest is not installed for the interpreter you are running. | `python -m pip install pytest` in the active environment. |
+          | A correct function fails a test with `0.30000000000000004` | Exact `==` on computed floats. | `math.isclose(a, b)` or `pytest.approx(b)`. |
+          | Tests pass alone but fail together, or in a different order | Tests share mutable state (a module-level list or dict). | Give each test fresh data (a fixture or helper function). |
+          | A test fails only sometimes | It depends on the clock, randomness or the network. | Inject the clock, fix the random seed, or replace the dependency with a fake ([test doubles](concept:python.mocking)). |
+          | Every refactor breaks tests although behaviour did not change | The tests check implementation details. | Assert on outputs and observable behaviour. |
+      - type: code
+        runnable: true
+        code: |
+          def add(a, b):
+              return a - b                  # bug!
+
+          def test_add():
+              assert (add(2, 2), 4)         # always true: a non-empty tuple
+
+          test_add()
+          print("test passed?!")
+        expectedOutput: |
+          test passed?!
+        caption: >-
+          The test "passes" although add is broken. Python even prints a SyntaxWarning when compiling it
+          (to stderr, so it is not part of the output above). Fix: assert add(2, 2) == 4.
+      - type: code
+        runnable: true
+        code: |
+          import pytest
+        expectError: ModuleNotFoundError
+        caption: pytest is not installed in the browser runtime — which is why this lesson's pytest examples are illustrative. Locally, install it first.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          In these exercises **you write the tests**. The checker calls your test function against a correct
+          implementation (your test must pass) and against several deliberately broken ones (your test must
+          fail for each). That is the real job of a test: to catch bugs.
+      - type: item
+        ref: leap-year-tests
+      - type: item
+        ref: parse-age-tests
+      - type: item
+        ref: debug-always-passes
+      - type: item
+        ref: parsons-aaa
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **test** calls code with known inputs and asserts on the result; it passes silently or fails
+            loudly. Name tests `test_<behaviour>` and keep them independent.
+          - Structure: **arrange, act, assert**.
+          - Choose cases deliberately: typical, **boundaries**, edge cases, **error cases**
+            (`try / except / else`), and a regression test for every bug fixed.
+          - Test **behaviour**, not implementation; compare floats with `math.isclose`.
+          - **pytest** discovers `test_*.py` files and `test` functions, rewrites asserts to show values, and
+            adds fixtures, `pytest.raises` and `parametrize`. Run it with `python -m pytest -q`.
+          - **TDD**: red → green → refactor. Watch every new test fail once.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How would you test this function?" is asked constantly. Name the categories of cases (typical,
+          boundary, edge, error), write a couple of tests with arrange-act-assert, and mention pytest
+          features (`parametrize` for the case table, `pytest.raises` for errors, fixtures for setup).
+          Bonus points for "I'd make the test fail first to prove it works" and for keeping tests
+          deterministic by injecting time and randomness.
+
+items:
+  - id: predict-mini-runner
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: This program contains a buggy function and a tiny test runner. Predict the output (three lines).
+    code: |
+      def is_adult(age):
+          return age > 18          # the rule is: 18 or older
+
+      def test_child():
+          assert not is_adult(10)
+
+      def test_exactly_eighteen():
+          assert is_adult(18), "18 counts as an adult"
+
+      def test_senior():
+          assert is_adult(70)
+
+      def check_teenager():
+          assert not is_adult(15)
+
+      for name, func in list(globals().items()):
+          if name.startswith("test_"):
+              try:
+                  func()
+                  print("PASS", name)
+              except AssertionError as err:
+                  print("FAIL", name, "-", err)
+    answer: |
+      PASS test_child
+      FAIL test_exactly_eighteen - 18 counts as an adult
+      PASS test_senior
+    explanation: >-
+      Only names starting with test_ are run, so check_teenager is never called. The boundary test catches
+      the bug: 18 > 18 is False, so the assert fails with its message. The other two tests pass.
+    wrongAnswers:
+      - answer: |
+          PASS test_child
+          PASS test_exactly_eighteen
+          PASS test_senior
+        feedback: Look closely at the boundary — is 18 > 18 true? This is exactly the kind of bug boundary tests exist for.
+      - answer: |
+          PASS test_child
+          FAIL test_exactly_eighteen - 18 counts as an adult
+          PASS test_senior
+          PASS check_teenager
+        feedback: The runner only calls functions whose names start with test_. check_teenager is never discovered.
+      - answer: FAIL test_exactly_eighteen - 18 counts as an adult
+        feedback: Passing tests are reported too — the runner prints PASS for each test that finishes without an AssertionError.
+
+  - id: mcq-edge-cases
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      `split_bill(total, people)` returns each person's share and raises `ValueError` if `people` is less
+      than 1. You already test `split_bill(100, 4) == 25`. Which **additional** set of cases adds the most
+      value?
+    explanation: >-
+      The extra cases should probe where behaviour changes or breaks: the smallest valid group, the invalid
+      boundary (which should raise), zero, and an uneven split. More ordinary cases mostly re-test what
+      already works.
+    options:
+      - id: a
+        text: "people = 1, people = 0 (expect ValueError), total = 0, and an uneven split such as split_bill(10, 3)"
+        correct: true
+        feedback: Boundaries, an error case, an edge case and a tricky value — each could reveal a different bug.
+      - id: b
+        text: "split_bill(200, 4), split_bill(300, 4) and split_bill(400, 4)"
+        feedback: These exercise the same path as the existing test; a bug that survives one will survive all of them.
+      - id: c
+        text: Assert that split_bill uses the / operator internally.
+        feedback: That tests implementation, not behaviour. A correct refactor (say, to Decimal) would break the test.
+      - id: d
+        text: Call split_bill with random numbers each time the tests run.
+        feedback: Random inputs make tests non-deterministic — a failure may not reproduce — and give no clear expected answer.
+
+  - id: mcq-discovery
+    type: mcq
+    skill: recognition
+    prompt: |
+      A project folder contains the files below. Which function will `python -m pytest` run as a test?
+    explanation: >-
+      pytest collects files named test_*.py or *_test.py, and inside them functions whose names start with
+      test. Only test_totals.py::test_sum_of_prices satisfies both rules.
+    options:
+      - id: a
+        text: "`test_sum_of_prices` in `test_totals.py`"
+        correct: true
+        feedback: Both the file name and the function name follow the discovery conventions.
+      - id: b
+        text: "`check_sum` in `test_totals.py`"
+        feedback: The file is collected, but functions must start with test to be collected.
+      - id: c
+        text: "`test_tax` in `tax_checks.py`"
+        feedback: The file name matches neither test_*.py nor *_test.py, so pytest never imports it.
+      - id: d
+        text: "`test_round` in `helpers.py`"
+        feedback: helpers.py is not a test file by name, so its functions are not collected.
+
+  - id: explain-test-must-fail
+    type: explain
+    skill: explanation
+    prompt: >-
+      In TDD you run a new test and watch it fail before writing the code. Explain why seeing a test fail
+      is valuable, and give an example of a test that could never fail.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that a failing run proves the test is actually able to detect a problem (it checks something real).
+      - Gives an example of a test that cannot fail, such as asserting a tuple, a missing assert, or a test that is never called/collected.
+      - Explains that a test which can never fail gives false confidence — bugs pass through it unnoticed.
+      - Mentions that the failure should be for the expected reason (the behaviour is missing), not an unrelated error such as a typo.
+    modelAnswer: |
+      A test is only useful if it can fail when the behaviour is wrong. Running it before the code exists
+      and seeing it fail — with the failure I expected, not some unrelated NameError — proves it really
+      checks the behaviour. Without that step I might have written a test that can never fail: for
+      example `assert (total([1, 2]), 3)`, which asserts a non-empty tuple and is always true, or a line
+      like `total([1, 2]) == 3` with no assert at all, or a function named `check_total` that the test
+      runner never collects. Such a test shows green forever and gives false confidence while bugs slip
+      through.
+
+  - id: leap-year-tests
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `is_leap_year(year)` follows the calendar rule: a year is a leap year if it is divisible by 4,
+      **except** century years (divisible by 100), which are leap years only if they are also divisible
+      by 400. So 2024 and 2000 are leap years; 2023 and 1900 are not.
+
+      The implementation is correct. **Your job is to write `test_is_leap_year()`** with asserts that would
+      catch a wrong implementation. The checker will run your test against the correct function (it must
+      pass) and against three buggy versions (it must fail for each one).
+    starterCode: |
+      def is_leap_year(year):
+          return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+      def test_is_leap_year():
+          # Write asserts that would catch a wrong is_leap_year.
+          pass
+
+
+      test_is_leap_year()
+      print("all tests passed")
+    solution: |
+      def is_leap_year(year):
+          return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+      def test_is_leap_year():
+          assert is_leap_year(2024), "2024 is divisible by 4, so it is a leap year"
+          assert not is_leap_year(2023), "2023 is not divisible by 4"
+          assert not is_leap_year(1900), "1900 is a century not divisible by 400"
+          assert is_leap_year(2000), "2000 is a century divisible by 400"
+
+
+      test_is_leap_year()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: test_is_leap_year is defined and uses assert
+        code: |
+          assert defined("test_is_leap_year") and callable(test_is_leap_year), "Define a function named test_is_leap_year."
+          assert uses("Assert") or "AssertionError" in source, "Your test needs at least one assert statement."
+      - name: passes for the correct implementation
+        code: |
+          def outcome(impl):
+              namespace = test_is_leap_year.__globals__
+              original = namespace.get("is_leap_year")
+              namespace["is_leap_year"] = impl
+              try:
+                  test_is_leap_year()
+              except AssertionError as err:
+                  return f"failed ({err})" if str(err) else "failed at an assert"
+              except Exception as err:
+                  return f"crashed with {type(err).__name__}: {err}"
+              finally:
+                  namespace["is_leap_year"] = original
+              return "passed"
+
+          def correct(year):
+              return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+          result = outcome(correct)
+          assert result == "passed", f"Your test should pass for a correct is_leap_year, but it {result}. Check your expected values against the rule."
+      - name: catches a version that ignores the century rule
+        code: |
+          def outcome(impl):
+              namespace = test_is_leap_year.__globals__
+              original = namespace.get("is_leap_year")
+              namespace["is_leap_year"] = impl
+              try:
+                  test_is_leap_year()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["is_leap_year"] = original
+              return "passed"
+
+          def every_fourth_year(year):
+              return year % 4 == 0
+
+          assert outcome(every_fourth_year) == "failed", "A buggy is_leap_year that says every year divisible by 4 is a leap year (so 1900 would be one) still passed your test. Add an assert for a century year such as 1900."
+      - name: catches a version that ignores the 400 rule
+        code: |
+          def outcome(impl):
+              namespace = test_is_leap_year.__globals__
+              original = namespace.get("is_leap_year")
+              namespace["is_leap_year"] = impl
+              try:
+                  test_is_leap_year()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["is_leap_year"] = original
+              return "passed"
+
+          def no_400_rule(year):
+              return year % 4 == 0 and year % 100 != 0
+
+          assert outcome(no_400_rule) == "failed", "A buggy is_leap_year that treats every century as a non-leap year (so 2000 would not be one) still passed your test. Add an assert for a year such as 2000."
+      - name: catches a version that only accepts multiples of 400
+        code: |
+          def outcome(impl):
+              namespace = test_is_leap_year.__globals__
+              original = namespace.get("is_leap_year")
+              namespace["is_leap_year"] = impl
+              try:
+                  test_is_leap_year()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["is_leap_year"] = original
+              return "passed"
+
+          def only_400(year):
+              return year % 400 == 0
+
+          assert outcome(only_400) == "failed", "A buggy is_leap_year that only accepts multiples of 400 (so 2024 would not be a leap year) still passed your test. Add an assert for an ordinary leap year such as 2024."
+    hints:
+      - Think about which kinds of year the rule treats differently — there are four.
+      - "You need at least: an ordinary leap year (2024), a century that is not a leap year (1900), and a century that is (2000). A normal non-leap year (2023) is a good addition."
+      - "Use `assert is_leap_year(2024)` for years that should be leap years and `assert not is_leap_year(1900)` for years that should not."
+    feedback:
+      - when: { errorType: AssertionError }
+        message: >-
+          Your own test fails against the correct is_leap_year. Re-check the expected value of each
+          assert against the rule (2000 IS a leap year; 1900 is NOT).
+    explanation: >-
+      Each part of the rule needs a case that only it decides: 2024 (divisible by 4), 1900 (century, not
+      divisible by 400) and 2000 (century divisible by 400). Each buggy version gets exactly one of those
+      wrong, so a test missing that case cannot tell it apart from the correct function.
+
+  - id: parse-age-tests
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      `parse_age(text)` converts text to an int age. It must raise `ValueError` for text that is not a
+      whole number (`"abc"`) and for negative ages (`"-1"`). The implementation is correct.
+
+      Write `test_parse_age()` that checks **all three** behaviours:
+
+      1. a valid age is returned as an int (`parse_age("42") == 42`);
+      2. a negative age raises `ValueError`;
+      3. non-numeric text raises `ValueError`.
+
+      Remember: to test that something raises, use `try / except / else` and fail in the `else`. The
+      checker runs your test against the correct function and three buggy ones.
+    starterCode: |
+      def parse_age(text):
+          age = int(text)
+          if age < 0:
+              raise ValueError(f"age cannot be negative: {age}")
+          return age
+
+
+      def test_parse_age():
+          # 1. a valid age is converted to an int
+          # 2. a negative age raises ValueError
+          # 3. text that is not a number raises ValueError
+          pass
+
+
+      test_parse_age()
+      print("all tests passed")
+    solution: |
+      def parse_age(text):
+          age = int(text)
+          if age < 0:
+              raise ValueError(f"age cannot be negative: {age}")
+          return age
+
+
+      def test_parse_age():
+          assert parse_age("42") == 42
+
+          for bad in ["-1", "abc"]:
+              try:
+                  parse_age(bad)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(f"parse_age({bad!r}) should raise ValueError")
+
+
+      test_parse_age()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: test_parse_age is defined
+        code: |
+          assert defined("test_parse_age") and callable(test_parse_age), "Define a function named test_parse_age."
+      - name: passes for the correct implementation
+        code: |
+          def outcome(impl):
+              namespace = test_parse_age.__globals__
+              original = namespace.get("parse_age")
+              namespace["parse_age"] = impl
+              try:
+                  test_parse_age()
+              except AssertionError as err:
+                  return f"failed ({err})" if str(err) else "failed at an assert"
+              except Exception as err:
+                  return f"crashed with {type(err).__name__}: {err}"
+              finally:
+                  namespace["parse_age"] = original
+              return "passed"
+
+          def correct(text):
+              age = int(text)
+              if age < 0:
+                  raise ValueError(f"age cannot be negative: {age}")
+              return age
+
+          result = outcome(correct)
+          assert result == "passed", f"Your test should pass for the correct parse_age, but it {result}. If it crashed with ValueError, catch the expected ValueError inside your test with try/except."
+      - name: catches a version without the negative check
+        code: |
+          def outcome(impl):
+              namespace = test_parse_age.__globals__
+              original = namespace.get("parse_age")
+              namespace["parse_age"] = impl
+              try:
+                  test_parse_age()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["parse_age"] = original
+              return "passed"
+
+          def no_negative_check(text):
+              return int(text)
+
+          assert outcome(no_negative_check) == "failed", "A buggy parse_age that accepts '-1' (returning -1) still passed your test. Check that a negative age raises ValueError, failing in the else block if it does not."
+      - name: catches a version that hides bad text
+        code: |
+          def outcome(impl):
+              namespace = test_parse_age.__globals__
+              original = namespace.get("parse_age")
+              namespace["parse_age"] = impl
+              try:
+                  test_parse_age()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["parse_age"] = original
+              return "passed"
+
+          def swallows_bad_text(text):
+              try:
+                  age = int(text)
+              except ValueError:
+                  return None
+              if age < 0:
+                  raise ValueError(f"age cannot be negative: {age}")
+              return age
+
+          assert outcome(swallows_bad_text) == "failed", "A buggy parse_age that returns None for 'abc' instead of raising still passed your test. Check that non-numeric text raises ValueError."
+      - name: catches a version that returns the wrong value
+        code: |
+          def outcome(impl):
+              namespace = test_parse_age.__globals__
+              original = namespace.get("parse_age")
+              namespace["parse_age"] = impl
+              try:
+                  test_parse_age()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["parse_age"] = original
+              return "passed"
+
+          def returns_text(text):
+              age = int(text)
+              if age < 0:
+                  raise ValueError(f"age cannot be negative: {age}")
+              return text
+
+          assert outcome(returns_text) == "failed", "A buggy parse_age that returns the text '42' instead of the int 42 still passed your test. Assert that parse_age('42') == 42."
+    hints:
+      - "Part 1 is one line: `assert parse_age(\"42\") == 42`."
+      - "For an error case: `try: parse_age(\"-1\")`, `except ValueError: pass`, `else: raise AssertionError(\"...should raise ValueError\")`."
+      - The else block runs only when no exception happened — that is the failure you are testing for. Repeat the pattern for "abc" (a loop over both bad inputs works well).
+    feedback:
+      - when: { errorType: ValueError }
+        message: >-
+          Your test let the expected ValueError escape, so the test itself crashes. Wrap the call in
+          try/except ValueError so the expected error counts as a pass.
+    explanation: >-
+      Each buggy version breaks a different promise, so the test needs a case for each: the normal value
+      (catches returning text), the negative age and the bad text (each must raise). The try/except/else
+      shape turns "no exception" into a test failure — exactly what pytest.raises does for you.
+
+  - id: debug-always-passes
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This test of `total` **can never fail** — it would pass even if `total` were completely broken. Find
+      both problems in `test_total` and fix them, so the test checks that the sum of `[1, 2, 3]` is 6 and
+      that the total of an empty list is 0. The checker runs your test against broken versions of `total`.
+    starterCode: |
+      def total(prices):
+          return sum(prices)
+
+
+      def test_total():
+          assert (total([1, 2, 3]), 6)
+          total([]) == 0
+
+
+      test_total()
+      print("all tests passed")
+    solution: |
+      def total(prices):
+          return sum(prices)
+
+
+      def test_total():
+          assert total([1, 2, 3]) == 6
+          assert total([]) == 0
+
+
+      test_total()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: no always-true asserts or lost comparisons
+        code: |
+          import ast
+          tree = ast.parse(source)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assert):
+                  assert not isinstance(node.test, ast.Tuple), "`assert (x, y)` asserts a tuple, which is always true. Write `assert total([1, 2, 3]) == 6` without the parentheses and comma."
+              if isinstance(node, ast.Expr):
+                  assert not isinstance(node.value, ast.Compare), "A comparison on a line of its own is computed and thrown away. Put `assert` in front of it."
+      - name: passes for the correct total
+        code: |
+          def outcome(impl):
+              namespace = test_total.__globals__
+              original = namespace.get("total")
+              namespace["total"] = impl
+              try:
+                  test_total()
+              except AssertionError as err:
+                  return f"failed ({err})" if str(err) else "failed at an assert"
+              except Exception as err:
+                  return f"crashed with {type(err).__name__}: {err}"
+              finally:
+                  namespace["total"] = original
+              return "passed"
+
+          result = outcome(lambda prices: sum(prices))
+          assert result == "passed", f"Your test should pass for a correct total, but it {result}."
+      - name: catches a wrong sum
+        code: |
+          def outcome(impl):
+              namespace = test_total.__globals__
+              original = namespace.get("total")
+              namespace["total"] = impl
+              try:
+                  test_total()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["total"] = original
+              return "passed"
+
+          assert outcome(lambda prices: sum(prices) + 1) == "failed", "A total that adds 1 to every sum still passes your test. Assert that total([1, 2, 3]) == 6."
+      - name: catches a wrong empty total
+        code: |
+          def outcome(impl):
+              namespace = test_total.__globals__
+              original = namespace.get("total")
+              namespace["total"] = impl
+              try:
+                  test_total()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["total"] = original
+              return "passed"
+
+          def empty_bug(prices):
+              return sum(prices) if prices else None
+
+          assert outcome(empty_bug) == "failed", "A total that returns None for an empty list still passes your test. Assert that total([]) == 0."
+    hints:
+      - What is the truth value of a tuple with two items, such as `(5, 6)`?
+      - What happens to the result of `total([]) == 0` on a line of its own?
+      - "Both lines should look like `assert <expression> == <expected>`."
+    feedback:
+      - when: { codeMatches: "assert\\s*\\(" }
+        message: "Remove the parentheses after assert: `assert (a, b)` is a tuple and always true. Write `assert a == b`."
+    explanation: >-
+      `assert (x, 6)` checks a two-item tuple, which is always truthy (Python even warns about it), and a
+      bare comparison is evaluated and discarded. Both lines must be real asserts of a comparison. Proving
+      that a test can fail — here, by running it against broken versions — is how you know it works.
+
+  - id: parsons-aaa
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a function under test and an arrange-act-assert test for it, then run the
+      test so the program prints `test passed`. One line is a distractor.
+    solution: |
+      def add_item(cart, item, quantity):
+          cart[item] = cart.get(item, 0) + quantity
+          return cart
+      def test_add_item_increases_quantity():
+          cart = {"tea": 1}
+          result = add_item(cart, "tea", 2)
+          assert result["tea"] == 3, "1 tea plus 2 teas should be 3"
+      test_add_item_increases_quantity()
+      print("test passed")
+    distractors:
+      - "    assert result[\"tea\"] == 2"
+    expectedOutput: |
+      test passed
+    explanation: >-
+      Arrange (create the cart), act (call add_item once), assert (check the observable result). The test
+      only runs when it is called, after it is defined. The distractor expects the wrong quantity, so the
+      test would fail.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-assert-messages
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Three lines.)
+    code: |
+      def check(values):
+          try:
+              assert len(values) > 0, "values must not be empty"
+              assert all(v >= 0 for v in values), f"negative value in {values}"
+              print("ok", values)
+          except AssertionError as err:
+              print("failed:", err)
+
+      check([3, 1])
+      check([])
+      check([2, -5])
+    answer: |
+      ok [3, 1]
+      failed: values must not be empty
+      failed: negative value in [2, -5]
+    explanation: >-
+      An assert raises AssertionError with its message as soon as its condition is false, so later lines
+      in the try block are skipped. [] fails the first assert; [2, -5] passes the first and fails the
+      second.
+    wrongAnswers:
+      - answer: |
+          ok [3, 1]
+          failed: values must not be empty
+          failed: values must not be empty
+        feedback: "[2, -5] is not empty, so the first assert passes; it is the second assert that fails."
+      - answer: |
+          ok [3, 1]
+          failed: values must not be empty
+          ok []
+          failed: negative value in [2, -5]
+        feedback: Once an assert fails, the rest of the try block (including the print) is skipped.
+
+  - id: m-mcq-pytest-raises
+    type: mcq
+    skill: recognition
+    difficulty: 2
+    prompt: Which pytest test correctly checks that `parse_age("-1")` raises `ValueError`?
+    explanation: >-
+      pytest.raises used as a context manager passes only if the block raises the given exception type and
+      fails the test if nothing is raised. The other versions either crash, can never fail, or never call
+      the function.
+    options:
+      - id: a
+        text: |
+          `with pytest.raises(ValueError):` followed by an indented `parse_age("-1")`
+        correct: true
+        feedback: Correct — the test fails if the block finishes without raising ValueError.
+      - id: b
+        text: "`assert parse_age(\"-1\") == ValueError`"
+        feedback: The call raises before the comparison is made, so the test errors out instead of passing; and if it returned normally, the comparison would make no sense.
+      - id: c
+        text: "`try: parse_age(\"-1\")` / `except ValueError: pass` (no else)"
+        feedback: Without an else that fails, this test also passes when no exception is raised at all — it can never fail.
+      - id: d
+        text: "`assert pytest.raises(ValueError)`"
+        feedback: This never calls parse_age; it just asserts that an object exists, which is always true.
+
+  - id: m-code-clamp-tests
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `clamp(value, low, high)` limits a number to a range: values below `low` become `low`, values above
+      `high` become `high`, and values in between are returned unchanged. The implementation is correct.
+
+      Write `test_clamp()`. The checker runs it against the correct `clamp` (it must pass) and three buggy
+      versions — one ignores `high`, one ignores `low`, and one mixes up the order of `min` and `max`
+      (it must fail for each).
+    starterCode: |
+      def clamp(value, low, high):
+          return max(low, min(value, high))
+
+
+      def test_clamp():
+          pass
+
+
+      test_clamp()
+      print("all tests passed")
+    solution: |
+      def clamp(value, low, high):
+          return max(low, min(value, high))
+
+
+      def test_clamp():
+          assert clamp(5, 0, 10) == 5, "values inside the range are unchanged"
+          assert clamp(-3, 0, 10) == 0, "values below low become low"
+          assert clamp(15, 0, 10) == 10, "values above high become high"
+
+
+      test_clamp()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: passes for the correct clamp
+        code: |
+          assert defined("test_clamp") and callable(test_clamp), "Define a function named test_clamp."
+          namespace = test_clamp.__globals__
+          original = namespace.get("clamp")
+          namespace["clamp"] = lambda value, low, high: max(low, min(value, high))
+          try:
+              test_clamp()
+          except AssertionError as err:
+              raise AssertionError(f"Your test fails for a correct clamp ({err}). Check your expected values.")
+          finally:
+              namespace["clamp"] = original
+      - name: catches all three buggy versions
+        code: |
+          def outcome(impl):
+              namespace = test_clamp.__globals__
+              original = namespace.get("clamp")
+              namespace["clamp"] = impl
+              try:
+                  test_clamp()
+              except AssertionError:
+                  return "failed"
+              finally:
+                  namespace["clamp"] = original
+              return "passed"
+
+          bugs = {
+              "ignores high (so clamp(15, 0, 10) returns 15) — test a value above high": lambda value, low, high: max(low, value),
+              "ignores low (so clamp(-3, 0, 10) returns -3) — test a value below low": lambda value, low, high: min(value, high),
+              "swaps min and max (so clamp(5, 0, 10) returns 10) — test a value inside the range": lambda value, low, high: max(high, min(value, low)),
+          }
+          for description, impl in bugs.items():
+              assert outcome(impl) == "failed", f"Your test passed for a buggy clamp that {description}."
+    hints:
+      - Three situations matter — below the range, inside it, above it.
+      - "Pick a range such as 0 to 10 and test -3, 5 and 15."
+      - "Example: `assert clamp(15, 0, 10) == 10`."
+    explanation: >-
+      Each buggy version is wrong in exactly one of the three situations, so a test needs one case for
+      each: below low, inside the range and above high. Choosing cases from the specification, not from
+      the code, is what makes tests catch bugs.
+
+  - id: m-debug-float-test
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `average` is correct, but its test fails with an AssertionError on the second assert. Fix the
+      **test** (not the function) so it passes for the correct `average` but would still catch a wrong
+      one. Keep testing the `[0.1, 0.2]` case.
+    starterCode: |
+      import math
+
+
+      def average(values):
+          return sum(values) / len(values)
+
+
+      def test_average():
+          assert average([2, 4]) == 3
+          assert average([0.1, 0.2]) == 0.15
+
+
+      test_average()
+      print("all tests passed")
+    solution: |
+      import math
+
+
+      def average(values):
+          return sum(values) / len(values)
+
+
+      def test_average():
+          assert average([2, 4]) == 3
+          assert math.isclose(average([0.1, 0.2]), 0.15)
+
+
+      test_average()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: the test passes for the correct average
+        code: |
+          assert output().strip() == "all tests passed", f"Your program printed {output()!r}. The test should pass for the correct average."
+      - name: still checks the decimal case
+        code: |
+          assert "0.1, 0.2" in source and "0.15" in source, "Keep testing average([0.1, 0.2]) against 0.15 — compare with a tolerance instead of deleting it."
+      - name: still catches a wrong average
+        code: |
+          namespace = test_average.__globals__
+          original = namespace.get("average")
+          caught = []
+          for bug in [lambda values: sum(values) / (len(values) + 1), lambda values: round(sum(values) / len(values), 1)]:
+              namespace["average"] = bug
+              try:
+                  test_average()
+              except AssertionError:
+                  caught.append(True)
+              finally:
+                  namespace["average"] = original
+          assert len(caught) == 2, "Your test passed for a wrong average (one that returns 0.2 for [0.1, 0.2]). Use math.isclose with its default tolerance rather than a very loose comparison."
+    hints:
+      - Print average([0.1, 0.2]). Is it exactly 0.15?
+      - The math module is already imported. Which function compares floats with a small tolerance?
+      - "`assert math.isclose(average([0.1, 0.2]), 0.15)`"
+    feedback:
+      - when: { errorType: AssertionError }
+        message: >-
+          The float comparison is still exact. 0.1 + 0.2 is not exactly 0.3 in binary, so use
+          math.isclose(average([0.1, 0.2]), 0.15).
+    explanation: >-
+      (0.1 + 0.2) / 2 is 0.15000000000000002 in binary floating point, so == fails even though the code is
+      right — the test was wrong. math.isclose allows a tiny relative difference (1e-9 by default), which
+      still catches real mistakes.
+
+  - id: m-tf-assert-production
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: it is safe to validate user input with `assert` in application code, because a false
+      assert always raises AssertionError.
+    answer: false
+    explanation: >-
+      Running Python with -O (optimise) removes assert statements entirely, so the check silently
+      disappears. Use assert in tests; validate input in application code with an explicit raise such as
+      `raise ValueError(...)`.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-assert-messages, m-mcq-pytest-raises, m-code-clamp-tests, m-debug-float-test, m-tf-assert-production]
+
+cheatsheet: |
+  ```python
+  def test_discount_reduces_price():          # name: test_<behaviour>
+      price, percent = 200, 10                # arrange
+      result = apply_discount(price, percent) # act
+      assert result == 180, f"got {result}"   # assert
+
+  def test_rejects_bad_percent():             # error case without pytest
+      try:
+          apply_discount(50, 150)
+      except ValueError:
+          pass
+      else:
+          raise AssertionError("expected ValueError")
+
+  assert math.isclose(average([0.1, 0.2]), 0.15)   # floats: tolerance
+  ```
+  ```python
+  # with pytest (installed locally)
+  with pytest.raises(ValueError, match="between 0 and 100"):
+      apply_discount(50, 150)
+
+  @pytest.mark.parametrize("value, expected", [(1, 2), (5, 10)])
+  def test_double(value, expected):
+      assert double(value) == expected
+
+  @pytest.fixture
+  def cart():
+      return {"tea": 2}          # fresh for every test that names `cart`
+  ```
+  ```bash
+  python -m pip install pytest
+  python -m pytest -q          # -k NAME, -x (stop early), -v (verbose)
+  ```
+  - Cases: typical · boundaries · edge (empty/zero/one) · errors · regressions
+  - Watch a new test fail once (red) before trusting it.

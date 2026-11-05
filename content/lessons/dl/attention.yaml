@@ -1,0 +1,1222 @@
+id: dl.attention
+concept: dl.attention
+title: Attention
+subtitle: Scaled dot-product attention, from scratch
+estimatedMinutes: 60
+reviewedOn: 2026-10-22
+summary: >-
+  Attention lets every token build its representation from the tokens around it, with weights that
+  depend on content. Implement scaled dot-product attention in pure Python — queries, keys and values,
+  dot-product scores, scaling by √d_k, a numerically stable softmax and a weighted sum of values — then
+  add the causal mask used for next-token prediction and see how multi-head attention runs several of
+  these in parallel.
+objectives:
+  - Explain the problem attention solves and describe queries, keys and values as a soft dictionary lookup.
+  - Implement a numerically stable softmax using the max-subtraction trick, and explain why it gives the same result.
+  - Implement scaled dot-product attention, softmax(Q Kᵀ / √d_k) V, in pure Python and check its shapes.
+  - Explain why scores are divided by √d_k, with the variance argument from "Attention Is All You Need".
+  - Apply a causal mask with −∞ so each position attends only to itself and earlier positions, and explain why next-token training needs it.
+  - Describe multi-head attention and the quadratic cost of attention in sequence length.
+sources:
+  - title: Attention Is All You Need (Vaswani et al., 2017), arXiv:1706.03762
+    url: https://arxiv.org/abs/1706.03762
+    publisher: arXiv
+  - title: "Dive into Deep Learning: Attention Mechanisms and Transformers"
+    url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/index.html
+    publisher: Zhang, Lipton, Li and Smola
+  - title: torch.nn.functional.scaled_dot_product_attention
+    url: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+    publisher: PyTorch Foundation
+  - title: "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness, arXiv:2205.14135"
+    url: https://arxiv.org/abs/2205.14135
+    publisher: arXiv (Dao et al.)
+  - title: Attention is not Explanation, arXiv:1902.10186
+    url: https://arxiv.org/abs/1902.10186
+    publisher: arXiv (Jain and Wallace)
+sections:
+  - id: why
+    title: Every word needs context
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          An [embedding](concept:dl.embeddings) layer gives each token one fixed vector. But "bank" means
+          something different in "the river bank" and "the money bank", and in "The animal didn't cross the
+          street because **it** was too tired", the word "it" only makes sense once you know it refers to
+          "animal". A token's meaning depends on **other tokens** — and *which* other tokens matter depends
+          on what the words are.
+
+          The fix is to let each token build a new vector as a **weighted mix** of the vectors around it.
+          Here the weights are chosen by hand to show the effect:
+      - type: code
+        runnable: true
+        code: |
+          emb = {"the": [0.0, 0.0], "river": [1.0, 0.0], "money": [0.0, 1.0], "bank": [0.5, 0.5]}
+
+          def mix(sentence, weights):
+              """Weighted average of the token vectors in a sentence."""
+              return [round(sum(w * emb[t][i] for w, t in zip(weights, sentence)), 2) for i in range(2)]
+
+          s1 = ["the", "river", "bank"]
+          s2 = ["the", "money", "bank"]
+          print("'bank' on its own:   ", emb["bank"])
+          print("'bank' after 'river':", mix(s1, [0.0, 0.5, 0.5]))
+          print("'bank' after 'money':", mix(s2, [0.0, 0.5, 0.5]))
+        expectedOutput: |
+          'bank' on its own:    [0.5, 0.5]
+          'bank' after 'river': [0.75, 0.25]
+          'bank' after 'money': [0.25, 0.75]
+        caption: Mixing in half of the most relevant neighbour gives "bank" a different vector in each sentence.
+        annotations:
+          - line: 1
+            text: Toy 2-D vectors. Real embeddings have hundreds or thousands of learned dimensions.
+          - line: 10
+            text: The weights [0.0, 0.5, 0.5] ignore "the" and split attention between "river" and "bank".
+      - type: markdown
+        body: |
+          The weights above were typed in. **[Attention](glossary:attention-mechanism)** is a mechanism that *computes* such weights from
+          the tokens themselves, for every token at once, and with learned parameters so that the model
+          discovers which relationships matter. It is the core of the Transformer architecture introduced
+          in "Attention Is All You Need" (Vaswani et al., 2017, [arXiv:1706.03762](https://arxiv.org/abs/1706.03762)),
+          which underlies today's large language models.
+
+  - id: qkv
+    title: Queries, keys and values
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A Python `dict` is a **hard lookup**: the query must match a key exactly, and you get exactly one
+          value back. Attention is a **soft lookup**: compare the query with **every** key, turn the
+          similarities into weights that sum to 1, and return the **weighted average of all the values**.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          prices = {"apple": 30, "banana": 10, "cherry": 50}
+          print("hard lookup:", prices["banana"])
+
+          keys = [[1.0, 0.0], [0.0, 1.0], [0.7, 0.7]]     # one key vector per item
+          values = [30.0, 10.0, 50.0]                      # what each item returns
+          query = [0.9, 0.1]                               # "something like the first key"
+
+          scores = [sum(q * k for q, k in zip(query, key)) for key in keys]
+          exps = [math.exp(s) for s in scores]
+          weights = [e / sum(exps) for e in exps]
+          output = sum(w * v for w, v in zip(weights, values))
+          print("scores ", [round(s, 2) for s in scores])
+          print("weights", [round(w, 3) for w in weights])
+          print("soft lookup:", round(output, 2))
+        expectedOutput: |
+          hard lookup: 10
+          scores  [0.9, 0.1, 0.7]
+          weights [0.441, 0.198, 0.361]
+          soft lookup: 33.26
+        caption: Every value contributes, weighted by how well its key matches the query. The weights sum to 1.
+        annotations:
+          - line: 10
+            text: The dot product is the similarity score — large when query and key point the same way.
+          - line: 12
+            text: Softmax turns scores into positive weights that sum to 1.
+          - line: 13
+            text: The answer is a blend of all the values, dominated by the best-matching keys.
+      - type: markdown
+        body: |
+          In **self-attention**, every token plays all three roles. Its embedding `x` is multiplied by three
+          learned matrices:
+
+          | Vector | Computed as | Plain-English role |
+          |---|---|---|
+          | **[Query](glossary:query-key-value)** `q` | `x W_Q` | "What am I looking for?" |
+          | **Key** `k` | `x W_K` | "What do I contain, for matching?" |
+          | **Value** `v` | `x W_V` | "What do I hand over if I am attended to?" |
+
+          Keeping keys and values separate lets a token be *found* for one reason (its key) while
+          *contributing* different information (its value). The matrices `W_Q`, `W_K` and `W_V` are
+          ordinary parameters, learned by gradient descent like the weights of any
+          [dense layer](concept:dl.neurons-layers).
+      - type: callout
+        variant: analogy
+        title: Searching a library catalogue
+        body: |
+          Your query is the topic you have in mind; each book's key is its catalogue description; its value
+          is the content inside. A hard lookup returns the one book whose description matches exactly.
+          Attention reads a bit of *every* book, more from the better matches. (Unlike a catalogue, the
+          "descriptions" and "contents" are learned vectors, not human-readable text.)
+      - type: item
+        ref: explain-qkv
+
+  - id: softmax
+    title: Softmax and the max-subtraction trick
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Softmax](concept:dl.activation-functions) turns a list of scores into weights:
+
+          ```text
+          softmax(s)_i = exp(s_i) / Σ_j exp(s_j)
+          ```
+
+          Every weight is positive, they sum to 1, and larger scores get exponentially larger weights.
+          Implemented naively, it breaks on large scores: `math.exp` overflows above about 709. The fix
+          subtracts the maximum score first. Because `exp(s_i − m) / Σ exp(s_j − m) = exp(s_i)·e^(−m) /
+          (e^(−m)·Σ exp(s_j))`, the `e^(−m)` cancels — the result is mathematically identical, but the
+          largest exponent is now `exp(0) = 1`, so nothing can overflow.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def softmax_naive(scores):
+              exps = [math.exp(s) for s in scores]
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          def softmax(scores):
+              m = max(scores)
+              exps = [math.exp(s - m) for s in scores]      # the largest exponent is now exp(0) = 1
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          print([round(p, 4) for p in softmax_naive([1.0, 2.0, 3.0])])
+          print([round(p, 4) for p in softmax([1.0, 2.0, 3.0])])
+          print([round(p, 4) for p in softmax([1001.0, 1002.0, 1003.0])])
+          print(softmax_naive([1001.0, 1002.0, 1003.0]))
+        expectedOutput: |
+          [0.09, 0.2447, 0.6652]
+          [0.09, 0.2447, 0.6652]
+          [0.09, 0.2447, 0.6652]
+        expectError: OverflowError
+        caption: "Both versions agree on small scores. Adding 1000 to every score does not change softmax — but the naive version raises OverflowError: math range error."
+        annotations:
+          - line: 9
+            text: Subtracting the same constant from every score leaves the softmax unchanged.
+          - line: 16
+            text: Shifted scores are [-2, -1, 0], exactly as for [1, 2, 3], so the weights are identical.
+      - type: callout
+        variant: production
+        title: Every framework does this for you
+        body: |
+          `torch.softmax`, `scipy.special.softmax` and attention kernels all subtract the maximum (or use the
+          equivalent log-sum-exp trick, see [numerical computing](concept:math.numerical-computing)).
+          When you write softmax yourself — in a kernel, in another language, in an interview — remember to
+          do it too.
+      - type: item
+        ref: predict-masked-softmax
+
+  - id: sdpa
+    title: "Walkthrough: scaled dot-product attention"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Put the pieces together for a whole sequence. With the queries, keys and values of all `n`
+          tokens stacked as rows of `Q`, `K` and `V`, the paper's equation (1) defines
+          [scaled dot-product attention](glossary:scaled-dot-product-attention):
+
+          ```text
+          Attention(Q, K, V) = softmax( Q Kᵀ / √d_k ) V
+          ```
+
+          1. **Scores** `Q Kᵀ`: entry `(i, j)` is the dot product of query `i` with key `j` — an `n × n`
+             matrix.
+          2. **Scale** by `1 / √d_k`, where `d_k` is the length of the query and key vectors.
+          3. **Softmax** each row, so every query's weights over all keys sum to 1.
+          4. **Mix**: multiply by `V`, so each output row is a weighted average of the value vectors.
+
+          First, one query against three keys — step through it and watch the scores become weights and the
+          weights become an output:
+      - type: visualization
+        component: python-tracer
+        title: One query attending to three keys
+        caption: >-
+          The third key matches the query best (score 3/√2), so it gets the largest weight, and the output
+          is pulled towards its value [1, 1].
+        props:
+          code: |
+            import math
+            q = [1.0, 1.0]
+            K = [[1.0, 0.0], [0.0, 2.0], [1.0, 2.0]]
+            V = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+            scores = [(q[0] * k[0] + q[1] * k[1]) / math.sqrt(2) for k in K]
+            m = max(scores)
+            exps = [math.exp(s - m) for s in scores]
+            total = sum(exps)
+            weights = [e / total for e in exps]
+            out = [sum(w * v[j] for w, v in zip(weights, V)) for j in range(2)]
+            print([round(w, 2) for w in weights], [round(o, 2) for o in out])
+      - type: markdown
+        body: |
+          Now the full version for a three-token sequence, including the learned projections. The
+          projection matrices here are small hand-picked numbers; in a real model they are learned.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def matmul(A, B):
+              return [[sum(a * b for a, b in zip(row, col)) for col in zip(*B)] for row in A]
+
+          def softmax(scores):
+              m = max(scores)
+              exps = [math.exp(s - m) for s in scores]
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          def attention(Q, K, V):
+              d_k = len(K[0])
+              weights = [softmax([sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) for k in K]) for q in Q]
+              return matmul(weights, V), weights
+
+          tokens = ["the", "cat", "sat"]
+          X = [[1.0, 0.0],      # toy embeddings, one row per token
+               [0.0, 1.0],
+               [1.0, 1.0]]
+          W_Q = [[0.0, 1.0], [1.0, 1.0]]
+          W_K = [[1.0, 0.0], [0.0, 2.0]]
+          W_V = [[1.0, 0.0], [0.0, 1.0]]
+
+          Q, K, V = matmul(X, W_Q), matmul(X, W_K), matmul(X, W_V)
+          print("Q =", Q)
+          print("K =", K)
+          output, weights = attention(Q, K, V)
+          for token, row, out in zip(tokens, weights, output):
+              print(f"{token:>4} attends {[round(w, 2) for w in row]} -> output {[round(o, 2) for o in out]}")
+        expectedOutput: |
+          Q = [[0.0, 1.0], [1.0, 1.0], [1.0, 2.0]]
+          K = [[1.0, 0.0], [0.0, 2.0], [1.0, 2.0]]
+           the attends [0.11, 0.45, 0.45] -> output [0.55, 0.89]
+           cat attends [0.14, 0.28, 0.58] -> output [0.72, 0.86]
+           sat attends [0.04, 0.32, 0.64] -> output [0.68, 0.96]
+        caption: Each row of weights sums to 1. Every token gets a new vector that blends the value vectors of the whole sequence.
+        annotations:
+          - line: 4
+            text: "`zip(*B)` yields the columns of B, so this is an ordinary matrix product."
+          - line: 14
+            text: "One row of scores per query: q·k for every key, divided by √d_k, then softmax."
+          - line: 15
+            text: "weights (n × n) times V (n × d_v) gives the outputs (n × d_v)."
+          - line: 25
+            text: "Q = X W_Q: each token's query is its embedding times the query matrix."
+      - type: markdown
+        body: |
+          **Shapes to remember** (one sequence, one head): `X` is `n × d_model`; `Q` and `K` are
+          `n × d_k`; `V` is `n × d_v`; the score and weight matrices are `n × n`; the output is `n × d_v`.
+          Real implementations add a batch dimension and a head dimension in front.
+
+  - id: visual
+    title: Explore attention weights
+    kind: walkthrough
+    blocks:
+      - type: visualization
+        component: attention
+        title: Scaled dot-product attention over a short sentence
+        caption: >-
+          Pick a query token to see its scores, softmax weights and output step by step. The embeddings are
+          deterministic toy 2-D vectors derived from each word's letters, and the projection matrices are
+          fixed — so the weights demonstrate the mechanism, not real word meanings. Raise "score sharpness"
+          to see the softmax concentrate on one token; tick the causal mask to hide future tokens.
+        props:
+          tokens: [the, river, bank, was, muddy]
+      - type: markdown
+        body: |
+          Things to try: compare the rows for two different query tokens (each row is a separate
+          probability distribution); push the sharpness slider up and watch rows approach one-hot vectors;
+          then turn on the causal mask and check that the first token can only attend to itself.
+
+  - id: scaling
+    title: Why divide by √d_k?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The paper's explanation (section 3.2.1 and footnote 4): if the components of `q` and `k` are
+          independent with mean 0 and variance 1, their dot product `q·k = Σ q_i k_i` has mean 0 and
+          **variance `d_k`** — a sum of `d_k` terms that each have variance 1. So its typical size grows like
+          `√d_k`. Check it by simulation with a fixed seed:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+          import statistics
+
+          rng = random.Random(0)
+          for d in [4, 64, 256]:
+              dots = []
+              for _ in range(500):
+                  q = [rng.gauss(0, 1) for _ in range(d)]
+                  k = [rng.gauss(0, 1) for _ in range(d)]
+                  dots.append(sum(a * b for a, b in zip(q, k)))
+              sd = statistics.pstdev(dots)
+              print(f"d_k={d:3}: std of q.k = {sd:5.2f}   sqrt(d_k) = {math.sqrt(d):5.2f}   std after scaling = {sd / math.sqrt(d):.2f}")
+        expectedOutput: |
+          d_k=  4: std of q.k =  1.82   sqrt(d_k) =  2.00   std after scaling = 0.91
+          d_k= 64: std of q.k =  8.11   sqrt(d_k) =  8.00   std after scaling = 1.01
+          d_k=256: std of q.k = 15.58   sqrt(d_k) = 16.00   std after scaling = 0.97
+        caption: Unscaled, the spread of the scores grows like √d_k; after dividing by √d_k it stays near 1 (up to sampling noise from 500 samples).
+      - type: markdown
+        body: |
+          Why does that matter? Large scores push softmax towards a one-hot output — in the paper's words,
+          "into regions where it has extremely small gradients", so learning stalls. Here is one query
+          against five keys at `d_k = 256`:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+
+          def softmax(scores):
+              m = max(scores)
+              exps = [math.exp(s - m) for s in scores]
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          rng = random.Random(1)
+          d_k = 256
+          q = [rng.gauss(0, 1) for _ in range(d_k)]
+          keys = [[rng.gauss(0, 1) for _ in range(d_k)] for _ in range(5)]
+          raw = [sum(a * b for a, b in zip(q, k)) for k in keys]
+          print("raw scores:   ", [round(s, 1) for s in raw])
+          print("unscaled weights:", [round(w, 3) for w in softmax(raw)])
+          print("scaled weights:  ", [round(w, 3) for w in softmax([s / math.sqrt(d_k) for s in raw])])
+        expectedOutput: |
+          raw scores:    [14.4, 20.7, -19.0, 1.6, -17.3]
+          unscaled weights: [0.002, 0.998, 0.0, 0.0, 0.0]
+          scaled weights:   [0.313, 0.464, 0.039, 0.141, 0.043]
+        caption: Unscaled, one key takes 99.8% of the weight. Scaled, the distribution stays soft, and every key still receives a useful gradient.
+      - type: item
+        ref: mcq-scale
+
+  - id: causal
+    title: Causal masking for next-token prediction
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A GPT-style language model is trained to predict the **next** token at every position at once:
+          position 1 predicts token 2, position 2 predicts token 3, and so on, all in one parallel pass.
+          If position 2 could attend to position 3, it could simply copy the answer. A
+          **[causal mask](glossary:causal-mask)** forbids that: before the softmax, every score for a
+          *later* position (`j > i`) is set to **−∞**. Since `exp(−∞) = 0`, those keys get weight exactly
+          0, and each row still sums to 1 over the allowed positions.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def softmax(scores):
+              m = max(scores)
+              exps = [math.exp(s - m) for s in scores]      # math.exp(-inf) is 0.0
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          tokens = ["the", "cat", "sat", "down"]
+          scores = [[0.5, 1.0, 0.2, 0.8],
+                    [0.3, 0.9, 1.5, 0.1],
+                    [0.2, 1.2, 0.4, 0.7],
+                    [0.1, 0.6, 1.1, 0.3]]
+
+          masked = [[s if j <= i else float("-inf") for j, s in enumerate(row)]
+                    for i, row in enumerate(scores)]
+          print("query  " + "  ".join(f"{t:>5}" for t in tokens))
+          for token, row in zip(tokens, masked):
+              print(f"{token:>5}  " + "  ".join(f"{w:5.2f}" for w in softmax(row)))
+        expectedOutput: |
+          query    the    cat    sat   down
+            the   1.00   0.00   0.00   0.00
+            cat   0.35   0.65   0.00   0.00
+            sat   0.20   0.55   0.25   0.00
+           down   0.15   0.25   0.41   0.19
+        caption: A lower-triangular weight matrix. "the" can only attend to itself; "down" can attend to everything before it.
+        annotations:
+          - line: 15
+            text: Keep a score when key j is not in the future of query i; otherwise replace it with minus infinity.
+          - line: 4
+            text: The diagonal is never masked, so the maximum is always finite and subtracting it is safe.
+      - type: markdown
+        body: |
+          At generation time the future tokens do not exist yet, so the model naturally only sees the past;
+          the mask makes **training** match that situation. It also means the keys and values of earlier
+          tokens never change as new tokens are added, which is why inference engines can store them in a
+          KV cache instead of recomputing them (see [inference performance](concept:dl.inference-performance)).
+          Encoder models such as BERT use no causal mask: every token may attend in both directions.
+      - type: item
+        ref: mcq-causal
+
+  - id: multi-head
+    title: Multi-head attention
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          One attention computation produces one set of weights per token — one notion of "relevant".
+          Language has many relations at once (which noun a pronoun refers to, which verb goes with which
+          subject, what came just before). **[Multi-head attention](glossary:multi-head-attention)** runs
+          `h` attention computations ("heads") in parallel, each with its own `W_Q`, `W_K`, `W_V` that
+          project into a smaller dimension, then concatenates the head outputs and mixes them with a final
+          matrix `W_O`:
+
+          ```text
+          head_i    = Attention(X W_Q_i, X W_K_i, X W_V_i)
+          MultiHead = Concat(head_1, ..., head_h) W_O
+          ```
+
+          The base model in the paper uses `d_model = 512` and `h = 8` heads of size
+          `d_k = d_v = 512 / 8 = 64`, so the total computation is similar to one head at full width. In the
+          sketch below each head simply looks at a different half of a 4-dimensional input (standing in for
+          different learned projections), and the two heads come up with different weight patterns:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def softmax(row):
+              m = max(row)
+              exps = [math.exp(s - m) for s in row]
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          def attention(Q, K, V):
+              d_k = len(K[0])
+              W = [softmax([sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) for k in K]) for q in Q]
+              out = [[sum(w * v[j] for w, v in zip(row, V)) for j in range(len(V[0]))] for row in W]
+              return out, W
+
+          X = [[1.0, 0.0, 0.0, 2.0],      # 3 tokens, d_model = 4
+               [0.0, 1.0, 2.0, 0.0],
+               [1.0, 1.0, 0.0, 0.0]]
+
+          head_outputs = []
+          for h in range(2):                                  # 2 heads, each sees d_model / 2 = 2 dimensions
+              part = [row[2 * h:2 * h + 2] for row in X]      # stands in for X @ W_Q, X @ W_K, X @ W_V of this head
+              out, W = attention(part, part, part)
+              head_outputs.append(out)
+              print(f"head {h} weights:", [[round(w, 2) for w in row] for row in W])
+
+          concat = [head_outputs[0][i] + head_outputs[1][i] for i in range(len(X))]   # list + list joins them
+          print("concatenated output per token:", len(concat[0]), "dimensions")
+        expectedOutput: |
+          head 0 weights: [[0.4, 0.2, 0.4], [0.2, 0.4, 0.4], [0.25, 0.25, 0.5]]
+          head 1 weights: [[0.89, 0.05, 0.05], [0.05, 0.89, 0.05], [0.33, 0.33, 0.33]]
+          concatenated output per token: 4 dimensions
+        caption: Same tokens, two different attention patterns. A real layer would multiply the concatenation by a learned W_O.
+        annotations:
+          - line: 21
+            text: Slicing columns is a stand-in for a learned projection; real heads use separate W_Q, W_K, W_V matrices.
+          - line: 26
+            text: Concatenating the two 2-D head outputs restores the model dimension, 4.
+      - type: markdown
+        body: |
+          How heads, residual connections, feed-forward layers and normalisation fit together into a block
+          is the topic of [the Transformer architecture](concept:dl.transformer-architecture).
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `OverflowError: math range error` (or `nan` in tensors) | Softmax without subtracting the max | Subtract `max(scores)` first |
+          | Rows of the weight matrix do not sum to 1 | Softmax applied over the wrong axis (columns instead of rows) | Normalise over the **keys** for each query (`dim=-1` in PyTorch) |
+          | Future tokens still get some weight | Masked scores set to `0` instead of `−∞` | Use `float("-inf")` (or a very large negative number) **before** the softmax |
+          | Attention is nearly one-hot from the start, training is unstable | Scores not divided by `√d_k` | Scale by `1 / math.sqrt(d_k)` |
+          | Model ignores word order | Self-attention is order-blind | Add positional information ([positional encoding](concept:dl.positional-encoding)) |
+          | Mask has the opposite effect in PyTorch | Boolean mask conventions differ between APIs | In `scaled_dot_product_attention`, `True` means "may attend"; in `nn.MultiheadAttention`'s `key_padding_mask`, `True` means "ignore" |
+
+          The masking bug is the subtle one: a score of 0 is not "no attention" — `exp(0 − m)` is still
+          positive, so the future token keeps a share of the weight.
+      - type: item
+        ref: debug-mask
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: code-softmax
+      - type: item
+        ref: code-attention
+      - type: item
+        ref: parsons-attention
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Attention is order-blind.** Self-attention treats its input as a *set*: shuffle the tokens and
+          the outputs are shuffled the same way, with no other change. That is why Transformers add
+          positional information.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def softmax(row):
+              m = max(row)
+              exps = [math.exp(s - m) for s in row]
+              total = sum(exps)
+              return [e / total for e in exps]
+
+          def self_attention(X):
+              d = len(X[0])
+              W = [softmax([sum(a * b for a, b in zip(q, k)) / math.sqrt(d) for k in X]) for q in X]
+              return [[sum(w * v[j] for w, v in zip(row, X)) for j in range(d)] for row in W]
+
+          X = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]       # "dog bites man"
+          reordered = [X[2], X[1], X[0]]                  # "man bites dog"
+          out = self_attention(X)
+          out_reordered = self_attention(reordered)
+          same = all(math.isclose(a, b) for r1, r2 in zip(out[::-1], out_reordered) for a, b in zip(r1, r2))
+          print("outputs are just reordered too:", same)
+        expectedOutput: |
+          outputs are just reordered too: True
+        caption: Without positional information, "dog bites man" and "man bites dog" contain exactly the same information.
+      - type: markdown
+        body: |
+          **Quadratic cost.** The score matrix has one entry per (query, key) pair: `n²` entries per head
+          per layer.
+      - type: code
+        runnable: true
+        code: |
+          for n in [1_000, 8_000, 128_000]:
+              print(f"{n:>7} tokens -> {n * n:>15,} attention scores per head per layer")
+        expectedOutput: |2
+             1000 tokens ->       1,000,000 attention scores per head per layer
+             8000 tokens ->      64,000,000 attention scores per head per layer
+           128000 tokens ->  16,384,000,000 attention scores per head per layer
+        caption: Doubling the context length quadruples the score computations.
+      - type: markdown
+        body: |
+          A naive implementation stores that whole matrix. **FlashAttention** (Dao et al., 2022,
+          arXiv:2205.14135) computes *exactly the same* outputs by processing queries and keys in tiles that
+          fit in fast on-chip memory, using a running ("online") softmax so the full `n × n` matrix is never
+          written out. The arithmetic still grows as `n²`, but memory traffic — usually the bottleneck on
+          GPUs — drops dramatically.
+
+          **Attention weights are not explanations.** It is tempting to read a weight matrix as "what the
+          model looked at". Jain and Wallace ("Attention is not Explanation", arXiv:1902.10186) showed that
+          attention weights often correlate poorly with other measures of feature importance, and that
+          quite different weights can produce the same prediction. Treat attention maps as a debugging
+          hint, not as proof of the model's reasoning.
+
+          **In PyTorch**, `torch.nn.functional.scaled_dot_product_attention(query, key, value,
+          attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False)` computes exactly
+          this formula on tensors shaped `(batch, heads, sequence, head_dim)`; `scale` defaults to
+          `1 / sqrt(head_dim)` and, depending on the hardware and inputs, it dispatches to fused kernels
+          such as FlashAttention. `nn.MultiheadAttention` wraps the projections, heads and output matrix.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install torch   (see pytorch.org for the right command for your machine)
+          import torch
+          import torch.nn.functional as F
+
+          torch.manual_seed(0)
+          q = torch.randn(1, 2, 5, 8)      # (batch, heads, sequence length, head dim)
+          k = torch.randn(1, 2, 5, 8)
+          v = torch.randn(1, 2, 5, 8)
+
+          out = F.scaled_dot_product_attention(q, k, v, is_causal=True)   # scale defaults to 1/sqrt(8)
+
+          # The same computation written out by hand:
+          scores = q @ k.transpose(-2, -1) / 8 ** 0.5                    # (1, 2, 5, 5)
+          allowed = torch.ones(5, 5, dtype=torch.bool).tril()           # True = may attend
+          scores = scores.masked_fill(~allowed, float("-inf"))
+          manual = torch.softmax(scores, dim=-1) @ v                     # softmax over the keys
+          print(out.shape, torch.allclose(out, manual, atol=1e-6))       # torch.Size([1, 2, 5, 8]) True
+        caption: >-
+          Illustrative: PyTorch cannot run in this browser runtime. Install it locally to compare the fused
+          function with the explicit formula; the comments show the expected output.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Attention gives each token a **content-dependent weighted average** of the other tokens'
+            information.
+          - Each token's embedding is projected into a **query** (what it looks for), a **key** (what it
+            offers for matching) and a **value** (what it contributes).
+          - `Attention(Q, K, V) = softmax(Q Kᵀ / √d_k) V`: scores, scale, softmax per query row, weighted sum
+            of values. Shapes: `n × n` weights, `n × d_v` outputs.
+          - Stable softmax subtracts the max first; the result is identical and cannot overflow.
+          - Divide by `√d_k` because dot products of `d_k`-dimensional vectors have variance `d_k`;
+            unscaled scores saturate the softmax.
+          - **Causal mask**: set scores for `j > i` to `−∞` before softmax, so training on next-token
+            prediction cannot peek ahead.
+          - **Multi-head**: several smaller attention heads in parallel, concatenated and projected with
+            `W_O`. Cost grows as `n²` in sequence length.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Implement scaled dot-product attention" is a classic exercise: write the scores, the √d_k
+          scaling, a stable softmax over the right axis and the weighted sum, and state the shapes. Expect
+          follow-ups on why the scaling exists (variance grows with d_k), how causal masking works (−∞
+          before softmax), why cost is quadratic, and what multi-head attention adds.
+
+items:
+  - id: explain-qkv
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a colleague who knows Python dictionaries what queries, keys and values are in attention,
+      and why attention is called a "soft" lookup.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Compares attention to a dictionary lookup in which a query is matched against keys to retrieve values.
+      - Explains that the query is compared with every key (dot-product scores), not matched exactly.
+      - Explains that softmax turns the scores into weights that sum to 1 and the output is a weighted average of all values.
+      - Mentions that in self-attention each token's query, key and value come from its own embedding via learned matrices.
+    modelAnswer: |
+      A dictionary does a hard lookup: the query must equal one key exactly, and you get that key's value.
+      Attention compares the query with every key using a dot product, so better-matching keys get higher
+      scores. Softmax turns the scores into positive weights that sum to 1, and the result is the weighted
+      average of all the values — mostly the best matches, but a little of everything, which is why it is
+      "soft" (and differentiable, so it can be learned). In self-attention each token produces its own
+      query, key and value by multiplying its embedding by three learned matrices W_Q, W_K and W_V.
+
+  - id: predict-masked-softmax
+    type: predict-output
+    skill: prediction
+    prompt: A masked score row goes through a stable softmax. What does this print?
+    code: |
+      import math
+      scores = [3.0, 3.0, float("-inf")]
+      m = max(scores)
+      exps = [math.exp(s - m) for s in scores]
+      print([e / sum(exps) for e in exps])
+    answer: "[0.5, 0.5, 0.0]"
+    explanation: >-
+      The maximum is 3.0, so the shifted scores are 0, 0 and −∞. exp(0) = 1 and exp(−∞) = 0.0, so the
+      exponentials are [1.0, 1.0, 0.0] and the weights are [0.5, 0.5, 0.0]. The masked position gets
+      exactly zero weight and the others still sum to 1.
+    wrongAnswers:
+      - answer: "[0.3333333333333333, 0.3333333333333333, 0.3333333333333333]"
+        feedback: exp(−∞) is 0.0, so the masked position contributes nothing; the remaining weight is shared by the two equal scores.
+      - answer: "[1.0, 1.0, 0.0]"
+        feedback: These are the exponentials before normalising. Dividing by their sum (2.0) gives weights that sum to 1.
+
+  - id: mcq-scale
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: Why does scaled dot-product attention divide the scores by √d_k?
+    explanation: >-
+      With components of mean 0 and variance 1, a dot product of d_k-dimensional vectors has variance d_k,
+      so scores grow like √d_k. Large scores push softmax into a near one-hot regime where gradients are
+      tiny. Dividing by √d_k keeps the score variance around 1 regardless of the dimension.
+    options:
+      - id: a
+        text: Dot products grow with the dimension (variance d_k), and large scores saturate the softmax, giving tiny gradients.
+        correct: true
+        feedback: Correct — this is the argument in section 3.2.1 of "Attention Is All You Need".
+      - id: b
+        text: To make the attention weights in each row sum to 1.
+        feedback: Softmax already guarantees that, scaled or not.
+      - id: c
+        text: To prevent math.exp from overflowing.
+        feedback: Overflow is prevented by subtracting the maximum score. Scaling addresses the size of gradients.
+      - id: d
+        text: Because d_k is the number of tokens, and the output should be an average.
+        feedback: d_k is the length of the query and key vectors, not the sequence length. The softmax already produces an average.
+
+  - id: mcq-causal
+    type: mcq
+    skill: recognition
+    prompt: In a decoder (GPT-style) model trained on next-token prediction, what does the causal mask do?
+    explanation: >-
+      Before the softmax, scores for keys at later positions (j > i) are set to −∞, so their weights are
+      exactly 0. Each position can then only use itself and earlier tokens, which matches generation, where
+      future tokens do not exist yet.
+    options:
+      - id: a
+        text: It sets scores for later positions to −∞ before the softmax, so each token attends only to itself and earlier tokens.
+        correct: true
+        feedback: Correct. Without it, a position could copy the very token it is supposed to predict.
+      - id: b
+        text: It hides earlier tokens so the model concentrates on the most recent one.
+        feedback: It is the other way round — earlier tokens remain visible; future ones are hidden.
+      - id: c
+        text: It sets the attention weights of later positions to 0 after the softmax.
+        feedback: Zeroing after the softmax leaves rows that no longer sum to 1. The mask is applied to the scores before the softmax.
+      - id: d
+        text: It randomly drops attention weights during training to prevent overfitting.
+        feedback: That is attention dropout, a different regularisation technique.
+
+  - id: debug-mask
+    type: debug
+    skill: debugging
+    prompt: |
+      `causal_weights(scores)` should return attention weights where token `i` gives **zero** weight to every
+      later token `j > i`. Run it: the first row should be `[1.0, 0.0, 0.0]`, but the future tokens still
+      get weight. Fix the masking.
+    starterCode: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def causal_weights(scores):
+          """scores[i][j] = how much token i attends to token j. Token i may only see j <= i."""
+          masked = [[s if j <= i else 0.0 for j, s in enumerate(row)] for i, row in enumerate(scores)]
+          return [softmax(row) for row in masked]
+
+      for row in causal_weights([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]):
+          print([round(w, 2) for w in row])
+    solution: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def causal_weights(scores):
+          """scores[i][j] = how much token i attends to token j. Token i may only see j <= i."""
+          masked = [[s if j <= i else float("-inf") for j, s in enumerate(row)] for i, row in enumerate(scores)]
+          return [softmax(row) for row in masked]
+
+      for row in causal_weights([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]):
+          print([round(w, 2) for w in row])
+    expectedOutput: |
+      [1.0, 0.0, 0.0]
+      [0.27, 0.73, 0.0]
+      [0.09, 0.24, 0.67]
+    tests:
+      - name: Future positions get exactly zero weight
+        code: |
+          W = causal_weights([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]])
+          for i, row in enumerate(W):
+              for j, w in enumerate(row):
+                  if j > i:
+                      assert w == 0.0, f"Token {i} gives weight {w:.3f} to future token {j}. A score of 0 is not 'no attention' - exp(0 - m) is still positive. Mask with float('-inf')."
+      - name: Rows still sum to 1
+        code: |
+          import math
+          W = causal_weights([[0.5, -2.0, 4.0, 1.0], [3.0, 1.0, -1.0, 0.0], [0.0, 0.0, 0.0, 9.0], [1.0, 2.0, 3.0, 4.0]])
+          for i, row in enumerate(W):
+              assert math.isclose(sum(row), 1.0), f"Row {i} sums to {sum(row)}, not 1. Mask the scores before the softmax, not the weights after it."
+      - name: Visible positions keep their softmax weights
+        code: |
+          import math
+          W = causal_weights([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 2.0, 3.0]])
+          assert W[0][0] == 1.0, "The first token can only see itself, so its weight on itself must be 1.0."
+          e1, e2 = math.exp(1.0), math.exp(2.0)
+          assert math.isclose(W[1][0], e1 / (e1 + e2)) and math.isclose(W[1][1], e2 / (e1 + e2)), f"Row 1 should be the softmax of [1, 2] over the visible keys, got {W[1]}."
+    hints:
+      - What is `math.exp(0.0 - m)`? Is it zero?
+      - Only a score of minus infinity becomes exactly 0 after exp.
+      - "Replace `0.0` in the mask with `float(\"-inf\")`."
+    feedback:
+      - when: { outputContains: "nan" }
+        message: >-
+          You produced nan — probably by masking every score in a row, or by subtracting infinity from
+          infinity. Only mask positions j > i; the diagonal must stay visible.
+    explanation: >-
+      Masking a score to 0 just gives it the value 0, which is comparable to the real scores, so after the
+      softmax the future token still receives a sizeable weight (0.21 for the first row here). Setting it to
+      −∞ makes exp(−∞) = 0 exactly, and the softmax renormalises over the visible positions.
+
+  - id: code-softmax
+    type: code
+    skill: implementation
+    prompt: |
+      Write `softmax(scores)` that returns a list of weights `exp(s_i) / Σ exp(s_j)`, using the
+      **max-subtraction trick** so it works for very large scores and for masked scores of `float("-inf")`
+      (as long as at least one score is finite).
+    starterCode: |
+      import math
+
+      def softmax(scores):
+          pass
+
+      print([round(p, 4) for p in softmax([1.0, 2.0, 3.0])])
+    solution: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      print([round(p, 4) for p in softmax([1.0, 2.0, 3.0])])
+    expectedOutput: |
+      [0.09, 0.2447, 0.6652]
+    tests:
+      - name: Correct values
+        code: |
+          import math
+          got = softmax([1.0, 2.0, 3.0])
+          assert got is not None, "softmax returned None. Return the list of weights."
+          expected = [0.09003057317038046, 0.24472847105479764, 0.6652409557748219]
+          assert len(got) == 3 and all(math.isclose(a, b) for a, b in zip(got, expected)), f"Expected about [0.09, 0.2447, 0.6652], got {got!r}."
+      - name: Weights sum to 1 and equal scores share equally
+        code: |
+          import math
+          got = softmax([0.5, -1.0, 2.0, 0.0])
+          assert math.isclose(sum(got), 1.0), f"The weights must sum to 1, they sum to {sum(got)}."
+          got = softmax([7.0, 7.0, 7.0, 7.0])
+          assert all(math.isclose(p, 0.25) for p in got), f"Four equal scores should each get 0.25, got {got!r}."
+      - name: Large scores do not overflow
+        code: |
+          import math
+          try:
+              got = softmax([1001.0, 1002.0, 1003.0])
+          except OverflowError:
+              raise AssertionError("OverflowError for scores near 1000. Subtract max(scores) from every score before calling math.exp.")
+          assert math.isclose(got[2], 0.6652409557748219), f"Shifting all scores by 1000 must not change the result, got {got!r}."
+      - name: Handles masked scores
+        code: |
+          got = softmax([2.0, float("-inf"), 2.0])
+          assert got == [0.5, 0.0, 0.5], f"A score of -inf should get weight 0.0 and the rest share the weight: expected [0.5, 0.0, 0.5], got {got!r}."
+    hints:
+      - Find the largest score with `max(scores)`.
+      - Exponentiate `s - m` for every score; the largest becomes exp(0) = 1.
+      - Divide each exponential by their total.
+    feedback:
+      - when: { errorType: OverflowError }
+        message: math.exp overflowed. Subtract max(scores) from each score before exponentiating.
+      - when: { outputEquals: "None\n" }
+        message: The function returns None. Return the list of weights.
+    explanation: >-
+      Subtracting the maximum multiplies every exponential by the same factor e^(−m), which cancels in the
+      division, so the weights are unchanged — but the largest exponent becomes exp(0) = 1, so nothing can
+      overflow, and exp(−∞) = 0 handles masked positions.
+
+  - id: code-attention
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `attention(Q, K, V)` that returns the list of output vectors of scaled dot-product attention,
+      `softmax(Q Kᵀ / √d_k) V`. `Q`, `K` and `V` are lists of row vectors (one per token); `d_k` is the
+      length of a key vector. A stable `softmax` is provided.
+
+      For each query: score it against every key (dot product ÷ `math.sqrt(d_k)`), softmax the scores, and
+      return the weighted sum of the value vectors.
+    starterCode: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def attention(Q, K, V):
+          pass
+
+      Q = [[1.0, 0.0], [0.0, 1.0]]
+      K = [[1.0, 0.0], [0.0, 1.0]]
+      V = [[10.0, 0.0], [0.0, 10.0]]
+      print(attention(Q, K, V))
+    solution: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def attention(Q, K, V):
+          d_k = len(K[0])
+          outputs = []
+          for q in Q:
+              scores = [sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) for k in K]
+              weights = softmax(scores)
+              outputs.append([sum(w * v[j] for w, v in zip(weights, V)) for j in range(len(V[0]))])
+          return outputs
+
+      Q = [[1.0, 0.0], [0.0, 1.0]]
+      K = [[1.0, 0.0], [0.0, 1.0]]
+      V = [[10.0, 0.0], [0.0, 10.0]]
+      print([[round(x, 3) for x in row] for row in attention(Q, K, V)])
+    expectedOutput: |
+      [[6.698, 3.302], [3.302, 6.698]]
+    tests:
+      - name: Small example
+        code: |
+          import math
+          out = attention([[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0], [0.0, 1.0]], [[10.0, 0.0], [0.0, 10.0]])
+          assert out is not None, "attention returned None. Return the list of output vectors."
+          w = 1 / (1 + math.exp(-1 / math.sqrt(2)))
+          expected = [[10 * w, 10 * (1 - w)], [10 * (1 - w), 10 * w]]
+          assert all(math.isclose(a, b) for r1, r2 in zip(out, expected) for a, b in zip(r1, r2)), f"Expected about [[6.698, 3.302], [3.302, 6.698]], got {out!r}. Did you divide the scores by math.sqrt(d_k)?"
+      - name: Matches a reference implementation on random data
+        code: |
+          import math, random
+          def ref(Q, K, V):
+              d = len(K[0])
+              res = []
+              for q in Q:
+                  s = [sum(a * b for a, b in zip(q, k)) / math.sqrt(d) for k in K]
+                  m = max(s)
+                  e = [math.exp(x - m) for x in s]
+                  t = sum(e)
+                  res.append([sum(ei / t * v[j] for ei, v in zip(e, V)) for j in range(len(V[0]))])
+              return res
+          rng = random.Random(3)
+          for n_q, n_k, d_k, d_v in [(4, 4, 3, 2), (2, 5, 4, 3), (3, 3, 8, 1)]:
+              Q = [[rng.uniform(-2, 2) for _ in range(d_k)] for _ in range(n_q)]
+              K = [[rng.uniform(-2, 2) for _ in range(d_k)] for _ in range(n_k)]
+              V = [[rng.uniform(-2, 2) for _ in range(d_v)] for _ in range(n_k)]
+              out = attention(Q, K, V)
+              assert len(out) == n_q and all(len(r) == d_v for r in out), f"With {n_q} queries and values of length {d_v}, the output should be {n_q} rows of {d_v} numbers."
+              exp_out = ref(Q, K, V)
+              assert all(math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12) for r1, r2 in zip(out, exp_out) for a, b in zip(r1, r2)), f"Output differs from the reference for shapes Q {n_q}x{d_k}, V {n_k}x{d_v}."
+      - name: Each output is a convex combination of the values
+        code: |
+          out = attention([[5.0, 1.0]], [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], [[0.0], [1.0], [2.0]])
+          assert 0.0 <= out[0][0] <= 2.0, f"An output must lie between the smallest and largest value (0 and 2), got {out[0][0]!r}."
+    hints:
+      - "`d_k = len(K[0])`. For one query `q`, the scores are `[sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) for k in K]`."
+      - "Call `softmax(scores)` to get the weights for that query."
+      - "Output component j is `sum(w * v[j] for w, v in zip(weights, V))`; build one output row per query."
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: attention returns None. Return the list of output rows.
+      - when: { outputContains: "7.31" }
+        message: >-
+          Those are the unscaled weights (softmax of [1, 0] gives 0.731). Divide each score by
+          math.sqrt(d_k) before the softmax.
+    explanation: >-
+      For each query, the scores are dot products with every key divided by √d_k; softmax turns them into
+      weights over the keys; and the output is the weighted sum of the value vectors. Written as matrices
+      that is softmax(Q Kᵀ / √d_k) V — the whole of scaled dot-product attention.
+
+  - id: parsons-attention
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to compute the attention output for a single query over two keys and print it.
+      One line is a distractor.
+    solution: |
+      import math
+      q = [1.0, 0.0]
+      K = [[1.0, 0.0], [0.0, 1.0]]
+      V = [[4.0], [8.0]]
+      scores = [sum(a * b for a, b in zip(q, k)) / math.sqrt(len(q)) for k in K]
+      exps = [math.exp(s - max(scores)) for s in scores]
+      weights = [e / sum(exps) for e in exps]
+      print(round(sum(w * v[0] for w, v in zip(weights, V)), 2))
+    distractors:
+      - weights = [e / sum(scores) for e in exps]
+    expectedOutput: |
+      5.32
+    explanation: >-
+      Scores come first (dot product, scaled by √d_k), then the shifted exponentials, then normalisation by
+      the sum of the exponentials, then the weighted sum of values. Dividing by the sum of the raw scores
+      (the distractor) does not produce weights that sum to 1.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-weights
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import math
+      scores = [0.0, math.log(3)]
+      exps = [math.exp(s) for s in scores]
+      print([round(e / sum(exps), 2) for e in exps])
+    answer: "[0.25, 0.75]"
+    explanation: >-
+      exp(0) = 1 and exp(ln 3) = 3, so the exponentials are 1 and 3, which sum to 4. The weights are 1/4
+      and 3/4. Softmax gives the larger score more weight, but not all of it.
+    wrongAnswers:
+      - answer: "[0.0, 1.0]"
+        feedback: Softmax is a soft version of argmax — the smaller score still gets a share, here 1/4.
+      - answer: "[0.5, 0.5]"
+        feedback: Softmax keeps the order of the scores — the larger score always gets the larger weight. Exponentiate (1 and 3), then divide by the total, 4.
+
+  - id: m-mcq-quadratic
+    type: mcq
+    skill: transfer
+    prompt: |
+      A model's context length is increased from 4,000 to 16,000 tokens. Roughly how does the number of
+      attention scores computed per head per layer change?
+    explanation: >-
+      Every query is scored against every key, so the score matrix has n² entries. Multiplying n by 4
+      multiplies n² by 16.
+    options:
+      - id: a
+        text: It grows about 16 times.
+        correct: true
+        feedback: Correct — (4n)² = 16 n². This quadratic growth is why long contexts are expensive.
+      - id: b
+        text: It grows about 4 times.
+        feedback: That would be linear growth. Each of the 4× more queries is compared with 4× more keys.
+      - id: c
+        text: It stays the same, because the number of heads is unchanged.
+        feedback: The number of heads multiplies the work; the per-head work still depends on the sequence length.
+      - id: d
+        text: FlashAttention makes it constant.
+        feedback: FlashAttention computes exactly the same scores with far less memory traffic; the number of scores is still n².
+
+  - id: m-tf-order
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: self-attention on its own (with no positional information added) produces different
+      results for "dog bites man" and "man bites dog" beyond simply reordering the outputs.
+    answer: false
+    explanation: >-
+      Self-attention treats its input as a set: permuting the input tokens permutes the outputs in the same
+      way and changes nothing else. Word order has to be injected separately, for example with positional
+      encodings or rotary embeddings.
+
+  - id: m-code-causal
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `causal_attention(Q, K, V)`: scaled dot-product attention in which query `i` may only attend to
+      keys `j <= i`. Mask the **scores** of later positions with `float("-inf")` before the softmax. A stable
+      `softmax` is provided; return the list of output vectors.
+    starterCode: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def causal_attention(Q, K, V):
+          pass
+
+      X = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+      print([[round(x, 2) for x in row] for row in causal_attention(X, X, X)])
+    solution: |
+      import math
+
+      def softmax(scores):
+          m = max(scores)
+          exps = [math.exp(s - m) for s in scores]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def causal_attention(Q, K, V):
+          d_k = len(K[0])
+          outputs = []
+          for i, q in enumerate(Q):
+              scores = [sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) if j <= i else float("-inf")
+                        for j, k in enumerate(K)]
+              weights = softmax(scores)
+              outputs.append([sum(w * v[c] for w, v in zip(weights, V)) for c in range(len(V[0]))])
+          return outputs
+
+      X = [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]
+      print([[round(x, 2) for x in row] for row in causal_attention(X, X, X)])
+    expectedOutput: |
+      [[1.0, 0.0], [0.33, 0.67], [0.75, 0.75]]
+    tests:
+      - name: The first token only sees itself
+        code: |
+          out = causal_attention([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+          assert out is not None, "causal_attention returned None. Return the list of output rows."
+          assert out[0] == [1.0, 0.0], f"Token 0 can only attend to itself, so its output must equal its own value [1.0, 0.0]. Got {out[0]!r}."
+      - name: Future values have no influence
+        code: |
+          import math
+          Q = [[0.3, -0.2], [1.0, 0.5], [0.1, 0.9]]
+          K = [[0.5, 0.5], [-1.0, 0.2], [0.4, -0.7]]
+          V1 = [[1.0], [2.0], [3.0]]
+          V2 = [[1.0], [2.0], [300.0]]          # only the LAST value changes
+          a, b = causal_attention(Q, K, V1), causal_attention(Q, K, V2)
+          assert math.isclose(a[0][0], b[0][0]) and math.isclose(a[1][0], b[1][0]), "Changing the last token's value changed an earlier token's output - earlier tokens must not see later positions."
+          assert not math.isclose(a[2][0], b[2][0]), "The last token should still attend to its own value."
+      - name: Matches masked attention on random data
+        code: |
+          import math, random
+          rng = random.Random(7)
+          n, d = 4, 3
+          Q = [[rng.uniform(-1, 1) for _ in range(d)] for _ in range(n)]
+          K = [[rng.uniform(-1, 1) for _ in range(d)] for _ in range(n)]
+          V = [[rng.uniform(-1, 1) for _ in range(2)] for _ in range(n)]
+          out = causal_attention(Q, K, V)
+          for i in range(n):
+              s = [sum(a * b for a, b in zip(Q[i], K[j])) / math.sqrt(d) for j in range(i + 1)]
+              m = max(s)
+              e = [math.exp(x - m) for x in s]
+              t = sum(e)
+              expected = [sum(e[j] / t * V[j][c] for j in range(i + 1)) for c in range(2)]
+              assert all(math.isclose(x, y, rel_tol=1e-9, abs_tol=1e-12) for x, y in zip(out[i], expected)), f"Row {i} differs from masked attention. Are you scaling by math.sqrt(d_k) and masking only j > i?"
+    hints:
+      - Start from ordinary attention, but loop with `for i, q in enumerate(Q)` so you know the query's position.
+      - "When building the scores, use `float(\"-inf\")` for every key position `j > i`."
+      - The softmax and the weighted sum of values are unchanged.
+    feedback:
+      - when: { outputContains: "nan" }
+        message: You produced nan. Make sure position i can always see itself (j <= i), so every row has a finite score.
+    explanation: >-
+      Causal attention is ordinary scaled dot-product attention with one change: scores for later positions
+      are −∞ before the softmax, so they receive exactly zero weight. Earlier tokens' outputs therefore
+      cannot depend on later tokens, which is what next-token training requires.
+
+  - id: m-mcq-multihead
+    type: mcq
+    skill: explanation
+    prompt: What is the main purpose of using several attention heads instead of one?
+    explanation: >-
+      Each head has its own learned query, key and value projections into a smaller subspace, so different
+      heads can attend according to different relationships at the same time. Their outputs are
+      concatenated and mixed by W_O. With d_k = d_model / h, the total cost is similar to one full-width
+      head.
+    options:
+      - id: a
+        text: Different heads can learn to attend to different relationships in parallel, each in its own projected subspace.
+        correct: true
+        feedback: Correct. The concatenated head outputs are then combined with the output matrix W_O.
+      - id: b
+        text: Each head processes a different part of the sequence, so long inputs are split between heads.
+        feedback: Every head sees the whole sequence; heads differ in their projections, not in which tokens they see.
+      - id: c
+        text: Several heads remove the quadratic cost of attention.
+        feedback: Each head still computes an n × n score matrix.
+      - id: d
+        text: Heads are copies with identical weights, averaged to reduce noise.
+        feedback: Heads have separate learned weights; identical heads would be redundant.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-weights, m-mcq-quadratic, m-tf-order, m-code-causal, m-mcq-multihead]
+
+cheatsheet: |
+  ```python
+  def softmax(scores):                       # stable: subtract the max first
+      m = max(scores)
+      exps = [math.exp(s - m) for s in scores]
+      total = sum(exps)
+      return [e / total for e in exps]
+
+  def attention(Q, K, V):                    # softmax(Q Kᵀ / sqrt(d_k)) V
+      d_k = len(K[0])
+      out = []
+      for q in Q:
+          w = softmax([sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k) for k in K])
+          out.append([sum(wi * v[j] for wi, v in zip(w, V)) for j in range(len(V[0]))])
+      return out
+  ```
+  - Q = X W_Q (what I look for) · K = X W_K (what I offer) · V = X W_V (what I hand over)
+  - Shapes: scores/weights n × n · output n × d_v · cost O(n²) per head per layer
+  - Causal mask: scores[i][j] = -inf for j > i, BEFORE softmax (0 is not a mask)
+  - Multi-head: h heads of size d_model / h, concatenated, then × W_O (paper: 512 = 8 × 64)
+  - PyTorch: `F.scaled_dot_product_attention(q, k, v, is_causal=True)`; bool attn_mask True = may attend

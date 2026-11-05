@@ -1,0 +1,218 @@
+id: databases.sql-advanced
+concept: databases.sql-advanced
+title: Subqueries, CTEs and window functions
+subtitle: Common table expressions name intermediate results; window functions rank and compute running totals without
+  collapsing rows
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Common table expressions name intermediate results; window functions rank and compute running totals without
+  collapsing rows.
+objectives:
+- Explain the core model behind subqueries, ctes and window functions.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL Tutorial: Window Functions'
+  url: https://www.postgresql.org/docs/current/tutorial-window.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: WITH Queries (Common Table Expressions)'
+  url: https://www.postgresql.org/docs/current/queries-with.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: Window Functions reference'
+  url: https://www.postgresql.org/docs/current/functions-window.html
+  publisher: PostgreSQL Global Development Group
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Common table expressions name intermediate results; window functions rank and compute running totals without
+      collapsing rows. Questions such as "top three products per category" or "running total per day" are awkward
+      or slow with plain GROUP BY; subqueries, CTEs and window functions express them clearly in one query.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS (...)`
+      tests whether any matching row exists.
+
+      - `WITH recent AS (SELECT ...) SELECT ... FROM recent` names an intermediate result; `WITH RECURSIVE` walks
+      hierarchies such as org charts or category trees.
+
+      - Window functions compute across related rows without collapsing them, for example `ROW_NUMBER() OVER (PARTITION
+      BY category ORDER BY sales DESC)`.
+
+      - Running totals and moving averages use frames such as `SUM(amount) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING
+      AND CURRENT ROW)`; `LAG` and `LEAD` read the previous and next rows.
+
+      - Window functions are evaluated after WHERE, GROUP BY and HAVING, so to filter on their result wrap the query
+      in a CTE or subquery.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- `RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips,
+      while ROW_NUMBER is always unique.
+
+      - `NOT IN (subquery)` returns no rows at all if the subquery produces any NULL; prefer `NOT EXISTS`.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def rank_scores(rows):\n    ordered = sorted(rows, key=lambda r: r[\"score\"], reverse=True)\n    result\
+      \ = []\n    previous = None; rank = 0\n    for index, row in enumerate(ordered, 1):\n        if row[\"score\"\
+      ] != previous: rank = index; previous = row[\"score\"]\n        result.append({**row, \"rank\": rank})\n \
+      \   return result\n\nprint(rank_scores([{\"name\":\"A\",\"score\":9},{\"name\":\"B\",\"score\":9},{\"name\"\
+      :\"C\",\"score\":7}]))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: sql-advanced-code
+  - type: item
+    ref: sql-advanced-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS (...)`
+      tests whether any matching row exists.
+
+      - `WITH recent AS (SELECT ...) SELECT ... FROM recent` names an intermediate result; `WITH RECURSIVE` walks
+      hierarchies such as org charts or category trees.
+
+      - Window functions compute across related rows without collapsing them, for example `ROW_NUMBER() OVER (PARTITION
+      BY category ORDER BY sales DESC)`.
+
+      - Running totals and moving averages use frames such as `SUM(amount) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING
+      AND CURRENT ROW)`; `LAG` and `LEAD` read the previous and next rows.
+
+      - Window functions are evaluated after WHERE, GROUP BY and HAVING, so to filter on their result wrap the query
+      in a CTE or subquery.
+
+
+      **Avoid**
+
+      - `RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips, while
+      ROW_NUMBER is always unique.
+
+      - `NOT IN (subquery)` returns no rows at all if the subquery produces any NULL; prefer `NOT EXISTS`.'
+  - type: item
+    ref: sql-advanced-mcq
+  - type: item
+    ref: sql-advanced-tf
+  - type: item
+    ref: sql-advanced-code
+items:
+- id: sql-advanced-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of subqueries, ctes and window functions?
+  explanation: A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS
+    (...)` tests whether any matching row exists.
+  options:
+  - id: a
+    text: A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS (...)`
+      tests whether any matching row exists.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: '`RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips,
+      while ROW_NUMBER is always unique.'
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: sql-advanced-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips,
+    while ROW_NUMBER is always unique.'
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: sql-advanced-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing subqueries, ctes and window functions in a real application. What design decisions
+    would you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: sql-advanced-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for subqueries, ctes and window functions. Implement the stated rule and make sure
+    both ordinary and edge-case tests pass.
+  starterCode: "def rank_scores(rows):\n    raise NotImplementedError('Complete this function')"
+  solution: "def rank_scores(rows):\n    ordered = sorted(rows, key=lambda r: r[\"score\"], reverse=True)\n    result\
+    \ = []\n    previous = None; rank = 0\n    for index, row in enumerate(ordered, 1):\n        if row[\"score\"\
+    ] != previous: rank = index; previous = row[\"score\"]\n        result.append({**row, \"rank\": rank})\n   \
+    \ return result"
+  tests:
+  - name: Core behaviour
+    code: r = rank_scores([{"name":"A","score":9},{"name":"B","score":9},{"name":"C","score":7}])
+  - name: Edge cases
+    code: 'assert [x["rank"] for x in r] == [1,1,3]
+
+      assert rank_scores([]) == []'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - sql-advanced-mcq
+  - sql-advanced-tf
+  - sql-advanced-code
+cheatsheet: '**Core model**
+
+  - A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS (...)` tests
+  whether any matching row exists.
+
+  - `WITH recent AS (SELECT ...) SELECT ... FROM recent` names an intermediate result; `WITH RECURSIVE` walks hierarchies
+  such as org charts or category trees.
+
+  - Window functions compute across related rows without collapsing them, for example `ROW_NUMBER() OVER (PARTITION
+  BY category ORDER BY sales DESC)`.
+
+  - Running totals and moving averages use frames such as `SUM(amount) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING
+  AND CURRENT ROW)`; `LAG` and `LEAD` read the previous and next rows.
+
+  - Window functions are evaluated after WHERE, GROUP BY and HAVING, so to filter on their result wrap the query
+  in a CTE or subquery.
+
+
+  **Common mistakes**
+
+  - `RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips, while ROW_NUMBER
+  is always unique.
+
+  - `NOT IN (subquery)` returns no rows at all if the subquery produces any NULL; prefer `NOT EXISTS`.'

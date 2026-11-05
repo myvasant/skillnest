@@ -1,0 +1,204 @@
+id: data.pandas-transform
+concept: data.pandas-transform
+title: Grouping, joining and reshaping
+subtitle: groupby/aggregate, merge, concat, pivot and melt — the DataFrame equivalents of SQL aggregation and joins
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: groupby/aggregate, merge, concat, pivot and melt — the DataFrame equivalents of SQL aggregation and joins.
+objectives:
+- Explain the role of grouping, joining and reshaping in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: 'Group by: split-apply-combine'
+  url: https://pandas.pydata.org/docs/user_guide/groupby.html
+  publisher: pandas
+- title: Merge, join, concatenate and compare
+  url: https://pandas.pydata.org/docs/user_guide/merging.html
+  publisher: pandas
+- title: Comparison with SQL
+  url: https://pandas.pydata.org/docs/getting_started/comparison/comparison_with_sql.html
+  publisher: pandas
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: groupby/aggregate, merge, concat, pivot and melt — the DataFrame equivalents of SQL aggregation and joins.
+      Real questions need summaries by group and combinations of tables; doing that correctly in pandas mirrors
+      SQL and avoids error-prone loops.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Split-apply-combine: `df.groupby("country").agg(revenue=("amount", "sum"), users=("user_id", "nunique"))`
+      returns one row per group with named result columns.
+
+      - `transform` returns a result aligned to the original rows (for example each row''s share of its group total),
+      whereas `agg` returns one row per group.
+
+      - `pd.merge(left, right, on="id", how="left", validate="many_to_one")` is a SQL-style join; `validate=` and
+      `indicator=True` expose duplicate keys and unmatched rows.
+
+      - `pd.concat` stacks frames vertically or side by side; `pivot_table` reshapes long data to wide with aggregation,
+      and `melt` turns wide data back into long form.
+
+      - Compare row counts before and after every merge; an unexpected increase means duplicated keys.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- `groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them.
+
+      - A left merge does not guarantee the original row count; duplicate keys on the right multiply rows.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def group_totals(rows, group_key, value_key):\n    totals = {}\n    for row in rows: totals[row[group_key]]\
+      \ = totals.get(row[group_key], 0) + row[value_key]\n    return totals\n\nprint(group_totals([{\"team\":\"\
+      A\",\"points\":3},{\"team\":\"A\",\"points\":4},{\"team\":\"B\",\"points\":2}], \"team\", \"points\"))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: pandas-transform-code
+  - type: item
+    ref: pandas-transform-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Split-apply-combine: `df.groupby("country").agg(revenue=("amount", "sum"), users=("user_id", "nunique"))`
+      returns one row per group with named result columns.
+
+      - `transform` returns a result aligned to the original rows (for example each row''s share of its group total),
+      whereas `agg` returns one row per group.
+
+      - `pd.merge(left, right, on="id", how="left", validate="many_to_one")` is a SQL-style join; `validate=` and
+      `indicator=True` expose duplicate keys and unmatched rows.
+
+      - `pd.concat` stacks frames vertically or side by side; `pivot_table` reshapes long data to wide with aggregation,
+      and `melt` turns wide data back into long form.
+
+      - Compare row counts before and after every merge; an unexpected increase means duplicated keys.
+
+
+      **Watch for**
+
+      - `groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them.
+
+      - A left merge does not guarantee the original row count; duplicate keys on the right multiply rows.'
+  - type: item
+    ref: pandas-transform-mcq
+  - type: item
+    ref: pandas-transform-tf
+  - type: item
+    ref: pandas-transform-code
+items:
+- id: pandas-transform-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of grouping, joining and reshaping?
+  explanation: 'Split-apply-combine: `df.groupby("country").agg(revenue=("amount", "sum"), users=("user_id", "nunique"))`
+    returns one row per group with named result columns.'
+  options:
+  - id: a
+    text: 'Split-apply-combine: `df.groupby("country").agg(revenue=("amount", "sum"), users=("user_id", "nunique"))`
+      returns one row per group with named result columns.'
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: '`groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them.'
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: pandas-transform-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them.'
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: pandas-transform-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying grouping, joining and reshaping to a dataset that may contain missing, duplicate or malformed
+    records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: pandas-transform-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for grouping, joining and reshaping. The assertions test the main behaviour and an
+    important edge case.
+  starterCode: "def group_totals(rows, group_key, value_key):\n    raise NotImplementedError('Complete this function')"
+  solution: "def group_totals(rows, group_key, value_key):\n    totals = {}\n    for row in rows: totals[row[group_key]]\
+    \ = totals.get(row[group_key], 0) + row[value_key]\n    return totals"
+  tests:
+  - name: Core transformation
+    code: assert group_totals([{"g":"a","v":2},{"g":"a","v":3}], "g", "v") == {"a":5}
+  - name: Edge case
+    code: assert group_totals([], "g", "v") == {}
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - pandas-transform-mcq
+  - pandas-transform-tf
+  - pandas-transform-code
+cheatsheet: '**Key ideas**
+
+  - Split-apply-combine: `df.groupby("country").agg(revenue=("amount", "sum"), users=("user_id", "nunique"))` returns
+  one row per group with named result columns.
+
+  - `transform` returns a result aligned to the original rows (for example each row''s share of its group total),
+  whereas `agg` returns one row per group.
+
+  - `pd.merge(left, right, on="id", how="left", validate="many_to_one")` is a SQL-style join; `validate=` and `indicator=True`
+  expose duplicate keys and unmatched rows.
+
+  - `pd.concat` stacks frames vertically or side by side; `pivot_table` reshapes long data to wide with aggregation,
+  and `melt` turns wide data back into long form.
+
+  - Compare row counts before and after every merge; an unexpected increase means duplicated keys.
+
+
+  **Data quality risks**
+
+  - `groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them.
+
+  - A left merge does not guarantee the original row count; duplicate keys on the right multiply rows.'

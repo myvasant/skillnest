@@ -1,0 +1,427 @@
+id: cs.architecture-tradeoffs
+concept: cs.architecture-tradeoffs
+title: Architectural Trade-offs
+subtitle: Choose boundaries and structures that fit real constraints
+estimatedMinutes: 60
+reviewedOn: '2026-11-04'
+summary: Learn to reason about quality attributes, cohesion, coupling, layering, modular monoliths and microservices.
+  Make trade-offs explicit, inject dependencies at boundaries and record significant decisions so future engineers
+  can understand and revisit them.
+objectives:
+- Explain architecture as a set of structural decisions under constraints.
+- Turn vague quality goals into measurable scenarios.
+- Distinguish cohesion from coupling and identify a useful module boundary.
+- Explain the benefits and costs of layered designs and modularity.
+- Compare a modular monolith with microservices using team, workload and operational constraints.
+- Use dependency injection to make an architectural boundary testable.
+- Record context, alternatives, consequences and revisit triggers in an ADR.
+sources:
+- title: Software Architecture Guide
+  url: https://martinfowler.com/architecture/
+  publisher: Martin Fowler
+- title: 'Software Engineering at Google — Chapter 1: What Is Software Engineering?'
+  url: https://abseil.io/resources/swe-book/html/ch01.html
+  publisher: Google
+- title: Architecture Decision Records
+  url: https://adr.github.io/
+  publisher: ADR GitHub organization
+sections:
+- id: why-architecture
+  title: Why architecture is about choices
+  kind: why
+  blocks:
+  - type: markdown
+    body: |-
+      Architecture is the structure that shapes how a system is divided, how parts communicate, where data lives and which qualities are easy or difficult to achieve. Every choice creates benefits and costs. A design that is excellent for a small internal tool may be unsuitable for a regulated public service.
+
+      An architectural decision is not “good” because it uses a fashionable technology. It is good when it fits the system’s constraints and makes important changes safe and affordable.
+  - type: callout
+    variant: analogy
+    title: Architecture is a set of trade-offs, not a blueprint for every future
+    body: You can keep options open without building every possible extension today. Design for known requirements,
+      measure real pressure and make expensive-to-reverse decisions deliberately.
+- id: quality-attributes
+  title: Quality attributes and constraints
+  kind: concept
+  blocks:
+  - type: markdown
+    body: |-
+      A quality attribute describes how well a system behaves: latency, throughput, availability, reliability, security, privacy, accessibility, maintainability, portability and cost. These qualities can conflict. Stronger consistency may increase latency; more replicas can improve availability while adding coordination; more abstraction may improve testability while making a small system harder to follow.
+
+      Turn vague goals into scenarios. Instead of “high performance”, specify a workload, a percentile, a target and the environment. Instead of “secure”, identify assets, attackers, trust boundaries and required controls.
+  - type: markdown
+    body: |-
+      Constraints matter too: team skills, budget, legal obligations, existing systems, deployment environment, data sensitivity and deadlines. A useful design starts by ranking the qualities that matter most for this system rather than trying to maximise everything.
+- id: coupling-cohesion
+  title: Cohesion, coupling and boundaries
+  kind: concept
+  blocks:
+  - type: markdown
+    body: |-
+      [Cohesion](glossary:high-cohesion) asks whether the responsibilities inside a module belong together. [Coupling](glossary:low-coupling) asks how much one module depends on the details of another. A helpful direction is high cohesion and low coupling: keep related rules together and make dependencies explicit and narrow.
+
+      A module that validates orders, sends email, writes SQL and formats PDFs has unrelated reasons to change. Splitting responsibilities can help, but splitting every function into a class can create more navigation than value. The goal is a boundary that reflects a stable responsibility.
+  - type: callout
+    variant: tip
+    title: Depend on contracts, not hidden construction details
+    body: A service that receives a payment gateway can be tested with a fake. A service that constructs a specific
+      network client internally is harder to configure, replace and test.
+- id: layers-and-modules
+  title: Layering and modularity
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: |-
+      A common application separates:
+
+      - **Presentation/API:** receives requests and translates them into application operations.
+      - **Application/service:** coordinates a use case and enforces workflow rules.
+      - **Domain:** represents business concepts and rules.
+      - **Infrastructure/data access:** talks to databases, queues, files or external services.
+
+      The exact number of layers is not the point. Each boundary should have a clear responsibility and a direction of dependency. Too many layers add indirection; too few can mix transport, business rules and storage details.
+  - type: code
+    language: python
+    code: |-
+      class OrderService:
+          def __init__(self, gateway, repository):
+              self.gateway = gateway
+              self.repository = repository
+
+          def place(self, order_id, amount):
+              if amount <= 0:
+                  raise ValueError("amount must be positive")
+              receipt = self.gateway.charge(amount)
+              self.repository.save(order_id, receipt)
+              return receipt
+
+      class FakeGateway:
+          def charge(self, amount):
+              print("charged", amount)
+              return "receipt-1"
+
+      class FakeRepository:
+          def save(self, order_id, receipt):
+              print("saved", order_id, receipt)
+
+      service = OrderService(FakeGateway(), FakeRepository())
+      print(service.place("A-7", 20))
+    runnable: true
+    status: verified
+    expectedOutput: 'charged 20
+
+      saved A-7 receipt-1
+
+      receipt-1'
+    caption: The service coordinates a use case. The gateway and repository are collaborators supplied from outside.
+  - type: markdown
+    body: |-
+      The example shows a dependency boundary, not a mandatory four-layer architecture. A small application may keep the same responsibilities in fewer modules.
+- id: monolith-microservices
+  title: Modular monoliths and microservices
+  kind: concept
+  blocks:
+  - type: markdown
+    body: |-
+      A **monolith** is deployed as one application. A **modular monolith** still has one deployment but separates responsibilities internally. It can be simple to develop, test and operate while keeping boundaries clear.
+
+      **Microservices** split a system into independently deployed services that communicate over a network. They can support independent scaling, release and team ownership, but add network timeouts, partial failures, service discovery, distributed tracing, data ownership and deployment complexity. A microservice is not merely a small folder or class.
+  - type: callout
+    variant: warning
+    title: Do not assume microservices automatically scale better
+    body: They allow independent scaling when workloads or ownership differ. If the system has one small team
+      and one workload, network and operational overhead may outweigh that benefit.
+- id: reversibility-adrs
+  title: Reversibility and decision records
+  kind: application
+  blocks:
+  - type: markdown
+    body: |-
+      Some choices are cheap to reverse: renaming a private helper or changing an internal implementation. Others are expensive: a public API, a data model with many consumers, an identity boundary or a storage format. Spend analysis in proportion to the cost of being wrong.
+
+      For a significant decision, record context, constraints, options, the chosen decision, consequences and a trigger for revisiting it. An ADR should make the reasoning understandable to someone who was not in the meeting. It is evidence of a decision, not proof that the decision can never change.
+  - type: callout
+    variant: production
+    title: Measure before adding complexity
+    body: Before introducing a cache, queue, service split or replica, state which bottleneck or failure mode
+      it addresses and how you will measure the result. Every extra component needs ownership, monitoring and
+      recovery.
+  depth: deep
+- id: mistakes-architecture
+  title: Common architecture mistakes
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: |-
+      - **Optimising for imaginary scale:** extra services and caches add real complexity before the expected load exists.
+      - **Confusing low coupling with no dependencies:** software needs dependencies; make them explicit and stable.
+      - **Splitting by technical layer only:** modules should also reflect business responsibilities and change patterns.
+      - **Treating a diagram as the architecture:** runtime behaviour, data ownership, failure modes and operations matter too.
+      - **Ignoring team topology:** a design that requires constant coordination between teams may slow delivery.
+      - **Recording only the chosen tool:** preserve the context and alternatives, not just the final name.
+  - type: callout
+    variant: misconception
+    title: There is no universal “best architecture”
+    body: Architecture is a fit between goals, constraints and operating capability. Explain the trade-off rather
+      than declaring a pattern universally superior.
+- id: practice-architecture
+  title: Practice before the mastery check
+  kind: practice
+  blocks:
+  - type: markdown
+    body: |-
+      1. Choose a starting architecture for a small internal application and list two reasons not to split it into services yet.
+      2. Identify one high-coupling dependency in a codebase and propose a narrower contract.
+      3. Write an ADR outline for selecting a relational database. Include alternatives, migration risk and operational ownership.
+      4. Name one quality attribute that conflicts with another in your proposed design.
+  - type: item
+    ref: arch-practice-monolith
+  - type: item
+    ref: arch-practice-injected-output
+- id: summary-architecture
+  title: Summary and decision checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: |-
+      Architecture decisions trade quality attributes under real constraints. Aim for cohesive responsibilities and explicit, narrow dependencies. Use layers and modular boundaries where they make change easier. A modular monolith is often a sensible starting point; microservices need a reason such as independent ownership, scaling or release. Record expensive-to-reverse decisions and revisit them when evidence changes.
+
+      Before choosing, ask: what quality matters most, what constraint is binding, what alternative did we consider, what complexity does the choice add, how will we observe it, and what would make us revisit the decision?
+items:
+- id: arch-practice-monolith
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: A three-person team is building a small internal inventory service with one deployment environment and
+    a modest workload. Which starting architecture is usually the most proportionate?
+  options:
+  - id: modular-monolith
+    text: A modular monolith with clear internal boundaries.
+    correct: true
+    feedback: It keeps deployment and operations simple while allowing the code to be organised into cohesive
+      modules.
+  - id: many-microservices
+    text: A separate microservice for every entity and business rule.
+    correct: false
+    feedback: This introduces network, deployment, observability and data consistency costs before a need is established.
+  - id: shared-database-everywhere
+    text: Several independently deployed services that all write every table.
+    correct: false
+    feedback: Shared ownership of tables creates tight coupling and unclear data boundaries.
+  - id: no-boundaries
+    text: One file with global state and no module boundaries.
+    correct: false
+    feedback: A monolith can still have modular boundaries; simplicity does not require tangled code.
+  explanation: A modular monolith is often the simpler starting point for a small team. Separate services when
+    independent scaling, ownership, deployment or isolation needs justify the operational cost.
+- id: arch-practice-injected-output
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: What is printed when the service uses the supplied fake gateway and repository?
+  code: |-
+    class FakeGateway:
+        def charge(self, amount):
+            print("charged", amount)
+            return "receipt-1"
+
+    class FakeRepository:
+        def save(self, order_id, receipt):
+            print("saved", order_id, receipt)
+
+    class OrderService:
+        def __init__(self, gateway, repository):
+            self.gateway = gateway
+            self.repository = repository
+        def place(self, order_id, amount):
+            receipt = self.gateway.charge(amount)
+            self.repository.save(order_id, receipt)
+            return receipt
+
+    service = OrderService(FakeGateway(), FakeRepository())
+    print(service.place("A-7", 20))
+  answer: 'charged 20
+
+    saved A-7 receipt-1
+
+    receipt-1'
+  wrongAnswers:
+  - answer: 'saved A-7 receipt-1
+
+      charged 20
+
+      receipt-1'
+    feedback: The service charges first, then saves the receipt.
+  - answer: 'charged 20
+
+      receipt-1'
+    feedback: The repository also prints when the service saves the order.
+  - answer: AttributeError
+    feedback: Both collaborators provide the methods the service calls.
+  explanation: The injected gateway runs first. Its receipt is passed to the repository, then returned to the
+    caller.
+- id: arch-master-quality-attributes
+  type: mcq
+  skill: design
+  difficulty: 2
+  prompt: A public API is used by external customers and will be difficult to change after launch. Which concern
+    should receive explicit design attention before release?
+  options:
+  - id: contract-and-compatibility
+    text: The public contract, compatibility policy and migration path.
+    correct: true
+    feedback: External consumers create a costly-to-reverse boundary. Versioning and compatibility deserve deliberate
+      design.
+  - id: framework-fashion
+    text: Choosing the most fashionable framework.
+    correct: false
+    feedback: Framework popularity does not establish that the API contract fits the consumers.
+  - id: premature-microservices
+    text: Splitting the API into many services immediately.
+    correct: false
+    feedback: Service boundaries do not solve an unclear or unstable public contract.
+  - id: ignore-operations
+    text: Ignoring observability because the API is stable.
+    correct: false
+    feedback: A stable interface still needs monitoring, support and failure handling.
+  explanation: Public contracts are hard to reverse once consumers depend on them. Explicitly consider compatibility,
+    deprecation and migration.
+- id: arch-master-universal-best
+  type: true-false
+  skill: recognition
+  difficulty: 1
+  prompt: There is one architecture that is best for every product if the team follows enough design patterns.
+  answer: false
+  explanation: Architecture is a set of choices under constraints. Team size, risk, workload, budget, reliability
+    and change rate affect which trade-offs are acceptable.
+- id: arch-master-order-service
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: Implement `OrderService` with injected `gateway` and `repository` collaborators. `place(order_id, amount)`
+    must reject non-positive amounts, call `gateway.charge(amount)`, save the returned receipt with the order
+    id, and return the receipt. Do not create concrete clients inside the service.
+  starterCode: |-
+    class OrderService:
+        def __init__(self, gateway, repository):
+            self.gateway = gateway
+            self.repository = repository
+
+        def place(self, order_id, amount):
+            # Validate, charge, save and return the receipt.
+            pass
+  solution: |-
+    class OrderService:
+        def __init__(self, gateway, repository):
+            self.gateway = gateway
+            self.repository = repository
+
+        def place(self, order_id, amount):
+            if amount <= 0:
+                raise ValueError("amount must be positive")
+            receipt = self.gateway.charge(amount)
+            self.repository.save(order_id, receipt)
+            return receipt
+  tests:
+  - name: uses injected collaborators
+    code: |-
+      class Gateway:
+          def charge(self, amount):
+              return "receipt-9"
+      class Repository:
+          def __init__(self):
+              self.saved = []
+          def save(self, order_id, receipt):
+              self.saved.append((order_id, receipt))
+      repo = Repository()
+      service = OrderService(Gateway(), repo)
+      assert service.place("A-9", 40) == "receipt-9"
+      assert repo.saved == [("A-9", "receipt-9")]
+  - name: rejects invalid amount
+    code: |-
+      class Gateway:
+          def charge(self, amount):
+              raise AssertionError("gateway must not be called")
+      class Repository:
+          def save(self, order_id, receipt):
+              raise AssertionError("repository must not be called")
+      try:
+          OrderService(Gateway(), Repository()).place("A-0", 0)
+      except ValueError:
+          pass
+      else:
+          raise AssertionError("zero amount must be rejected")
+  hints:
+  - Keep the business rule in `OrderService`, but let the collaborators perform charging and persistence.
+  - Validate before calling either collaborator.
+  explanation: The service owns the workflow and validation. Gateway and repository details are supplied from
+    outside, so tests can use fakes and production can use real adapters.
+- id: arch-master-debug-hidden-dependency
+  type: debug
+  skill: debugging
+  difficulty: 3
+  prompt: This service constructs its own gateway, so tests cannot supply a fake and production configuration
+    is hidden. Change it to receive the gateway in the constructor and use that object.
+  starterCode: |-
+    class PaymentGateway:
+        def charge(self, amount):
+            return "paid"
+
+    class Checkout:
+        def charge(self, amount):
+            gateway = PaymentGateway()
+            return gateway.charge(amount)
+  solution: |-
+    class Checkout:
+        def __init__(self, gateway):
+            self.gateway = gateway
+
+        def charge(self, amount):
+            return self.gateway.charge(amount)
+  tests:
+  - name: fake can be injected
+    code: |-
+      class FakeGateway:
+          def charge(self, amount):
+              return f"fake:{amount}"
+      checkout = Checkout(FakeGateway())
+      assert checkout.charge(12) == "fake:12"
+  - name: does not instantiate real gateway
+    code: |-
+      class FakeGateway:
+          def charge(self, amount):
+              return "ok"
+      checkout = Checkout(FakeGateway())
+      assert checkout.gateway.__class__.__name__ == "FakeGateway"
+  hints:
+  - Move object creation outside the class.
+  - Store the supplied dependency and call its method.
+  explanation: Constructing a concrete client inside the method hides a dependency and couples the class to that
+    implementation. Injection makes the boundary explicit and replaceable.
+- id: arch-master-adr
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: You must choose between a modular monolith and several microservices for a new product. State at least
+    three decision factors, one benefit and one cost of each option, and what you would record in an ADR.
+  rubric:
+  - Uses actual constraints such as team ownership, deployment independence, scale, reliability and data boundaries.
+  - States a benefit and a cost for both options.
+  - Avoids claiming microservices are automatically more scalable or reliable.
+  - Describes ADR context, decision, alternatives and consequences.
+  modelAnswer: A modular monolith has one deployment and simpler local calls, transactions and operations, but
+    modules must enforce boundaries to avoid becoming tangled. Microservices can support independent ownership,
+    deployment and scaling, but add network failures, distributed tracing, deployment automation and data consistency
+    challenges. I would compare team size, independent release needs, scaling profiles, fault isolation and data
+    ownership. The ADR would record context, constraints, chosen option, alternatives, consequences, risks and
+    a revisit trigger.
+  explanation: A sound architecture answer explains the constraints and the cost paid for each benefit. The decision
+    record preserves why the choice fit at that time.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - arch-master-quality-attributes
+  - arch-master-universal-best
+  - arch-master-order-service
+  - arch-master-debug-hidden-dependency
+  - arch-master-adr

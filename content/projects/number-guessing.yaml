@@ -1,0 +1,721 @@
+id: number-guessing
+title: Number Guessing Game
+track: python-beginner
+level: beginner
+estimatedHours: 3
+environment: browser
+summary: >-
+  Build the classic "guess my number" game with testable functions: compare guesses, validate
+  input, count attempts with a limit, and play again with a summary of your best score.
+concepts:
+  - python.input-output
+  - python.type-conversion
+  - python.conditionals
+  - python.while-loops
+  - python.lists
+  - python.functions
+  - python.exceptions
+problem: |
+  The computer picks a secret whole number from 1 to 100. You guess; it answers "go higher" or
+  "go lower" until you find it or run out of your 7 attempts. (Seven is enough if you always guess
+  the middle of the numbers that are left: each guess halves the range.)
+
+  Games are fun to play and awkward to test, because the secret is **random**. The trick that
+  makes this project testable is to keep the randomness in one place:
+
+  * every function that does real work receives the secret as a **parameter**:
+    `check_guess(secret, guess)` and `play(secret)`, so a test can say "the secret is 42";
+  * only the interactive `main()` calls `random.randint(1, 100)` to choose a secret;
+  * the tests that run your whole program first call `random.seed(...)`, which makes the
+    "random" numbers repeat exactly, so they can work out which secret your program will pick.
+
+  | Function | Takes | Returns |
+  |---|---|---|
+  | `check_guess(secret, guess)` | two whole numbers | `"higher"`, `"lower"` or `"correct"` |
+  | `parse_guess(text, low, high)` | what the player typed, the allowed range | an `int`, or `None` if invalid |
+  | `play(secret)` | the secret number | number of attempts used, or `None` if the round was lost |
+  | `summarise(results)` | a list of round results | `"Games played: 3, won: 2, best: 3 attempt(s)"` |
+  | `main()` | (reads with `input()`) | plays rounds with random secrets until the player stops |
+
+  Example session (what the player types is shown after each prompt):
+
+  ```text
+  I'm thinking of a number from 1 to 100. You have 7 attempts.
+  Your guess: 50
+  Too low! Go higher.
+  Attempts left: 6
+  Your guess: seventy
+  Please type a whole number from 1 to 100.
+  Your guess: 75
+  Too high! Go lower.
+  Attempts left: 5
+  Your guess: 62
+  Correct! You found 62 in 3 attempt(s).
+  Play again? (y/n): y
+  Your guess: 50
+  Too high! Go lower.
+  Attempts left: 6
+  ...
+  Out of attempts! The number was 17.
+  Play again? (y/n): n
+  Games played: 2, won: 1, best: 3 attempt(s)
+  ```
+acceptanceCriteria:
+  - "`check_guess(secret, guess)` returns exactly `\"higher\"`, `\"lower\"` or `\"correct\"`, where `\"higher\"` means the secret is higher than the guess."
+  - "`parse_guess(text, low, high)` returns an `int` for whole numbers from `low` to `high` inclusive and `None` for anything else (text, decimals, empty input, out of range), using `try`/`except ValueError`."
+  - "`play(secret)` says go higher or go lower after each wrong guess, ignores invalid guesses without counting them, and returns the number of attempts or `None` after 7 wrong guesses (revealing the secret) or when the input runs out."
+  - "Only `main()` calls `random.randint`; every other function gets the secret as a parameter."
+  - "After each round the player can answer `y`/`yes` to play again with a new secret; anything else ends the game with `summarise(results)`."
+  - "The program never crashes, whatever is typed, including when the input runs out."
+architecture: |
+  The game is split so that everything except `main()` is **deterministic**: given the same secret
+  and the same guesses, it always does the same thing.
+
+  ```text
+            random.randint(1, 100)          (only here: the one source of randomness)
+                       │
+   main() ──secret──► play(secret) ──► read_line ──► parse_guess ──► check_guess(secret, guess)
+     │                    │                                               │
+     │                    └── prints hints, counts attempts ◄─────────────┘
+     │                    └── returns attempts or None
+     └── results list ──► summarise(results) ──► print()
+  ```
+
+  * `check_guess` and `parse_guess` are **pure functions**: no `input()`, no `print()`. They are
+    the easiest code in the world to test.
+  * `play(secret)` owns one round: a [while loop](concept:python.while-loops) that stops on a
+    correct guess, after `MAX_ATTEMPTS` valid guesses, or when `read_line` reports that the input
+    has run out (`EOFError` turned into `None`).
+  * `main()` uses the `random` [module](concept:python.modules) (`import random` at the top of the
+    file) and collects each round's result in a [list](concept:python.lists).
+
+  Why seeding works: `random` does not produce truly random numbers. It computes a long sequence
+  from a starting value, the *seed*. `random.seed(7)` resets that sequence, so the next
+  `random.randint(1, 100)` is always the same number. Never call `random.seed` in your own program:
+  then your game really is different every time, and only the tests choose a seed.
+setup: |
+  Nothing to install. This project runs in the editor on this page with Python 3.14 in your
+  browser (Pyodide). All milestones share **one code file**: keep your earlier functions as you
+  add new ones, and click **Run milestone tests** to check the milestone you are working on.
+
+  To play the finished game on your own computer, save the code as `guessing_game.py` and run it
+  from a terminal in the same folder (only built-in Python is used; no packages or virtual
+  environment needed):
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  python guessing_game.py
+  ```
+
+  (If `python` is not found, try `py guessing_game.py`.)
+
+  **macOS / Linux**
+
+  ```bash
+  python3 guessing_game.py
+  ```
+milestones:
+  - id: check-guess
+    title: Compare a guess with the secret
+    description: |
+      Write `check_guess(secret, guess)`. It returns text that tells the player which way to go:
+
+      * `"higher"` when the guess is **below** the secret (the secret is higher);
+      * `"lower"` when the guess is above the secret;
+      * `"correct"` when they are equal.
+
+      It must **return** the word, not print it, and it must not call `input()`: the secret and
+      the guess arrive as parameters. That is what makes it testable without playing.
+
+      The tests try guesses below, above and equal to several secrets, including the edges 1 and
+      100.
+    starterCode: |
+      # Number guessing game
+      # One file for the whole project: keep your earlier functions as you add new ones.
+      import random
+
+      LOW = 1
+      HIGH = 100
+      MAX_ATTEMPTS = 7
+
+
+      # --- Milestone 1: check_guess(secret, guess) ------------------------------
+
+      def check_guess(secret, guess):
+          """Return "higher", "lower" or "correct".
+
+          "higher" means the secret is higher than the guess, so the player should go higher.
+          """
+          # TODO
+          pass
+
+
+      # --- Milestone 2: parse_guess(text, low, high) ----------------------------
+      # --- Milestone 3: read_line(prompt), play(secret) and main() -------------
+      # --- Milestone 4: summarise(results) and "Play again?" --------------------
+
+
+      def main():
+          """Pick a random secret number and play."""
+          print(f"I'm thinking of a number from {LOW} to {HIGH}. You have {MAX_ATTEMPTS} attempts.")
+          # TODO (milestone 3): secret = random.randint(LOW, HIGH), then play(secret)
+
+
+      if __name__ == "__main__":
+          main()
+    hints:
+      - "Use `if guess < secret:` → `return \"higher\"`, then `elif guess > secret:` → `return \"lower\"`. If neither is true, the guess must be correct."
+      - "Check the spelling and case: the tests expect exactly `\"higher\"`, `\"lower\"` and `\"correct\"` in lowercase."
+    tests:
+      - name: check_guess tells the player which way to go
+        code: |
+          assert defined("check_guess"), "Define a function called check_guess(secret, guess)."
+          cases = [(50, 25, "higher"), (50, 75, "lower"), (50, 50, "correct"), (1, 1, "correct"),
+                   (100, 99, "higher"), (1, 2, "lower"), (100, 100, "correct"), (37, 36, "higher")]
+          for secret, guess, expected in cases:
+              got = check_guess(secret, guess)
+              assert got is not None, "check_guess returned None. Use return, not print(), to send the word back."
+              assert got == expected, (
+                  f"check_guess({secret}, {guess}) should return {expected!r}, but it returned {got!r}. "
+                  "Remember: \"higher\" means the secret is higher than the guess."
+              )
+      - name: check_guess does not ask for input
+        code: |
+          import ast
+          for node in ast.walk(ast.parse(source)):
+              if isinstance(node, ast.FunctionDef) and node.name == "check_guess":
+                  for inner in ast.walk(node):
+                      if isinstance(inner, ast.Call) and getattr(inner.func, "id", "") in ("input", "print"):
+                          raise AssertionError("check_guess should only compare and return; leave input() and print() to the game loop.")
+    solution: |
+      # Number guessing game: milestone 1
+
+
+      def check_guess(secret, guess):
+          """Return "higher", "lower" or "correct".
+
+          "higher" means the secret is higher than the guess, so the player should go higher.
+          """
+          if guess < secret:
+              return "higher"
+          elif guess > secret:
+              return "lower"
+          return "correct"
+  - id: parse-guess
+    title: Validate the player's guess
+    description: |
+      Players type text, and they make mistakes. Write `parse_guess(text, low, high)`:
+
+      * convert with `int(text)` inside `try`; if it raises `ValueError` (for `"abc"`, `""` or
+        `"3.5"`), return `None`;
+      * if the number is below `low` or above `high`, return `None`;
+      * otherwise return the number (an `int`). Both ends are allowed: with `low=1, high=100`,
+        `"1"` and `"100"` are valid.
+
+      Add the constants `LOW = 1`, `HIGH = 100` and `MAX_ATTEMPTS = 7` near the top of your file if
+      they are not there yet.
+
+      The tests try valid numbers (with spaces around them), both edges of the range, numbers just
+      outside it, decimals, words and empty input, and check that you catch `ValueError`
+      specifically.
+    hints:
+      - "`int(\" 7 \")` is `7`: `int()` ignores spaces around the digits, but `int(\"3.5\")` raises ValueError."
+      - "The shape is `try:` → `guess = int(text)` → `except ValueError:` → `return None`. After that, check the range with `if guess < low or guess > high:`."
+    tests:
+      - name: parse_guess accepts whole numbers in range
+        code: |
+          assert defined("parse_guess"), "Define a function called parse_guess(text, low, high)."
+          for text, low, high, expected in [("42", 1, 100, 42), (" 7 ", 1, 100, 7), ("1", 1, 100, 1), ("100", 1, 100, 100), ("5", 5, 5, 5), ("-3", -10, 10, -3)]:
+              got = parse_guess(text, low, high)
+              assert got == expected, f"parse_guess({text!r}, {low}, {high}) should be {expected!r}, but it returned {got!r}."
+              assert isinstance(got, int), f"parse_guess({text!r}, {low}, {high}) should return an int, not {type(got).__name__}."
+      - name: parse_guess rejects invalid guesses without crashing
+        code: |
+          for text, low, high in [("0", 1, 100), ("101", 1, 100), ("abc", 1, 100), ("", 1, 100), ("3.5", 1, 100), ("4 5", 1, 100), ("six", 1, 10), ("11", 1, 10)]:
+              try:
+                  got = parse_guess(text, low, high)
+              except ValueError:
+                  raise AssertionError(f"parse_guess({text!r}, {low}, {high}) crashed with ValueError. Catch it and return None.")
+              assert got is None, f"parse_guess({text!r}, {low}, {high}) should return None, but it returned {got!r}."
+      - name: catches ValueError specifically
+        code: |
+          import ast
+          handlers = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ExceptHandler)]
+          assert handlers, "Use try/except ValueError in parse_guess."
+          for handler in handlers:
+              assert handler.type is not None, "Avoid a bare `except:`; name the error you expect, such as `except ValueError:`."
+          assert "ValueError" in source, "parse_guess should catch ValueError, which int() raises for text that is not a whole number."
+    solution: |
+      # Number guessing game: milestones 1-2
+
+      LOW = 1
+      HIGH = 100
+      MAX_ATTEMPTS = 7
+
+
+      def check_guess(secret, guess):
+          """Return "higher", "lower" or "correct".
+
+          "higher" means the secret is higher than the guess, so the player should go higher.
+          """
+          if guess < secret:
+              return "higher"
+          elif guess > secret:
+              return "lower"
+          return "correct"
+
+
+      def parse_guess(text, low, high):
+          """Turn the player's text into a whole number from low to high (inclusive).
+
+          Returns None if the text is not a whole number or is out of range.
+          """
+          try:
+              guess = int(text)
+          except ValueError:
+              return None
+          if guess < low or guess > high:
+              return None
+          return guess
+  - id: play-round
+    title: Play a round with attempt counting
+    description: |
+      Now the game itself. Add:
+
+      * `read_line(prompt)`: returns `input(prompt).strip()`, or `None` if `input()` raises
+        `EOFError` (no more input);
+      * `play(secret)`: one round against a **known** secret. Repeat until the player has used
+        `MAX_ATTEMPTS` valid guesses:
+        * read a guess with `read_line("Your guess: ")`; if it is `None`, print
+          `No more input. The number was <secret>.` and return `None`;
+        * if `parse_guess(text, LOW, HIGH)` rejects it, print
+          `Please type a whole number from 1 to 100.` and ask again **without counting it**;
+        * otherwise count the attempt and use `check_guess`: on `"correct"` print
+          `Correct! You found <secret> in <n> attempt(s).` and return the number of attempts; on
+          `"higher"` print `Too low! Go higher.`; on `"lower"` print `Too high! Go lower.`; then
+          print `Attempts left: <n>`;
+        * after the last allowed wrong guess print `Out of attempts! The number was <secret>.`
+          and return `None`;
+      * `main()`: print the welcome line, then `secret = random.randint(LOW, HIGH)` and
+        `play(secret)`.
+
+      `random.randint` belongs in `main()` only. The tests call `play(42)` directly with scripted
+      guesses, and run your whole program after `random.seed(...)` so they know which secret
+      `main()` will pick. They check the hints, attempt counting, that invalid guesses are not
+      counted, the 7-attempt limit, and that the program stops politely when the input runs out.
+    hints:
+      - "Keep `attempts = 0` before a `while attempts < MAX_ATTEMPTS:` loop and add 1 only after `parse_guess` accepted the guess. Use `continue` after an invalid guess."
+      - "`return attempts` inside the loop ends the round as soon as the guess is correct. If the loop finishes without returning, the player ran out of attempts: print the reveal message and `return None` after the loop."
+      - "Do not call `random.seed()` in your program. The tests seed `random` themselves just before running it."
+    tests:
+      - name: play(secret) returns the number of attempts
+        code: |
+          import builtins
+          assert defined("play"), "Define a function play(secret) that plays one round."
+
+          def play_scripted(secret, lines):
+              remaining = list(lines)
+
+              def fake_input(prompt=""):
+                  if not remaining:
+                      raise EOFError
+                  return remaining.pop(0)
+
+              saved = builtins.input
+              builtins.input = fake_input
+              try:
+                  return play(secret)
+              finally:
+                  builtins.input = saved
+
+          got = play_scripted(42, ["42"])
+          assert got == 1, f"Guessing 42 straight away should make play(42) return 1, but it returned {got!r}."
+          got = play_scripted(42, ["10", "90", "42"])
+          assert got == 3, f"With guesses 10, 90, 42, play(42) should return 3, but it returned {got!r}."
+          got = play_scripted(42, ["abc", "0", "3.5", "42"])
+          assert got == 1, f"Invalid guesses should not count: with 'abc', '0', '3.5', '42' play(42) should return 1, not {got!r}."
+          got = play_scripted(42, ["1"] * 7)
+          assert got is None, f"After 7 wrong guesses play(42) should return None, but it returned {got!r}."
+          got = play_scripted(42, ["1", "2"])
+          assert got is None, f"When the input runs out, play(42) should return None, but it returned {got!r}."
+      - name: the program tells the player to go higher or lower
+        code: |
+          import random
+
+          def secret_for(seed):
+              random.seed(seed)
+              return random.randint(1, 100)
+
+          seed = 1
+          while not (1 < secret_for(seed) < 100):
+              seed = seed + 1
+          secret = secret_for(seed)
+
+          def run_seeded(script):
+              random.seed(seed)
+              return run_program(script).lower()
+
+          base = run_seeded(f"{secret}\n")
+          assert "correct" in base, f"Guessing the secret ({secret}) should print 'Correct! ...'. The program printed:\n{base}"
+          assert "1 attempt" in base, f"Guessing right the first time should report 1 attempt(s). The program printed:\n{base}"
+          low = run_seeded(f"1\n{secret}\n")
+          high = run_seeded(f"100\n{secret}\n")
+          assert low.count("higher") > base.count("higher"), "After a guess that is too low (1), the program should say 'Too low! Go higher.'"
+          assert low.count("lower") == base.count("lower"), "After a guess that is too low, the program should not tell the player to go lower."
+          assert high.count("lower") > base.count("lower"), "After a guess that is too high (100), the program should say 'Too high! Go lower.'"
+          assert high.count("higher") == base.count("higher"), "After a guess that is too high, the program should not tell the player to go higher."
+          assert "2 attempt" in low, "One wrong guess followed by the right one is 2 attempts."
+      - name: invalid guesses are rejected and not counted
+        code: |
+          import random
+          random.seed(11)
+          secret = random.randint(1, 100)
+          random.seed(11)
+          base = run_program(f"{secret}\n").lower()
+          random.seed(11)
+          out = run_program(f"abc\n0\n101\n3.5\n\n{secret}\n").lower()
+          extra = out.count("whole number") - base.count("whole number")
+          assert extra >= 5, "Each invalid guess (abc, 0, 101, 3.5 and an empty line) should print 'Please type a whole number from 1 to 100.'"
+          assert "1 attempt" in out, "Invalid guesses should not count as attempts, so this round is won in 1 attempt(s)."
+      - name: seven wrong guesses end the round and reveal the secret
+        code: |
+          import random
+          seed = 1
+          while True:
+              random.seed(seed)
+              secret = random.randint(1, 100)
+              if secret != 1:
+                  break
+              seed = seed + 1
+          random.seed(seed)
+          empty = run_program("").lower()
+          random.seed(seed)
+          out = run_program("1\n" * 7 + f"{secret}\n").lower()
+          assert "out of attempts" in out, "After 7 wrong guesses the program should print 'Out of attempts! The number was ...'."
+          assert f"the number was {secret}" in out, f"When the player runs out of attempts, reveal the secret: 'The number was {secret}.'"
+          assert out.count("correct") == empty.count("correct"), "After 7 wrong guesses the round is over: the 8th line must not be used as a guess."
+      - name: only main() uses random.randint
+        code: |
+          import ast
+          assert calls("randint"), "main() should pick the secret with random.randint(LOW, HIGH)."
+          tree = ast.parse(source)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.FunctionDef) and node.name != "main":
+                  for inner in ast.walk(node):
+                      if isinstance(inner, ast.Call):
+                          func = inner.func
+                          name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                          assert name not in ("randint", "seed"), (
+                              f"{node.name}() calls random.{name}. Only main() should use random; "
+                              "other functions get the secret as a parameter so they can be tested."
+                          )
+          plays = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "play"]
+          assert plays and len(plays[0].args.args) >= 1, "play should take the secret as a parameter: def play(secret):"
+          for script in ["", "50\n", "abc\n"]:
+              try:
+                  run_program(script)
+              except RuntimeError as err:
+                  raise AssertionError(f"When the input runs out the program should stop politely. {err}")
+    solution: |
+      # Number guessing game: milestones 1-3
+      import random
+
+      LOW = 1
+      HIGH = 100
+      MAX_ATTEMPTS = 7
+
+
+      def check_guess(secret, guess):
+          """Return "higher", "lower" or "correct".
+
+          "higher" means the secret is higher than the guess, so the player should go higher.
+          """
+          if guess < secret:
+              return "higher"
+          elif guess > secret:
+              return "lower"
+          return "correct"
+
+
+      def parse_guess(text, low, high):
+          """Turn the player's text into a whole number from low to high (inclusive).
+
+          Returns None if the text is not a whole number or is out of range.
+          """
+          try:
+              guess = int(text)
+          except ValueError:
+              return None
+          if guess < low or guess > high:
+              return None
+          return guess
+
+
+      def read_line(prompt):
+          """Show prompt and return what the player typed, or None if there is no more input."""
+          try:
+              return input(prompt).strip()
+          except EOFError:
+              return None
+
+
+      def play(secret):
+          """Play one round against a known secret.
+
+          Returns the number of attempts used, or None if the player ran out of
+          attempts (or of input).
+          """
+          attempts = 0
+          while attempts < MAX_ATTEMPTS:
+              text = read_line("Your guess: ")
+              if text is None:
+                  print(f"No more input. The number was {secret}.")
+                  return None
+              guess = parse_guess(text, LOW, HIGH)
+              if guess is None:
+                  print(f"Please type a whole number from {LOW} to {HIGH}.")
+                  continue
+              attempts = attempts + 1
+              result = check_guess(secret, guess)
+              if result == "correct":
+                  print(f"Correct! You found {secret} in {attempts} attempt(s).")
+                  return attempts
+              if result == "higher":
+                  print("Too low! Go higher.")
+              else:
+                  print("Too high! Go lower.")
+              print(f"Attempts left: {MAX_ATTEMPTS - attempts}")
+          print(f"Out of attempts! The number was {secret}.")
+          return None
+
+
+      def main():
+          """Pick a random secret number and play one round."""
+          print(f"I'm thinking of a number from {LOW} to {HIGH}. You have {MAX_ATTEMPTS} attempts.")
+          secret = random.randint(LOW, HIGH)
+          play(secret)
+
+
+      if __name__ == "__main__":
+          main()
+  - id: play-again
+    title: Play again and keep score
+    description: |
+      Turn one round into a session. Add `summarise(results)`, where `results` is a list with one
+      entry per round: the number of attempts for a win, or `None` for a loss. It returns one line:
+
+      * `Games played: 3, won: 2, best: 3 attempt(s)` (best = fewest attempts in a win);
+      * without any wins, leave the best part out: `Games played: 1, won: 0`.
+
+      Then change `main()`: start with an empty `results` list and repeat rounds. Each round picks
+      a **new** secret with `random.randint(LOW, HIGH)`, appends what `play(secret)` returned, and
+      asks `Play again? (y/n): `. Only `y` or `yes` (in any case) starts another round; anything
+      else, including no more input, ends the session with `print(summarise(results))`.
+
+      The tests check `summarise` with several lists, then run your program (seeded) to play two
+      rounds, stop after one, and lose a round.
+    hints:
+      - "To find the best score, first collect the wins: loop over `results` and append every value that `is not None` to a new list. `len(wins)` is the number of wins and `min(wins)` the best."
+      - "Build the text in two steps: `text = f\"Games played: {len(results)}, won: {len(wins)}\"`, then add `, best: ...` only `if len(wins) > 0:`."
+      - "In `main()`, use `while True:` around the round and `break` when the answer is not `y` or `yes`. Remember that `read_line` may return `None`."
+    tests:
+      - name: summarise reports games, wins and the best score
+        code: |
+          assert defined("summarise"), "Define a function called summarise(results)."
+          cases = [
+              ([3, None, 5], "Games played: 3, won: 2, best: 3 attempt(s)"),
+              ([None], "Games played: 1, won: 0"),
+              ([], "Games played: 0, won: 0"),
+              ([4], "Games played: 1, won: 1, best: 4 attempt(s)"),
+              ([None, 7, 2, None], "Games played: 4, won: 2, best: 2 attempt(s)"),
+          ]
+          for results, expected in cases:
+              got = summarise(results)
+              assert got == expected, f"summarise({results!r}) should return {expected!r}, but it returned {got!r}."
+      - name: y starts another round with a new secret
+        code: |
+          import random
+          random.seed(7)
+          first = random.randint(1, 100)
+          second = random.randint(1, 100)
+          for answer in ["y", "Y", "yes"]:
+              random.seed(7)
+              out = run_program(f"{first}\n{answer}\n{second}\nn\n")
+              assert "Games played: 2, won: 2, best: 1 attempt(s)" in out, (
+                  f"Answering {answer!r} should start a second round with a new random.randint secret, and the summary "
+                  f"should be 'Games played: 2, won: 2, best: 1 attempt(s)'. The program printed:\n{out}"
+              )
+      - name: any other answer ends the session with a summary
+        code: |
+          import random
+          random.seed(7)
+          first = random.randint(1, 100)
+          second = random.randint(1, 100)
+          for answer in ["n", "no", "", "maybe"]:
+              random.seed(7)
+              out = run_program(f"{first}\n{answer}\n{second}\n")
+              assert "Games played: 1, won: 1, best: 1 attempt(s)" in out, (
+                  f"Answering {answer!r} to 'Play again?' should end the game and print the summary. The program printed:\n{out}"
+              )
+      - name: lost rounds count as games played
+        code: |
+          import random
+          random.seed(3)
+          secret = random.randint(1, 100)
+          wrong = 1 if secret != 1 else 2
+          random.seed(3)
+          out = run_program(f"{wrong}\n" * 7 + "n\n")
+          assert "Games played: 1, won: 0" in out, f"A lost round still counts as a game played. The program printed:\n{out}"
+          assert "best:" not in out, "Without any wins there is no best score, so leave the 'best' part out."
+          try:
+              run_program("")
+          except RuntimeError as err:
+              raise AssertionError(f"When the input runs out the program should stop politely. {err}")
+    solution: |
+      # Number guessing game: complete program (milestones 1-4)
+      import random
+
+      LOW = 1
+      HIGH = 100
+      MAX_ATTEMPTS = 7
+
+
+      def check_guess(secret, guess):
+          """Return "higher", "lower" or "correct".
+
+          "higher" means the secret is higher than the guess, so the player should go higher.
+          """
+          if guess < secret:
+              return "higher"
+          elif guess > secret:
+              return "lower"
+          return "correct"
+
+
+      def parse_guess(text, low, high):
+          """Turn the player's text into a whole number from low to high (inclusive).
+
+          Returns None if the text is not a whole number or is out of range.
+          """
+          try:
+              guess = int(text)
+          except ValueError:
+              return None
+          if guess < low or guess > high:
+              return None
+          return guess
+
+
+      def read_line(prompt):
+          """Show prompt and return what the player typed, or None if there is no more input."""
+          try:
+              return input(prompt).strip()
+          except EOFError:
+              return None
+
+
+      def play(secret):
+          """Play one round against a known secret.
+
+          Returns the number of attempts used, or None if the player ran out of
+          attempts (or of input).
+          """
+          attempts = 0
+          while attempts < MAX_ATTEMPTS:
+              text = read_line("Your guess: ")
+              if text is None:
+                  print(f"No more input. The number was {secret}.")
+                  return None
+              guess = parse_guess(text, LOW, HIGH)
+              if guess is None:
+                  print(f"Please type a whole number from {LOW} to {HIGH}.")
+                  continue
+              attempts = attempts + 1
+              result = check_guess(secret, guess)
+              if result == "correct":
+                  print(f"Correct! You found {secret} in {attempts} attempt(s).")
+                  return attempts
+              if result == "higher":
+                  print("Too low! Go higher.")
+              else:
+                  print("Too high! Go lower.")
+              print(f"Attempts left: {MAX_ATTEMPTS - attempts}")
+          print(f"Out of attempts! The number was {secret}.")
+          return None
+
+
+      def summarise(results):
+          """Describe a session: results holds the attempts of each won round, or None for a loss."""
+          wins = []
+          for result in results:
+              if result is not None:
+                  wins.append(result)
+          text = f"Games played: {len(results)}, won: {len(wins)}"
+          if len(wins) > 0:
+              text = text + f", best: {min(wins)} attempt(s)"
+          return text
+
+
+      def main():
+          """Play rounds with random secrets until the player does not want another one."""
+          print(f"I'm thinking of a number from {LOW} to {HIGH}. You have {MAX_ATTEMPTS} attempts.")
+          results = []
+          while True:
+              secret = random.randint(LOW, HIGH)
+              results.append(play(secret))
+              answer = read_line("Play again? (y/n): ")
+              if answer is None or answer.lower() not in ["y", "yes"]:
+                  break
+          print(summarise(results))
+
+
+      if __name__ == "__main__":
+          main()
+testing: |
+  Click **Run milestone tests** under a milestone. The tests run against your **whole program**
+  (all milestones share one file), so earlier functions must keep working as you add new ones.
+
+  * **Function checks** call `check_guess`, `parse_guess` and `summarise` directly, for example
+    `assert check_guess(50, 25) == "higher"`.
+  * **Round checks** call `play(42)` with a scripted list of guesses (they temporarily replace
+    `input()`), so they know the secret without any randomness.
+  * **Program checks** re-run your whole program with `run_program("...")`, one line per `input()`
+    call. Just before, they call `random.seed(...)` and work out which secret
+    `random.randint(1, 100)` will return, so they can type the right guess. This only works if
+    `main()` is the one place that calls `random.randint(LOW, HIGH)`, once per round, and your
+    program never calls `random.seed` itself.
+
+  Every failed check says what it tried and what it expected. After your first test run you can
+  open the **reference solution** for the milestone to compare approaches.
+
+  On your own computer, run `python guessing_game.py` and play: try a word, `0`, `101`, `3.5`,
+  seven wrong guesses, and answering `y` and `n` at the end.
+security:
+  - The random module is predictable by design (that is why seeding works). Never use it for passwords, tokens or anything secret; use the secrets module (for example secrets.randbelow) instead.
+  - Treat everything a user types as untrusted. parse_guess accepts only whole numbers in range and never crashes, so the game loop only ever sees valid guesses.
+  - Never turn input into code with eval() or exec(). int() is all you need to read a number.
+  - Limit repeated work. MAX_ATTEMPTS bounds each round, and end of input stops the program, so it can never loop forever waiting for input that will not come.
+extensions:
+  - Add difficulty levels (easy 1 to 50 with 10 attempts, hard 1 to 1000 with 10 attempts) chosen at the start, by passing the range and attempt limit to play as parameters.
+  - Warn the player when a guess is outside the range they have already narrowed down (for example guessing 30 after being told to go higher than 40).
+  - Write a computer player that always guesses the middle of the remaining range and prove it never needs more than 7 attempts for 1 to 100.
+  - "Show the list of guesses at the end of each round, such as: Your guesses 50, 75, 62."
+  - Keep the best score in a file between runs (see the file-processor project), treating a missing or damaged file as no best score yet.
+rubric:
+  - criterion: Correctness
+    needsWork: Hints point the wrong way, the attempt count is off by one, or the 7-attempt limit is not enforced.
+    meets: check_guess, parse_guess, play and summarise pass all the tests, including edges 1 and 100.
+    exceeds: You tested extra cases yourself, such as a range of a single number or a limit of one attempt.
+  - criterion: Testable design
+    needsWork: random.randint is called inside play or check_guess, so the game cannot be tested with a known secret.
+    meets: Randomness lives only in main(); every other function gets the secret as a parameter and returns its result.
+    exceeds: You can explain how random.seed makes the program checks repeatable, and why the program itself must not seed.
+  - criterion: Robust input handling
+    needsWork: Typing a word, a decimal or nothing crashes the game or wastes an attempt.
+    meets: Invalid guesses get a clear message and do not count; end of input ends the program politely.
+    exceeds: Messages tell the player exactly what is allowed, and validation lives in one function that is reused.
+  - criterion: Readability
+    needsWork: Magic numbers such as 100 and 7 are repeated throughout the code.
+    meets: LOW, HIGH and MAX_ATTEMPTS are named constants and functions have docstrings.
+    exceeds: Changing the range or attempt limit needs a change in only one place, and messages update automatically.

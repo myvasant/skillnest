@@ -1,0 +1,209 @@
+id: backend.async-endpoints
+concept: backend.async-endpoints
+title: Synchronous and asynchronous endpoints
+subtitle: async endpoints handle many concurrent I/O-bound requests on one event loop — but one blocking call inside
+  them stalls every request
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: async endpoints handle many concurrent I/O-bound requests on one event loop — but one blocking call inside
+  them stalls every request.
+objectives:
+- Explain the core model behind synchronous and asynchronous endpoints.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Concurrency and async / await
+  url: https://fastapi.tiangolo.com/async/
+  publisher: FastAPI
+- title: Developing with asyncio
+  url: https://docs.python.org/3/library/asyncio-dev.html
+  publisher: Python Software Foundation
+- title: Working with threads
+  url: https://anyio.readthedocs.io/en/stable/threads.html
+  publisher: AnyIO
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: async endpoints handle many concurrent I/O-bound requests on one event loop — but one blocking call inside
+      them stalls every request. Model APIs and RAG services spend most of their time waiting on databases and other
+      HTTP calls; async lets one process serve many such requests at once, or freezes all of them when misused.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- `async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies
+      run in a thread pool, so blocking code there does not freeze the loop.
+
+      - Inside `async def`, use only awaitable libraries (`httpx.AsyncClient`, asyncpg, SQLAlchemy''s asyncio extension);
+      a `time.sleep()`, `requests.get()` or synchronous database call blocks every request on that worker.
+
+      - Offload unavoidable blocking calls with `await anyio.to_thread.run_sync(fn)` (or Starlette''s `run_in_threadpool`);
+      AnyIO''s default limit is 40 worker threads.
+
+      - CPU-heavy work such as large-model inference or image processing belongs in separate processes, task workers
+      or a dedicated model server, not on the event loop.
+
+      - Concurrency is per worker process; production servers run several workers to use several CPU cores.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- `async def` does not make code faster or parallel; it only lets other requests proceed while one is
+      waiting on I/O.
+
+      - Plain `def` endpoints are not wrong; for blocking libraries they are the safer choice.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "import asyncio\n\nasync def fetch_value(value):\n    await asyncio.sleep(0)\n    return value * 2\n\n\
+      async def main():\n    return await asyncio.gather(fetch_value(2), fetch_value(3))\n\nprint(asyncio.run(main()))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: async-endpoints-code
+  - type: item
+    ref: async-endpoints-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - `async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies run in
+      a thread pool, so blocking code there does not freeze the loop.
+
+      - Inside `async def`, use only awaitable libraries (`httpx.AsyncClient`, asyncpg, SQLAlchemy''s asyncio extension);
+      a `time.sleep()`, `requests.get()` or synchronous database call blocks every request on that worker.
+
+      - Offload unavoidable blocking calls with `await anyio.to_thread.run_sync(fn)` (or Starlette''s `run_in_threadpool`);
+      AnyIO''s default limit is 40 worker threads.
+
+      - CPU-heavy work such as large-model inference or image processing belongs in separate processes, task workers
+      or a dedicated model server, not on the event loop.
+
+      - Concurrency is per worker process; production servers run several workers to use several CPU cores.
+
+
+      **Avoid**
+
+      - `async def` does not make code faster or parallel; it only lets other requests proceed while one is waiting
+      on I/O.
+
+      - Plain `def` endpoints are not wrong; for blocking libraries they are the safer choice.'
+  - type: item
+    ref: async-endpoints-mcq
+  - type: item
+    ref: async-endpoints-tf
+  - type: item
+    ref: async-endpoints-code
+items:
+- id: async-endpoints-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of synchronous and asynchronous endpoints?
+  explanation: '`async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies
+    run in a thread pool, so blocking code there does not freeze the loop.'
+  options:
+  - id: a
+    text: '`async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies run
+      in a thread pool, so blocking code there does not freeze the loop.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: '`async def` does not make code faster or parallel; it only lets other requests proceed while one is waiting
+      on I/O.'
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: async-endpoints-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`async def` does not make code faster or parallel; it only lets other requests proceed while one is waiting
+    on I/O.'
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: async-endpoints-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing synchronous and asynchronous endpoints in a real application. What design decisions
+    would you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: async-endpoints-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for synchronous and asynchronous endpoints. Implement the stated rule and make sure
+    both ordinary and edge-case tests pass.
+  starterCode: "import asyncio\n\nasync def fetch_value(value):\n    raise NotImplementedError('Complete this function')\n\
+    \nasync def main():\n    raise NotImplementedError('Complete this function')"
+  solution: "import asyncio\n\nasync def fetch_value(value):\n    await asyncio.sleep(0)\n    return value * 2\n\
+    \nasync def main():\n    return await asyncio.gather(fetch_value(2), fetch_value(3))"
+  tests:
+  - name: Core behaviour
+    code: assert asyncio.run(main()) == [4, 6]
+  - name: Edge cases
+    code: assert asyncio.run(fetch_value(5)) == 10
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - async-endpoints-mcq
+  - async-endpoints-tf
+  - async-endpoints-code
+cheatsheet: '**Core model**
+
+  - `async def` endpoints run directly on the event loop; plain `def` endpoints and `def` dependencies run in a
+  thread pool, so blocking code there does not freeze the loop.
+
+  - Inside `async def`, use only awaitable libraries (`httpx.AsyncClient`, asyncpg, SQLAlchemy''s asyncio extension);
+  a `time.sleep()`, `requests.get()` or synchronous database call blocks every request on that worker.
+
+  - Offload unavoidable blocking calls with `await anyio.to_thread.run_sync(fn)` (or Starlette''s `run_in_threadpool`);
+  AnyIO''s default limit is 40 worker threads.
+
+  - CPU-heavy work such as large-model inference or image processing belongs in separate processes, task workers
+  or a dedicated model server, not on the event loop.
+
+  - Concurrency is per worker process; production servers run several workers to use several CPU cores.
+
+
+  **Common mistakes**
+
+  - `async def` does not make code faster or parallel; it only lets other requests proceed while one is waiting
+  on I/O.
+
+  - Plain `def` endpoints are not wrong; for blocking libraries they are the safer choice.'

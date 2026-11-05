@@ -1,0 +1,971 @@
+id: python.type-conversion
+concept: python.type-conversion
+title: Types and Type Conversion
+subtitle: Turning text into numbers, and numbers into text
+estimatedMinutes: 35
+reviewedOn: 2026-10-22
+summary: >-
+  "5" and 5 look identical when printed, but one is text and one is a number. Learn to see an
+  object's type with type() and repr(), convert values with int(), float(), str() and bool(), predict
+  when a conversion fails, and understand why Python refuses to mix text and numbers for you.
+objectives:
+  - Identify the type of any value with type() and reveal hidden differences with repr().
+  - Convert between str, int, float and bool, and predict which conversions raise ValueError.
+  - Explain the difference between truncation with int() and rounding with round().
+  - Explain that a conversion creates a new object and leaves the original unchanged.
+  - Diagnose TypeError and ValueError messages caused by mixing or mis-converting types.
+  - Check a value's type with isinstance().
+sources:
+  - title: "Built-in Functions (int, float, str, bool, type, isinstance, repr)"
+    url: https://docs.python.org/3/library/functions.html
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: int()"
+    url: https://docs.python.org/3/library/functions.html#int
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Numeric Types — int, float, complex"
+    url: https://docs.python.org/3/library/stdtypes.html#numeric-types-int-float-complex
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Integer string conversion length limitation"
+    url: https://docs.python.org/3/library/stdtypes.html#integer-string-conversion-length-limitation
+    publisher: Python Software Foundation
+  - title: Built-in Exceptions
+    url: https://docs.python.org/3/library/exceptions.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why types matter
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Data from the outside world — typed into a form, read from a file, received from a website —
+          almost always arrives as **text**. Text that *looks* like a number is still text. Watch what
+          happens when a price arrives as a string:
+      - type: code
+        runnable: true
+        code: |
+          price = "450"
+          quantity = 2
+          print(price * quantity)
+        expectedOutput: |
+          450450
+        caption: No error — just a wrong answer. A string times an integer repeats the string.
+      - type: markdown
+        body: |
+          The program didn't crash, which makes this bug dangerous: it silently produced nonsense. The
+          fix is to **convert** the text into a number before calculating:
+      - type: code
+        runnable: true
+        code: |
+          price = "450"
+          quantity = 2
+          print(int(price) * quantity)
+        expectedOutput: |
+          900
+        annotations:
+          - line: 3
+            text: int(price) creates the integer 450 from the text "450".
+      - type: markdown
+        body: |
+          This lesson is about knowing what [type](glossary:type) of value you have, and turning it into
+          the type you need — [type conversion](glossary:type-conversion).
+
+  - id: types
+    title: Every object has a type
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Every object carries a type that decides what you can do with it. You have met four:
+
+          | Type | Holds | Examples |
+          |---|---|---|
+          | `int` | whole numbers | `42`, `-7`, `0` |
+          | `float` | numbers with a fractional part | `4.2`, `2.0`, `1e3` |
+          | `str` | text | `"42"`, `'hello'`, `""` |
+          | `bool` | truth values | `True`, `False` |
+
+          `type(x)` tells you the type of the object `x` refers to. (`bool` gets a full lesson in
+          [booleans](concept:python.booleans).)
+      - type: code
+        runnable: true
+        code: |
+          print(type(42))
+          print(type(4.2))
+          print(type("42"))
+          print(type(True))
+          print(type(3 + 0.5))
+        expectedOutput: |
+          <class 'int'>
+          <class 'float'>
+          <class 'str'>
+          <class 'bool'>
+          <class 'float'>
+        annotations:
+          - line: 5
+            text: Mixing an int and a float gives a float, as you saw in the numbers lesson.
+      - type: markdown
+        body: |
+          `print()` hides the difference between text and numbers: `print(42)` and `print("42")` both
+          show `42`. When you are not sure what you have, use **`repr()`**, which shows the
+          programmer's view of a value — strings appear with quotes, and invisible characters such as
+          trailing spaces become visible.
+      - type: code
+        runnable: true
+        code: |
+          print(42, "42")
+          print(repr(42), repr("42"))
+          print(repr("42 "))
+        expectedOutput: |
+          42 42
+          42 '42'
+          '42 '
+        caption: repr() is one of the most useful debugging tools you will ever have.
+      - type: item
+        ref: predict-types
+
+  - id: converting
+    title: Converting with int(), float() and str()
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The type names double as **conversion functions**. Each one takes a value and creates a
+          **new** object of that type:
+
+          | Call | Result | Note |
+          |---|---|---|
+          | `int("42")` | `42` | text containing a whole number |
+          | `int(" 42\n")` | `42` | spaces and newlines around the number are ignored |
+          | `int(3.99)` | `3` | a float is **truncated**, not rounded |
+          | `int("3.99")` | `ValueError` | the text must look like a whole number |
+          | `float("3.5")` | `3.5` | |
+          | `float(7)` | `7.0` | |
+          | `float("1e3")` | `1000.0` | scientific notation is accepted |
+          | `str(42)` | `'42'` | any object can become text |
+          | `str(3.0)` | `'3.0'` | |
+      - type: code
+        runnable: true
+        code: |
+          text = "42"
+          number = int(text)
+          print(number + 8)
+          print(text + "8")
+          print(float("3.5") * 2)
+          print(str(7) + str(7))
+          print(int(" 12 ") + 1)
+        expectedOutput: |
+          50
+          428
+          7.0
+          77
+          13
+        annotations:
+          - line: 3
+            text: number is an int, so + adds.
+          - line: 4
+            text: text is still a str, so + joins.
+          - line: 6
+            text: str() turns both numbers into text, so + joins them into "77".
+
+  - id: truncation
+    title: Truncating versus rounding
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `int()` on a float simply **chops off** the fractional part —
+          [truncation](glossary:truncation) toward zero. It never rounds. If you want rounding, ask for
+          it with `round()`; for "always down" or "always up" use `math.floor()` and `math.ceil()`.
+
+          | | `3.7` | `-3.7` | `2.5` |
+          |---|---|---|---|
+          | `int(x)` — toward zero | `3` | `-3` | `2` |
+          | `round(x)` — nearest (ties to even) | `4` | `-4` | `2` |
+          | `math.floor(x)` — down | `3` | `-4` | `2` |
+          | `math.ceil(x)` — up | `4` | `-3` | `3` |
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          print(int(3.7), int(-3.7))
+          print(round(3.7), round(-3.7))
+          print(math.floor(-3.7), math.ceil(3.2))
+          print(round(2.5), round(3.5))
+          print(round(3.14159, 2))
+        expectedOutput: |
+          3 -3
+          4 -4
+          -4 4
+          2 4
+          3.14
+        annotations:
+          - line: 3
+            text: Toward zero in both directions.
+          - line: 6
+            text: Ties go to the even neighbour (banker's rounding), as you saw in the numbers lesson.
+          - line: 7
+            text: With a second argument, round() returns a float with that many decimals.
+      - type: item
+        ref: predict-truncate
+
+  - id: conversion-errors
+    title: When conversion fails, and when Python refuses to guess
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two different errors appear around conversions, and telling them apart tells you what to fix:
+
+          - A [ValueError](glossary:value-error) means the **type was fine but the value was not**:
+            `int()` happily accepts a string, but not one that reads `"forty-two"` or `"3.5"`.
+          - A [TypeError](glossary:type-error) means the **type itself is wrong** for the operation:
+            you tried to add text to a number.
+      - type: code
+        runnable: true
+        code: |
+          print(int("42"))
+          print(int("forty-two"))
+        expectedOutput: |
+          42
+        expectError: ValueError
+        caption: "ValueError: invalid literal for int() with base 10: 'forty-two'. The message quotes the exact text that failed."
+      - type: markdown
+        body: |
+          `int("3.5")` fails for the same reason: `"3.5"` is not a whole number. If you really want to
+          truncate it, convert in two steps: `int(float("3.5"))` gives `3`.
+
+          Now the TypeError. Some languages quietly convert for you — JavaScript turns `"5" + 3` into
+          `"53"`. Python refuses, because it cannot know whether you meant *add* or *join*:
+      - type: code
+        runnable: true
+        code: |
+          age = "36"
+          print(age + 1)
+        expectError: TypeError
+        caption: "TypeError: can only concatenate str (not \"int\") to str. Fix: int(age) + 1 to add, or age + str(1) to join."
+      - type: markdown
+        body: |
+          Python *does* mix types where the meaning is unambiguous: an int and a float combine into a
+          float, and `True` counts as `1`. And one combination is legal but often a bug — a string times
+          an integer is **repetition**, not multiplication:
+      - type: code
+        runnable: true
+        code: |
+          print("5" * 3)
+          print(5 * 3)
+          print(3 + 0.5, True + 1)
+        expectedOutput: |
+          555
+          15
+          3.5 2
+      - type: item
+        ref: mcq-error-kind
+      - type: item
+        ref: explain-explicit
+
+  - id: new-objects
+    title: "Mental model: conversion makes a new object"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          `int(text)` does **not** change `text`. It reads the string, builds a separate integer object,
+          and returns it. If you don't bind a name to the result, it is lost. The original string is
+          untouched — strings are immutable, and names only move when *you* assign them.
+      - type: visualization
+        component: python-tracer
+        title: Two objects, two types
+        caption: >-
+          After line 2 there are two objects: the str '42' and the int 42. Lines 3 and 4 show + behaving
+          differently for each. Line 5 moves the label text onto a new int; the old string loses its
+          label.
+        props:
+          code: |
+            text = "42"
+            number = int(text)
+            total = number + 8
+            joined = text + "8"
+            text = int(text)
+            print(total, joined, text)
+      - type: callout
+        variant: misconception
+        title: '"int(x) converts x"'
+        body: |
+          A line containing just `int(x)` does nothing useful: it creates an integer and throws it
+          away. Write `x = int(x)` (or bind a new name, `n = int(x)`) to keep the result — exactly like
+          string methods.
+      - type: item
+        ref: predict-new-object
+
+  - id: bool-and-checks
+    title: bool(), isinstance() and checking before converting
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `bool(x)` converts a value to `True` or `False`. For numbers and strings the rule is simple:
+          **zero and empty are `False`; everything else is `True`.** Watch out — the *text* `"False"`
+          and `"0"` are non-empty strings, so they convert to `True`. (The full story is called
+          [truthiness](glossary:truthiness), in the [booleans lesson](concept:python.booleans).)
+      - type: code
+        runnable: true
+        code: |
+          print(bool(0), bool(42), bool(-1))
+          print(bool(0.0), bool(0.1))
+          print(bool(""), bool(" "), bool("False"))
+          print(int(True), int(False), str(True))
+        expectedOutput: |
+          False True True
+          False True
+          False True True
+          1 0 True
+        annotations:
+          - line: 3
+            text: A space is a character, so " " is not empty.
+      - type: markdown
+        body: |
+          `isinstance(x, int)` asks "is x an int?" and answers `True` or `False`. Prefer it over
+          `type(x) == int`, because it also accepts related types: `bool` is a special kind of `int`, so
+          `isinstance(True, int)` is `True`. You will use these checks inside
+          [if statements](concept:python.conditionals).
+
+          Before converting text, `text.isdecimal()` tells you whether every character is a decimal
+          digit. It is a quick check for whole numbers, but note what it rejects: a minus sign, a
+          decimal point, and spaces. The robust approach — try the conversion and handle the error — comes
+          with [exceptions](concept:python.exceptions).
+      - type: code
+        runnable: true
+        code: |
+          print(isinstance(42, int), isinstance("42", int))
+          print(isinstance(4.2, float), isinstance(4.2, int))
+          print(type(True) == int, isinstance(True, int))
+          print("42".isdecimal(), "-42".isdecimal(), "4.2".isdecimal(), " 42".isdecimal())
+        expectedOutput: |
+          True False
+          True False
+          False True
+          True False False False
+
+  - id: worked-example
+    title: "Worked example: a receipt from text data"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A file or web form gives you a price and a quantity as text. The pattern is always the same:
+          **convert at the edge, calculate with numbers, convert back to text for display.**
+      - type: code
+        runnable: true
+        code: |
+          price_text = "19.99"
+          quantity_text = "3"
+
+          price = float(price_text)
+          quantity = int(quantity_text)
+
+          total = price * quantity
+          print("Total: " + str(round(total, 2)))
+          print(type(price_text), type(price), type(total))
+        expectedOutput: |
+          Total: 59.97
+          <class 'str'> <class 'float'> <class 'float'>
+        annotations:
+          - line: 1
+            text: "Step 1: the raw data — text, as it would arrive from outside."
+          - line: 4
+            text: "Step 2: convert once, as early as possible. A price can have decimals, so float."
+          - line: 5
+            text: A quantity is a whole number, so int.
+          - line: 7
+            text: "Step 3: calculate with real numbers. float * int gives a float."
+          - line: 8
+            text: "Step 4: round, then str() so + can join it to the label."
+      - type: callout
+        variant: production
+        title: Convert at the boundary
+        body: |
+          Professional code converts and validates data **once, where it enters the program** (user
+          input, files, network requests), and works with proper types everywhere else. Scattering
+          `int(...)` calls through a program leads to bugs where a value is text in one place and a
+          number in another.
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **What `int()` accepts.** Besides optional spaces and a `+`/`-` sign, `int()` accepts
+          underscores between digits (as in literals: `int("1_000")`), digits from other writing
+          systems (Unicode decimal digits, such as Arabic-Indic ١٢٣), and a `base` argument for
+          binary, hexadecimal and others. With `base=0` it reads the prefix (`0x`, `0b`, `0o`) itself.
+      - type: code
+        runnable: true
+        code: |
+          print(int("1_000_000"), int("١٢٣"))
+          print(int("ff", 16), int("101", 2), int("0x1F", 0))
+          print(float(2**53 + 1))
+          print(float("inf") > 10**100)
+        expectedOutput: |
+          1000000 123
+          255 5 31
+          9007199254740992.0
+          True
+        annotations:
+          - line: 1
+            text: "\\u0661\\u0662\\u0663 are the Arabic-Indic digits one, two, three."
+          - line: 3
+            text: 2**53 + 1 = 9007199254740993 cannot be stored exactly in a 64-bit float, so the conversion loses the last digit.
+      - type: markdown
+        body: |
+          **Precision can be lost.** Python ints are exact at any size, but a float holds only about
+          15–17 significant digits, so converting a large int to float can change its value (above).
+          Converting back with `int()` will not restore the lost digits.
+
+          **A safety limit.** Converting between `str` and `int` for numbers with thousands of digits
+          takes a long time, which attackers could exploit by sending huge numbers. Since Python 3.11
+          (and security releases of some older versions), CPython refuses decimal conversions of more
+          than 4300 digits by default and raises `ValueError`
+          ([integer string conversion length limitation](https://docs.python.org/3/library/stdtypes.html#integer-string-conversion-length-limitation));
+          `sys.set_int_max_str_digits()` changes the limit.
+      - type: code
+        runnable: true
+        code: |
+          digits = "9" * 5000
+          number = int(digits)
+        expectError: ValueError
+        caption: "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 5000 digits."
+      - type: markdown
+        body: |
+          **How `+` decides what to do.** For `a + b`, Python first asks the type of `a` how to add a
+          `b`; if that type does not know, it asks the type of `b` (via its "reflected" add). If neither
+          can handle the pair, you get a `TypeError`. That is why `int + float` works (float knows how to
+          combine with int), while `int + str` fails. The two messages differ —
+          `can only concatenate str (not "int") to str` versus
+          `unsupported operand type(s) for +: 'int' and 'str'` — because in the first case the string's
+          own joining code reports the problem. You will see these "special methods" in
+          [the data model](concept:python.data-model).
+
+  - id: mistakes
+    title: Common mistakes and how to fix them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: can only concatenate str (not "int") to str` | `"Total: " + 5` | `"Total: " + str(5)`, or `print("Total:", 5)` |
+          | `TypeError: unsupported operand type(s) for +: 'int' and 'str'` | `5 + "3"` | Convert the text: `5 + int("3")` |
+          | `ValueError: invalid literal for int() with base 10: '3.5'` | `int()` on text with a decimal point | Use `float()`; or `int(float(text))` if you want truncation |
+          | `ValueError: could not convert string to float: '3,5'` | A comma used as the decimal separator | `text.replace(",", ".")` before converting |
+          | `450450` instead of `900` | `str * int` repeats the text | Convert before calculating |
+          | `bool("False")` is `True` | Any non-empty string is truthy | Compare the text instead: `text == "True"` |
+          | The variable is still a string after `int(x)` | The result was not assigned | `x = int(x)` |
+          | Wrong total although no error | Rounding expected, but `int()` truncates | Use `round()` |
+
+          When a value behaves strangely, print **both** its `repr()` and its type. Invisible spaces and
+          quotes show up immediately:
+      - type: code
+        runnable: true
+        code: |
+          quantity = "3 "
+          print(quantity, type(quantity))
+          print(repr(quantity))
+        expectedOutput: |
+          3  <class 'str'>
+          '3 '
+        caption: "The plain print looks like the number 3. repr() reveals a string with a trailing space."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          In each exercise the data arrives as text, just as it would from a user or a file. The checks
+          re-run your code with different values, so convert the variables rather than typing answers.
+      - type: item
+        ref: debug-total
+      - type: item
+        ref: code-average
+      - type: item
+        ref: code-temperature
+      - type: item
+        ref: parsons-convert
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Every object has a type: `type(x)` shows it; `repr(x)` reveals text versus numbers.
+          - `int()`, `float()`, `str()`, `bool()` **create new objects**; assign the result to keep it.
+          - `int(3.9)` truncates to `3`; `round(3.9)` gives `4`; `int("3.9")` is a `ValueError`.
+          - **ValueError** = right type, unusable value. **TypeError** = wrong type for the operation.
+          - Python never converts between text and numbers for you; `"5" * 3` is `"555"`, not 15.
+          - `bool()` is `False` only for zero and empty values — `bool("False")` is `True`.
+          - Convert data once, where it enters your program.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Is Python strongly or weakly typed?" — Python is **dynamically** typed (names have no fixed
+          type) but **strongly** typed (objects are not silently converted: `"5" + 3` is a `TypeError`).
+          Mention explicit conversion, `int()` truncation versus `round()`, and `isinstance()` for type
+          checks.
+
+items:
+  - id: predict-types
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? Think about the type each operation produces.
+    code: |
+      print(7 / 7, "7" * 2, 7 // 2)
+    answer: "1.0 77 3"
+    explanation: >-
+      / always produces a float (1.0). "7" is a string, so * 2 repeats it ("77"). // on two ints gives an
+      int (3).
+    wrongAnswers:
+      - answer: "1 14 3"
+        feedback: >-
+          Two slips: / always gives a float (1.0), and "7" in quotes is text, so * repeats it rather than
+          multiplying.
+      - answer: "1.0 14 3"
+        feedback: The quotes make "7" a string. String times int means repetition, so the result is "77".
+      - answer: "1.0 77 3.5"
+        feedback: // is floor division, so 7 // 2 is the int 3.
+
+  - id: predict-truncate
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      print(int(9.99), round(9.99), int(-9.99), int("9"))
+    answer: "9 10 -9 9"
+    explanation: >-
+      int() truncates toward zero: 9.99 becomes 9 and -9.99 becomes -9. round() goes to the nearest
+      integer, 10. int("9") converts the text to the number 9.
+    wrongAnswers:
+      - answer: "10 10 -10 9"
+        feedback: int() never rounds — it chops off the fractional part. Only round() gives 10.
+      - answer: "9 10 -10 9"
+        feedback: int() truncates toward ZERO, so -9.99 becomes -9. Rounding down to -10 is what math.floor() does.
+
+  - id: mcq-error-kind
+    type: mcq
+    skill: recognition
+    prompt: Which of these raises a **ValueError** (rather than a TypeError)?
+    explanation: >-
+      ValueError means the type was acceptable but the value was not. int() accepts strings, but "12.5"
+      is not a whole number. The other three apply an operation to a type that does not support it.
+    options:
+      - id: a
+        text: "`int(\"12.5\")`"
+        correct: true
+        feedback: "Correct. int() takes a str, but this text is not a whole number: ValueError: invalid literal for int() with base 10: '12.5'."
+      - id: b
+        text: "`\"12\" + 5`"
+        feedback: "Joining a str and an int is a type problem: TypeError: can only concatenate str (not \"int\") to str."
+      - id: c
+        text: "`\"12\" - 5`"
+        feedback: "Strings do not support subtraction at all: TypeError: unsupported operand type(s) for -: 'str' and 'int'."
+      - id: d
+        text: "`len(12)`"
+        feedback: "Integers have no length: TypeError: object of type 'int' has no len()."
+
+  - id: explain-explicit
+    type: explain
+    skill: explanation
+    prompt: |
+      In JavaScript, `"5" + 3` gives `"53"`. Python raises a TypeError instead. Explain why Python's
+      choice helps you write correct programs, and show how you would write each of the two possible
+      intended results in Python.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says the operation is ambiguous — it could mean adding numbers or joining text — and Python refuses to guess.
+      - Explains that an immediate error at the faulty line is better than a wrong value silently flowing through the program.
+      - Shows int("5") + 3 to get the number 8.
+      - Shows "5" + str(3) to get the text "53".
+    modelAnswer: |
+      "5" + 3 is ambiguous: you might mean arithmetic (8) or joining text ("53"). Rather than guess,
+      Python raises a TypeError on that exact line, so the bug is found immediately instead of producing
+      a wrong value that causes trouble somewhere else later. You state your intent with an explicit
+      conversion: int("5") + 3 gives 8, and "5" + str(3) gives "53".
+
+  - id: predict-new-object
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      value = "7"
+      int(value)
+      print(value * 2)
+    answer: "77"
+    explanation: >-
+      Line 2 creates the integer 7 and immediately discards it — no name is bound to it. value still
+      refers to the string "7", and a string times 2 is repetition: "77".
+    wrongAnswers:
+      - answer: "14"
+        feedback: >-
+          int(value) does not change value. It returns a new int, which line 2 throws away. To keep it,
+          write value = int(value).
+
+  - id: debug-total
+    type: debug
+    skill: debugging
+    prompt: |
+      The first two lines hold values exactly as they arrived from a web form. The program should print
+      `Total: 1000`, but it crashes. Fix it **without changing the first two lines**.
+    starterCode: |
+      price = "250"
+      quantity = "4"
+      total = price * quantity
+      print("Total:", total)
+    solution: |
+      price = "250"
+      quantity = "4"
+      total = int(price) * int(quantity)
+      print("Total:", total)
+    expectedOutput: |
+      Total: 1000
+    tests:
+      - name: Prints Total - 1000
+        code: |
+          assert output() == "Total: 1000\n", f"Expected 'Total: 1000' but your program printed {output()!r}."
+      - name: The form values are unchanged
+        code: |
+          assert 'price = "250"' in source and 'quantity = "4"' in source, (
+              'Keep the first two lines exactly as they are (price = "250" and quantity = "4"). Convert the values where you calculate.'
+          )
+      - name: Works for other form values
+        code: |
+          import contextlib, io
+          changed = source.replace('price = "250"', 'price = "125"', 1).replace('quantity = "4"', 'quantity = "3"', 1)
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue() == "Total: 375\n", f"With price '125' and quantity '3' you should print 'Total: 375', but got {buffer.getvalue()!r}."
+    hints:
+      - "Read the error: TypeError: can't multiply sequence by non-int of type 'str'. Which values are strings?"
+      - Both values are text. Which function turns "250" into the number 250?
+      - total = int(price) * int(quantity)
+    feedback:
+      - when: { errorType: TypeError }
+        message: >-
+          Both values are still strings, and Python cannot multiply text by text. Convert each one with
+          int() in the calculation.
+      - when: { outputContains: "250250" }
+        message: >-
+          Only quantity was converted: a string times an int repeats the string. Convert price as well.
+    explanation: >-
+      "250" * "4" asks Python to multiply two strings, which is meaningless, so it raises TypeError.
+      Converting both with int() gives 250 * 4 = 1000. The original strings stay unchanged; the
+      conversions create new int objects for the calculation.
+
+  - id: code-average
+    type: code
+    skill: implementation
+    prompt: |
+      Three test scores arrive as text: `s1 = "72"`, `s2 = "85"`, `s3 = "90"`. Convert them, compute
+      their average **rounded to 1 decimal place**, store it in `average`, and print it with two
+      values: `print("Average:", average)`. Expected output:
+
+      ```text
+      Average: 82.3
+      ```
+    starterCode: |
+      s1 = "72"
+      s2 = "85"
+      s3 = "90"
+
+    solution: |
+      s1 = "72"
+      s2 = "85"
+      s3 = "90"
+      total = int(s1) + int(s2) + int(s3)
+      average = round(total / 3, 1)
+      print("Average:", average)
+    expectedOutput: |
+      Average: 82.3
+    tests:
+      - name: average is 82.3
+        code: |
+          assert defined("average"), "Create a variable named average."
+          assert average == 82.3, f"average should be 82.3 (247 / 3 rounded to 1 decimal), but it is {average!r}."
+      - name: Works for other scores
+        code: |
+          import re
+          changed = re.sub(r"s1\s*=\s*[\"']72[\"']", 's1 = "60"', source, count=1)
+          changed = re.sub(r"s2\s*=\s*[\"']85[\"']", 's2 = "70"', changed, count=1)
+          changed = re.sub(r"s3\s*=\s*[\"']90[\"']", 's3 = "81"', changed, count=1)
+          ns = {"print": lambda *args, **kwargs: None}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("average") == 70.3, f"With scores 60, 70 and 81, average should be 70.3 but it was {ns.get('average')!r}. Convert s1, s2 and s3 instead of typing numbers."
+      - name: Prints the average
+        code: |
+          assert output() == "Average: 82.3\n", f"Print it as print(\"Average:\", average). You printed {output()!r}."
+    hints:
+      - '"72" + "85" joins text. Convert each score with int() before adding.'
+      - The average is the total divided by 3.
+      - round(value, 1) keeps one decimal place.
+    feedback:
+      - when: { errorType: TypeError }
+        message: >-
+          At least one score is still a string when you do arithmetic. Wrap each one in int(), e.g.
+          int(s1) + int(s2) + int(s3).
+      - when: { outputContains: "82.333" }
+        message: Almost! Round the result to one decimal place with round(..., 1).
+    explanation: >-
+      int() turns each text score into a number, so + adds instead of joining: 72 + 85 + 90 = 247.
+      Dividing by 3 gives 82.333..., and round(..., 1) keeps one decimal: 82.3.
+
+  - id: code-temperature
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A sensor sends readings as text with stray spaces: `reading = " 21.5 "`. Convert it to a number
+      of degrees Celsius, compute Fahrenheit with F = C × 9 / 5 + 32, and print **one line built with
+      `+` and `str()`**:
+
+      ```text
+      21.5C is 70.7F
+      ```
+
+      It must work for any reading — for example `" -40 "` should print `-40.0C is -40.0F`.
+    starterCode: |
+      reading = " 21.5 "
+
+    solution: |
+      reading = " 21.5 "
+      celsius = float(reading)
+      fahrenheit = celsius * 9 / 5 + 32
+      print(str(celsius) + "C is " + str(fahrenheit) + "F")
+    expectedOutput: |
+      21.5C is 70.7F
+    tests:
+      - name: Prints the converted reading
+        code: |
+          assert output() == "21.5C is 70.7F\n", f"Expected '21.5C is 70.7F' but your program printed {output()!r}."
+      - name: Builds the line with + and str()
+        code: |
+          assert calls("float"), "Convert the reading with float() - it may contain a decimal point."
+          assert calls("str"), "Turn the numbers back into text with str() so + can join them."
+      - name: Works for another reading
+        code: |
+          import contextlib, io, re
+          changed = re.sub(r"reading\s*=\s*[\"'][^\"']*[\"']", 'reading = " -40 "', source, count=1)
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue() == "-40.0C is -40.0F\n", f"With reading = ' -40 ' you should print '-40.0C is -40.0F', but got {buffer.getvalue()!r}."
+    hints:
+      - float() ignores the spaces around a number, so float(reading) works directly.
+      - "Translate the formula: celsius * 9 / 5 + 32."
+      - '"C is " is a string, so the numbers must be converted with str() before joining with +.'
+    feedback:
+      - when: { errorType: ValueError }
+        message: >-
+          The reading has a decimal point, so int() cannot read it. Use float(reading) instead.
+      - when: { errorMessageContains: "concatenate" }
+        message: >-
+          You are joining a number to a string with +. Wrap the numbers in str() first.
+    explanation: >-
+      float(" 21.5 ") ignores the spaces and gives 21.5. The formula gives 70.7. Because + only joins
+      strings, both numbers are converted back with str() before being glued to the labels. This is the
+      full round trip: text in, numbers for the maths, text out.
+
+  - id: parsons-convert
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program adds two numbers that arrived as text and prints `42`. Two lines
+      are distractors.
+    solution: |
+      a_text = "12"
+      b_text = "30"
+      a = int(a_text)
+      b = int(b_text)
+      print(a + b)
+    distractors:
+      - print(a_text + b_text)
+      - a = a_text.int()
+    expectedOutput: |
+      42
+    explanation: >-
+      The text values must exist before they are converted, and both conversions must happen before the
+      addition. Adding the text versions would print 1230 (joined text), and strings have no int()
+      method — conversion is done with the int() function.
+
+  # ----- Mastery check (not used in the sections above) -----
+  - id: m-predict-mixed
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      x = "3"
+      y = 3
+      print(x * y, int(x) * y, float(x) + y)
+    answer: "333 9 6.0"
+    explanation: >-
+      x is text, so x * y repeats it three times: "333". int(x) * y is 3 * 3 = 9. float(x) + y mixes a
+      float and an int, which gives the float 6.0.
+    wrongAnswers:
+      - answer: "9 9 6.0"
+        feedback: x is the string "3"; string * int is repetition, giving "333".
+      - answer: "333 9 6"
+        feedback: float(x) is 3.0, and float + int always produces a float, so the result is 6.0.
+
+  - id: m-mcq-bool
+    type: mcq
+    skill: recognition
+    prompt: Which of these expressions evaluates to **False**?
+    explanation: >-
+      For strings, bool() only checks whether the string is empty. "", with no characters at all, is the
+      only falsy option; "0", " " and "False" all contain characters.
+    options:
+      - id: a
+        text: "`bool(\"0\")`"
+        feedback: '"0" is a non-empty string (one character), so it is True. Only the number 0 is falsy.'
+      - id: b
+        text: "`bool(\" \")`"
+        feedback: A space is a character, so this string is not empty and converts to True.
+      - id: c
+        text: "`bool(\"\")`"
+        correct: true
+        feedback: Correct - the empty string is the only falsy string.
+      - id: d
+        text: "`bool(\"False\")`"
+        feedback: bool() does not read the words. "False" is five characters, so it is True.
+
+  - id: m-tf-int-round
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `int(7.9)` returns `8`."
+    answer: false
+    explanation: >-
+      int() truncates toward zero, so int(7.9) is 7. Use round(7.9) to get 8.
+
+  - id: m-code-change
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      A shop till receives amounts as text: `paid_text = "500"` and `price_text = "345.50"`. Compute the
+      `change` as a number and print it with `print("Change:", change)`:
+
+      ```text
+      Change: 154.5
+      ```
+
+      Keep the two text lines as they are; the checks will change them.
+    starterCode: |
+      paid_text = "500"
+      price_text = "345.50"
+
+    solution: |
+      paid_text = "500"
+      price_text = "345.50"
+      change = float(paid_text) - float(price_text)
+      print("Change:", change)
+    expectedOutput: |
+      Change: 154.5
+    tests:
+      - name: change is 154.5
+        code: |
+          assert defined("change"), "Create a variable named change."
+          assert change == 154.5, f"change should be 154.5, but it is {change!r}."
+      - name: Works for other amounts
+        code: |
+          import re
+          changed = re.sub(r"paid_text\s*=\s*[\"']500[\"']", 'paid_text = "1000"', source, count=1)
+          changed = re.sub(r"price_text\s*=\s*[\"']345\.50[\"']", 'price_text = "999.25"', changed, count=1)
+          ns = {"print": lambda *args, **kwargs: None}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("change") == 0.75, f"With paid '1000' and price '999.25', change should be 0.75 but it was {ns.get('change')!r}. Convert paid_text and price_text instead of typing numbers."
+      - name: Prints the change
+        code: |
+          assert output() == "Change: 154.5\n", f"Print it with print(\"Change:\", change). You printed {output()!r}."
+    hints:
+      - Both amounts are strings. Which conversion handles "345.50"?
+      - change = float(paid_text) - float(price_text)
+    feedback:
+      - when: { errorType: ValueError }
+        message: '"345.50" contains a decimal point, so int() cannot read it. Use float().'
+      - when: { errorType: TypeError }
+        message: Strings cannot be subtracted. Convert both amounts before subtracting.
+    explanation: >-
+      float() converts both amounts (500.0 and 345.5), and subtracting gives 154.5. int() would fail on
+      "345.50" because of the decimal point.
+
+  - id: m-debug-age
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should print `Age: 36` but crashes. There are **two** type bugs. Fix both, keeping
+      `birth_year` as the text `"1990"`.
+    starterCode: |
+      birth_year = "1990"
+      current_year = 2026
+      age = current_year - birth_year
+      print("Age: " + age)
+    solution: |
+      birth_year = "1990"
+      current_year = 2026
+      age = current_year - int(birth_year)
+      print("Age: " + str(age))
+    expectedOutput: |
+      Age: 36
+    tests:
+      - name: Prints Age - 36
+        code: |
+          assert output() == "Age: 36\n", f"Expected 'Age: 36' but your program printed {output()!r}."
+      - name: birth_year is still text
+        code: |
+          assert birth_year == "1990", "Keep birth_year as the string \"1990\"; convert it where you calculate."
+      - name: Works for another year
+        code: |
+          import contextlib, io
+          changed = source.replace('"1990"', '"2000"', 1)
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue() == "Age: 26\n", f"With birth_year = '2000' you should print 'Age: 26', but got {buffer.getvalue()!r}."
+    hints:
+      - The first error is on line 3. Which operand of the subtraction is text?
+      - After fixing line 3, line 4 fails. What type is age now, and what can + join to a string?
+    feedback:
+      - when: { errorMessageContains: "unsupported operand type(s) for -" }
+        message: "Line 3 subtracts a string from an int. Convert birth_year with int(birth_year)."
+      - when: { errorMessageContains: "can only concatenate" }
+        message: "Line 3 works now. Line 4 joins the int age to a string - wrap it in str(age)."
+    explanation: >-
+      Line 3 needs numbers on both sides of -, so birth_year is converted with int(). That makes age an
+      int, so line 4 must convert it back with str() before joining it to "Age: ". (print("Age:", age)
+      would also work, because print converts each value for display.)
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-mixed, m-mcq-bool, m-tf-int-round, m-code-change, m-debug-age]
+
+cheatsheet: |
+  ```python
+  type(x)              # <class 'int'> / 'float' / 'str' / 'bool'
+  repr(x)              # '42' shows quotes: it's a string
+  int("42")            # 42        int(" 42 ") also works
+  int(3.99)            # 3         truncates toward zero (int(-3.99) -> -3)
+  round(3.99)          # 4         round(2.5) -> 2 (ties to even)
+  float("3.5")         # 3.5
+  str(42)              # '42'
+  bool(0), bool("")    # False, False   bool("0") -> True!
+  isinstance(4, int)   # True
+  "42".isdecimal()     # True   ("-42" and "4.2" -> False)
+  ```
+  - `ValueError` → right type, bad value (`int("3.5")`) · `TypeError` → wrong type (`"5" + 3`)
+  - `"5" * 3` → `'555'` (repetition, not arithmetic)

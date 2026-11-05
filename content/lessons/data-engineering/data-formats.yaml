@@ -1,0 +1,223 @@
+id: de.data-formats
+concept: de.data-formats
+title: Data formats — structured, semi-structured and unstructured
+subtitle: CSV, JSON, Avro and Parquet differ in schema, compression and row- vs column-orientation, which drives
+  storage cost and query speed
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: CSV, JSON, Avro and Parquet differ in schema, compression and row- vs column-orientation, which drives
+  storage cost and query speed.
+objectives:
+- Explain the role of data formats — structured, semi-structured and unstructured in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: Apache Parquet documentation
+  url: https://parquet.apache.org/docs/
+  publisher: Apache Software Foundation
+- title: Apache Avro specification
+  url: https://avro.apache.org/docs/1.12.0/specification/
+  publisher: Apache Software Foundation
+  version: 1.12.0
+- title: Arrow Columnar Format
+  url: https://arrow.apache.org/docs/format/Columnar.html
+  publisher: Apache Software Foundation
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: CSV, JSON, Avro and Parquet differ in schema, compression and row- vs column-orientation, which drives
+      storage cost and query speed. The file format decides how much you pay to store and scan data, whether types
+      survive the trip between systems, and how fast every downstream query runs.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing;
+      unstructured data (text, images, audio) has no record schema at all.
+
+      - CSV and JSON Lines are row-oriented text — easy to read and append, but untyped, verbose and slow to parse
+      at scale.
+
+      - Avro is a row-oriented binary format whose schema travels with the data, which suits event streams, record-at-a-time
+      writes and schema evolution.
+
+      - Parquet is columnar — each column is stored, encoded and compressed separately, so a query reads only the
+      columns it needs and can skip row groups using stored min/max statistics.
+
+      - Compression codecs (Snappy, Zstandard, gzip) trade CPU for size; Parquet and Avro stay splittable for parallel
+      reads when compressed, a gzipped CSV does not.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when
+      a producer changes it.
+
+      - Parquet is not always the right choice; for small, frequently appended or record-at-a-time data, row formats
+      such as Avro or JSON Lines fit better.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "import json\ndef parse_json_records(text):\n    value = json.loads(text)\n    if not isinstance(value,\
+      \ list) or any(not isinstance(row, dict) for row in value): raise ValueError(\"expected a list of objects\"\
+      )\n    return value\n\nprint(parse_json_records(\"[{\\\"id\\\":1},{\\\"id\\\":2}]\"))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: data-formats-code
+  - type: item
+    ref: data-formats-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing;
+      unstructured data (text, images, audio) has no record schema at all.
+
+      - CSV and JSON Lines are row-oriented text — easy to read and append, but untyped, verbose and slow to parse
+      at scale.
+
+      - Avro is a row-oriented binary format whose schema travels with the data, which suits event streams, record-at-a-time
+      writes and schema evolution.
+
+      - Parquet is columnar — each column is stored, encoded and compressed separately, so a query reads only the
+      columns it needs and can skip row groups using stored min/max statistics.
+
+      - Compression codecs (Snappy, Zstandard, gzip) trade CPU for size; Parquet and Avro stay splittable for parallel
+      reads when compressed, a gzipped CSV does not.
+
+
+      **Watch for**
+
+      - JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when a
+      producer changes it.
+
+      - Parquet is not always the right choice; for small, frequently appended or record-at-a-time data, row formats
+      such as Avro or JSON Lines fit better.'
+  - type: item
+    ref: data-formats-mcq
+  - type: item
+    ref: data-formats-tf
+  - type: item
+    ref: data-formats-code
+items:
+- id: data-formats-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of data formats — structured, semi-structured and unstructured?
+  explanation: Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing;
+    unstructured data (text, images, audio) has no record schema at all.
+  options:
+  - id: a
+    text: Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing;
+      unstructured data (text, images, audio) has no record schema at all.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when
+      a producer changes it.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: data-formats-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when
+    a producer changes it.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: data-formats-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying data formats — structured, semi-structured and unstructured to a dataset that may contain
+    missing, duplicate or malformed records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: data-formats-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for data formats — structured, semi-structured and unstructured. The assertions test
+    the main behaviour and an important edge case.
+  starterCode: "import json\n\ndef parse_json_records(text):\n    raise NotImplementedError('Complete this function')"
+  solution: "import json\ndef parse_json_records(text):\n    value = json.loads(text)\n    if not isinstance(value,\
+    \ list) or any(not isinstance(row, dict) for row in value): raise ValueError(\"expected a list of objects\"\
+    )\n    return value"
+  tests:
+  - name: Core transformation
+    code: assert parse_json_records("[{\"id\":1}]") == [{"id":1}]
+  - name: Edge case
+    code: 'try: parse_json_records("{\"id\":1}")
+
+      except ValueError: pass
+
+      else: raise AssertionError("object root should be rejected")'
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - data-formats-mcq
+  - data-formats-tf
+  - data-formats-code
+cheatsheet: '**Key ideas**
+
+  - Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing;
+  unstructured data (text, images, audio) has no record schema at all.
+
+  - CSV and JSON Lines are row-oriented text — easy to read and append, but untyped, verbose and slow to parse at
+  scale.
+
+  - Avro is a row-oriented binary format whose schema travels with the data, which suits event streams, record-at-a-time
+  writes and schema evolution.
+
+  - Parquet is columnar — each column is stored, encoded and compressed separately, so a query reads only the columns
+  it needs and can skip row groups using stored min/max statistics.
+
+  - Compression codecs (Snappy, Zstandard, gzip) trade CPU for size; Parquet and Avro stay splittable for parallel
+  reads when compressed, a gzipped CSV does not.
+
+
+  **Data quality risks**
+
+  - JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when a producer
+  changes it.
+
+  - Parquet is not always the right choice; for small, frequently appended or record-at-a-time data, row formats
+  such as Avro or JSON Lines fit better.'

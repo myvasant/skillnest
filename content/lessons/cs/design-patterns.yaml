@@ -1,0 +1,359 @@
+id: cs.design-patterns
+concept: cs.design-patterns
+title: Design Patterns in Python
+subtitle: Recognise recurring design pressure without overengineering
+estimatedMinutes: 60
+reviewedOn: '2026-11-04'
+summary: Learn the intent and trade-offs of Strategy, Factory, Adapter, Observer and Decorator, and use dependency
+  injection to keep collaborators replaceable. See how Python functions and duck typing often provide simpler
+  implementations than classic class-heavy examples.
+objectives:
+- Explain what a design pattern names and why it is not a checklist.
+- Use a function or callable object as a Strategy for interchangeable behaviour.
+- Distinguish Factory creation from Adapter interface translation.
+- Explain Observer notification and the failure concerns it introduces.
+- Distinguish Python `@decorator` syntax from the classic object Decorator pattern.
+- Use dependency injection to make a component testable with a fake collaborator.
+- Recognise when a direct function or module is simpler than a pattern.
+sources:
+- title: Python Design Patterns
+  url: https://python-patterns.guide/
+  publisher: Brandon Rhodes
+- title: Design Patterns
+  url: https://refactoring.guru/design-patterns
+  publisher: Refactoring.Guru
+- title: Functional Programming HOWTO
+  url: https://docs.python.org/3/howto/functional.html
+  publisher: Python Software Foundation
+sections:
+- id: why-patterns
+  title: Why design patterns exist
+  kind: why
+  blocks:
+  - type: markdown
+    body: |-
+      Teams repeatedly encounter similar design pressures: an algorithm changes by customer, a library exposes the wrong interface, several components need notification, or object creation has rules. A [design pattern](glossary:design-pattern) gives the recurring problem and a family of solutions a shared name. That shared vocabulary helps engineers discuss trade-offs without copying a diagram mechanically.
+  - type: callout
+    variant: misconception
+    title: A pattern is not a required number of classes
+    body: Python functions, modules, protocols and duck typing often express the same idea with less machinery
+      than a traditional object-oriented example.
+- id: strategy-pattern
+  title: 'Strategy: swap one behaviour'
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: |-
+      Use Strategy when a workflow stays stable but one algorithm varies. The caller supplies the policy. In Python, the strategy can be a function because functions are values; a class is useful when the policy needs state or several related operations.
+  - type: code
+    language: python
+    code: |-
+      def percentage_discount(percent):
+          def discount(subtotal):
+              return subtotal * percent / 100
+          return discount
+
+      def final_price(subtotal, policy):
+          return round(subtotal - policy(subtotal), 2)
+
+      ten_percent = percentage_discount(10)
+      print(final_price(80, ten_percent))
+    runnable: true
+    status: verified
+    expectedOutput: '72.0'
+    caption: The factory returns a configured function. `final_price` does not need to know how the discount is
+      calculated.
+  - type: markdown
+    body: |-
+      This example returns an inner function, so it also uses a [closure](concept:python.closures): the returned function remembers `percent`. The Strategy idea is the interchangeable policy; the closure is one way to build it.
+- id: factory-adapter
+  title: Factory and Adapter
+  kind: concept
+  blocks:
+  - type: markdown
+    body: |-
+      A **Factory** centralises object or function creation when choosing or configuring the result has meaningful rules. It can keep callers from knowing concrete implementation details. Do not create a factory just to wrap a constructor with no added decision.
+
+      An **Adapter** translates one interface into another. The client keeps using the interface it expects while the adapter calls the legacy or third-party interface:
+  - type: code
+    language: python
+    code: |-
+      class LegacyPrinter:
+          def print_text(self, text):
+              print("LEGACY:" + text)
+
+      class PrinterAdapter:
+          def __init__(self, legacy):
+              self.legacy = legacy
+          def send(self, message):
+              self.legacy.print_text(message)
+
+      def deliver(printer, message):
+          printer.send(message)
+
+      deliver(PrinterAdapter(LegacyPrinter()), "Ready")
+    runnable: true
+    status: verified
+    expectedOutput: LEGACY:Ready
+    caption: The client depends on `send`; the adapter translates it to the existing `print_text` operation.
+  - type: markdown
+    body: |-
+      An adapter should preserve the meaning of the operation, not merely rename a method. Translate data formats, error behaviour and edge cases where necessary.
+- id: observer-decorator
+  title: Observer and Decorator
+  kind: concept
+  blocks:
+  - type: markdown
+    body: |-
+      **Observer** defines a one-to-many notification relationship: a subject publishes an event and registered observers receive it. It is useful for event notifications, UI updates and decoupled reactions, but asynchronous delivery, ordering and subscriber failures need explicit design.
+
+      The classic object **Decorator** wraps an object that follows the same interface and adds behaviour before or after delegation, such as buffering or access checks. Python’s `@decorator` syntax instead applies a callable transformation to a function or class. They share a wrapping idea but are not identical patterns.
+  - type: callout
+    variant: warning
+    title: Do not let observers hide critical work
+    body: If a payment must be recorded before confirmation, do not rely on an untracked best-effort observer.
+      Use explicit transaction and delivery guarantees for business-critical effects.
+- id: dependency-injection
+  title: Dependency injection and testability
+  kind: application
+  blocks:
+  - type: markdown
+    body: |-
+      [Dependency injection](glossary:dependency-injection) means a component receives the collaborators it needs rather than constructing them internally. Constructor arguments, function parameters or a composition root can supply those dependencies. This makes dependencies visible and lets tests provide fakes.
+
+      It is not a requirement to use a large dependency-injection framework. In Python, passing a function or object explicitly is often enough. This connects to [composition](concept:cs.oop-principles): build a component from collaborators that each have a clear responsibility.
+  - type: markdown
+    body: |-
+      A useful test asks whether the component behaves correctly when a collaborator returns success, fails, times out or supplies invalid data. A fake should model the contract that matters; it should not reproduce the entire external service.
+- id: pattern-selection
+  title: Choose a pattern only when the pressure exists
+  kind: internals
+  blocks:
+  - type: markdown
+    body: |-
+      | Design pressure | Possible pattern | Simpler Python form to consider |
+      |---|---|---|
+      | Algorithm varies | Strategy | Pass a function or callable object |
+      | Existing interface differs | Adapter | A small wrapper function or class |
+      | Creation rules vary | Factory | A constructor function or classmethod |
+      | Many listeners need events | Observer | Explicit callbacks or an event queue |
+      | Add behaviour around an object | Decorator | A wrapper function or context manager |
+      | Collaborators should be replaceable | Dependency injection | Pass them as parameters |
+
+      Patterns can improve clarity when they name a real boundary. They can make code harder to understand when they add indirection without solving a current problem.
+  - type: callout
+    variant: tip
+    title: Prefer a clear contract over inheritance for its own sake
+    body: If a caller only needs `send(message)`, depend on that behaviour. The implementation can be a function,
+      an object or an adapter as long as it fulfils the contract.
+- id: mistakes-patterns
+  title: Common mistakes
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: |-
+      - **Pattern collecting:** adding patterns because they are famous rather than because the code has a recurring pressure.
+      - **Confusing names:** Python decorator syntax is not exactly the classic Decorator object pattern.
+      - **Overusing inheritance:** composition and a small callable often make variation simpler.
+      - **Hidden dependencies:** constructing network clients or databases inside business logic makes tests and configuration harder.
+      - **Unbounded observers:** subscribers can fail, run slowly or execute in an unexpected order; define delivery semantics.
+- id: practice-patterns
+  title: Practice before the mastery check
+  kind: practice
+  blocks:
+  - type: markdown
+    body: |-
+      1. Identify whether each scenario needs Strategy, Adapter, Factory or Observer, and state the design pressure.
+      2. Replace a long `if format == ...` block with a function passed as a strategy.
+      3. Add a fake dependency to a function that currently constructs its own external client.
+      4. Find a pattern in an existing Python library and explain why it is useful there.
+  - type: item
+    ref: patterns-practice-strategy
+  - type: item
+    ref: patterns-practice-adapter
+- id: summary-patterns
+  title: Summary and checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: |-
+      Strategy swaps behaviour; Factory centralises meaningful creation choices; Adapter translates an interface; Observer notifies subscribers; Decorator wraps an object to add behaviour; dependency injection makes collaborators explicit. Python often expresses these ideas with functions and small objects.
+
+      Before introducing a pattern, ask: what is changing, what contract should remain stable, who owns creation, what failures can happen, and does the abstraction reduce more complexity than it adds?
+items:
+- id: patterns-practice-strategy
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: A checkout flow supports several discount rules. Each rule receives a subtotal and returns a discount.
+    Which pattern best describes supplying the chosen rule to the checkout logic?
+  options:
+  - id: strategy
+    text: 'Strategy: make the varying algorithm interchangeable.'
+    correct: true
+    feedback: The checkout flow delegates the varying calculation to a supplied policy.
+  - id: adapter
+    text: 'Adapter: translate one interface into another.'
+    correct: false
+    feedback: An adapter is useful when an existing component has the wrong interface, not simply when an algorithm
+      varies.
+  - id: observer
+    text: 'Observer: notify subscribers when an event occurs.'
+    correct: false
+    feedback: Observer is about one-to-many notification after a state change or event.
+  - id: singleton
+    text: 'Singleton: force every caller to share one global instance.'
+    correct: false
+    feedback: A global shared instance does not express interchangeable discount behaviour and can hide dependencies.
+  explanation: Strategy separates a stable workflow from a behaviour that varies. In Python the strategy may be
+    a simple function rather than a class hierarchy.
+- id: patterns-practice-adapter
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: What does the adapter print when the client calls the standard `send` method?
+  code: |-
+    class LegacyPrinter:
+        def print_text(self, text):
+            print("LEGACY:" + text)
+
+    class PrinterAdapter:
+        def __init__(self, legacy):
+            self.legacy = legacy
+        def send(self, text):
+            self.legacy.print_text(text)
+
+    printer = PrinterAdapter(LegacyPrinter())
+    printer.send("Ready")
+  answer: LEGACY:Ready
+  wrongAnswers:
+  - answer: Ready
+    feedback: The adapter delegates to the legacy method, which adds the `LEGACY:` prefix.
+  - answer: AttributeError
+    feedback: The adapter exposes `send` and translates it to the legacy `print_text` method.
+  - answer: LEGACY:send
+    feedback: The adapter forwards the message value, not the method name.
+  explanation: The client uses `send`; the adapter translates that call into `print_text` on the legacy object.
+- id: patterns-master-adapter-choice
+  type: mcq
+  skill: transfer
+  difficulty: 2
+  prompt: A third-party library has a method named `deliver_sms(text)`, but the rest of your application expects
+    `send(message)`. Which pattern is the most direct fit?
+  options:
+  - id: adapter
+    text: 'Adapter: wrap the library and expose `send(message)`.'
+    correct: true
+    feedback: The adapter translates the interface your application expects into the library interface.
+  - id: strategy
+    text: 'Strategy: pass a different algorithm for the same operation.'
+    correct: false
+    feedback: Strategy is about interchangeable behaviour; the immediate mismatch is the method interface.
+  - id: observer
+    text: 'Observer: register listeners for an event.'
+    correct: false
+    feedback: No event subscription or notification relationship is described.
+  - id: factory
+    text: 'Factory: centralise object creation.'
+    correct: false
+    feedback: A factory may create the adapter, but it does not perform the interface translation.
+  explanation: Adapter is appropriate when two components provide compatible intent but incompatible method shapes.
+- id: patterns-master-decorator-distinction
+  type: true-false
+  skill: recognition
+  difficulty: 2
+  prompt: Python’s `@decorator` syntax and the object-oriented Decorator design pattern are exactly the same concept.
+  answer: false
+  explanation: They are related by the idea of wrapping behaviour, but the language feature is a callable transformation
+    applied to a function or class, while the classic object pattern wraps an object behind a compatible interface.
+- id: patterns-master-price-policy
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: Implement `price_after_discount(subtotal, policy)`. The policy is a function that receives the subtotal
+    and returns a discount amount. Reject a negative subtotal and reject a discount outside the range from zero
+    to subtotal. Return the final price rounded to two decimals.
+  starterCode: |-
+    def price_after_discount(subtotal, policy):
+        # Validate inputs, call the policy, and return the final price.
+        pass
+  solution: |-
+    def price_after_discount(subtotal, policy):
+        if subtotal < 0:
+            raise ValueError("subtotal cannot be negative")
+        discount = policy(subtotal)
+        if discount < 0 or discount > subtotal:
+            raise ValueError("discount must be between zero and subtotal")
+        return round(subtotal - discount, 2)
+  tests:
+  - name: percentage strategy
+    code: |-
+      ten_percent = lambda subtotal: subtotal * 0.10
+      assert price_after_discount(80, ten_percent) == 72.0
+  - name: no-discount strategy
+    code: |-
+      assert price_after_discount(25, lambda subtotal: 0) == 25.0
+  - name: rejects invalid discount
+    code: |-
+      try:
+          price_after_discount(20, lambda subtotal: 25)
+      except ValueError:
+          pass
+      else:
+          raise AssertionError("discount greater than subtotal must fail")
+  hints:
+  - Call the policy with the current subtotal.
+  - Validate the returned discount before subtracting it.
+  explanation: The strategy function supplies only the varying calculation. The checkout workflow owns input validation
+    and the final-price rule.
+- id: patterns-master-debug-policy
+  type: debug
+  skill: debugging
+  difficulty: 2
+  prompt: This code fails because it calls the strategy without the subtotal. Fix the function so it passes the
+    value to the policy and returns the discounted amount.
+  starterCode: |-
+    def price_after_discount(subtotal, policy):
+        discount = policy()
+        return subtotal - discount
+  solution: |-
+    def price_after_discount(subtotal, policy):
+        discount = policy(subtotal)
+        return subtotal - discount
+  tests:
+  - name: policy receives subtotal
+    code: |-
+      assert price_after_discount(100, lambda amount: amount * 0.2) == 80
+  - name: zero discount preserves price
+    code: |-
+      assert price_after_discount(35, lambda amount: 0) == 35
+  hints:
+  - 'Read the policy contract: it accepts one subtotal argument.'
+  - Pass `subtotal` when calling `policy`.
+  explanation: A strategy is a callable with a known input/output contract. The caller must supply the input that
+    the strategy expects.
+- id: patterns-master-avoid-pattern
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: A teammate proposes creating a class, interface, factory, registry and plugin loader for a feature with
+    one stable implementation. Explain when a design pattern is useful and why this proposal may be overengineering.
+  rubric:
+  - Explains that patterns address recurring design pressure, not a checklist to apply everywhere.
+  - Identifies the actual source of variation or interface mismatch that would justify a pattern.
+  - Discusses the extra indirection and maintenance cost of unnecessary abstractions.
+  - Suggests a simpler function or module when it satisfies the current need.
+  modelAnswer: 'A pattern is useful when a recurring design pressure exists: interchangeable algorithms suggest
+    Strategy, an interface mismatch suggests Adapter, and complex creation rules may justify a Factory. If there
+    is one stable implementation and no real variation, a direct function is clearer. Extra classes and registries
+    add concepts that every maintainer must understand without providing a current benefit.'
+  explanation: A pattern is a tool, not a quality score. Start with the simplest design that makes the real variation
+    explicit.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - patterns-master-adapter-choice
+  - patterns-master-decorator-distinction
+  - patterns-master-price-policy
+  - patterns-master-debug-policy
+  - patterns-master-avoid-pattern

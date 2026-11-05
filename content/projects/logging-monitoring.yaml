@@ -1,0 +1,228 @@
+id: logging-monitoring
+title: Logging and Monitoring for a FastAPI Service
+track: production
+level: advanced
+estimatedHours: 9
+summary: >-
+  Instrument a FastAPI service like production software: structured JSON logs, request IDs
+  carried through a ContextVar, and a hand-written Prometheus /metrics endpoint with a
+  request counter and a latency histogram — all tested deterministically.
+problem: |
+  A customer reports: *"the app was slow around 14:05 and then showed an error."* The
+  service prints free-text lines from many concurrent requests, so you cannot tell which
+  lines belong to the failing request, and nothing records how long requests take. You
+  will add the three things an on-call engineer needs:
+
+  1. **Structured logs.** Every log line is one JSON object with fixed fields, so a log
+     platform can filter `status >= 500` or `request_id = "demo-1"`.
+  2. **Request IDs.** Each request gets an ID — the caller's `X-Request-ID` if it is safe,
+     a fresh one otherwise. It is stored in a `ContextVar`, so *every* line logged while
+     handling that request carries it, and it is echoed in the response header for the
+     customer to quote.
+  3. **Metrics.** `GET /metrics` exposes `http_requests_total` (a counter) and
+     `http_request_duration_seconds` (a histogram) in the Prometheus text format, which
+     you write by hand to understand exactly what monitoring systems scrape.
+
+  **Example session**
+
+  ```text
+  $ curl -i -H "X-Request-ID: demo-1" http://127.0.0.1:8000/items/1
+  HTTP/1.1 200 OK
+  x-request-id: demo-1
+
+  log → {"ts": "2026-10-22T14:05:01.124Z", "level": "INFO", "logger": "observability_app",
+         "message": "request completed", "request_id": "demo-1", "method": "GET",
+         "path": "/items/1", "route": "/items/{item_id}", "status": 200, "duration_ms": 1.402}
+
+  $ curl http://127.0.0.1:8000/metrics
+  # HELP http_requests_total HTTP requests handled, by method, route template and status code.
+  # TYPE http_requests_total counter
+  http_requests_total{method="GET",path="/items/{item_id}",status="200"} 1.0
+  # TYPE http_request_duration_seconds histogram
+  http_request_duration_seconds_bucket{method="GET",path="/items/{item_id}",le="0.005"} 1.0
+  ...
+  http_request_duration_seconds_bucket{method="GET",path="/items/{item_id}",le="+Inf"} 1.0
+  http_request_duration_seconds_sum{method="GET",path="/items/{item_id}"} 0.001402
+  http_request_duration_seconds_count{method="GET",path="/items/{item_id}"} 1.0
+  ```
+
+  Inputs are HTTP requests (optionally with `X-Request-ID`); outputs are responses with
+  an `X-Request-ID` header, JSON log lines on standard error, and the metrics text.
+concepts:
+  - python.logging
+  - backend.fastapi-basics
+  - backend.routing-middleware
+  - mlops.logging-tracing
+  - mlops.observability
+  - python.classes
+  - python.regex
+acceptanceCriteria:
+  - "`JsonFormatter` emits exactly one JSON object per line with `ts` (ISO 8601 UTC, milliseconds, `Z`), `level`, `logger`, `message` and `request_id`, plus `extra=` fields that never overwrite core fields."
+  - "Exceptions are logged with `exc_type`, `exc_message` and `stack`; a message containing newlines still produces a single line."
+  - "A valid incoming `X-Request-ID` (1–64 of `A-Z a-z 0-9 . _ -`) is reused; a missing or unsafe one is replaced by a generated ID; the response always carries the ID."
+  - "Each request produces one `request completed` log line with `method`, `path` (no query string), `route` (template), `status`, `duration_ms` and the request ID; level is ERROR for 5xx and WARNING for 4xx."
+  - "Log lines written inside handlers carry the same request ID without passing it around (ContextVar)."
+  - "An unhandled exception becomes a 500 JSON response containing the request ID, and is logged with its stack trace."
+  - "`GET /metrics` returns `text/plain; version=0.0.4` with `# HELP`/`# TYPE` lines, a counter labelled `method`, `path` (route template or `unmatched`) and `status`, and a histogram with cumulative `le` buckets ending in `+Inf`, `_sum` and `_count`."
+  - "Metric output is exact and deterministic: series sorted by label values, values formatted like Prometheus clients (`3.0`, `0.25`, `+Inf`), label values escaped."
+architecture: |
+  ```text
+             request ──▶ ┌──────────────────── observe_requests middleware ───────────────────┐
+                         │ 1. resolve_request_id(X-Request-ID)  → request_id_var.set(id)        │
+                         │ 2. start = clock()                                                   │
+                         │ 3. call_next_safely ──▶ router ──▶ handler (log.info → has the ID)   │
+                         │ 4. duration = clock() - start ; route = route_template(request)      │
+                         │ 5. record_request(metrics, …)   log_request(log, …)                  │
+                         │ 6. response.headers["X-Request-ID"] = id ; request_id_var.reset()    │
+                         └──────────────────────────────────────────────────────────────────────┘
+                                        │                                │
+                                        ▼                                ▼
+                         MetricsRegistry (Counter, Histogram)    logging.Logger + JsonFormatter
+                                        │                                │
+                              GET /metrics (Prometheus text)       JSON lines on stderr
+  ```
+
+  * **`create_app(registry=, logger=, clock=, id_factory=, buckets=)`** is an app factory:
+    every collaborator is injected, so there is no global mutable state and tests can
+    use a fake clock (`0.25 s` per request) and predictable IDs.
+  * **`ContextVar`** holds the request ID. Each request runs in its own context, so
+    concurrent requests never see each other's ID, and the value is reset in `finally`.
+  * **Logs vs metrics.** Logs may contain high-cardinality details (the raw path, an
+    item ID). Metrics must not: each distinct label combination is a separate time
+    series stored forever, so metrics are labelled with the **route template**
+    (`/items/{item_id}`), and unmatched paths share the label `unmatched`.
+  * **Histogram buckets are cumulative**: `le="0.25"` counts every observation ≤ 0.25 s,
+    which lets Prometheus compute percentiles with `histogram_quantile`.
+environment: local
+starterKit: projects/logging-monitoring
+setup: |
+  Requires Python 3.11+.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/logging-monitoring
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/logging-monitoring
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Run the service while you work (use `--app-dir solution` for the reference):
+
+  ```bash
+  python -m uvicorn --app-dir starter --factory observability_app:create_app --port 8000
+  ```
+milestones:
+  - id: m1-json-logs
+    title: Structured JSON logs
+    description: |
+      Implement `JsonFormatter.format`, `_iso_utc` and `_extra_fields` in
+      `starter/observability_app.py`. Use `record.getMessage()` (it applies `%s`
+      arguments), `datetime.fromtimestamp(record.created, tz=UTC)`, and compare
+      `vars(record)` with the attributes every `LogRecord` has to find `extra=` fields.
+      Let `json.dumps` do the escaping — that is what keeps hostile input on one line.
+
+      Tests: `TestMilestone1JsonLogs` — exact fields for a fixed record, extras,
+      core-field precedence, newline injection, exceptions, request ID from the context,
+      and a logger that is not registered globally.
+  - id: m2-request-ids
+    title: Request IDs and access logs
+    description: |
+      Implement `is_valid_request_id`, `resolve_request_id`, `call_next_safely`,
+      `route_template` and `log_request`, then write the middleware body in `create_app`:
+      set `request_id_var` (and reset it in `finally`), time the request with the
+      injected `clock`, log `request completed`, and add the `X-Request-ID` header.
+
+      Tests: `TestMilestone2RequestIds` — safe/unsafe IDs, header echo, one access line
+      with exact fields (`duration_ms` is 250.0 with the fake clock), handler logs carry
+      the ID, 4xx at WARNING, unhandled errors become a logged 500 with the ID.
+  - id: m3-counters
+    title: Counters in the Prometheus text format
+    description: |
+      Implement `format_value`, `escape_label_value`, `_render_labels`, `_Metric._key`,
+      the `Counter` methods and `MetricsRegistry.render`. Output must match the format
+      exactly: `# HELP`, `# TYPE`, then one `name{labels} value` line per series, sorted
+      by label values; every line ends with `\n`.
+
+      Tests: `TestMilestone3Counters`.
+  - id: m4-histograms
+    title: Latency histograms
+    description: |
+      Finish `Histogram`: validate buckets (non-empty, strictly increasing, no `le`
+      label), append `+Inf`, count each observation into every bucket whose bound is
+      ≥ the value, and render `_bucket{…,le="…"}` lines (with `le` last), `_sum` and
+      `_count`.
+
+      Tests: `TestMilestone4Histograms` — exact output for known observations, boundary
+      values, labelled series, invalid buckets and NaN.
+  - id: m5-metrics-endpoint
+    title: Request metrics and GET /metrics
+    description: |
+      Implement `record_request` and call it from the middleware with the route
+      template, method and status. `GET /metrics` already returns `registry.render()`
+      with the Prometheus content type.
+
+      Tests: `TestMilestone5MetricsEndpoint` — content type, counts by template (no raw
+      paths), `unmatched` for unknown paths, latency buckets from the fake clock, 500s
+      counted, and a well-formed exposition where every sample follows its `# TYPE`.
+testing: |
+  ```powershell
+  python -m pytest                     # all milestones against starter/
+  python -m pytest -k Milestone3       # one milestone
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  python -m pytest
+  python -m pytest -k Milestone3
+  GW_TARGET=solution python -m pytest  # run the same tests against the reference
+  ```
+
+  The tests never sleep and never read the wall clock: `create_app` receives a fake
+  clock that advances 0.25 s per call, an ID factory that returns `generated-1`,
+  `generated-2`, …, and a logger writing to an in-memory `io.StringIO`, so log lines can be
+  parsed with `json.loads` and metric lines compared exactly. FastAPI's `TestClient` runs
+  the app in-process — no server or network is needed.
+
+  Manual check: run the service with uvicorn, send a few requests with `curl`, and read
+  `/metrics`. Scraping it with a real Prometheus server is optional and not tested.
+security:
+  - "Log injection: a client-supplied request ID or message with newlines or quotes could forge log entries; IDs are validated against a strict pattern and JSON encoding escapes every message."
+  - "Never log secrets or personal data: the access log records the URL path only, because query strings often carry tokens, emails or search terms."
+  - "Unbounded metric labels (raw paths, user IDs) let anyone create millions of time series and exhaust the monitoring system's memory; label with route templates and a shared `unmatched` value."
+  - "`/metrics` reveals traffic patterns and endpoint names; in production expose it on an internal port or behind authentication rather than to the public internet."
+  - "Error responses return a generic message plus the request ID, never the stack trace; the stack trace goes only to the logs."
+extensions:
+  - "Add a `Gauge` (`http_requests_in_progress`) that increments when a request starts and decrements in `finally`."
+  - "Propagate the request ID to outgoing calls: add it as a header on `httpx` requests made by the service, and accept a W3C `traceparent` header."
+  - "Add sampling: log only 10% of successful requests but every 4xx/5xx, with a counter of dropped lines."
+  - "Replace the hand-written registry with the official `prometheus-client` package behind the same `HttpMetrics` interface and compare the output."
+  - "Run Prometheus and Grafana with Docker Compose and build a dashboard with request rate, error ratio and p95 latency."
+rubric:
+  - criterion: Structured logging
+    needsWork: Logs are partly free text, fields vary between lines, or newlines in messages break lines.
+    meets: Every line is one JSON object with the core fields; extras and exceptions are structured; milestone 1 passes.
+    exceeds: Field names are documented and stable, and sensitive values are kept out of logs by design.
+  - criterion: Request correlation
+    needsWork: The request ID is missing from some lines or unsafe IDs are accepted.
+    meets: IDs are validated, propagated through a ContextVar, reset in finally, echoed in the response; milestone 2 passes.
+    exceeds: IDs are also propagated to outgoing calls or integrated with a tracing header.
+  - criterion: Metrics correctness
+    needsWork: Output does not follow the exposition format, or buckets are not cumulative.
+    meets: Counter and histogram output matches the exact format, with escaping and sorted series; milestones 3–4 pass.
+    exceeds: Metrics are thread-safe and the implementation is cross-checked against `prometheus-client` output.
+  - criterion: Production judgement
+    needsWork: Raw paths or user data are used as labels; errors leak stack traces.
+    meets: Route-template labels, generic 500 bodies, log levels by status; milestone 5 passes.
+    exceeds: Clear README notes on what to alert on (error ratio, p95 latency) and how `/metrics` is protected.

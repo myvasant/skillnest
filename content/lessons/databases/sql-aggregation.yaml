@@ -1,0 +1,189 @@
+id: databases.sql-aggregation
+concept: databases.sql-aggregation
+title: Aggregation — GROUP BY and HAVING
+subtitle: Aggregate functions summarise groups of rows; WHERE filters rows before grouping, HAVING filters groups
+  after
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Aggregate functions summarise groups of rows; WHERE filters rows before grouping, HAVING filters groups
+  after.
+objectives:
+- Explain the core model behind aggregation — group by and having.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL Tutorial: Aggregate Functions'
+  url: https://www.postgresql.org/docs/current/tutorial-agg.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: Aggregate Functions reference'
+  url: https://www.postgresql.org/docs/current/functions-aggregate.html
+  publisher: PostgreSQL Global Development Group
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Aggregate functions summarise groups of rows; WHERE filters rows before grouping, HAVING filters groups
+      after. Most business and ML questions are summaries (revenue per month, users per country, error rate per
+      endpoint), and aggregating inside the database avoids loading every row into your program.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them except
+      `COUNT(*)` ignore NULLs.
+
+      - `GROUP BY country` produces one output row per group; every selected column must be either grouped or aggregated.
+
+      - WHERE filters rows before grouping; HAVING filters groups after aggregation, as in `HAVING COUNT(*) > 10`.
+
+      - `COUNT(DISTINCT user_id)` counts unique values, and `COUNT(*) FILTER (WHERE status = ''error'')` aggregates
+      a subset in the same query (PostgreSQL and SQLite).'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- `COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL.
+
+      - `AVG` over a column with NULLs averages only the non-NULL values, which can silently bias results.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def count_by(rows, key):\n    totals = {}\n    for row in rows: totals[row[key]] = totals.get(row[key],\
+      \ 0) + 1\n    return totals\n\nprint(count_by([{\"team\":\"A\"},{\"team\":\"B\"},{\"team\":\"A\"}], \"team\"\
+      ))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: sql-aggregation-code
+  - type: item
+    ref: sql-aggregation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them except
+      `COUNT(*)` ignore NULLs.
+
+      - `GROUP BY country` produces one output row per group; every selected column must be either grouped or aggregated.
+
+      - WHERE filters rows before grouping; HAVING filters groups after aggregation, as in `HAVING COUNT(*) > 10`.
+
+      - `COUNT(DISTINCT user_id)` counts unique values, and `COUNT(*) FILTER (WHERE status = ''error'')` aggregates
+      a subset in the same query (PostgreSQL and SQLite).
+
+
+      **Avoid**
+
+      - `COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL.
+
+      - `AVG` over a column with NULLs averages only the non-NULL values, which can silently bias results.'
+  - type: item
+    ref: sql-aggregation-mcq
+  - type: item
+    ref: sql-aggregation-tf
+  - type: item
+    ref: sql-aggregation-code
+items:
+- id: sql-aggregation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of aggregation — group by and having?
+  explanation: Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them
+    except `COUNT(*)` ignore NULLs.
+  options:
+  - id: a
+    text: Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them except
+      `COUNT(*)` ignore NULLs.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: '`COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL.'
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: sql-aggregation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL.'
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: sql-aggregation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing aggregation — group by and having in a real application. What design decisions would
+    you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: sql-aggregation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for aggregation — group by and having. Implement the stated rule and make sure both
+    ordinary and edge-case tests pass.
+  starterCode: "def count_by(rows, key):\n    raise NotImplementedError('Complete this function')"
+  solution: "def count_by(rows, key):\n    totals = {}\n    for row in rows: totals[row[key]] = totals.get(row[key],\
+    \ 0) + 1\n    return totals"
+  tests:
+  - name: Core behaviour
+    code: assert count_by([{"team":"A"},{"team":"B"},{"team":"A"}], "team") == {"A":2,"B":1}
+  - name: Edge cases
+    code: assert count_by([], "team") == {}
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - sql-aggregation-mcq
+  - sql-aggregation-tf
+  - sql-aggregation-code
+cheatsheet: '**Core model**
+
+  - Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them except `COUNT(*)`
+  ignore NULLs.
+
+  - `GROUP BY country` produces one output row per group; every selected column must be either grouped or aggregated.
+
+  - WHERE filters rows before grouping; HAVING filters groups after aggregation, as in `HAVING COUNT(*) > 10`.
+
+  - `COUNT(DISTINCT user_id)` counts unique values, and `COUNT(*) FILTER (WHERE status = ''error'')` aggregates
+  a subset in the same query (PostgreSQL and SQLite).
+
+
+  **Common mistakes**
+
+  - `COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL.
+
+  - `AVG` over a column with NULLs averages only the non-NULL values, which can silently bias results.'

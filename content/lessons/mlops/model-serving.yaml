@@ -1,0 +1,218 @@
+id: mlops.model-serving
+concept: mlops.model-serving
+title: Model serving
+subtitle: Batch scoring vs online inference behind an API, model loading, input validation, versioned endpoints
+  and shadow deployments
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Batch scoring vs online inference behind an API, model loading, input validation, versioned endpoints and
+  shadow deployments.
+objectives:
+- Explain the core engineering decisions behind model serving.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: ML Model Serving
+  url: https://mlflow.org/docs/latest/ml/deployment/
+  publisher: MLflow (Linux Foundation)
+  version: 3.x
+- title: Rules of Machine Learning (training-serving skew)
+  url: https://developers.google.com/machine-learning/guides/rules-of-ml
+  publisher: Google
+- title: FastAPI deployment
+  url: https://fastapi.tiangolo.com/deployment/
+  publisher: FastAPI
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Batch scoring vs online inference behind an API, model loading, input validation, versioned endpoints
+      and shadow deployments. A model only creates value when other systems can use its predictions reliably, within
+      their latency and cost limits.
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference
+      answers each request through an API within a latency budget.
+
+      - Load the model once at startup, not per request; validate inputs with a schema (for example Pydantic) and
+      return the model version with every prediction.
+
+      - Apply exactly the same preprocessing as in training, ideally the same code or a saved pipeline object, to
+      avoid training-serving skew.
+
+      - Version the API or the model (for example `/v1/predict`) and provide health and readiness endpoints so deploys
+      do not break clients.
+
+      - A shadow deployment sends real traffic to a new model and logs its predictions without returning them, so
+      it can be compared safely with the live model.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Online serving is not always better; if predictions can be computed in advance, batch is cheaper and
+      more reliable.
+
+      - A pickled model is executable code; never load a pickle from an untrusted source.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def validate_prediction_request(payload, required_features):\n    missing=[key for key in required_features\
+      \ if key not in payload]\n    if missing: raise ValueError(f\"missing features: {missing}\")\n    return {key:payload[key]\
+      \ for key in required_features}\n\nprint(validate_prediction_request({\"age\":30,\"income\":50000}, [\"age\"\
+      ,\"income\"]))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: model-serving-code
+  - type: item
+    ref: model-serving-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference
+      answers each request through an API within a latency budget.
+
+      - Load the model once at startup, not per request; validate inputs with a schema (for example Pydantic) and
+      return the model version with every prediction.
+
+      - Apply exactly the same preprocessing as in training, ideally the same code or a saved pipeline object, to
+      avoid training-serving skew.
+
+      - Version the API or the model (for example `/v1/predict`) and provide health and readiness endpoints so deploys
+      do not break clients.
+
+      - A shadow deployment sends real traffic to a new model and logs its predictions without returning them, so
+      it can be compared safely with the live model.
+
+
+      **Watch for**
+
+      - Online serving is not always better; if predictions can be computed in advance, batch is cheaper and more
+      reliable.
+
+      - A pickled model is executable code; never load a pickle from an untrusted source.'
+  - type: item
+    ref: model-serving-mcq
+  - type: item
+    ref: model-serving-tf
+  - type: item
+    ref: model-serving-code
+items:
+- id: model-serving-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of model serving?
+  explanation: Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference
+    answers each request through an API within a latency budget.
+  options:
+  - id: a
+    text: Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference
+      answers each request through an API within a latency budget.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: Online serving is not always better; if predictions can be computed in advance, batch is cheaper and more
+      reliable.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: model-serving-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Online serving is not always better; if predictions can be computed in advance, batch is cheaper and more
+    reliable.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: model-serving-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply model serving to a realistic engineering scenario. State your assumptions, explain your decision,
+    compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: model-serving-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for model serving. The assertions cover the expected path and an important boundary
+    case.
+  starterCode: "def validate_prediction_request(payload, required_features):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def validate_prediction_request(payload, required_features):\n    missing=[key for key in required_features\
+    \ if key not in payload]\n    if missing: raise ValueError(f\"missing features: {missing}\")\n    return {key:payload[key]\
+    \ for key in required_features}"
+  tests:
+  - name: Core behaviour
+    code: assert validate_prediction_request({"age":30,"income":5},["age"])=={"age":30}
+  - name: Boundary behaviour
+    code: 'try: validate_prediction_request({"age":30},["age","income"])
+
+      except ValueError: pass
+
+      else: raise AssertionError("missing feature must fail")'
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - model-serving-mcq
+  - model-serving-tf
+  - model-serving-code
+cheatsheet: '**Key principles**
+
+  - Batch scoring computes predictions on a schedule and stores them (cheap, simple, stale); online inference answers
+  each request through an API within a latency budget.
+
+  - Load the model once at startup, not per request; validate inputs with a schema (for example Pydantic) and return
+  the model version with every prediction.
+
+  - Apply exactly the same preprocessing as in training, ideally the same code or a saved pipeline object, to avoid
+  training-serving skew.
+
+  - Version the API or the model (for example `/v1/predict`) and provide health and readiness endpoints so deploys
+  do not break clients.
+
+  - A shadow deployment sends real traffic to a new model and logs its predictions without returning them, so it
+  can be compared safely with the live model.
+
+
+  **Trade-offs**
+
+  - Online serving is not always better; if predictions can be computed in advance, batch is cheaper and more reliable.
+
+  - A pickled model is executable code; never load a pickle from an untrusted source.'

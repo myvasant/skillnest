@@ -1,0 +1,1059 @@
+id: foundations.text-encoding
+concept: foundations.text-encoding
+title: Text Encoding, Unicode and UTF-8
+subtitle: Characters, code points and bytes
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Computers store bytes, not letters. Unicode gives every character a number (a code point) and an encoding
+  such as UTF-8 turns those numbers into bytes. Learn to move between str and bytes in Python, predict how
+  many bytes text takes, recognise and fix decoding errors and garbled text, and always open text files with
+  an explicit encoding.
+objectives:
+  - Distinguish characters, code points and bytes, and convert between them with ord(), chr(), str.encode() and bytes.decode().
+  - Predict the UTF-8 length of text containing ASCII letters, accented letters, symbols such as ₹ and emoji.
+  - Explain why len() of a str and len() of its encoded bytes differ.
+  - Diagnose UnicodeDecodeError and mojibake, and fix them by decoding with the correct encoding.
+  - Open text files with an explicit encoding, and handle a UTF-8 byte order mark.
+  - Explain why visually identical strings can compare unequal, and normalise them with NFC.
+sources:
+  - title: Unicode HOWTO
+    url: https://docs.python.org/3/howto/unicode.html
+    publisher: Python Software Foundation
+  - title: "Built-in Types: str.encode and bytes.decode"
+    url: https://docs.python.org/3/library/stdtypes.html#str.encode
+    publisher: Python Software Foundation
+  - title: "codecs: Standard Encodings"
+    url: https://docs.python.org/3/library/codecs.html#standard-encodings
+    publisher: Python Software Foundation
+  - title: unicodedata — Unicode Database
+    url: https://docs.python.org/3/library/unicodedata.html
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: open() (encoding parameter)"
+    url: https://docs.python.org/3/library/functions.html#open
+    publisher: Python Software Foundation
+  - title: "PEP 686: Make UTF-8 mode default"
+    url: https://peps.python.org/pep-0686/
+    publisher: Python Software Foundation
+  - title: "RFC 3629: UTF-8, a transformation format of ISO 10646"
+    url: https://www.rfc-editor.org/rfc/rfc3629
+    publisher: IETF
+  - title: "Unicode Standard Annex #15: Unicode Normalization Forms"
+    url: https://www.unicode.org/reports/tr15/
+    publisher: Unicode Consortium
+sections:
+  - id: why
+    title: Why text goes wrong
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          You have probably seen text like **cafÃ©** instead of **café**, or a customer name that turns into
+          question marks after an export. These bugs come from one fact: **files, networks and databases store
+          bytes, not letters.** Turning text into bytes and back requires an agreed rule, an
+          [encoding](glossary:character-encoding). Use the wrong rule when reading, and the bytes are
+          misinterpreted.
+
+          This lesson uses a little Python: names for values (`data = ...`), strings in quotes, `print` and
+          `len`. Every new tool is explained as it appears. Run this:
+      - type: code
+        runnable: true
+        code: |
+          data = "café".encode("utf-8")
+          print(data)
+          print(data.decode("utf-8"))
+          print(data.decode("latin-1"))
+        expectedOutput: |
+          b'caf\xc3\xa9'
+          café
+          cafÃ©
+        annotations:
+          - line: 1
+            text: "`.encode(\"utf-8\")` turns the text into bytes using the UTF-8 rule."
+          - line: 2
+            text: "Five bytes: c, a, f, then two bytes (`\\xc3\\xa9`) for é."
+          - line: 3
+            text: Decoding with the same rule gives the original text back.
+          - line: 4
+            text: Decoding with a different rule (Latin-1) reads each of é's two bytes as a separate character - garbled text, and no error.
+      - type: markdown
+        body: |
+          Same bytes, two different readings. The fix is never "try random encodings until it looks right";
+          it is knowing **which encoding the bytes were written with** and using that one. To do that
+          confidently you need three ideas: characters, code points and bytes.
+
+  - id: code-points
+    title: Characters and code points
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Unicode](glossary:unicode) is a catalogue that gives every character — Latin and Devanagari
+          letters, Chinese characters, symbols such as ₹, emoji — a unique number called a
+          [code point](glossary:code-point). Code points are written `U+` followed by the number in
+          hexadecimal (base 16): `A` is U+0041, `é` is U+00E9, `₹` is U+20B9, `😀` is U+1F600. Unicode has
+          room for 1,114,112 code points (U+0000 to U+10FFFF).
+
+          In Python, a `str` is a sequence of code points. `ord()` gives a character's code point and `chr()`
+          goes the other way:
+      - type: code
+        runnable: true
+        code: |
+          for ch in "Aé₹😀":
+              print(ch, ord(ch), f"U+{ord(ch):04X}")
+        expectedOutput: |
+          A 65 U+0041
+          é 233 U+00E9
+          ₹ 8377 U+20B9
+          😀 128512 U+1F600
+        annotations:
+          - line: 1
+            text: The loop takes one character (code point) of the string at a time.
+          - line: 2
+            text: "`ord(ch)` is the code point as a normal number; `:04X` formats it as at least four hexadecimal digits."
+      - type: code
+        runnable: true
+        code: |
+          print(chr(65), chr(233), chr(8377), chr(0x1F600))
+          print(len("café"))
+        expectedOutput: |
+          A é ₹ 😀
+          4
+        annotations:
+          - line: 1
+            text: "`chr()` turns a code point back into a one-character string. `0x1F600` is a number written in hexadecimal."
+          - line: 2
+            text: "`len()` of a str counts code points: c, a, f, é."
+      - type: callout
+        variant: note
+        title: A code point is a number, not bytes
+        body: |
+          U+20B9 tells you *which* character ₹ is. It does not say how ₹ is stored. Storage is the job of an
+          encoding, and different encodings store the same code point as different bytes.
+      - type: item
+        ref: what-is-code-point
+
+  - id: bytes-and-encodings
+    title: Bytes, encode and decode
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A byte holds a number from 0 to 255. Python represents raw bytes with the
+          [bytes](glossary:bytes-object) type. Two methods move between the worlds:
+
+          - **`text.encode("utf-8")`** — str → bytes (characters to storage).
+          - **`data.decode("utf-8")`** — bytes → str (storage back to characters).
+      - type: code
+        runnable: true
+        code: |
+          text = "café"
+          data = text.encode("utf-8")
+          print(type(text).__name__, type(data).__name__)
+          print(data)
+          print(list(data))
+          print(data.decode("utf-8") == text)
+        expectedOutput: |
+          str bytes
+          b'caf\xc3\xa9'
+          [99, 97, 102, 195, 169]
+          True
+        annotations:
+          - line: 3
+            text: Two different types. A str holds code points; a bytes object holds numbers 0-255.
+          - line: 4
+            text: "The `b'...'` display shows bytes that happen to be printable ASCII as letters, and the rest as `\\x` plus two hex digits."
+          - line: 5
+            text: "`list()` reveals the actual numbers: 195 and 169 (hex c3 and a9) together encode é."
+          - line: 6
+            text: Decoding with the same encoding is a perfect round trip.
+      - type: markdown
+        body: |
+          A useful rule: **text inside your program is `str`; text at the edges is bytes.** Decode bytes as
+          soon as they arrive (from a file, socket or HTTP response), work with `str`, and encode when you
+          send or save. Mixing the two is an error, not a silent conversion:
+      - type: code
+        runnable: true
+        code: |
+          print("abc" + b"def")
+        expectError: TypeError
+        caption: "TypeError: can only concatenate str (not \"bytes\") to str. Decode the bytes first."
+      - type: item
+        ref: predict-len-bytes
+
+  - id: utf8-lengths
+    title: "UTF-8: one to four bytes per character"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          [UTF-8](glossary:utf-8) is the dominant encoding on the web and the default in most modern tools.
+          It uses a **variable number of bytes** per code point:
+
+          | Code points | Bytes | Examples |
+          |---|---|---|
+          | U+0000 – U+007F | 1 | English letters, digits, punctuation (the [ASCII](glossary:ascii) range) |
+          | U+0080 – U+07FF | 2 | é, ü, ñ, Greek, Cyrillic, Hebrew, Arabic |
+          | U+0800 – U+FFFF | 3 | ₹, €, Devanagari, Chinese, Japanese, Korean |
+          | U+10000 – U+10FFFF | 4 | Most emoji, rare scripts and symbols |
+
+          See it for yourself — `.hex(" ")` prints bytes as hexadecimal pairs:
+      - type: code
+        runnable: true
+        code: |
+          for ch in "Aé₹😀":
+              encoded = ch.encode("utf-8")
+              print(ch, f"U+{ord(ch):04X}", len(encoded), encoded.hex(" "))
+        expectedOutput: |
+          A U+0041 1 41
+          é U+00E9 2 c3 a9
+          ₹ U+20B9 3 e2 82 b9
+          😀 U+1F600 4 f0 9f 98 80
+      - type: markdown
+        body: |
+          Because the sizes vary, **the number of characters and the number of bytes are different
+          measurements**:
+      - type: code
+        runnable: true
+        code: |
+          text = "Aé₹😀"
+          print(len(text))
+          print(len(text.encode("utf-8")))
+        expectedOutput: |
+          4
+          10
+        annotations:
+          - line: 2
+            text: 4 code points.
+          - line: 3
+            text: 1 + 2 + 3 + 4 = 10 bytes.
+      - type: markdown
+        body: |
+          Step through a loop that adds up the bytes character by character. Watch `size` change with each
+          character and `total` grow:
+      - type: visualization
+        component: python-tracer
+        title: Counting UTF-8 bytes per character
+        caption: n takes 1 byte, é takes 2 and ₹ takes 3, so 3 characters need 6 bytes.
+        props:
+          code: |
+            word = "né₹"
+            total = 0
+            for ch in word:
+                size = len(ch.encode("utf-8"))
+                total += size
+            print(len(word), total)
+      - type: callout
+        variant: production
+        title: Where the difference bites
+        body: |
+          Limits are often in **bytes**: the HTTP `Content-Length` header, database column sizes in some
+          systems, message size limits, buffers. A 20-character name in Hindi can be 60 bytes. Measure the
+          encoded length whenever a limit or a protocol talks about bytes.
+      - type: item
+        ref: predict-emoji
+
+  - id: decoding-errors
+    title: Wrong encodings, errors and garbled text
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Decoding with the wrong encoding fails in one of two ways.
+
+          **1. Loudly — a [UnicodeDecodeError](glossary:unicode-decode-error).** The bytes are not valid in
+          the encoding you chose. ASCII only knows 0-127, so the byte 0xC3 is impossible:
+      - type: code
+        runnable: true
+        code: |
+          data = "café".encode("utf-8")
+          print(data.decode("ascii"))
+        expectError: UnicodeDecodeError
+        caption: "'ascii' codec can't decode byte 0xc3 in position 3: ordinal not in range(128)"
+      - type: markdown
+        body: |
+          UTF-8 has strict rules about which bytes may follow which, so text saved in an older Windows
+          encoding usually fails loudly when read as UTF-8:
+      - type: code
+        runnable: true
+        code: |
+          data = "Zoë,Renée".encode("cp1252")
+          print(data.decode("utf-8"))
+        expectError: UnicodeDecodeError
+        caption: "'utf-8' codec can't decode byte 0xeb in position 2: invalid continuation byte. In cp1252, ë is the single byte 0xEB."
+      - type: markdown
+        body: |
+          The message tells you a lot: **which codec** was used, **which byte** was bad, and **where**. A
+          byte such as 0xE9 or 0xEB in "UTF-8" text is a strong hint that the data is really Latin-1 or
+          cp1252.
+
+          Encoding can fail too: `"₹".encode("ascii")` raises `UnicodeEncodeError`, because ASCII has no
+          byte for ₹.
+
+          **2. Silently — [mojibake](glossary:mojibake).** Single-byte encodings such as Latin-1 and cp1252
+          assign a character to (almost) every byte, so decoding "succeeds" with the wrong characters. That is
+          the cafÃ© you saw at the start. Silent corruption is worse than an error: it gets saved, indexed
+          and emailed to customers.
+      - type: markdown
+        body: |
+          The `errors=` argument chooses what happens on a bad byte. The default `"strict"` raises; `"replace"`
+          substitutes a marker (U+FFFD `�` when decoding, `?` when encoding to ASCII). Use `"replace"` only
+          when losing data is acceptable, such as displaying a log line — never to make an error "go away".
+      - type: code
+        runnable: true
+        code: |
+          data = "café".encode("utf-8")
+          print(data.decode("ascii", errors="replace"))
+          print("₹50".encode("ascii", errors="replace"))
+        expectedOutput: |
+          caf��
+          b'?50'
+        annotations:
+          - line: 2
+            text: Each of é's two bytes became one replacement character - information is lost.
+      - type: item
+        ref: latin1-silent
+
+  - id: files
+    title: Always say encoding="utf-8" for text files
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When Python opens a file in text mode it decodes bytes to `str` for you — using an encoding. If you
+          do not name one, Python uses a **platform-dependent default** from the operating system's locale.
+          On Linux and macOS that is usually UTF-8; on many Windows machines it is a legacy code page such as
+          cp1252. The same program then reads a file correctly on one computer and fails (or garbles it) on
+          another. ([PEP 686](https://peps.python.org/pep-0686/) makes UTF-8 the default from Python 3.15,
+          but code that must run on older versions still needs the explicit argument.)
+
+          `open()` is covered fully in [reading and writing files](concept:python.files); here, notice only
+          the `encoding=` argument and the `"rb"` mode, which reads raw bytes without decoding.
+      - type: code
+        runnable: true
+        code: |
+          with open("names.txt", "w", encoding="utf-8") as f:
+              f.write("José\n")
+
+          with open("names.txt", "rb") as f:
+              print(f.read())
+
+          with open("names.txt", encoding="utf-8") as f:
+              print(f.read().strip())
+
+          with open("names.txt", encoding="latin-1") as f:
+              print(f.read().strip())
+        expectedOutput: |
+          b'Jos\xc3\xa9\n'
+          José
+          JosÃ©
+        annotations:
+          - line: 1
+            text: Write text; Python encodes it to UTF-8 bytes on the way to the file.
+          - line: 4
+            text: '"rb" = read bytes. This is what is really on disk.'
+          - line: 7
+            text: Reading with the encoding it was written in gives the original text.
+          - line: 10
+            text: Reading the same bytes as Latin-1 silently produces mojibake.
+      - type: markdown
+        body: |
+          **The rule:** pass `encoding="utf-8"` every time you open a text file for reading or writing —
+          unless you know the file uses another encoding, in which case name that one.
+
+          **The byte order mark.** Some programs (for example spreadsheet software exporting "CSV UTF-8")
+          put an invisible [byte order mark](glossary:byte-order-mark), U+FEFF, at the start of a UTF-8 file.
+          Decoded as plain UTF-8 it stays glued to the first column name. The `"utf-8-sig"` codec removes it
+          if present:
+      - type: code
+        runnable: true
+        code: |
+          data = b"\xef\xbb\xbfname,city\nAsha,Pune\n"
+
+          header = data.decode("utf-8").splitlines()[0].split(",")
+          print(header[0] == "name", len(header[0]), hex(ord(header[0][0])))
+
+          header = data.decode("utf-8-sig").splitlines()[0].split(",")
+          print(header[0] == "name", header)
+        expectedOutput: |
+          False 5 0xfeff
+          True ['name', 'city']
+        annotations:
+          - line: 1
+            text: The first three bytes, EF BB BF, are the BOM in UTF-8; the rest is an ordinary CSV.
+          - line: 4
+            text: Decoded as plain UTF-8, the first column name is 5 characters - an invisible U+FEFF followed by name - so it is not equal to "name".
+          - line: 7
+            text: utf-8-sig strips a leading BOM; files without one are read exactly as with utf-8.
+
+  - id: under-the-hood
+    title: How UTF-8 packs bits, and how other encodings compare
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          UTF-8 ([RFC 3629](https://www.rfc-editor.org/rfc/rfc3629)) spreads a code point's bits over one to
+          four bytes. The first byte's leading bits say how many bytes follow; every continuation byte starts
+          with `10`:
+
+          | Bytes | Byte pattern | Payload bits |
+          |---|---|---|
+          | 1 | `0xxxxxxx` | 7 |
+          | 2 | `110xxxxx 10xxxxxx` | 11 |
+          | 3 | `1110xxxx 10xxxxxx 10xxxxxx` | 16 |
+          | 4 | `11110xxx 10xxxxxx 10xxxxxx 10xxxxxx` | 21 |
+      - type: code
+        runnable: true
+        code: |
+          for byte in "é".encode("utf-8"):
+              print(format(byte, "08b"))
+          print(format(ord("é"), "011b"))
+        expectedOutput: |
+          11000011
+          10101001
+          00011101001
+        caption: >-
+          é is U+00E9 = 233. The payload bits after 110 and 10 are 00011 and 101001; joined they give
+          00011101001, which is 233.
+      - type: markdown
+        body: |
+          This design has valuable properties:
+
+          - **ASCII compatible.** Bytes 0-127 mean exactly what they mean in ASCII, and never appear inside a
+            multi-byte sequence. Old ASCII files are valid UTF-8, and searching for `/` or `,` in UTF-8 bytes
+            never matches half of another character.
+          - **Self-synchronising.** From any position you can find the start of the next character (skip
+            bytes that begin with `10`).
+          - **No byte-order problem.** UTF-8 is a sequence of single bytes, so it needs no BOM.
+
+          **UTF-16** (used inside Windows, Java and JavaScript strings) uses 2 bytes for most characters and 4
+          (a *surrogate pair*) for code points above U+FFFF. That is why `"😀".length` is 2 in JavaScript while
+          `len("😀")` is 1 in Python, which counts code points.
+      - type: code
+        runnable: true
+        code: |
+          print(len("A".encode("utf-16-le")), len("😀".encode("utf-16-le")))
+          print("A".encode("utf-16"))
+        expectedOutput: |
+          2 4
+          b'\xff\xfeA\x00'
+        caption: '"utf-16" (no -le/-be) writes a BOM, FF FE here, so the reader can tell the byte order.'
+      - type: markdown
+        body: |
+          **Chunked data.** A multi-byte character can be split across two network packets or two reads of a
+          file. Decoding each chunk separately then fails with *unexpected end of data*. An incremental
+          decoder keeps the unfinished bytes until the rest arrive — this matters when you stream text from a
+          socket or an LLM API.
+      - type: code
+        runnable: true
+        code: |
+          data = "₹100".encode("utf-8")
+          print(data[:2].decode("utf-8"))
+        expectError: UnicodeDecodeError
+        caption: "'utf-8' codec can't decode bytes in position 0-1: unexpected end of data - only 2 of ₹'s 3 bytes."
+      - type: code
+        runnable: true
+        code: |
+          import codecs
+
+          decoder = codecs.getincrementaldecoder("utf-8")()
+          text = ""
+          for chunk in [b"\xe2\x82", b"\xb9100"]:
+              text += decoder.decode(chunk)
+          text += decoder.decode(b"", final=True)
+          print(text)
+        expectedOutput: |
+          ₹100
+        caption: The decoder holds the incomplete bytes from the first chunk and completes ₹ when the second arrives.
+      - type: markdown
+        body: |
+          **How CPython stores str.** Internally CPython picks 1, 2 or 4 bytes per code point for each string,
+          depending on the largest code point it contains ([PEP 393](https://peps.python.org/pep-0393/)).
+          That is an implementation detail: the language only promises that a str is a sequence of code
+          points.
+
+  - id: normalisation
+    title: "Same look, different code points: normalisation"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Unicode can represent some characters in more than one way. `é` can be a single *precomposed* code
+          point (U+00E9) or the letter `e` followed by U+0301 COMBINING ACUTE ACCENT. They look identical but
+          are different sequences, so `==` says they differ. Text typed on different systems, or copied from
+          PDFs and web pages, mixes both forms.
+      - type: code
+        runnable: true
+        code: |
+          import unicodedata
+
+          composed = chr(0xE9)
+          decomposed = "e" + chr(0x301)
+          print(composed == decomposed, len(composed), len(decomposed))
+          print([unicodedata.name(ch) for ch in decomposed])
+          print(unicodedata.normalize("NFC", decomposed) == composed)
+          print([f"U+{ord(ch):04X}" for ch in unicodedata.normalize("NFD", composed)])
+        expectedOutput: |
+          False 1 2
+          ['LATIN SMALL LETTER E', 'COMBINING ACUTE ACCENT']
+          True
+          ['U+0065', 'U+0301']
+        annotations:
+          - line: 3
+            text: "`chr(0xE9)` is the precomposed é, one code point."
+          - line: 4
+            text: The letter e followed by U+0301, a combining accent that attaches to the previous letter. On screen it also looks like é.
+          - line: 7
+            text: NFC composes sequences into single code points where possible.
+          - line: 8
+            text: NFD decomposes them into a base letter plus combining marks.
+      - type: markdown
+        body: |
+          [Normalisation](glossary:unicode-normalization) ([UAX #15](https://www.unicode.org/reports/tr15/))
+          defines standard forms:
+
+          | Form | What it does | Typical use |
+          |---|---|---|
+          | **NFC** | Compose (é as one code point) | Storing and comparing text; most common |
+          | **NFD** | Decompose (e + accent) | Some file systems store names this way; stripping accents |
+          | **NFKC / NFKD** | Also replace "compatibility" variants: ligature ﬁ → fi, full-width Ａ → A, ² → 2 | Search, usernames, identifiers |
+
+          Normalise **both sides** before comparing, hashing or storing text as a key. Python itself applies
+          NFKC to identifiers when it parses source code. For caseless matching use `str.casefold()`, which is
+          more thorough than `lower()`:
+      - type: code
+        runnable: true
+        code: |
+          import unicodedata
+
+          print(unicodedata.normalize("NFKC", "ﬁ Ａ ²"))
+          print("Straße".lower(), "Straße".casefold())
+          print(len("👍🏽"), [f"U+{ord(ch):04X}" for ch in "👍🏽"])
+        expectedOutput: |
+          fi A 2
+          straße strasse
+          2 ['U+1F44D', 'U+1F3FD']
+        annotations:
+          - line: 5
+            text: A thumbs-up with a skin-tone modifier is two code points shown as one symbol.
+      - type: callout
+        variant: note
+        title: len() counts code points, not what a reader sees
+        body: |
+          What a reader perceives as one character is a [grapheme cluster](glossary:grapheme-cluster): it may
+          be several code points (an emoji with a skin tone, a family emoji joined with zero-width joiners, a
+          letter with combining marks). The standard library has no grapheme splitter; the rules are in
+          [UAX #29](https://www.unicode.org/reports/tr29/), and third-party packages implement them. Keep this
+          in mind before truncating user-visible text to "N characters".
+      - type: item
+        ref: normalise-mcq
+
+  - id: mistakes
+    title: Common mistakes and how to fix them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 ...` | The data is not UTF-8 (often Latin-1 or cp1252) | Find out the real encoding (ask the producer, check the export settings) and decode with it; convert to UTF-8 when you save |
+          | `UnicodeDecodeError: ... unexpected end of data` | Bytes were cut in the middle of a character | Decode the complete data, or use an incremental decoder for streams |
+          | Text shows `Ã©`, `â‚¹` or `Ã¼` | UTF-8 bytes were decoded as Latin-1/cp1252 | Decode the original bytes as UTF-8. Do not try to "repair" already-garbled text by guessing |
+          | `UnicodeEncodeError: 'ascii' codec can't encode character` | Writing to a destination configured for ASCII | Encode/open with `encoding="utf-8"` |
+          | `row["name"]` raises KeyError although the header looks like `name,city` | The file starts with a UTF-8 BOM, so the first column is really U+FEFF + `name` | Open with `encoding="utf-8-sig"` |
+          | `TypeError: can only concatenate str (not "bytes") to str` | Mixing str and bytes | Decode bytes at the edge of your program; work in str |
+          | Works on your laptop, fails on a colleague's | `open()` without `encoding=` uses each machine's default | Always pass `encoding="utf-8"` |
+          | Two names that look the same do not match | Different normalisation forms | `unicodedata.normalize("NFC", s)` on both sides |
+      - type: callout
+        variant: warning
+        title: errors="ignore" hides data loss
+        body: |
+          `decode("utf-8", errors="ignore")` silently drops bytes it cannot decode, so "José" can become "Jos".
+          It makes the error message disappear, not the problem. Find the right encoding instead.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise checks behaviour with *other* text too, so calculate from the data instead of typing
+          the answer.
+      - type: item
+        ref: byte-budget
+      - type: item
+        ref: fix-mojibake
+      - type: item
+        ref: parsons-roundtrip
+      - type: item
+        ref: explain-ascii-compat
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Character** (what you see) → **code point** (Unicode's number, `ord`/`chr`) → **bytes** (what is
+            stored, chosen by an **encoding**).
+          - `str.encode("utf-8")` makes bytes; `bytes.decode("utf-8")` makes text. Decode at the edges, work
+            in `str` inside.
+          - UTF-8 uses 1 byte for ASCII, 2 for é, 3 for ₹, 4 for most emoji, so `len(text)` and
+            `len(text.encode("utf-8"))` differ.
+          - The wrong codec gives a **UnicodeDecodeError** (loud) or **mojibake** (silent). Fix it by using
+            the encoding the bytes were written with.
+          - Always `open(..., encoding="utf-8")`; use `"utf-8-sig"` for files that may start with a BOM.
+          - Visually identical text can differ in code points; normalise with NFC before comparing.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What is the difference between Unicode and UTF-8?" — Unicode assigns code points to characters;
+          UTF-8 is one encoding that stores code points as 1–4 bytes, ASCII-compatible. Be ready to explain
+          why `len()` of text and of its bytes differ, and how you would debug a `UnicodeDecodeError`. See
+          [the interview question](interview:foundations.text-encoding.unicode-vs-utf8).
+
+items:
+  - id: what-is-code-point
+    type: mcq
+    skill: recognition
+    prompt: What is a Unicode code point?
+    explanation: >-
+      A code point is the number Unicode assigns to a character (U+20B9 for ₹). How that number is stored as
+      bytes depends on the encoding.
+    options:
+      - id: a
+        text: The number Unicode assigns to a character, such as U+20B9 for ₹.
+        correct: true
+        feedback: Right. ord("₹") gives 8377, which is 0x20B9.
+      - id: b
+        text: The byte that stores a character on disk.
+        feedback: Bytes come from an encoding. ₹ has one code point but three bytes in UTF-8.
+      - id: c
+        text: The position of a character inside a string.
+        feedback: That is an index. A code point identifies which character it is, wherever it appears.
+      - id: d
+        text: Another name for UTF-8.
+        feedback: UTF-8 is an encoding that turns code points into bytes; Unicode code points exist independently of any encoding.
+
+  - id: predict-len-bytes
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      word = "naïve"
+      print(len(word), len(word.encode("utf-8")))
+    answer: "5 6"
+    explanation: >-
+      "naïve" has 5 code points. In UTF-8, n, a, v and e take one byte each and ï (U+00EF) takes two, so the
+      encoded form has 6 bytes.
+    wrongAnswers:
+      - answer: "5 5"
+        feedback: One character is not always one byte. ï is outside the ASCII range and needs two bytes in UTF-8.
+      - answer: "6 6"
+        feedback: len() of a str counts code points, and ï is a single code point here, so the str length is 5.
+      - answer: "6 5"
+        feedback: The str has 5 characters; it is the bytes that are longer, because ï needs two bytes.
+
+  - id: predict-emoji
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      smile = "😀"
+      print(len(smile), len(smile.encode("utf-8")))
+    answer: "1 4"
+    explanation: >-
+      😀 is one code point (U+1F600), so its str length is 1. Code points above U+FFFF need four bytes in
+      UTF-8.
+    wrongAnswers:
+      - answer: "2 4"
+        feedback: >-
+          That is the JavaScript answer, where strings count UTF-16 code units and 😀 needs two. Python's len()
+          counts code points, so it is 1.
+      - answer: "1 1"
+        feedback: An emoji is far outside the one-byte ASCII range. UTF-8 uses four bytes for U+1F600.
+      - answer: "4 4"
+        feedback: The str holds one code point. Only the encoded bytes number four.
+
+  - id: latin1-silent
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A teammate "fixed" a UnicodeDecodeError by changing `data.decode("utf-8")` to `data.decode("latin-1")`.
+      The error is gone. Why is this risky?
+    explanation: >-
+      Latin-1 maps every byte 0-255 to some character, so decoding can never fail - it just produces wrong
+      text when the bytes were written in another encoding. The real fix is to use the encoding the data was
+      written with.
+    options:
+      - id: a
+        text: Latin-1 decodes any bytes without error, so wrong text (mojibake) is produced silently instead of an error.
+        correct: true
+        feedback: Correct. An error you can see has been replaced by corruption you cannot.
+      - id: b
+        text: Latin-1 is slower than UTF-8.
+        feedback: Speed is not the issue. Correctness is - the characters may simply be wrong.
+      - id: c
+        text: There is no risk; Latin-1 can represent every Unicode character.
+        feedback: Latin-1 covers only 256 characters (U+0000-U+00FF). It cannot represent ₹ or emoji at all.
+      - id: d
+        text: Latin-1 removes accents from the text.
+        feedback: It does not remove anything; it reads each byte as one character, which garbles multi-byte UTF-8 characters into several wrong ones.
+
+  - id: normalise-mcq
+    type: mcq
+    skill: debugging
+    difficulty: 3
+    prompt: |
+      A login form compares the typed username with the stored one. Both display as `renée`, but `typed ==
+      stored` is `False`, and `len(typed)` is 6 while `len(stored)` is 5. What is the best fix?
+    explanation: >-
+      One string uses e + COMBINING ACUTE ACCENT (6 code points), the other the precomposed é (5). Normalising
+      both to the same form, usually NFC, before comparing or storing makes equivalent text equal.
+    options:
+      - id: a
+        text: Normalise both strings with unicodedata.normalize("NFC", ...) before comparing (and store usernames normalised).
+        correct: true
+        feedback: Right. Normalise on the way in and before every comparison.
+      - id: b
+        text: Compare the UTF-8 bytes instead of the strings.
+        feedback: The bytes differ too, because the code points differ. Encoding does not make equivalent forms equal.
+      - id: c
+        text: Remove all non-ASCII characters from usernames.
+        feedback: That destroys legitimate names and can make different users collide.
+      - id: d
+        text: Use .lower() on both.
+        feedback: Case is not the problem here; both strings are already lower case but use different code point sequences.
+
+  - id: byte-budget
+    type: code
+    skill: implementation
+    prompt: |
+      A messaging gateway measures messages in UTF-8 **bytes**. For the given `message`:
+
+      1. create `char_count`, the number of characters (code points),
+      2. create `byte_count`, the number of bytes when encoded as UTF-8,
+      3. print them in the form `10 characters, 16 bytes`.
+
+      Calculate both from `message` — the checks re-run your code with a different message.
+    starterCode: |
+      message = "Café ₹50 😀"
+
+      # Create char_count and byte_count from message, then print them.
+    solution: |
+      message = "Café ₹50 😀"
+
+      char_count = len(message)
+      byte_count = len(message.encode("utf-8"))
+      print(f"{char_count} characters, {byte_count} bytes")
+    expectedOutput: |
+      10 characters, 16 bytes
+    tests:
+      - name: char_count counts code points
+        code: |
+          assert defined("char_count"), "Create a variable named char_count."
+          assert char_count == len(message), f"char_count should be len(message) = {len(message)}, but it is {char_count!r}."
+      - name: byte_count counts UTF-8 bytes
+        code: |
+          assert defined("byte_count"), "Create a variable named byte_count."
+          assert byte_count == len(message.encode("utf-8")), f"byte_count should be the length of message.encode('utf-8'), which is {len(message.encode('utf-8'))}, but it is {byte_count!r}."
+      - name: prints the summary line
+        code: |
+          assert output_lines()[-1:] == ["10 characters, 16 bytes"], f"The last line should be '10 characters, 16 bytes'. Your program printed {output()!r}."
+      - name: works for a different message
+        code: |
+          import ast, io, contextlib
+          tree = ast.parse(source)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "message" for t in node.targets):
+                  node.value = ast.Constant("naïve ☕")
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(ast.fix_missing_locations(tree), "<check>", "exec"), {"__name__": "__main__"})
+          last = buffer.getvalue().strip().splitlines()[-1:]
+          assert last == ["7 characters, 10 bytes"], f"With message = 'naïve ☕' your program printed {last!r}; expected '7 characters, 10 bytes'. Compute both numbers from message with len() and .encode('utf-8')."
+    hints:
+      - "`len(message)` counts characters (code points)."
+      - "`message.encode(\"utf-8\")` gives the bytes; take `len()` of that."
+      - "An f-string such as `f\"{char_count} characters, {byte_count} bytes\"` builds the line."
+    feedback:
+      - when: { outputContains: "10 characters, 10 bytes" }
+        message: You measured the str twice. byte_count must measure the encoded bytes - call .encode("utf-8") first.
+      - when: { errorType: TypeError }
+        message: Check that you take len() of the result of message.encode("utf-8"), and that you are not adding str and bytes together.
+    explanation: >-
+      len(message) counts 10 code points. Encoded as UTF-8, the ASCII characters take 1 byte each, é takes 2,
+      ₹ takes 3 and 😀 takes 4, giving 16 bytes. Computing both from message keeps the numbers right for any
+      text.
+
+  - id: fix-mojibake
+    type: debug
+    skill: debugging
+    prompt: |
+      These bytes arrived from an API that documents its responses as UTF-8. The program prints garbled text
+      instead of `José paid ₹500`. Fix the decoding — do not retype the text.
+    starterCode: |
+      raw = b"Jos\xc3\xa9 paid \xe2\x82\xb9500"
+      text = raw.decode("latin-1")
+      print(text)
+    solution: |
+      raw = b"Jos\xc3\xa9 paid \xe2\x82\xb9500"
+      text = raw.decode("utf-8")
+      print(text)
+    expectedOutput: |
+      José paid ₹500
+    tests:
+      - name: decodes to the right text
+        code: |
+          assert text == "José paid ₹500", f"text should be 'José paid ₹500' but it is {text!r}. Which encoding did the API say it uses?"
+      - name: prints it
+        code: |
+          assert output_lines() == ["José paid ₹500"], f"Print text. Your program printed {output()!r}."
+      - name: decodes the original bytes
+        code: |
+          assert raw == b"Jos\xc3\xa9 paid \xe2\x82\xb9500", "Keep raw exactly as given - the bytes are correct; the decoding is wrong."
+          assert calls("decode") and "José" not in source, "Get the text by decoding raw, not by typing it."
+    hints:
+      - The API says its responses are UTF-8. Which encoding does the program use to decode them?
+      - "Decode with the encoding the bytes were written in: `raw.decode(\"utf-8\")`."
+    feedback:
+      - when: { outputContains: "Ã" }
+        message: You are still decoding UTF-8 bytes with a single-byte encoding (Latin-1 or cp1252). Use utf-8.
+      - when: { errorType: UnicodeDecodeError }
+        message: That codec cannot read these bytes. They are UTF-8, as the API documents.
+    explanation: >-
+      The bytes are valid UTF-8 (c3 a9 is é, e2 82 b9 is ₹). Latin-1 read each byte as its own character,
+      producing mojibake without an error. Decoding with UTF-8, the encoding they were written in, restores
+      the text.
+
+  - id: parsons-roundtrip
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to encode a price to UTF-8, print how many bytes it takes, decode it back and confirm
+      the round trip. One line is a distractor.
+    solution: |
+      price = "₹100"
+      data = price.encode("utf-8")
+      print(len(data))
+      back = data.decode("utf-8")
+      print(back == price)
+    distractors:
+      - back = data.encode("utf-8")
+    expectedOutput: |
+      6
+      True
+    explanation: >-
+      Encode str to bytes (₹ is 3 bytes, plus 3 digits = 6), then decode bytes back to str. bytes objects have
+      no encode method - you decode bytes and encode text.
+
+  - id: explain-ascii-compat
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain why UTF-8 uses a variable number of bytes per character, and why being compatible with ASCII
+      helped it become the standard encoding of the web.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says Unicode has over a million possible code points, too many for one byte.
+      - Says UTF-8 uses 1 byte for ASCII characters and 2-4 bytes for others, keeping common English text small.
+      - Explains that ASCII files are already valid UTF-8 with identical bytes, so old files and tools kept working.
+      - Mentions that bytes 0-127 never appear inside multi-byte sequences, so searching for ASCII characters is safe.
+    modelAnswer: |
+      Unicode has room for more than a million code points, so a fixed one-byte encoding cannot cover it, and
+      a fixed four bytes per character would quadruple the size of English text. UTF-8 compromises: code
+      points 0-127 (ASCII) take one byte, and larger code points take two, three or four bytes. Because the
+      one-byte range is exactly ASCII, every existing ASCII file was already valid UTF-8, and programs that
+      only cared about ASCII characters such as `/`, `,` or newline kept working - those byte values never
+      occur inside the multi-byte sequences of other characters. That painless migration is a big reason the
+      web standardised on it.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-rupee
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      print("₹".encode("utf-8"), len("₹"))
+    answer: |
+      b'\xe2\x82\xb9' 1
+    explanation: >-
+      ₹ is one code point (len 1) encoded in UTF-8 as three bytes, which Python displays as \x escapes because
+      they are not printable ASCII.
+    wrongAnswers:
+      - answer: |
+          b'₹' 1
+        feedback: A bytes display never contains non-ASCII characters; bytes outside printable ASCII are shown as \x plus two hex digits.
+      - answer: |
+          b'\xe2\x82\xb9' 3
+        feedback: The second value is len() of the str "₹", which counts code points - one.
+      - answer: |
+          ₹ 1
+        feedback: .encode() returns bytes, and printing bytes shows the b'...' form, not the character.
+
+  - id: m-bom-mcq
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A CSV exported as "CSV UTF-8" is read with `encoding="utf-8"`. Looking up the `name` column raises
+      `KeyError: 'name'`, although the header looks like `name,city`. Checking `len(header[0])` gives 5 and
+      `hex(ord(header[0][0]))` gives `0xfeff`. What is the best fix?
+    explanation: >-
+      The file starts with a UTF-8 byte order mark (EF BB BF), which decodes to U+FEFF and sticks to the first
+      header. The utf-8-sig codec removes a leading BOM and otherwise behaves like utf-8.
+    options:
+      - id: a
+        text: Open the file with encoding="utf-8-sig".
+        correct: true
+        feedback: Correct. It strips the BOM if present and reads files without one normally.
+      - id: b
+        text: Open the file with encoding="latin-1".
+        feedback: Latin-1 would turn the BOM into three garbage characters (ï»¿) and garble every non-ASCII letter.
+      - id: c
+        text: Delete all non-ASCII characters from the file.
+        feedback: That destroys real data such as names with accents; the problem is one invisible character at the start.
+      - id: d
+        text: Prefix the column name with the invisible U+FEFF character everywhere in your code.
+        feedback: That ties your code to one export tool's quirk and breaks for files without a BOM.
+
+  - id: m-partner-cp1252
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A partner system writes its export files in Windows-1252 (Python codec name `cp1252`). The first part of
+      the program simulates that file. Reading it crashes with a UnicodeDecodeError. Fix the **reading** so the
+      program prints `['Zoë', 'Renée']`. Do not change how the file is written, and do not hide errors with
+      `errors=`.
+    starterCode: |
+      # The partner's file (written in cp1252) - leave this part unchanged.
+      with open("partner.txt", "wb") as f:
+          f.write("Zoë,Renée\n".encode("cp1252"))
+
+      # Read it back.
+      with open("partner.txt", encoding="utf-8") as f:
+          names = f.read().strip().split(",")
+      print(names)
+    solution: |
+      # The partner's file (written in cp1252) - leave this part unchanged.
+      with open("partner.txt", "wb") as f:
+          f.write("Zoë,Renée\n".encode("cp1252"))
+
+      # Read it back.
+      with open("partner.txt", encoding="cp1252") as f:
+          names = f.read().strip().split(",")
+      print(names)
+    expectedOutput: |
+      ['Zoë', 'Renée']
+    tests:
+      - name: names are decoded correctly
+        code: |
+          assert names == ["Zoë", "Renée"], f"names should be ['Zoë', 'Renée'] but is {names!r}. Read the file with the encoding it was written in."
+      - name: the partner file is unchanged
+        code: |
+          with open("partner.txt", "rb") as f:
+              on_disk = f.read()
+          assert on_disk == "Zoë,Renée\n".encode("cp1252"), "Keep writing the file in cp1252 - the partner's format is not yours to change."
+      - name: no error hiding
+        code: |
+          assert "errors=" not in source, "Don't use errors=...; choose the correct encoding instead."
+    hints:
+      - The error mentions byte 0xeb. In which encoding is ë the single byte 0xEB?
+      - "Change only the reading line: `open(\"partner.txt\", encoding=\"cp1252\")`."
+    feedback:
+      - when: { errorType: UnicodeDecodeError }
+        message: The file is still being decoded as UTF-8 (or another wrong codec). The partner writes cp1252.
+      - when: { outputContains: "Ã" }
+        message: That is mojibake - the bytes were decoded with the wrong single-byte codec. Use cp1252 for reading.
+    explanation: >-
+      The file's bytes are cp1252, where ë is the single byte 0xEB - invalid as UTF-8. Reading with
+      encoding="cp1252" decodes them correctly. In a real pipeline you would then write your own outputs as
+      UTF-8.
+
+  - id: m-utf8-report
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Write a program that, for the string `word`, prints one line per character with the character and its
+      UTF-8 byte count, followed by a final `total` line. For `word = "₹5é"` the output is:
+
+      ```text
+      ₹ 3
+      5 1
+      é 2
+      total 6
+      ```
+
+      Use a loop; the checks also run your program with a different `word`.
+    starterCode: |
+      word = "₹5é"
+
+    solution: |
+      word = "₹5é"
+
+      total = 0
+      for ch in word:
+          size = len(ch.encode("utf-8"))
+          print(ch, size)
+          total += size
+      print("total", total)
+    expectedOutput: |
+      ₹ 3
+      5 1
+      é 2
+      total 6
+    tests:
+      - name: report for ₹5é
+        code: |
+          expected = ["₹ 3", "5 1", "é 2", "total 6"]
+          assert output_lines() == expected, f"Expected {expected}, but your program printed {output_lines()!r}."
+      - name: uses a loop and encode
+        code: |
+          assert uses("For", "While"), "Loop over the characters of word."
+          assert calls("encode"), "Measure each character with ch.encode('utf-8')."
+      - name: works for another word
+        code: |
+          import ast, io, contextlib
+          tree = ast.parse(source)
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "word" for t in node.targets):
+                  node.value = ast.Constant("aü😀")
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(ast.fix_missing_locations(tree), "<check>", "exec"), {"__name__": "__main__"})
+          lines = [line.rstrip() for line in buffer.getvalue().strip().splitlines()]
+          expected = ["a 1", "ü 2", "😀 4", "total 7"]
+          assert lines == expected, f"With word = 'aü😀' expected {expected} but got {lines!r}. Compute sizes from each character instead of typing them."
+    hints:
+      - "`for ch in word:` gives one character at a time."
+      - "`len(ch.encode(\"utf-8\"))` is that character's byte count. Keep a running total that starts at 0."
+    feedback:
+      - when: { outputContains: "total 3" }
+        message: Your total counts characters, not bytes. Add each character's encoded length.
+    explanation: >-
+      Each character is encoded separately and measured. Summing the sizes gives the same number as
+      len(word.encode("utf-8")), because UTF-8 encodes characters independently.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-rupee, m-bom-mcq, m-partner-cp1252, m-utf8-report]
+
+cheatsheet: |
+  ```python
+  ord("₹"), chr(8377)              # 8377, '₹'   (code point <-> character)
+  data = text.encode("utf-8")      # str -> bytes
+  text = data.decode("utf-8")      # bytes -> str
+  len(text), len(text.encode("utf-8"))   # code points vs bytes
+  open(path, encoding="utf-8")     # ALWAYS name the encoding
+  open(path, encoding="utf-8-sig") # strip a BOM (spreadsheet CSVs)
+  unicodedata.normalize("NFC", s)  # compare/store equivalent text equally
+  ```
+  - UTF-8 sizes: ASCII 1 · é 2 · ₹ 3 · emoji 4
+  - UnicodeDecodeError → wrong codec (often cp1252/Latin-1 data read as UTF-8)
+  - Ã© / â‚¹ (mojibake) → UTF-8 bytes decoded as Latin-1/cp1252

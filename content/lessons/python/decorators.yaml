@@ -1,0 +1,1748 @@
+id: python.decorators
+concept: python.decorators
+title: Decorators
+subtitle: Wrapping functions to add behaviour without editing them
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  A decorator is a function that takes a function and returns a replacement for it. Learn what the @
+  syntax really does, write general-purpose wrappers with *args and **kwargs, keep metadata with
+  functools.wraps, build decorators that take arguments, stack them in the right order, and use the
+  standard library's caching decorators.
+objectives:
+  - Explain that `@deco` above `def f` means `f = deco(f)`, applied once when the function is defined.
+  - Write a decorator whose wrapper accepts any arguments, calls the original function and returns its result.
+  - Use functools.wraps to preserve a decorated function's name, docstring and signature.
+  - Build a decorator that takes arguments (factory → decorator → wrapper) and predict the order of stacked decorators.
+  - Apply practical decorators — call counting, logging, timing with an injectable clock, and caching with functools.lru_cache / functools.cache — and recognise when caching is unsafe.
+sources:
+  - title: "Glossary: decorator"
+    url: https://docs.python.org/3/glossary.html#term-decorator
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Function definitions"
+    url: https://docs.python.org/3/reference/compound_stmts.html#function-definitions
+    publisher: Python Software Foundation
+  - title: "functools.wraps"
+    url: https://docs.python.org/3/library/functools.html#functools.wraps
+    publisher: Python Software Foundation
+  - title: "functools.lru_cache"
+    url: https://docs.python.org/3/library/functools.html#functools.lru_cache
+    publisher: Python Software Foundation
+  - title: "PEP 318: Decorators for Functions and Methods"
+    url: https://peps.python.org/pep-0318/
+    publisher: Python Software Foundation
+  - title: "PEP 614: Relaxing Grammar Restrictions On Decorators"
+    url: https://peps.python.org/pep-0614/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why decorators exist
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Suppose you want to see every call to a few functions while debugging: what arguments came in and
+          what came out. The direct approach is to edit every function:
+      - type: code
+        runnable: true
+        code: |
+          def add(a, b):
+              print("calling add with", (a, b))
+              result = a + b
+              print("add returned", result)
+              return result
+
+          def multiply(a, b):
+              print("calling multiply with", (a, b))
+              result = a * b
+              print("multiply returned", result)
+              return result
+
+          add(2, 3)
+          multiply(4, 5)
+        expectedOutput: |
+          calling add with (2, 3)
+          add returned 5
+          calling multiply with (4, 5)
+          multiply returned 20
+        caption: The logging lines are copied into every function and buried among the real work.
+      - type: markdown
+        body: |
+          The same four lines are pasted everywhere. To change the log format you edit every function, and
+          to turn logging off you delete the lines again. The logging has nothing to do with *adding* or
+          *multiplying*, yet it is tangled into them.
+
+          A [decorator](glossary:decorator) writes that extra behaviour **once** and applies it with one line:
+      - type: code
+        runnable: true
+        code: |
+          def log_calls(func):
+              def wrapper(*args):
+                  print("calling", func.__name__, "with", args)
+                  result = func(*args)
+                  print(func.__name__, "returned", result)
+                  return result
+              return wrapper
+
+          @log_calls
+          def add(a, b):
+              return a + b
+
+          @log_calls
+          def multiply(a, b):
+              return a * b
+
+          add(2, 3)
+          multiply(4, 5)
+        expectedOutput: |
+          calling add with (2, 3)
+          add returned 5
+          calling multiply with (4, 5)
+          multiply returned 20
+        annotations:
+          - line: 1
+            text: log_calls receives a function and builds a new one around it.
+          - line: 9
+            text: "`@log_calls` replaces add with the logging version. add's own body stays clean."
+      - type: markdown
+        body: |
+          Same output, but each function contains only its real job. Decorators are everywhere in
+          professional Python: web frameworks register URL handlers with them, test tools mark tests with
+          them, and the standard library uses them for caching (`@functools.cache`) and for
+          [dataclasses](concept:python.dataclasses) (`@dataclass`). Let's build them from first principles.
+
+  - id: functions-as-values
+    title: "Building block: functions that take and return functions"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two facts from earlier lessons are all you need:
+
+          1. **Functions are objects.** You can give them extra names, pass them as arguments and return
+             them ([higher-order functions](concept:python.higher-order-functions)).
+          2. **Inner functions remember their enclosing variables** ([closures](concept:python.closures)).
+      - type: code
+        runnable: true
+        code: |
+          def shout(text):
+              return text.upper() + "!"
+
+          def apply_twice(func, value):
+              return func(func(value))
+
+          speak = shout                # a second name for the same function object
+          print(speak("hello"))
+          print(apply_twice(shout, "hey"))
+        expectedOutput: |
+          HELLO!
+          HEY!!
+      - type: markdown
+        body: |
+          Now combine them: a function that **takes a function and returns a new function** which calls
+          the original and adds something:
+      - type: code
+        runnable: true
+        code: |
+          def exclaim(func):
+              def wrapper(name):
+                  return func(name) + "!!!"
+              return wrapper
+
+          def greet(name):
+              return "Hello, " + name
+
+          excited_greet = exclaim(greet)
+          print(greet("Ada"))
+          print(excited_greet("Ada"))
+        expectedOutput: |
+          Hello, Ada
+          Hello, Ada!!!
+        annotations:
+          - line: 2
+            text: wrapper is a closure — it remembers func from the exclaim call that created it.
+          - line: 9
+            text: exclaim returns wrapper. The original greet is untouched.
+      - type: markdown
+        body: |
+          `exclaim` **is a decorator**: a callable that takes a function and returns a replacement. The
+          inner function it returns is called the [wrapper](glossary:wrapper-function), because it wraps
+          extra behaviour around the original.
+
+  - id: at-syntax
+    title: "The @ syntax: f = deco(f)"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Usually you want the decorated version to **replace** the original under the same name. Python's
+          `@` syntax does exactly that. These two programs are equivalent:
+
+          ```python
+          # With @
+          @exclaim
+          def greet(name):
+              return "Hello, " + name
+          ```
+
+          ```python
+          # Without @ — the same thing, written out
+          def greet(name):
+              return "Hello, " + name
+          greet = exclaim(greet)
+          ```
+
+          Precisely: Python evaluates the decorator expression (`exclaim`), creates the function object,
+          calls the decorator **with that function as its only argument**, and binds the name `greet` to
+          **whatever the decorator returned**.
+      - type: code
+        runnable: true
+        code: |
+          def exclaim(func):
+              def wrapper(name):
+                  return func(name) + "!!!"
+              return wrapper
+
+          @exclaim
+          def greet(name):
+              return "Hello, " + name
+
+          print(greet("Ada"))
+        expectedOutput: |
+          Hello, Ada!!!
+      - type: markdown
+        body: |
+          A crucial consequence: **decorating happens once, when the `def` statement runs** — usually when
+          the module is first imported — not each time the function is called. The wrapper is what runs on
+          every call. Test yourself:
+      - type: item
+        ref: predict-definition-time
+      - type: callout
+        variant: misconception
+        title: '"The decorator runs every time I call the function"'
+        body: |
+          The decorator function runs **once**, at definition time, and returns the wrapper. Only the code
+          *inside the wrapper* runs on each call. Code placed directly in the decorator body (outside the
+          wrapper) is setup that happens a single time.
+
+  - id: general-wrapper
+    title: "A wrapper that works for any function"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `exclaim`'s wrapper accepts exactly one argument, so it only works for one-argument functions. A
+          general decorator must accept **any** arguments and pass them through unchanged. That is what
+          `*args` and `**kwargs` are for (see [parameters](concept:python.parameters)): collect every
+          positional argument into a tuple and every keyword argument into a dict, then unpack them again
+          when calling the original.
+
+          Every well-behaved decorator follows this template:
+
+          ```python
+          def decorator(func):
+              def wrapper(*args, **kwargs):
+                  # 1. code that runs BEFORE the original
+                  result = func(*args, **kwargs)   # 2. call the original with the same arguments
+                  # 3. code that runs AFTER the original
+                  return result                    # 4. hand back the original's result
+              return wrapper                       # 5. return the wrapper, not wrapper()
+          ```
+      - type: code
+        runnable: true
+        code: |
+          def log_calls(func):
+              def wrapper(*args, **kwargs):
+                  print(f"calling {func.__name__} args={args} kwargs={kwargs}")
+                  result = func(*args, **kwargs)
+                  print(f"{func.__name__} returned {result!r}")
+                  return result
+              return wrapper
+
+          @log_calls
+          def make_tag(text, tag="p"):
+              return f"<{tag}>{text}</{tag}>"
+
+          @log_calls
+          def zero():
+              return 0
+
+          html = make_tag("hi", tag="b")
+          print(html)
+          zero()
+        expectedOutput: |
+          calling make_tag args=('hi',) kwargs={'tag': 'b'}
+          make_tag returned '<b>hi</b>'
+          <b>hi</b>
+          calling zero args=() kwargs={}
+          zero returned 0
+        annotations:
+          - line: 2
+            text: "*args and **kwargs let one wrapper fit functions with any parameters."
+          - line: 4
+            text: Unpacking passes the arguments through exactly as the caller gave them.
+          - line: 6
+            text: Without this line every decorated function would return None.
+      - type: markdown
+        body: |
+          Step through a decorated call. Notice the **two frames**: the caller calls `wrapper` (because the
+          name `add` now refers to the wrapper), and `wrapper` calls the original function, which it finds
+          through its closure variable `func`.
+      - type: visualization
+        component: python-tracer
+        title: Calling a decorated function
+        caption: >-
+          The decoration happens once (lines 9-11). The call on line 13 enters wrapper first; wrapper then
+          calls the original add through func and returns its result.
+        props:
+          code: |
+            def log_calls(func):
+                def wrapper(*args, **kwargs):
+                    print("calling", func.__name__)
+                    result = func(*args, **kwargs)
+                    return result
+                return wrapper
+
+            @log_calls
+            def add(a, b):
+                return a + b
+
+            total = add(2, 3)
+            print(total)
+      - type: item
+        ref: mcq-missing-return
+
+  - id: wraps
+    title: Keeping the original's identity with functools.wraps
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The decorated name now refers to the wrapper — and the wrapper has its *own* name and docstring.
+          Anything that inspects the function (logging that prints `func.__name__`, `help()`, documentation
+          tools, frameworks that register functions by name) sees the wrong information:
+      - type: code
+        runnable: true
+        code: |
+          def log_calls(func):
+              def wrapper(*args, **kwargs):
+                  return func(*args, **kwargs)
+              return wrapper
+
+          @log_calls
+          def add(a, b):
+              """Return the sum of a and b."""
+              return a + b
+
+          print(add.__name__)
+          print(add.__doc__)
+        expectedOutput: |
+          wrapper
+          None
+        caption: The function's identity has been lost.
+      - type: markdown
+        body: |
+          [`functools.wraps`](glossary:functools-wraps) fixes this. It is itself a decorator, applied to the
+          wrapper, that copies the original's `__name__`, `__qualname__`, `__doc__`, `__module__` and
+          annotation information onto the wrapper, and stores the original in `wrapper.__wrapped__`:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def log_calls(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  return func(*args, **kwargs)
+              return wrapper
+
+          @log_calls
+          def add(a, b):
+              """Return the sum of a and b."""
+              return a + b
+
+          print(add.__name__)
+          print(add.__doc__)
+          print(add.__wrapped__(2, 3))
+        expectedOutput: |
+          add
+          Return the sum of a and b.
+          5
+        annotations:
+          - line: 4
+            text: "`functools.wraps(func)` returns a decorator, which is applied to wrapper."
+          - line: 16
+            text: __wrapped__ is the undecorated original — handy in tests.
+      - type: callout
+        variant: production
+        title: Always use functools.wraps
+        body: |
+          There is no downside, and forgetting it causes confusing logs and broken introspection. Treat
+          `@functools.wraps(func)` as part of the decorator template. (Notice that `wraps(func)` takes an
+          argument — it is a *decorator with arguments*, the next topic.)
+
+  - id: decorator-arguments
+    title: Decorators that take arguments
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Sometimes the decorator itself needs configuration: *repeat this 3 times*, *retry up to 5 times*,
+          *only allow admins*. You write `@repeat(3)`. Apply the rule carefully: the expression after `@` is
+          `repeat(3)`, so Python **first calls `repeat(3)`**, and whatever that returns is the actual
+          decorator:
+
+          ```python
+          @repeat(3)
+          def cheer(name): ...
+          # means:  cheer = repeat(3)(cheer)
+          ```
+
+          So `repeat` is a [decorator factory](glossary:decorator-factory): a function that returns a
+          decorator. That gives **three levels**:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def repeat(times):
+              def decorator(func):
+                  @functools.wraps(func)
+                  def wrapper(*args, **kwargs):
+                      result = None
+                      for _ in range(times):
+                          result = func(*args, **kwargs)
+                      return result
+                  return wrapper
+              return decorator
+
+          @repeat(3)
+          def cheer(name):
+              print("Go,", name + "!")
+
+          cheer("Ada")
+        expectedOutput: |
+          Go, Ada!
+          Go, Ada!
+          Go, Ada!
+        annotations:
+          - line: 3
+            text: "Level 1, the factory: receives the configuration and returns the decorator."
+          - line: 4
+            text: "Level 2, the decorator: receives the function and returns the wrapper."
+          - line: 6
+            text: "Level 3, the wrapper: runs on every call. It can see both times and func through closures."
+      - type: markdown
+        body: |
+          | Level | Runs when | Receives | Returns |
+          |---|---|---|---|
+          | `repeat(times)` | once, when the `@repeat(3)` line is evaluated | the configuration (`3`) | `decorator` |
+          | `decorator(func)` | once, right after the `def` | the function | `wrapper` |
+          | `wrapper(*args, **kwargs)` | on **every** call | the call's arguments | the result |
+      - type: visualization
+        component: python-tracer
+        title: Three levels in action
+        caption: >-
+          Watch repeat(2) run and return decorator, decorator(beep) run and return wrapper, and then the
+          single call beep() run the original twice. The wrapper frame can see both times and func.
+        props:
+          code: |
+            def repeat(times):
+                def decorator(func):
+                    def wrapper(*args, **kwargs):
+                        for _ in range(times):
+                            func(*args, **kwargs)
+                    return wrapper
+                return decorator
+
+            @repeat(2)
+            def beep():
+                print("beep")
+
+            beep()
+      - type: callout
+        variant: warning
+        title: Forgetting the parentheses
+        body: |
+          `@repeat` (without `(3)`) calls `repeat(cheer)` — so `times` becomes the function and the name
+          `cheer` ends up referring to `decorator`. The mistake only shows up when you call it:
+          `TypeError: repeat.<locals>.decorator() missing 1 required positional argument: 'func'`. A
+          factory must always be called: `@repeat(3)`.
+      - type: code
+        runnable: true
+        code: |
+          def repeat(times):
+              def decorator(func):
+                  def wrapper(*args, **kwargs):
+                      for _ in range(times):
+                          func(*args, **kwargs)
+                  return wrapper
+              return decorator
+
+          @repeat
+          def cheer():
+              print("Go!")
+
+          cheer()
+        expectError: TypeError
+        caption: Run it to see the error, then change line 9 to @repeat(2).
+
+  - id: stacking
+    title: Stacking decorators
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You can apply several decorators to one function. They are applied **bottom-up** — the one
+          nearest the `def` first:
+
+          ```python
+          @bold
+          @italic
+          def label(text): ...
+          # means:  label = bold(italic(label))
+          ```
+
+          The result is like nested boxes: `italic`'s wrapper is inside `bold`'s wrapper. So at **call
+          time** the **top** decorator's wrapper runs first, and the bottom one is closest to the original.
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def bold(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  return "<b>" + func(*args, **kwargs) + "</b>"
+              return wrapper
+
+          def italic(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  return "<i>" + func(*args, **kwargs) + "</i>"
+              return wrapper
+
+          @bold
+          @italic
+          def label(text):
+              return text
+
+          print(label("sale"))
+        expectedOutput: |
+          <b><i>sale</i></b>
+      - type: item
+        ref: predict-stacking
+      - type: markdown
+        body: |
+          **Order changes behaviour.** Put a logging decorator *above* a cache and you log every call; put
+          it *below* the cache and you only log the calls the cache could not answer:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def log_calls(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  print("  computing", func.__name__, args)
+                  return func(*args, **kwargs)
+              return wrapper
+
+          @log_calls
+          @functools.cache
+          def square_a(n):
+              return n * n
+
+          @functools.cache
+          @log_calls
+          def square_b(n):
+              return n * n
+
+          print("log outside the cache:")
+          square_a(4)
+          square_a(4)
+          print("log inside the cache:")
+          square_b(4)
+          square_b(4)
+        expectedOutput: |
+          log outside the cache:
+            computing square_a (4,)
+            computing square_a (4,)
+          log inside the cache:
+            computing square_b (4,)
+        annotations:
+          - line: 10
+            text: The logging wrapper is outermost, so it runs on every call — even when the cache answers.
+          - line: 15
+            text: The cache is outermost; on the second call it returns the stored result without reaching log_calls.
+
+  - id: practical
+    title: Practical decorators
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          **Counting calls.** A wrapper is a function object, so you can attach attributes to it. Here the
+          count lives on the wrapper, where callers can read it:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def count_calls(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  wrapper.calls += 1
+                  return func(*args, **kwargs)
+              wrapper.calls = 0
+              return wrapper
+
+          @count_calls
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+          print(fib(15), fib.calls)
+        expectedOutput: |
+          610 1973
+        annotations:
+          - line: 8
+            text: Set once, at decoration time. The wrapper increments it on every call.
+          - line: 13
+            text: The recursive calls look up the global name fib, which is now the wrapper — so they are counted too.
+      - type: markdown
+        body: |
+          Nearly 2,000 calls to compute one number: the naive recursion recomputes the same values again
+          and again. **Caching results** ([memoization](glossary:memoization)) fixes that. A simple version
+          is a dict in the decorator's closure:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          def count_calls(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  wrapper.calls += 1
+                  return func(*args, **kwargs)
+              wrapper.calls = 0
+              return wrapper
+
+          def memoize(func):
+              cache = {}
+              @functools.wraps(func)
+              def wrapper(*args):
+                  if args not in cache:
+                      cache[args] = func(*args)
+                  return cache[args]
+              return wrapper
+
+          @count_calls
+          @memoize
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+          print(fib(15), fib.calls)
+        expectedOutput: |
+          610 29
+        annotations:
+          - line: 12
+            text: One cache dict per decorated function, created once at decoration time and kept by the closure.
+          - line: 15
+            text: The args tuple is the key, so it works for any number of (hashable) positional arguments.
+      - type: markdown
+        body: |
+          **Use the standard library's cache.** `functools.lru_cache` is a fast, tested version of the same
+          idea (implemented in C in CPython). `@functools.lru_cache(maxsize=128)` keeps the 128 most
+          recently used results (128 is the default); `maxsize=None` keeps everything.
+          `@functools.cache` (Python 3.9+) is shorthand for `lru_cache(maxsize=None)`. Both add
+          `cache_info()` and `cache_clear()`:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          @functools.cache
+          def fib(n):
+              return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+          print(fib(80))
+          print(fib.cache_info())
+
+          @functools.lru_cache(maxsize=2)
+          def square(n):
+              return n * n
+
+          for n in [1, 2, 1, 3, 2]:
+              square(n)
+          print(square.cache_info())
+        expectedOutput: |
+          23416728348467685
+          CacheInfo(hits=78, misses=81, maxsize=None, currsize=81)
+          CacheInfo(hits=1, misses=4, maxsize=2, currsize=2)
+        annotations:
+          - line: 7
+            text: Instant — each fib(n) is computed once. Without the cache this would take longer than you would wait.
+          - line: 15
+            text: With room for only 2 results, 3 evicts 2 (least recently used), so the final square(2) misses again.
+      - type: callout
+        variant: warning
+        title: When caching is wrong
+        body: |
+          A cache returns the **stored** result without running the function. That is only correct when:
+
+          - the function is **pure** — same arguments always give the same result, with no side effects.
+            Do not cache something that reads the clock, a file or the network, or that writes logs or
+            sends emails;
+          - the arguments are **hashable** — they become dictionary keys. Passing a list raises
+            `TypeError: unhashable type: 'list'` (pass a tuple instead);
+          - callers do not **mutate** the returned object — every caller gets the *same* cached object;
+          - memory is acceptable — an unbounded cache (`cache`, `maxsize=None`) grows forever.
+      - type: markdown
+        body: |
+          **Timing — and making it testable.** A timing decorator reads a clock before and after the call.
+          Real timings change on every run, so a good timing decorator lets you **inject the clock** — in
+          production you use `time.perf_counter` (the clock meant for measuring short durations), and in a
+          test you pass a fake clock with predictable readings:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+          import time
+
+          def timed(clock=time.perf_counter):
+              def decorator(func):
+                  @functools.wraps(func)
+                  def wrapper(*args, **kwargs):
+                      start = clock()
+                      result = func(*args, **kwargs)
+                      elapsed = clock() - start
+                      print(f"{func.__name__} took {elapsed:.2f}s")
+                      return result
+                  return wrapper
+              return decorator
+
+          readings = iter([100.0, 102.5])     # a fake clock with two readings
+
+          def fake_clock():
+              return next(readings)
+
+          @timed(clock=fake_clock)
+          def build_report():
+              return "report ready"
+
+          print(build_report())
+        expectedOutput: |
+          build_report took 2.50s
+          report ready
+        annotations:
+          - line: 4
+            text: "A decorator factory whose argument has a sensible default: @timed() uses the real clock."
+          - line: 16
+            text: The first reading is the start, the second the end, so the reported time is exactly 2.5 s.
+      - type: code
+        status: illustrative
+        code: |
+          @timed()
+          def build_report():
+              return "report ready"
+
+          print(build_report())
+          # build_report took 0.00s   <- the real duration differs on every run
+        caption: >-
+          With the real clock the printed duration changes from run to run, so this block is not executed
+          by the content tests. Injecting the clock (above) is what makes the decorator verifiable.
+      - type: markdown
+        body: |
+          **Registering functions.** A decorator does not have to wrap anything. It can record the function
+          somewhere and return it **unchanged**. This is the idea behind many framework decorators: web
+          frameworks map URLs to handler functions, and command-line tools map command names to functions.
+      - type: code
+        runnable: true
+        code: |
+          COMMANDS = {}
+
+          def command(func):
+              COMMANDS[func.__name__] = func
+              return func              # no wrapper: the original is returned as-is
+
+          @command
+          def hello():
+              return "hello!"
+
+          @command
+          def bye():
+              return "goodbye!"
+
+          print(sorted(COMMANDS))
+          print(COMMANDS["bye"]())
+        expectedOutput: |
+          ['bye', 'hello']
+          goodbye!
+      - type: item
+        ref: mcq-cache-design
+
+  - id: under-the-hood
+    title: "Under the hood: what Python actually does"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The exact semantics.** The Language Reference (*Function definitions*) guarantees that decorator
+          expressions are evaluated when the function is defined, in the scope containing the definition;
+          that each result must be a callable called with the function object as its only argument; that
+          multiple decorators are applied in nested fashion (bottom one innermost); and that the final result
+          is bound to the function's name. It notes one difference from writing `f = deco(f)` by hand: the
+          original function is never temporarily bound to the name. In CPython the order is: evaluate the
+          decorator expressions **top to bottom**, evaluate default argument values, create the function
+          object, then apply the decorators **bottom to top**.
+
+          **Any expression can be a decorator** (since Python 3.9, PEP 614), e.g.
+          `@handlers["click"]` or `@app.route("/")` — anything that evaluates to a callable.
+
+          **Classes and methods.** Decorators can be applied to classes (`@dataclass` receives the class
+          and returns it with generated methods). Decorating a method works with the usual template: the
+          instance arrives as the first element of `args`. `@property`, `@staticmethod` and `@classmethod`
+          are built-in decorators that you will meet with the [data model](concept:python.data-model).
+
+          **What `functools.wraps` copies.** It calls `functools.update_wrapper`, which copies the attributes
+          listed in `functools.WRAPPER_ASSIGNMENTS`, merges the original's `__dict__` into the wrapper's,
+          and sets `__wrapped__`. `inspect.signature` follows `__wrapped__`, so tools see the original
+          parameters:
+      - type: code
+        runnable: true
+        code: |
+          import functools
+          import inspect
+
+          def plain(func):
+              def wrapper(*args, **kwargs):
+                  return func(*args, **kwargs)
+              return wrapper
+
+          def tidy(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  return func(*args, **kwargs)
+              return wrapper
+
+          def area(width, height=1.0):
+              return width * height
+
+          print(inspect.signature(plain(area)))
+          print(inspect.signature(tidy(area)))
+          print(functools.WRAPPER_ASSIGNMENTS)
+        expectedOutput: |
+          (*args, **kwargs)
+          (width, height=1.0)
+          ('__module__', '__name__', '__qualname__', '__doc__', '__annotate__', '__type_params__')
+        caption: >-
+          The last line is Python 3.14, which copies __annotate__ (the function behind lazily evaluated
+          annotations). Python 3.12 and 3.13 listed __annotations__ there instead.
+      - type: markdown
+        body: |
+          **What wraps does not change.** The wrapper's *code* is still the wrapper's: tracebacks and
+          debuggers show a frame named `wrapper` between the caller and the original. That is normal.
+
+          **lru_cache details.** The cache key is built from the positional and keyword arguments, so
+          `f(a=1, b=2)` and `f(b=2, a=1)` may be stored as separate entries. With the default
+          `typed=False`, `f(3)` and `f(3.0)` are usually treated as the same call (they are equal and hash
+          the same); `typed=True` keeps them apart. Using `lru_cache` on a method puts `self` into the cache
+          key, which keeps those instances alive for as long as their entries stay cached — with
+          `maxsize=None`, forever. This is a common memory leak in long-running services.
+
+          **Cost.** Every wrapper adds a function call (and argument packing/unpacking) to each call of the
+          decorated function. That is negligible for almost everything, but it is why you should not wrap a
+          tiny function that runs millions of times in a hot loop without measuring first
+          ([profiling](concept:python.profiling)).
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: 'NoneType' object is not callable` when calling the decorated function | The decorator forgot `return wrapper`, so the name now refers to `None`. | End the decorator with `return wrapper`. |
+          | The decorated function always returns `None` | The wrapper calls `func(...)` but does not return its result. | `return func(*args, **kwargs)` (or store it in `result` and return that). |
+          | `TypeError: ...wrapper() takes 0 positional arguments but 2 were given` | The wrapper was defined without parameters. | `def wrapper(*args, **kwargs):` and pass them through. |
+          | The function runs once at start-up and the name refers to its result | The decorator returned `wrapper()` or `func()` instead of the function object. | Return `wrapper` without parentheses. |
+          | `TypeError: ...decorator() missing 1 required positional argument: 'func'` | A decorator factory was used without parentheses: `@repeat`. | Call the factory: `@repeat(3)`. |
+          | `NameError: name 'func' is not defined` inside a factory | The factory skipped the middle level, so no parameter named `func` exists. | Use three levels: factory → decorator(func) → wrapper. |
+          | Logs or `help()` show `wrapper` instead of the real name | `functools.wraps` is missing. | Add `@functools.wraps(func)` above the wrapper. |
+          | `TypeError: unhashable type: 'list'` from a cached function | `lru_cache`/`cache` arguments must be hashable. | Pass a tuple, or do not cache this function. |
+      - type: code
+        runnable: true
+        code: |
+          def log_calls(func):
+              def wrapper(*args, **kwargs):
+                  print("calling", func.__name__)
+                  return func(*args, **kwargs)
+
+          @log_calls
+          def add(a, b):
+              return a + b
+
+          print(add(2, 3))
+        expectError: TypeError
+        caption: "log_calls returns None, so add is None. The error appears at the call: 'NoneType' object is not callable."
+      - type: code
+        runnable: true
+        code: |
+          def log_calls(func):
+              def wrapper():
+                  print("calling", func.__name__)
+                  return func()
+              return wrapper
+
+          @log_calls
+          def add(a, b):
+              return a + b
+
+          print(add(2, 3))
+        expectError: TypeError
+        caption: The wrapper takes no arguments, but the caller passes two. Fix it with *args and **kwargs.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks apply *your* decorator to new functions with different arguments, so write it for any
+          function — not just the example in the starter code.
+      - type: item
+        ref: announce
+      - type: item
+        ref: debug-count-calls
+      - type: item
+        ref: retry
+      - type: item
+        ref: parsons-tag
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **decorator** is a callable that takes a function and returns a replacement.
+            `@deco` above `def f` means `f = deco(f)`, done **once**, when the `def` runs.
+          - Template: `def deco(func):` → `@functools.wraps(func)` → `def wrapper(*args, **kwargs):` →
+            before / `result = func(*args, **kwargs)` / after / `return result` → `return wrapper`.
+          - **Decorator with arguments** = factory → decorator → wrapper. `@repeat(3)` means
+            `f = repeat(3)(f)`.
+          - **Stacking**: applied bottom-up; at call time the top wrapper runs first. Order matters.
+          - `functools.cache` / `functools.lru_cache` memoize **pure** functions with **hashable**
+            arguments.
+          - Make side-effecting decorators testable by injecting dependencies such as the clock.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Write a decorator that times a function" is a classic. Use `*args, **kwargs`, return the
+          result, add `functools.wraps`, use `time.perf_counter`, and mention you would make the clock
+          injectable (or log rather than print) for testing. Expect follow-ups: a decorator that takes
+          arguments, what `@a @b` means, and when `lru_cache` is unsafe.
+
+items:
+  - id: predict-definition-time
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output (five lines).
+    code: |
+      def register(func):
+          print("registering", func.__name__)
+          return func
+
+      print("start")
+
+      @register
+      def backup():
+          print("backing up")
+
+      print("middle")
+      backup()
+      backup()
+    answer: |
+      start
+      registering backup
+      middle
+      backing up
+      backing up
+    explanation: >-
+      The decorator runs once, when the def statement executes — between "start" and "middle". It returns
+      the original function, so each call just prints "backing up".
+    wrongAnswers:
+      - answer: |
+          start
+          middle
+          registering backup
+          backing up
+          backing up
+        feedback: >-
+          The decorator does not wait for the first call. `@register` runs as soon as Python executes the
+          def statement, which comes before print("middle").
+      - answer: |
+          start
+          middle
+          registering backup
+          backing up
+          registering backup
+          backing up
+        feedback: >-
+          The decorator is not re-run on each call. It runs once at definition time; here it returns the
+          original function, so calls only run backup's body.
+
+  - id: mcq-missing-return
+    type: mcq
+    skill: debugging
+    prompt: |
+      With this decorator, `print(add(2, 3))` prints `calling add` and then `None`. Why?
+
+      ```python
+      def log_calls(func):
+          def wrapper(*args, **kwargs):
+              print("calling", func.__name__)
+              func(*args, **kwargs)
+          return wrapper
+
+      @log_calls
+      def add(a, b):
+          return a + b
+      ```
+    explanation: >-
+      The name add refers to wrapper, and wrapper is what the caller gets a value from. It calls the
+      original but throws its result away, and a function that reaches its end without return returns
+      None. `return func(*args, **kwargs)` fixes it.
+    options:
+      - id: a
+        text: wrapper calls the original but does not return its result, so wrapper returns None.
+        correct: true
+        feedback: Right. Every wrapper must hand back the original's result.
+      - id: b
+        text: log_calls forgot to return wrapper.
+        feedback: >-
+          It does return wrapper — otherwise add would be None and calling it would raise TypeError
+          before anything was printed.
+      - id: c
+        text: "*args and **kwargs lose the arguments, so add receives nothing."
+        feedback: They pass the arguments through unchanged; add computes 5 correctly. The 5 is just never returned.
+      - id: d
+        text: Decorated functions always return None unless you use functools.wraps.
+        feedback: wraps only copies metadata like the name and docstring. It does not affect return values.
+
+  - id: predict-stacking
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      def double(func):
+          def wrapper(x):
+              return func(x) * 2
+          return wrapper
+
+      def add_one(func):
+          def wrapper(x):
+              return func(x) + 1
+          return wrapper
+
+      @double
+      @add_one
+      def identity(x):
+          return x
+
+      print(identity(5))
+    answer: "12"
+    explanation: >-
+      identity = double(add_one(identity)). The outer (double) wrapper calls the add_one wrapper, which
+      returns 5 + 1 = 6; double's wrapper then returns 6 * 2 = 12.
+    wrongAnswers:
+      - answer: "11"
+        feedback: >-
+          That is (5 * 2) + 1 — the decorators applied in the opposite order. The decorator nearest the def
+          (add_one) is applied first, so it sits inside; double's wrapper doubles its result.
+      - answer: "10"
+        feedback: Both decorators apply. identity is wrapped by add_one, and that result is wrapped by double.
+
+  - id: mcq-cache-design
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: Which of these functions is a safe and useful candidate for `@functools.cache`?
+    explanation: >-
+      Caching is only correct for pure functions with hashable arguments: the same inputs must always give
+      the same output, with no side effects that would be skipped on a cache hit.
+    options:
+      - id: a
+        text: "`shipping_cost(weight_kg, zone)` — a pure calculation from two numbers, called thousands of times with repeated values."
+        correct: true
+        feedback: Pure, hashable arguments, repeated inputs — exactly what memoization is for.
+      - id: b
+        text: "`latest_exchange_rate(currency)` — downloads today's rate from a web service."
+        feedback: The answer changes over time; a cache would keep returning the first rate it saw forever.
+      - id: c
+        text: "`append_to_log(line)` — writes the line to a file."
+        feedback: Its job is a side effect. On a cache hit the function body is skipped, so repeated lines would never be written.
+      - id: d
+        text: "`average(scores)` — scores is a list of numbers."
+        feedback: Lists are unhashable, so the call would raise TypeError. You could pass a tuple, but the function as described cannot be cached.
+
+  - id: announce
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a decorator `announce` that:
+
+      1. prints `>> NAME` just before the decorated function runs and `<< NAME` just after it returns,
+         where NAME is the function's name;
+      2. returns the function's result unchanged;
+      3. works for any positional and keyword arguments;
+      4. keeps the original name and docstring (use `functools.wraps`).
+    starterCode: |
+      import functools
+
+
+      def announce(func):
+          # Define a wrapper that prints, calls func, prints again and returns the result.
+          pass
+
+
+      @announce
+      def add(a, b):
+          return a + b
+
+
+      print(add(2, 3))
+    solution: |
+      import functools
+
+
+      def announce(func):
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              print(">>", func.__name__)
+              result = func(*args, **kwargs)
+              print("<<", func.__name__)
+              return result
+          return wrapper
+
+
+      @announce
+      def add(a, b):
+          return a + b
+
+
+      print(add(2, 3))
+    expectedOutput: |
+      >> add
+      << add
+      5
+    tests:
+      - name: announce returns a function
+        code: |
+          def sample(x):
+              return x
+          assert callable(announce(sample)), "announce(func) must return the wrapper function. End announce with `return wrapper`."
+      - name: prints around the call and returns the result
+        code: |
+          import contextlib, io
+          def multiply(a, b):
+              print("inside")
+              return a * b
+          wrapped = announce(multiply)
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              result = wrapped(4, 5)
+          lines = buffer.getvalue().splitlines()
+          assert lines == [">> multiply", "inside", "<< multiply"], f"Expected the lines ['>> multiply', 'inside', '<< multiply'], got {lines}."
+          assert result == 20, f"The decorated function should return the original result (20) but returned {result!r}. Did you `return result`?"
+      - name: passes keyword arguments through
+        code: |
+          import contextlib, io
+          def tag(text, name="p"):
+              return f"<{name}>{text}</{name}>"
+          with contextlib.redirect_stdout(io.StringIO()):
+              got = announce(tag)("hi", name="b")
+          assert got == "<b>hi</b>", f"announce(tag)('hi', name='b') should return '<b>hi</b>', got {got!r}. Use *args and **kwargs."
+      - name: keeps the name and docstring
+        code: |
+          def report():
+              """Build the report."""
+          decorated = announce(report)
+          assert decorated.__name__ == "report", f"The decorated function is called {decorated.__name__!r}. Add @functools.wraps(func) above the wrapper."
+          assert decorated.__doc__ == "Build the report.", "The docstring was lost. Add @functools.wraps(func) above the wrapper."
+    hints:
+      - Follow the template — def wrapper(*args, **kwargs) inside announce, and return wrapper at the end.
+      - Inside the wrapper print before, store `result = func(*args, **kwargs)`, print after, then return result.
+      - Put `@functools.wraps(func)` on the line directly above `def wrapper`.
+    feedback:
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: announce returned None, so add became None. End announce with `return wrapper`.
+      - when: { outputContains: "None" }
+        message: The wrapper does not return the original's result. Store it and `return result`.
+      - when: { errorMessageContains: "positional argument" }
+        message: The wrapper's parameters do not match the call. Define it as `def wrapper(*args, **kwargs):` and call `func(*args, **kwargs)`.
+    explanation: >-
+      The wrapper prints, calls the original with exactly the arguments it received, prints again and
+      returns the result. functools.wraps copies the original's name and docstring onto the wrapper.
+
+  - id: debug-count-calls
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This decorator should print `call #1 of square`, `call #2 of square`, … on each call, but it
+      crashes. Read the error, then fix the decorator (keep the counter inside `count_calls`).
+    starterCode: |
+      import functools
+
+
+      def count_calls(func):
+          calls = 0
+
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              calls += 1
+              print(f"call #{calls} of {func.__name__}")
+              return func(*args, **kwargs)
+
+          return wrapper
+
+
+      @count_calls
+      def square(n):
+          return n * n
+
+
+      print(square(3), square(4))
+    solution: |
+      import functools
+
+
+      def count_calls(func):
+          calls = 0
+
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              nonlocal calls
+              calls += 1
+              print(f"call #{calls} of {func.__name__}")
+              return func(*args, **kwargs)
+
+          return wrapper
+
+
+      @count_calls
+      def square(n):
+          return n * n
+
+
+      print(square(3), square(4))
+    expectedOutput: |
+      call #1 of square
+      call #2 of square
+      9 16
+    tests:
+      - name: prints the call numbers and results
+        code: |
+          assert output_lines() == ["call #1 of square", "call #2 of square", "9 16"], f"Your program printed {output()!r}."
+      - name: each decorated function has its own counter
+        code: |
+          import contextlib, io
+          def cube(n):
+              return n ** 3
+          counted = count_calls(cube)
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              first = counted(2)
+              counted(3)
+          lines = buffer.getvalue().splitlines()
+          assert first == 8, f"The decorated cube(2) should return 8, got {first!r}."
+          assert lines == ["call #1 of cube", "call #2 of cube"], f"A newly decorated function should count from 1. Got {lines}."
+    hints:
+      - The error is UnboundLocalError. Which assignment makes `calls` local to wrapper?
+      - This is the closures lesson again — what statement lets an inner function rebind an enclosing variable?
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: "`calls += 1` makes calls local to wrapper. Add `nonlocal calls` as the first line of wrapper."
+    explanation: >-
+      calls belongs to count_calls, and wrapper assigns to it, which made it a local of wrapper. `nonlocal
+      calls` makes the assignment update the enclosed counter. Because each call to count_calls creates its
+      own calls variable, every decorated function counts independently.
+
+  - id: retry
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Network calls sometimes fail on the first try. Write a decorator factory `retry(times)`:
+
+      - The wrapper calls the function. If the call raises an `Exception`, it tries again — up to `times`
+        attempts in total.
+      - As soon as an attempt succeeds, return its result (no further attempts).
+      - If every attempt fails, re-raise the **last** exception.
+      - Pass all arguments through and use `functools.wraps`.
+
+      You may assume `times` is at least 1.
+    starterCode: |
+      import functools
+
+
+      def retry(times):
+          pass
+
+
+      attempts = []
+
+      @retry(3)
+      def flaky_fetch():
+          attempts.append("try")
+          if len(attempts) < 3:
+              raise ConnectionError("network hiccup")
+          return "data"
+
+
+      print(flaky_fetch(), "after", len(attempts), "attempts")
+    solution: |
+      import functools
+
+
+      def retry(times):
+          def decorator(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  for attempt in range(times):
+                      try:
+                          return func(*args, **kwargs)
+                      except Exception:
+                          if attempt == times - 1:
+                              raise
+              return wrapper
+          return decorator
+
+
+      attempts = []
+
+      @retry(3)
+      def flaky_fetch():
+          attempts.append("try")
+          if len(attempts) < 3:
+              raise ConnectionError("network hiccup")
+          return "data"
+
+
+      print(flaky_fetch(), "after", len(attempts), "attempts")
+    expectedOutput: |
+      data after 3 attempts
+    tests:
+      - name: succeeds after earlier failures
+        code: |
+          calls = []
+          def sometimes(x):
+              calls.append(x)
+              if len(calls) < 2:
+                  raise TimeoutError("slow")
+              return x * 2
+          got = retry(5)(sometimes)(21)
+          assert got == 42, f"retry(5) should return the successful result 42, got {got!r}."
+          assert len(calls) == 2, f"It should stop retrying after the first success: expected 2 attempts, made {len(calls)}."
+      - name: no retries when the first attempt works
+        code: |
+          calls = []
+          def fine():
+              calls.append(1)
+              return "ok"
+          assert retry(3)(fine)() == "ok", "A function that succeeds should just return its result."
+          assert len(calls) == 1, f"A successful first attempt should not be repeated, but the function ran {len(calls)} times."
+      - name: re-raises after the last attempt
+        code: |
+          calls = []
+          def always_fails():
+              calls.append(1)
+              raise ValueError("boom")
+          try:
+              retry(2)(always_fails)()
+          except ValueError as err:
+              assert str(err) == "boom", f"Re-raise the original exception; got message {str(err)!r}."
+          else:
+              raise AssertionError("When every attempt fails, the wrapper must raise the last exception, not return.")
+          assert len(calls) == 2, f"retry(2) should make exactly 2 attempts, made {len(calls)}."
+      - name: passes arguments and keeps the name
+        code: |
+          def combine(a, b=1):
+              return a + b
+          decorated = retry(2)(combine)
+          assert decorated(2, b=5) == 7, "Pass *args and **kwargs through to the function."
+          assert decorated.__name__ == "combine", "Use @functools.wraps(func) so the name is kept."
+    hints:
+      - Three levels — retry(times) returns decorator(func), which returns wrapper(*args, **kwargs).
+      - "In the wrapper, loop `for attempt in range(times):` and put the call in a try block; `return` the result as soon as it works."
+      - "In the except block, if this was the last attempt (`attempt == times - 1`), re-raise with a bare `raise`."
+    feedback:
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: >-
+          Something returned None where a function was expected. retry must return decorator, and
+          decorator must return wrapper.
+      - when: { errorType: ConnectionError }
+        message: >-
+          The exception escaped on an early attempt. Catch it inside the loop and only re-raise on the last
+          attempt.
+    explanation: >-
+      The factory remembers times; the decorator remembers func; the wrapper loops over attempts, returning
+      the first success. A bare `raise` in the except block re-raises the exception currently being
+      handled, which on the final attempt is the last failure — with its original traceback.
+
+  - id: parsons-tag
+    type: parsons
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Arrange the lines into a decorator factory `tag(name)` so that the program prints
+      `<em>hello</em>`. Two lines are distractors.
+    solution: |
+      import functools
+      def tag(name):
+          def decorator(func):
+              @functools.wraps(func)
+              def wrapper(*args, **kwargs):
+                  return f"<{name}>{func(*args, **kwargs)}</{name}>"
+              return wrapper
+          return decorator
+      @tag("em")
+      def word():
+          return "hello"
+      print(word())
+    distractors:
+      - "            return wrapper()"
+      - "@tag"
+    expectedOutput: |
+      <em>hello</em>
+    explanation: >-
+      The factory tag(name) returns decorator; decorator(func) returns wrapper; wrapper builds the tagged
+      string. `@tag("em")` calls the factory. `return wrapper()` would call the wrapper during decoration,
+      and a bare `@tag` would pass the function in as name.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-factory-order
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: Predict the output (four lines).
+    code: |
+      def tagged(label):
+          print("factory", label)
+          def decorator(func):
+              print("decorating", func.__name__)
+              def wrapper():
+                  print("calling", func.__name__)
+                  return func()
+              return wrapper
+          return decorator
+
+      @tagged("A")
+      def job():
+          print("working")
+
+      job()
+    answer: |
+      factory A
+      decorating job
+      calling job
+      working
+    explanation: >-
+      `@tagged("A")` first calls the factory (prints "factory A"), then applies the returned decorator to
+      job (prints "decorating job"). Only the call job() runs the wrapper, which prints "calling job" and
+      then calls the original.
+    wrongAnswers:
+      - answer: |
+          decorating job
+          factory A
+          calling job
+          working
+        feedback: The factory must run first — its return value is the decorator that gets applied.
+      - answer: |
+          calling job
+          factory A
+          decorating job
+          working
+        feedback: The factory and decorator run when the def statement executes, before any call.
+
+  - id: m-mcq-equivalent
+    type: mcq
+    skill: recognition
+    difficulty: 2
+    prompt: |
+      Which assignment is equivalent to this decorated definition?
+
+      ```python
+      @cache_result
+      @log_calls
+      def load(path):
+          ...
+      ```
+    explanation: >-
+      Decorators are applied bottom-up: log_calls wraps the original first, then cache_result wraps that.
+      So load = cache_result(log_calls(load)), and at call time cache_result's wrapper runs first.
+    options:
+      - id: a
+        text: "`load = cache_result(log_calls(load))`"
+        correct: true
+        feedback: Right — the decorator nearest the def is applied first and ends up innermost.
+      - id: b
+        text: "`load = log_calls(cache_result(load))`"
+        feedback: That is the reverse order. The bottom decorator (log_calls) is applied first.
+      - id: c
+        text: "`load = cache_result(log_calls)(load)`"
+        feedback: This passes log_calls itself to cache_result — that is the decorator-factory pattern, not stacking.
+      - id: d
+        text: "`load = cache_result(load); log_calls(load)`"
+        feedback: The result of log_calls(load) is thrown away here; stacked decorators bind the name to the fully wrapped function.
+
+  - id: m-predict-wraps-name
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import functools
+
+      def plain(func):
+          def wrapper(*args, **kwargs):
+              return func(*args, **kwargs)
+          return wrapper
+
+      def tidy(func):
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              return func(*args, **kwargs)
+          return wrapper
+
+      @plain
+      def first():
+          pass
+
+      @tidy
+      def second():
+          pass
+
+      print(first.__name__, second.__name__)
+    answer: wrapper second
+    explanation: >-
+      Both names refer to wrappers. Only tidy copies the original's metadata with functools.wraps, so
+      second reports its original name while first reports the wrapper's own name.
+    wrongAnswers:
+      - answer: first second
+        feedback: Without functools.wraps the wrapper keeps its own name, "wrapper".
+      - answer: wrapper wrapper
+        feedback: functools.wraps copies __name__ from the original onto the wrapper, so second reports "second".
+
+  - id: m-code-memoize
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write your own `memoize` decorator (do **not** use `functools.cache` or `functools.lru_cache`):
+
+      - It stores results in a dict keyed by the tuple of positional arguments.
+      - On a repeated call with the same arguments, it returns the stored result **without** calling the
+        function again.
+      - It works for functions with any number of positional arguments and keeps the function's name.
+    starterCode: |
+      import functools
+
+
+      def memoize(func):
+          pass
+
+
+      @memoize
+      def slow_square(n):
+          print("computing", n)
+          return n * n
+
+
+      print(slow_square(4))
+      print(slow_square(4))
+    solution: |
+      import functools
+
+
+      def memoize(func):
+          cache = {}
+
+          @functools.wraps(func)
+          def wrapper(*args):
+              if args not in cache:
+                  cache[args] = func(*args)
+              return cache[args]
+
+          return wrapper
+
+
+      @memoize
+      def slow_square(n):
+          print("computing", n)
+          return n * n
+
+
+      print(slow_square(4))
+      print(slow_square(4))
+    expectedOutput: |
+      computing 4
+      16
+      16
+    tests:
+      - name: repeated calls are answered from the cache
+        code: |
+          calls = []
+          def double(n):
+              calls.append(n)
+              return n * 2
+          fast = memoize(double)
+          results = [fast(3), fast(3), fast(5), fast(3)]
+          assert results == [6, 6, 10, 6], f"Expected [6, 6, 10, 6], got {results}."
+          assert calls == [3, 5], f"The original should run once per new argument (calls [3, 5]) but ran with {calls}."
+      - name: works with several arguments
+        code: |
+          calls = []
+          def power(base, exp):
+              calls.append((base, exp))
+              return base ** exp
+          fast = memoize(power)
+          assert fast(2, 10) == 1024 and fast(2, 10) == 1024 and fast(10, 2) == 100, "memoize(power) gave wrong results. Key the cache on the whole args tuple."
+          assert len(calls) == 2, f"(2, 10) should be computed once and (10, 2) once, but the function ran {len(calls)} times."
+      - name: separate functions have separate caches
+        code: |
+          inc = memoize(lambda n: n + 1)
+          dec = memoize(lambda n: n - 1)
+          assert inc(5) == 6 and dec(5) == 4, "Each decorated function needs its own cache: create the dict inside memoize."
+      - name: keeps the name and builds its own cache
+        code: |
+          def named(n):
+              return n
+          assert memoize(named).__name__ == "named", "Use @functools.wraps(func) so the decorated function keeps its name."
+          assert "lru_cache" not in source and "functools.cache" not in source, "Build the cache yourself with a dict instead of using functools.cache/lru_cache."
+    hints:
+      - Create `cache = {}` inside memoize, before defining the wrapper.
+      - In `wrapper(*args)`, args is already a tuple — use it directly as the dictionary key.
+      - If args is not in the cache, compute and store `func(*args)`; then return `cache[args]`.
+    feedback:
+      - when: { outputEquals: "computing 4\n16\ncomputing 4\n16\n" }
+        message: The second call recomputed the result. Check the cache before calling func, and store results in it.
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: memoize must return the wrapper function.
+    explanation: >-
+      The cache dict lives in memoize's closure, one per decorated function. The args tuple is hashable and
+      identifies the call, so a repeated call finds its stored result and skips the original function.
+
+  - id: m-debug-factory
+    type: debug
+    skill: debugging
+    difficulty: 3
+    prompt: |
+      This decorator factory should make `beep()` run twice, but the program crashes with
+      `NameError: name 'func' is not defined` before `beep` is ever called. Fix the factory.
+    starterCode: |
+      def repeat(times):
+          def wrapper(*args, **kwargs):
+              result = None
+              for _ in range(times):
+                  result = func(*args, **kwargs)
+              return result
+          return wrapper
+
+
+      @repeat(2)
+      def beep():
+          print("beep")
+
+
+      beep()
+    solution: |
+      def repeat(times):
+          def decorator(func):
+              def wrapper(*args, **kwargs):
+                  result = None
+                  for _ in range(times):
+                      result = func(*args, **kwargs)
+                  return result
+              return wrapper
+          return decorator
+
+
+      @repeat(2)
+      def beep():
+          print("beep")
+
+
+      beep()
+    expectedOutput: |
+      beep
+      beep
+    tests:
+      - name: beep runs twice
+        code: |
+          assert output_lines() == ["beep", "beep"], f"Expected two lines of 'beep', got {output()!r}."
+      - name: works for other functions and counts
+        code: |
+          calls = []
+          def record(x, y=0):
+              calls.append((x, y))
+              return x + y
+          result = repeat(3)(record)(1, y=2)
+          assert calls == [(1, 2), (1, 2), (1, 2)], f"repeat(3) should call the function 3 times with the same arguments; calls were {calls}."
+          assert result == 3, f"The wrapper should return the last result (3), got {result!r}."
+    hints:
+      - "`@repeat(2)` means beep = repeat(2)(beep). What does repeat(2) return, and what does Python then call with beep?"
+      - The function being decorated needs a parameter to arrive in — that is the missing middle level.
+      - "Insert `def decorator(func):` between repeat and wrapper, return wrapper from it, and return decorator from repeat."
+    feedback:
+      - when: { errorType: NameError }
+        message: >-
+          wrapper refers to func, but no enclosing function has a parameter called func. Add a middle
+          level, `def decorator(func):`, that receives the decorated function.
+    explanation: >-
+      With only two levels, repeat(2) returned wrapper, and Python then called wrapper(beep) — which tried to
+      use a func that did not exist. A decorator factory needs three levels: the factory receives times,
+      the decorator receives func, and the wrapper receives the call's arguments.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-factory-order, m-mcq-equivalent, m-predict-wraps-name, m-code-memoize, m-debug-factory]
+
+cheatsheet: |
+  ```python
+  import functools
+
+  def decorator(func):                     # runs once, at definition time
+      @functools.wraps(func)               # keep name, docstring, signature
+      def wrapper(*args, **kwargs):        # runs on every call
+          # before
+          result = func(*args, **kwargs)
+          # after
+          return result
+      return wrapper                       # the function, not wrapper()
+
+  def repeat(times):                       # decorator factory: @repeat(3)
+      def decorator(func):
+          @functools.wraps(func)
+          def wrapper(*args, **kwargs):
+              for _ in range(times):
+                  result = func(*args, **kwargs)
+              return result
+          return wrapper
+      return decorator
+
+  @a
+  @b
+  def f(): ...                             # f = a(b(f)); a's wrapper runs first
+
+  @functools.cache                         # = lru_cache(maxsize=None)
+  @functools.lru_cache(maxsize=128)        # bounded; .cache_info(), .cache_clear()
+  ```
+  - Cache only pure functions with hashable arguments.
+  - Inject clocks and other side effects so decorated code stays testable.

@@ -1,0 +1,574 @@
+id: databases
+order: 7
+title: Databases — SQL, PostgreSQL and Redis
+shortTitle: Databases
+summary: >-
+  Relational modelling and SQL from first queries to joins, window functions, indexes, query plans and
+  transactions; PostgreSQL in practice; Redis for caching and queues.
+why: >-
+  Data outlives code. Correct schemas, efficient queries and safe transactions underpin every backend,
+  data pipeline and RAG system (pgvector stores embeddings in PostgreSQL).
+modules:
+  - id: relational
+    title: Relational databases and SQL
+    summary: Tables, keys, queries, aggregation, joins, CTEs and window functions.
+  - id: design-performance
+    title: Design, performance and correctness
+    summary: Schema design, indexes, query plans and transactions.
+  - id: practice
+    title: Databases in applications
+    summary: Python drivers, PostgreSQL, migrations, ORMs, pooling and operations.
+  - id: nosql
+    title: Beyond relational
+    summary: Redis and other NoSQL models.
+concepts:
+  # ---------------------------------------------------------------- relational
+  - id: databases.why-databases
+    title: Why databases
+    module: relational
+    level: beginner
+    priority: essential
+    summary: Databases give durable, concurrent, queryable storage with guarantees that plain files cannot provide.
+    why: As soon as several users or processes read and write the same data, plain files get corrupted, overwrite each other and become slow to search; databases solve this with transactions, concurrency control and indexes.
+    requires: [python.files]
+    keyIdeas:
+      - A database management system (DBMS) provides durable storage, a query language, safe concurrent access, transactions and access control.
+      - Durability means committed data survives a crash, typically because changes are written to a write-ahead log on disk before the commit is acknowledged.
+      - Embedded databases such as SQLite run inside your process and store everything in one file; client-server databases such as PostgreSQL and MySQL run as a separate service that many applications connect to over the network.
+      - Choose by access pattern - relational databases for structured data with relationships and integrity rules, key-value stores for fast lookups by key, document or search engines for other shapes.
+    misconceptions:
+      - SQLite is not a toy; it is a production-grade database for embedded and single-machine use, though it allows only one writer at a time.
+      - A database is not a backup; you still need separate, tested backups.
+    interview: Expect to explain when a database is needed instead of files, and when SQLite is enough versus a server database.
+    sources:
+      - title: Appropriate Uses For SQLite
+        url: https://www.sqlite.org/whentouse.html
+        publisher: SQLite
+      - title: "PostgreSQL Tutorial: Getting Started and The SQL Language"
+        url: https://www.postgresql.org/docs/current/tutorial.html
+        publisher: PostgreSQL Global Development Group
+  - id: databases.relational-model
+    title: The relational model
+    module: relational
+    level: beginner
+    priority: essential
+    summary: Data lives in tables of rows and typed columns; primary keys identify rows and foreign keys relate tables.
+    why: Organising data as related tables with keys lets the database enforce consistency and answer questions you did not anticipate when you designed it.
+    requires: [databases.why-databases]
+    keyIdeas:
+      - A table (relation) has named, typed columns; each row records one fact about one entity.
+      - A primary key uniquely identifies each row and cannot be NULL; it can be a natural key (an ISBN) or a surrogate key (a generated integer or UUID).
+      - "A foreign key stores another table's key (`orders.customer_id` references `customers.id`), and the database rejects references to rows that do not exist."
+      - One-to-many relationships put the foreign key on the "many" side; many-to-many relationships use a junction table holding two foreign keys.
+      - NULL means unknown or missing, not zero or an empty string, and comparing anything with NULL gives unknown rather than true or false.
+    misconceptions:
+      - Rows in a table have no guaranteed order; without ORDER BY a query may return them in any order.
+      - "SQLite does not enforce foreign keys unless you run `PRAGMA foreign_keys = ON` on each connection."
+    interview: Expect to explain primary versus foreign keys and model a many-to-many relationship.
+    sources:
+      - title: "PostgreSQL Tutorial: Concepts"
+        url: https://www.postgresql.org/docs/current/tutorial-concepts.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Constraints"
+        url: https://www.postgresql.org/docs/current/ddl-constraints.html
+        publisher: PostgreSQL Global Development Group
+      - title: SQLite Foreign Key Support
+        url: https://www.sqlite.org/foreignkeys.html
+        publisher: SQLite
+  - id: databases.sql-basics
+    title: SQL queries — SELECT, WHERE, ORDER BY
+    module: relational
+    level: beginner
+    priority: essential
+    summary: SQL is declarative — you describe the rows you want and the database decides how to fetch them.
+    why: SQL is the common language of relational databases, data warehouses and many analytics tools; reading data with it is a daily task for backend, data and ML engineers.
+    requires: [databases.relational-model]
+    keyIdeas:
+      - "`SELECT name, price FROM products WHERE price > 10 ORDER BY price DESC LIMIT 5;` picks columns, filters rows, sorts and limits."
+      - "Clauses are evaluated logically in the order FROM, WHERE, GROUP BY, HAVING, SELECT, ORDER BY, LIMIT, which is why standard SQL (and PostgreSQL) does not let WHERE use a column alias defined in SELECT; SQLite allows it as a non-portable extension."
+      - "Test for missing values with `IS NULL` and `IS NOT NULL`; `= NULL` is never true."
+      - "Combine conditions with `AND`, `OR`, `NOT`, `IN (...)`, `BETWEEN` and `LIKE 'abc%'`, using parentheses when mixing AND with OR."
+      - "Name the columns you need instead of `SELECT *` in application code, so schema changes do not silently change results."
+    misconceptions:
+      - SQL is not executed top to bottom as written; SELECT is evaluated after FROM and WHERE.
+      - LIMIT without ORDER BY returns an arbitrary set of rows, not the "first" ones.
+    interview: Expect to write queries with filtering, sorting and NULL handling, and to explain the logical order of SQL clauses.
+    sources:
+      - title: "PostgreSQL Tutorial: Querying a Table"
+        url: https://www.postgresql.org/docs/current/tutorial-select.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Queries"
+        url: https://www.postgresql.org/docs/current/queries.html
+        publisher: PostgreSQL Global Development Group
+      - title: "SQLite: SELECT"
+        url: https://www.sqlite.org/lang_select.html
+        publisher: SQLite
+  - id: databases.sql-modification
+    title: Inserting, updating and deleting rows
+    module: relational
+    level: beginner
+    priority: essential
+    summary: INSERT, UPDATE, DELETE and upserts change data; always check WHERE clauses before running them.
+    why: Applications constantly create and change records, and a single UPDATE or DELETE with the wrong WHERE clause can destroy a whole table in one statement.
+    requires: [databases.sql-basics]
+    keyIdeas:
+      - "`INSERT INTO users (email, name) VALUES ('a@example.com', 'Ana');` names the columns explicitly; one statement can insert several rows of VALUES."
+      - "`UPDATE ... SET ... WHERE ...` and `DELETE FROM ... WHERE ...` affect every matching row; without a WHERE clause they affect all rows."
+      - "Upsert with `INSERT ... ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name` (PostgreSQL and SQLite) to insert or update atomically."
+      - "`RETURNING id` (PostgreSQL, and SQLite 3.35+) returns generated values without a second query."
+      - Run a SELECT with the same WHERE first, and wrap risky changes in a transaction so you can ROLLBACK.
+    misconceptions:
+      - DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+      - A "check, then insert" in two statements is not safe under concurrency; use a UNIQUE constraint with ON CONFLICT instead.
+    interview: Expect to write an upsert and explain how you would make a bulk update safe.
+    production: Batch very large updates and deletes to avoid long locks and huge transactions, and use soft deletes (a `deleted_at` column) when you need an audit trail.
+    sources:
+      - title: "PostgreSQL: Data Manipulation"
+        url: https://www.postgresql.org/docs/current/dml.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: INSERT (including ON CONFLICT)"
+        url: https://www.postgresql.org/docs/current/sql-insert.html
+        publisher: PostgreSQL Global Development Group
+      - title: "SQLite: UPSERT"
+        url: https://www.sqlite.org/lang_upsert.html
+        publisher: SQLite
+  - id: databases.sql-aggregation
+    title: Aggregation — GROUP BY and HAVING
+    module: relational
+    level: beginner
+    priority: essential
+    summary: Aggregate functions summarise groups of rows; WHERE filters rows before grouping, HAVING filters groups after.
+    why: Most business and ML questions are summaries (revenue per month, users per country, error rate per endpoint), and aggregating inside the database avoids loading every row into your program.
+    requires: [databases.sql-basics]
+    keyIdeas:
+      - "Aggregate functions include `COUNT(*)`, `COUNT(col)`, `SUM`, `AVG`, `MIN` and `MAX`; all of them except `COUNT(*)` ignore NULLs."
+      - "`GROUP BY country` produces one output row per group; every selected column must be either grouped or aggregated."
+      - "WHERE filters rows before grouping; HAVING filters groups after aggregation, as in `HAVING COUNT(*) > 10`."
+      - "`COUNT(DISTINCT user_id)` counts unique values, and `COUNT(*) FILTER (WHERE status = 'error')` aggregates a subset in the same query (PostgreSQL and SQLite)."
+    misconceptions:
+      - "`COUNT(col)` is not the same as `COUNT(*)`; it skips rows where `col` is NULL."
+      - "`AVG` over a column with NULLs averages only the non-NULL values, which can silently bias results."
+    interview: Expect GROUP BY and HAVING exercises and a question on the difference between WHERE and HAVING.
+    sources:
+      - title: "PostgreSQL Tutorial: Aggregate Functions"
+        url: https://www.postgresql.org/docs/current/tutorial-agg.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Aggregate Functions reference"
+        url: https://www.postgresql.org/docs/current/functions-aggregate.html
+        publisher: PostgreSQL Global Development Group
+  - id: databases.sql-joins
+    title: Joins
+    module: relational
+    level: intermediate
+    priority: essential
+    summary: INNER, LEFT, RIGHT and FULL joins combine rows from tables by matching keys; unmatched rows become NULLs or disappear.
+    why: Normalised data is spread across tables, and joins put it back together to answer questions such as "orders with their customer names".
+    requires: [databases.sql-basics]
+    keyIdeas:
+      - "`FROM orders o JOIN customers c ON c.id = o.customer_id` (an INNER JOIN) keeps only rows that have a match in both tables."
+      - LEFT JOIN keeps every row of the left table and fills the right side with NULLs where nothing matches; RIGHT JOIN is the mirror image; FULL JOIN keeps unmatched rows from both sides.
+      - "Find rows without a match (an anti-join) with `LEFT JOIN ... WHERE right_table.id IS NULL` or with `NOT EXISTS (...)`."
+      - Joining along a one-to-many relationship multiplies rows, so aggregating after such a join can double-count.
+      - A condition on the right-hand table placed in WHERE turns a LEFT JOIN into an inner join; put it in the ON clause to keep unmatched rows.
+    misconceptions:
+      - A join does not just "add columns"; when keys repeat it multiplies rows.
+      - Forgetting the join condition produces a Cartesian product, pairing every row with every other row.
+    interview: Expect to explain the join types with an example and to debug a query whose counts are inflated by a join.
+    production: Index foreign-key columns used in joins; PostgreSQL does not create those indexes automatically.
+    sources:
+      - title: "PostgreSQL Tutorial: Joins Between Tables"
+        url: https://www.postgresql.org/docs/current/tutorial-join.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Table Expressions (joined tables)"
+        url: https://www.postgresql.org/docs/current/queries-table-expressions.html
+        publisher: PostgreSQL Global Development Group
+  - id: databases.sql-advanced
+    title: Subqueries, CTEs and window functions
+    module: relational
+    level: intermediate
+    priority: essential
+    summary: Common table expressions name intermediate results; window functions rank and compute running totals without collapsing rows.
+    why: Questions such as "top three products per category" or "running total per day" are awkward or slow with plain GROUP BY; subqueries, CTEs and window functions express them clearly in one query.
+    requires: [databases.sql-aggregation, databases.sql-joins]
+    keyIdeas:
+      - "A subquery is a query inside another; a correlated subquery refers to the outer row, and `EXISTS (...)` tests whether any matching row exists."
+      - "`WITH recent AS (SELECT ...) SELECT ... FROM recent` names an intermediate result; `WITH RECURSIVE` walks hierarchies such as org charts or category trees."
+      - "Window functions compute across related rows without collapsing them, for example `ROW_NUMBER() OVER (PARTITION BY category ORDER BY sales DESC)`."
+      - "Running totals and moving averages use frames such as `SUM(amount) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)`; `LAG` and `LEAD` read the previous and next rows."
+      - Window functions are evaluated after WHERE, GROUP BY and HAVING, so to filter on their result wrap the query in a CTE or subquery.
+    misconceptions:
+      - "`RANK()` and `ROW_NUMBER()` are not interchangeable; RANK gives ties the same number and then skips, while ROW_NUMBER is always unique."
+      - "`NOT IN (subquery)` returns no rows at all if the subquery produces any NULL; prefer `NOT EXISTS`."
+    interview: Top-N-per-group and running-total questions solved with window functions are a staple of SQL interviews.
+    sources:
+      - title: "PostgreSQL Tutorial: Window Functions"
+        url: https://www.postgresql.org/docs/current/tutorial-window.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: WITH Queries (Common Table Expressions)"
+        url: https://www.postgresql.org/docs/current/queries-with.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Window Functions reference"
+        url: https://www.postgresql.org/docs/current/functions-window.html
+        publisher: PostgreSQL Global Development Group
+  # ------------------------------------------------------- design-performance
+  - id: databases.schema-design
+    title: Schema design and normalisation
+    module: design-performance
+    level: intermediate
+    priority: essential
+    summary: Normalise to avoid duplicated facts, enforce rules with constraints (NOT NULL, UNIQUE, CHECK, foreign keys) and choose precise data types.
+    why: A schema that stores the same fact in two places will eventually disagree with itself, and constraints catch bad data at write time instead of in a report months later.
+    requires: [databases.relational-model, databases.sql-modification]
+    keyIdeas:
+      - Normalise to third normal form by default - store each fact once, and make every non-key column depend on the key, the whole key and nothing but the key.
+      - "Constraints are guarantees the database enforces: `NOT NULL`, `UNIQUE`, `CHECK (price >= 0)`, `PRIMARY KEY` and `FOREIGN KEY ... ON DELETE ...`."
+      - "Choose precise types: `numeric` for money (never floating point), `timestamptz` for moments in time, `boolean`, `uuid`, and `text` with CHECK constraints rather than arbitrary `varchar(n)` limits."
+      - Denormalise deliberately (read models, caches, analytics tables) when measurements show joins are the bottleneck, and document how the copies are kept in sync.
+      - "Name things consistently, for example `snake_case` columns and `<table>_id` foreign keys."
+    misconceptions:
+      - Validation in application code alone is not enough; scripts, other services and bugs bypass it, but database constraints cannot be bypassed.
+      - A comma-separated list in one column is not a substitute for a related table.
+    interview: Expect to normalise a messy table design and choose types and constraints for an example domain.
+    production: Adding constraints to large existing tables can lock or scan them; in PostgreSQL you can add CHECK and foreign-key constraints as `NOT VALID` and validate them later.
+    sources:
+      - title: "PostgreSQL: Constraints"
+        url: https://www.postgresql.org/docs/current/ddl-constraints.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Data Types"
+        url: https://www.postgresql.org/docs/current/datatype.html
+        publisher: PostgreSQL Global Development Group
+      - title: Don't Do This (PostgreSQL wiki)
+        url: https://wiki.postgresql.org/wiki/Don%27t_Do_This
+        publisher: PostgreSQL wiki
+  - id: databases.indexes
+    title: Indexes
+    module: design-performance
+    level: intermediate
+    priority: essential
+    summary: B-tree indexes make lookups and sorts fast at the cost of storage and slower writes; column order in composite indexes matters.
+    why: Without an index the database must read every row to find matches; with the right index, a lookup in a table of millions of rows touches only a handful of pages.
+    requires: [databases.sql-basics, cs.trees]
+    keyIdeas:
+      - "A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on the indexed columns take O(log n) steps instead of a full scan."
+      - "Column order in a composite index matters: an index on `(user_id, created_at)` serves `WHERE user_id = ?` and `WHERE user_id = ? ORDER BY created_at`, but not `WHERE created_at > ?` alone (the leftmost-prefix rule)."
+      - Primary keys and UNIQUE constraints create indexes automatically; in PostgreSQL, foreign keys do not.
+      - Every index slows down inserts and updates and uses storage, so add indexes for real query patterns and drop unused ones.
+      - "Other index kinds include GIN (jsonb, arrays, full-text search), GiST, BRIN (very large, naturally ordered tables), expression indexes such as `lower(email)`, and partial indexes such as `WHERE deleted_at IS NULL`."
+    misconceptions:
+      - An index is not always used; when a query returns a large share of the table a sequential scan is often faster, and the planner decides.
+      - "Wrapping the column in a function, as in `WHERE lower(email) = ...`, prevents use of a plain index on `email`; create an expression index instead."
+    interview: Expect to explain how a B-tree index works, the leftmost-prefix rule, and the write cost of indexes.
+    production: "On busy PostgreSQL tables build indexes with `CREATE INDEX CONCURRENTLY` to avoid blocking writes, and check `pg_stat_user_indexes` for indexes that are never used."
+    sources:
+      - title: "PostgreSQL: Indexes"
+        url: https://www.postgresql.org/docs/current/indexes.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Multicolumn Indexes"
+        url: https://www.postgresql.org/docs/current/indexes-multicolumn.html
+        publisher: PostgreSQL Global Development Group
+      - title: Use The Index, Luke (free book on SQL indexing)
+        url: https://use-the-index-luke.com/
+        publisher: Markus Winand
+  - id: databases.query-plans
+    title: Query plans and optimisation
+    module: design-performance
+    level: advanced
+    priority: essential
+    summary: EXPLAIN shows how the database will execute a query; reading plans reveals missing indexes, bad estimates and expensive joins.
+    why: When a query is slow, guessing wastes time; the plan shows exactly what the database is doing and where the time goes.
+    requires: [databases.indexes, databases.sql-joins]
+    keyIdeas:
+      - "`EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)` actually runs the query and adds real timings, row counts and pages read."
+      - Read a plan from the most indented nodes outwards - scans (Seq Scan, Index Scan, Index Only Scan, Bitmap Heap Scan) feed joins (Nested Loop, Hash Join, Merge Join), which feed sorts and aggregates.
+      - "A large gap between estimated and actual rows points to stale or insufficient statistics; run `ANALYZE` or raise the column's statistics target."
+      - "Work in order: find the queries that cost the most in total (`pg_stat_statements`), check for missing or unusable indexes, then rewrite the query or change the schema."
+      - "In SQLite, `EXPLAIN QUERY PLAN` shows whether a query uses an index (SEARCH) or reads the whole table (SCAN)."
+    misconceptions:
+      - "`EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in a transaction and roll it back."
+      - A sequential scan is not automatically bad; for small tables or large result sets it is the right choice.
+    interview: Expect to walk through an EXPLAIN ANALYZE output and diagnose why a query is slow.
+    production: "Enable `pg_stat_statements` and slow-query logging (`log_min_duration_statement`), and re-check plans as data grows, because the best plan changes with table size."
+    sources:
+      - title: "PostgreSQL: Using EXPLAIN"
+        url: https://www.postgresql.org/docs/current/using-explain.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: pg_stat_statements"
+        url: https://www.postgresql.org/docs/current/pgstatstatements.html
+        publisher: PostgreSQL Global Development Group
+      - title: "SQLite: EXPLAIN QUERY PLAN"
+        url: https://www.sqlite.org/eqp.html
+        publisher: SQLite
+  - id: databases.transactions
+    title: Transactions and isolation
+    module: design-performance
+    level: advanced
+    priority: essential
+    summary: ACID transactions group changes atomically; isolation levels trade concurrency for protection against anomalies such as lost updates.
+    why: Transferring money, reserving stock or updating several related rows must happen all or nothing, and concurrent users must not silently overwrite each other's changes.
+    requires: [databases.sql-modification, cs.concurrency-fundamentals]
+    keyIdeas:
+      - ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions do not see each other's partial work) and Durability (committed data survives crashes).
+      - "`BEGIN; ... COMMIT;` groups statements and `ROLLBACK` undoes them; in PostgreSQL an error inside a transaction aborts it until you roll back."
+      - READ COMMITTED (PostgreSQL's default) gives each statement a fresh snapshot; REPEATABLE READ uses one snapshot for the whole transaction; SERIALIZABLE behaves as if transactions ran one at a time.
+      - "A lost update happens when two transactions read a value and both write value + 1. Prevent it with an atomic `UPDATE ... SET n = n + 1`, a `SELECT ... FOR UPDATE` row lock, or optimistic locking with a version column."
+      - PostgreSQL uses MVCC, so readers do not block writers and writers do not block readers; under REPEATABLE READ and SERIALIZABLE, conflicting transactions fail with serialization errors that the application must retry.
+    misconceptions:
+      - Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED level.
+      - The C in ACID is about rules you define, such as constraints; it is not the C (consistency) of the CAP theorem for distributed systems.
+      - Long-running transactions are not harmless; they hold locks and stop VACUUM from cleaning up old row versions.
+    interview: Expect to explain ACID, isolation levels and their anomalies, and how you would prevent a lost update or a double booking.
+    production: Keep transactions short, never wait on user input or external HTTP calls inside one, and retry on serialization failures and deadlocks.
+    sources:
+      - title: "PostgreSQL: Transaction Isolation"
+        url: https://www.postgresql.org/docs/current/transaction-iso.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL Tutorial: Transactions"
+        url: https://www.postgresql.org/docs/current/tutorial-transactions.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Concurrency Control (MVCC)"
+        url: https://www.postgresql.org/docs/current/mvcc.html
+        publisher: PostgreSQL Global Development Group
+  # --------------------------------------------------------------- practice
+  - id: databases.sqlite-python
+    title: SQL from Python with sqlite3
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Connect, execute parameterised queries (never string formatting — that is SQL injection), commit and close, using Python's built-in sqlite3.
+    why: The built-in sqlite3 module gives you a real SQL database with nothing to install, ideal for learning, tests, tools and small apps, and it teaches the parameter-binding habits every database driver needs.
+    requires: [databases.sql-modification, python.context-managers]
+    keyIdeas:
+      - "`con = sqlite3.connect(\"app.db\")`, `con.execute(sql, params)`, then `con.commit()`; `with con:` commits on success and rolls back on an exception, but does not close the connection."
+      - "Always pass values as parameters: `con.execute(\"SELECT * FROM users WHERE email = ?\", (email,))`, or named `:email` placeholders with a dict."
+      - "Fetch results with `fetchone()`, `fetchall()` or by iterating the cursor; set `con.row_factory = sqlite3.Row` to read columns by name."
+      - "`executemany()` inserts many rows efficiently, and one transaction per batch is much faster than one commit per row."
+      - The same DB-API pattern (PEP 249) of connect, execute with parameters, commit and close applies to PostgreSQL drivers such as psycopg, which use `%s` placeholders.
+    misconceptions:
+      - f-strings or `%` formatting into SQL are never safe, even for "trusted" values; parameters are how you prevent SQL injection.
+      - Placeholders cannot stand in for table or column names; check those against an allow-list instead.
+      - Forgetting `commit()` silently discards your writes when the connection closes.
+    interview: Expect to explain SQL injection, parameterised queries and the commit and rollback life cycle of a connection.
+    production: "Enable WAL mode (`PRAGMA journal_mode=WAL`) for better read concurrency, set a busy timeout, and remember that SQLite allows only one writer at a time."
+    sources:
+      - title: sqlite3 — DB-API 2.0 interface for SQLite databases
+        url: https://docs.python.org/3/library/sqlite3.html
+        publisher: Python Software Foundation
+      - title: SQL Injection Prevention Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        publisher: OWASP
+      - title: "PEP 249: Python Database API Specification v2.0"
+        url: https://peps.python.org/pep-0249/
+        publisher: Python Software Foundation
+  - id: databases.postgresql
+    title: PostgreSQL in practice
+    module: practice
+    level: intermediate
+    priority: technology-specific
+    summary: The widely used open-source relational database — psql, roles, rich types (JSONB, arrays, timestamps with time zones) and extensions such as pgvector.
+    why: PostgreSQL is free, standards-compliant and extensible enough to cover relational, JSON, full-text and vector workloads, so many teams use it as their default datastore.
+    requires: [databases.schema-design]
+    keyIdeas:
+      - '`psql` is the interactive client: `\l` lists databases, `\dt` lists tables, `\d name` describes a table, `\x` toggles expanded output and `\q` quits.'
+      - "Roles are users and groups; give each application its own role with only the privileges it needs (`GRANT SELECT, INSERT ON ...`) and never connect apps as a superuser."
+      - "Rich types include `jsonb` (binary JSON, indexable with GIN), arrays, `uuid`, `numeric`, ranges and `timestamptz`, which stores an absolute moment (internally UTC) and displays it in the session's time zone."
+      - "Extensions add capabilities with `CREATE EXTENSION`, for example pgvector for embeddings and similarity search, pg_stat_statements for query statistics and PostGIS for geospatial data."
+      - "Connect from Python with psycopg (version 3) or asyncpg, using a URL such as `postgresql://user:password@host:5432/dbname`."
+    misconceptions:
+      - "`timestamp` (without time zone) does not store a time zone; use `timestamptz` for real-world moments."
+      - "`jsonb` is not a reason to skip schema design; keep frequently queried, relational data in proper columns."
+    tools: [PostgreSQL, psql, psycopg, pgvector]
+    interview: Expect questions on jsonb versus columns, timestamptz versus timestamp, and how roles and privileges secure a database.
+    production: Managed PostgreSQL services take care of backups and minor upgrades, but you still plan major-version upgrades, monitor connections, disk and vacuum, and use only extensions your provider supports (check its current list).
+    sources:
+      - title: "psql: PostgreSQL interactive terminal"
+        url: https://www.postgresql.org/docs/current/app-psql.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: JSON Types"
+        url: https://www.postgresql.org/docs/current/datatype-json.html
+        publisher: PostgreSQL Global Development Group
+      - title: pgvector
+        url: https://github.com/pgvector/pgvector
+        publisher: pgvector project
+  - id: databases.migrations
+    title: Schema migrations
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Version-controlled, repeatable schema changes (e.g. Alembic) applied in order, with care for backwards compatibility during deploys.
+    why: Every environment's database must match the code that runs against it; hand-applied ALTER statements drift and cannot be reviewed, repeated or reliably rolled back.
+    requires: [databases.schema-design, tooling.git-basics]
+    keyIdeas:
+      - "A migration is a versioned script with `upgrade()` and `downgrade()` steps; the tool records the applied revision in a table (`alembic_version` for Alembic)."
+      - "Alembic workflow: `alembic revision --autogenerate -m \"add users\"` compares your SQLAlchemy models with the database, you review the generated script, then `alembic upgrade head` applies it."
+      - Autogenerate cannot detect everything - a renamed column looks like a drop plus an add, and some type and constraint changes need manual edits - so always read the script.
+      - Zero-downtime changes follow expand and contract - add the new column or table, deploy code that writes both, backfill, switch reads, and remove the old column in a later release.
+      - Treat migrations as code - commit and review them, run them in CI against a fresh database, and never edit one that has already run in production.
+    misconceptions:
+      - A downgrade script does not bring back lost data; dropping a column destroys its contents whatever your rollback plan says.
+      - A migration that is instant on a development database can lock a large production table for minutes; test on realistic data sizes.
+    tools: [Alembic]
+    interview: Expect to explain how you would rename a column, or add a NOT NULL column to a large table, without downtime.
+    production: "Set a `lock_timeout` for migration sessions, run migrations as a separate deploy step before new code starts, and take a backup before destructive changes."
+    sources:
+      - title: Alembic Tutorial
+        url: https://alembic.sqlalchemy.org/en/latest/tutorial.html
+        publisher: SQLAlchemy / Alembic project
+      - title: Auto Generating Migrations
+        url: https://alembic.sqlalchemy.org/en/latest/autogenerate.html
+        publisher: SQLAlchemy / Alembic project
+      - title: Parallel Change (expand and contract)
+        url: https://martinfowler.com/bliki/ParallelChange.html
+        publisher: Martin Fowler
+  - id: databases.orm
+    title: ORMs and SQLAlchemy
+    module: practice
+    level: intermediate
+    priority: technology-specific
+    summary: Object-relational mappers turn rows into objects and queries into method calls; know the N+1 query problem and when to drop to SQL.
+    why: Mapping rows to Python objects removes repetitive SQL and boilerplate, but an ORM used without understanding the SQL it emits is a common cause of slow APIs.
+    requires: [databases.sqlite-python, python.classes, databases.sql-joins]
+    keyIdeas:
+      - SQLAlchemy has two layers - Core (engine, connections and the SQL expression language) and the ORM (mapped classes and the Session).
+      - "In 2.0-style code, declare columns with `id: Mapped[int] = mapped_column(primary_key=True)` and query with `session.execute(select(User).where(User.email == email)).scalars()`."
+      - "The Session is a unit of work - it tracks changed objects and writes them on `commit()`; use one session per request or job, never a global one."
+      - "The N+1 problem - loading 100 orders and then touching `order.customer` lazily issues 101 queries; fix it with eager loading such as `selectinload()` or `joinedload()`."
+      - "Turn on SQL logging (`create_engine(..., echo=True)`) during development to see exactly which queries the ORM sends."
+    misconceptions:
+      - An ORM does not make SQL knowledge optional; you still need joins, indexes and transactions to use it well.
+      - ORM queries are parameterised, but building raw SQL with `text()` and f-strings brings SQL injection straight back.
+    tools: [SQLAlchemy]
+    interview: Expect to explain the N+1 query problem, how you would detect it and how eager loading fixes it.
+    production: Track the number of queries per request in tests or monitoring, and use Core or plain SQL for bulk operations and complex reports.
+    sources:
+      - title: SQLAlchemy Unified Tutorial
+        url: https://docs.sqlalchemy.org/en/20/tutorial/index.html
+        publisher: SQLAlchemy
+        version: "2.0"
+      - title: Relationship Loading Techniques
+        url: https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+        publisher: SQLAlchemy
+        version: "2.0"
+      - title: Session Basics
+        url: https://docs.sqlalchemy.org/en/20/orm/session_basics.html
+        publisher: SQLAlchemy
+        version: "2.0"
+  - id: databases.connection-pooling
+    title: Connection pooling
+    module: practice
+    level: advanced
+    priority: supporting
+    summary: Opening connections is expensive and databases cap them; pools reuse a bounded set of connections across requests.
+    why: Each PostgreSQL connection is a separate server process with its own memory and set-up cost, so opening one per request wastes time and quickly hits the server's connection limit.
+    requires: [databases.postgresql, networking.tcp-udp]
+    keyIdeas:
+      - A pool keeps a bounded set of open connections; a request borrows one, uses it and returns it.
+      - "PostgreSQL's `max_connections` (typically 100 by default) caps connections for the whole server, so app instances x workers x pool size, plus admin and migration connections, must stay below it."
+      - "SQLAlchemy's default `QueuePool` uses `pool_size=5` and `max_overflow=10`; `pool_pre_ping=True` tests connections before use and `pool_recycle` replaces old ones."
+      - "External poolers such as PgBouncer multiplex many client connections onto a few server connections; transaction pooling mode breaks features that rely on session state, such as `SET`, `LISTEN` and session-level advisory locks."
+      - Size pools by measurement; more active connections than the server's CPU and disks can serve increases contention instead of throughput.
+    misconceptions:
+      - A bigger pool is not always faster; past a point extra connections make the database slower.
+      - Forked worker processes must not share a pool created before the fork; create the engine in each process.
+    tools: [PgBouncer]
+    interview: Expect to size connection pools for several app instances and explain what happens when a pool is exhausted.
+    production: Monitor pool wait time and checkouts, set checkout timeouts so requests fail fast instead of hanging, and put a pooler in front of the database when many small or serverless instances connect.
+    sources:
+      - title: Connection Pooling
+        url: https://docs.sqlalchemy.org/en/20/core/pooling.html
+        publisher: SQLAlchemy
+        version: "2.0"
+      - title: "PostgreSQL: Connections and Authentication settings"
+        url: https://www.postgresql.org/docs/current/runtime-config-connection.html
+        publisher: PostgreSQL Global Development Group
+      - title: PgBouncer
+        url: https://www.pgbouncer.org/
+        publisher: PgBouncer project
+  - id: databases.backup-replication
+    title: Backups, replication and recovery
+    module: practice
+    level: advanced
+    priority: supporting
+    summary: Regular tested backups, point-in-time recovery and read replicas protect data and spread read load.
+    why: Disks fail, people run the wrong DELETE and ransomware happens; only tested backups let you recover, and replicas keep the service running while you do.
+    requires: [databases.postgresql]
+    keyIdeas:
+      - "Logical backups (`pg_dump`) export one database as SQL or an archive that restores anywhere; physical backups (`pg_basebackup`, pgBackRest) copy the data files of the whole cluster."
+      - Point-in-time recovery (PITR) combines a base backup with archived write-ahead log (WAL) so you can restore to the moment just before a mistake.
+      - Streaming replication ships WAL to standby servers that can serve read-only queries and be promoted on failure; asynchronous replicas can lag and lose the last transactions on failover.
+      - Set an RPO (how much data you can afford to lose) and an RTO (how long recovery may take), and choose backup frequency and method to meet them.
+      - Keep several copies on different storage with at least one off-site, and encrypt and access-control backups like production data.
+    misconceptions:
+      - Replication is not a backup; an accidental DELETE reaches every replica within seconds.
+      - A backup that has never been restored is not proven; test restores regularly.
+    tools: [pg_dump, pgBackRest]
+    interview: Expect to explain RPO and RTO, replication versus backups, and how you would recover from an accidental DELETE.
+    production: Automate backups, alert on failed backups and replication lag, and rehearse restores and failovers on a schedule.
+    sources:
+      - title: "PostgreSQL: Backup and Restore"
+        url: https://www.postgresql.org/docs/current/backup.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: Continuous Archiving and Point-in-Time Recovery"
+        url: https://www.postgresql.org/docs/current/continuous-archiving.html
+        publisher: PostgreSQL Global Development Group
+      - title: "PostgreSQL: High Availability, Load Balancing, and Replication"
+        url: https://www.postgresql.org/docs/current/high-availability.html
+        publisher: PostgreSQL Global Development Group
+  # -------------------------------------------------------------------- nosql
+  - id: databases.redis
+    title: Redis
+    module: nosql
+    level: intermediate
+    priority: technology-specific
+    summary: An in-memory data-structure server (strings, hashes, lists, sets, sorted sets, streams) with TTLs, used for caching, rate limits, queues and sessions.
+    why: Caches, counters, rate limits, sessions and job queues need sub-millisecond access to simple structures rather than durable relational queries, and Redis serves them from memory.
+    requires: [databases.why-databases, python.dictionaries, networking.tcp-udp]
+    keyIdeas:
+      - "Core types: strings (`SET`, `GET`, `INCR`), hashes (`HSET`), lists (`LPUSH` with `BRPOP` for simple queues), sets, sorted sets (`ZADD`, for leaderboards and sliding windows) and streams (`XADD`, `XREADGROUP` with consumer groups)."
+      - "Expire keys with `SET key value EX 60` or `EXPIRE key 60`; when memory is full, `maxmemory-policy` (for example `allkeys-lru`) decides what to evict."
+      - "Commands execute one at a time, so each single command is atomic; use `MULTI`/`EXEC` transactions or Lua scripts for multi-step atomic logic."
+      - Persistence is optional - RDB snapshots and/or an append-only file (AOF); with neither enabled, a restart loses all data.
+      - "From Python use redis-py (`redis.Redis(...)`, or `redis.asyncio` for async code) and namespace keys, for example `cache:user:42`."
+    misconceptions:
+      - Redis is not a safe primary store for data you cannot lose unless persistence and replication are configured deliberately.
+      - "`KEYS *` walks every key and blocks the server; use `SCAN` to iterate."
+    tools: [Redis, Valkey]
+    interview: Expect to choose a Redis data structure for caching, rate limiting, leaderboards or queues, and explain what happens on restart.
+    production: Set `maxmemory` and an eviction policy, keep Redis on a private network with authentication and TLS, and note that Redis's licensing has changed over time (Valkey is a BSD-licensed fork), so check current terms.
+    sources:
+      - title: Redis data types
+        url: https://redis.io/docs/latest/develop/data-types/
+        publisher: Redis
+      - title: EXPIRE command
+        url: https://redis.io/docs/latest/commands/expire/
+        publisher: Redis
+      - title: Redis persistence
+        url: https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/
+        publisher: Redis
+  - id: databases.nosql-overview
+    title: NoSQL data models
+    module: nosql
+    level: intermediate
+    priority: supporting
+    summary: Document, key-value, wide-column and graph databases trade relational guarantees for flexibility or scale in specific access patterns.
+    why: Some workloads (huge write volumes, nested documents, graph traversals, simple key lookups at massive scale) fit other data models better than tables, and choosing well starts from the access patterns.
+    requires: [databases.relational-model]
+    keyIdeas:
+      - Key-value stores (Redis, DynamoDB) get and put values by key very quickly but offer limited querying.
+      - Document databases (MongoDB, Couchbase) store JSON-like documents; model them around how the application reads data, embedding what is read together.
+      - Wide-column stores (Cassandra, ScyllaDB) partition rows by key across many nodes for high write throughput; you typically design one table per query.
+      - Graph databases (Neo4j and others) store nodes and relationships for traversals such as recommendations, fraud rings and knowledge graphs.
+      - Many of these systems trade strict consistency for availability or scale (eventual or tunable consistency), so know which guarantees your queries rely on.
+    misconceptions:
+      - NoSQL does not mean schemaless in practice; the schema moves into application code and still has to be managed.
+      - "Needing a few flexible fields rarely justifies a second database; PostgreSQL's `jsonb` often covers it."
+    interview: Expect to justify picking a document, key-value, wide-column or graph store over PostgreSQL, and what you would give up.
+    sources:
+      - title: What is NoSQL?
+        url: https://aws.amazon.com/nosql/
+        publisher: Amazon Web Services
+      - title: Data Modeling
+        url: https://www.mongodb.com/docs/manual/data-modeling/
+        publisher: MongoDB
+      - title: Data modeling
+        url: https://cassandra.apache.org/doc/latest/cassandra/developing/data-modeling/index.html
+        publisher: Apache Cassandra

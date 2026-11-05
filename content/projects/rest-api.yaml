@@ -1,0 +1,247 @@
+id: rest-api
+title: "Notes & Bookmarks REST API with FastAPI"
+track: backend
+level: intermediate
+estimatedHours: 8
+summary: >-
+  Design and build a small REST API the way production teams do: resource-oriented URLs, Pydantic
+  validation, the right status code for every outcome, pagination, an in-memory repository behind an
+  interface, and OpenAPI documentation that a client generator could use.
+problem: |
+  You are building the backend for a personal knowledge app. Users save short **notes** and
+  **bookmarks**, tag them, and browse them page by page. A web front end and a mobile app will both call
+  the API, so it must be predictable: the same rules for every resource, clear errors, and documentation
+  that is generated from the code rather than written separately (and forgotten).
+
+  **Endpoints**
+
+  | Method and path | Success | Failures |
+  |---|---|---|
+  | `POST /notes` `{title, body?, tags?}` | `201` + `Location: /notes/{id}` + the note | `422` invalid body or unknown field |
+  | `GET /notes?limit=&offset=&tag=` | `200 {items, total, limit, offset, next_offset}` | `422` limit outside 1-100, negative offset |
+  | `GET /notes/{note_id}` | `200` the note | `404 {"detail": "note 42 not found"}`, `422` id not a positive integer |
+  | `PATCH /notes/{note_id}` `{title?, body?, tags?}` | `200` the updated note | `404`, `422` empty body or `null` value |
+  | `DELETE /notes/{note_id}` | `204` (no body) | `404` |
+  | `POST /bookmarks` `{url, title, tags?}` | `201` + `Location` | `409` URL already saved, `422` not an http(s) URL |
+  | `GET /bookmarks`, `GET /bookmarks/{id}`, `DELETE /bookmarks/{id}` | as for notes | as for notes |
+
+  Inputs are JSON bodies, path parameters and query parameters; outputs are JSON (except the empty 204).
+  Titles are 1-200 characters after stripping spaces, bodies at most 10,000 characters, and tags are
+  normalised: `[" Python", "python", "Web-Dev"]` is stored as `["python", "web-dev"]`.
+
+  **Example session**
+
+  ```text
+  POST /notes {"title": "  Groceries ", "tags": ["Home"]}
+  201 Location: http://127.0.0.1:8000/notes/1
+      {"id": 1, "title": "Groceries", "body": "", "tags": ["home"],
+       "created_at": "2026-01-15T09:30:00Z", "updated_at": "2026-01-15T09:30:00Z"}
+
+  PATCH /notes/1 {"body": "eggs, milk"}
+  200 {"id": 1, "title": "Groceries", "body": "eggs, milk", ..., "updated_at": "2026-01-15T09:31:30Z"}
+
+  GET /notes?limit=20&offset=0
+  200 {"items": [{...}], "total": 1, "limit": 20, "offset": 0, "next_offset": null}
+
+  POST /notes {"title": "Hack", "id": 1000}
+  422 {"detail": [{"type": "extra_forbidden", "loc": ["body", "id"], "msg": "Extra inputs are not permitted", ...}]}
+
+  DELETE /notes/1
+  204
+
+  GET /notes/1
+  404 {"detail": "note 1 not found"}
+  ```
+concepts:
+  - backend.fastapi-basics
+  - backend.pydantic-validation
+  - backend.api-design
+  - networking.rest
+  - networking.http-semantics
+  - backend.error-handling
+  - backend.dependency-injection
+  - backend.api-testing
+acceptanceCriteria:
+  - "`normalise_tags` strips, lower-cases and de-duplicates tags in first-seen order, accepts only `^[a-z0-9]+(?:-[a-z0-9]+)*$`, and raises `ValueError` for more than 10 distinct tags."
+  - "`NoteCreate` and `BookmarkCreate` strip strings, enforce the length limits and reject unknown fields such as `id`; `BookmarkCreate.url` accepts only http and https URLs and normalises the host."
+  - "`NoteUpdate` applies only the fields that were sent (PATCH semantics), and rejects an empty body or a field sent as `null` with 422."
+  - "`InMemoryNoteRepository` satisfies the `NoteRepository` protocol: ids start at 1 and are never reused, timestamps come from the injected clock, and returned notes are immutable."
+  - "`POST /notes` returns 201 with a `Location` header; a missing note is 404 with `{\"detail\": \"note <id> not found\"}`; `DELETE` returns 204 with an empty body; `PUT /notes/1` returns 405; invalid input returns 422 with `loc` pointing at the field."
+  - "`GET /notes` pages in id order with `limit` 1-100 (default 20) and `offset` >= 0, reports `total` and `next_offset` (null on the last page), and filters by tag case-insensitively."
+  - "`POST /bookmarks` returns 409 when the normalised URL is already saved; after a delete the URL can be saved again."
+  - "`/openapi.json` documents every operation with a summary, a tag, its success code and the `ErrorResponse` model for 404/409, with operation ids equal to the route function names; `/docs` serves the Swagger UI."
+  - "Two apps created with `create_app()` never share data (no module-level state), and an injected repository is the one the routes use."
+architecture: |
+  ```text
+  HTTP request
+      |
+      v
+  +---------------------------- FastAPI app (create_app) -----------------------------+
+  |  routing + validation           route functions               dependencies         |
+  |  path/query/body --Pydantic-->  create_note, list_notes ...  <-- NoteRepo =         |
+  |  422 on bad input               raise 404 / 409, return       Depends(get_note_     |
+  |                                 models -> JSON + status code   repository)          |
+  +--------------------------------------------|----------------------------------------+
+                                               v
+                          NoteRepository / BookmarkRepository  (Protocol = the interface)
+                                               |
+                          InMemoryNoteRepository / InMemoryBookmarkRepository
+                          (dict + threading.Lock + injected clock; one per app)
+  ```
+
+  * **Models** (milestone 1): request models (`NoteCreate`, `NoteUpdate`, `BookmarkCreate`) describe
+    what clients may send; response models (`Note`, `Bookmark`, `Page[T]`, `ErrorResponse`) describe
+    what they get back. Keeping them separate is what stops a client from sending `id` or `created_at`.
+  * **Repository** (milestone 2): a `typing.Protocol` with `add`, `get`, `page`, `update` and `delete`.
+    Routes only know the protocol, so the SQLite version in
+    [crud-database-app](project:crud-database-app) drops in without changing a route.
+  * **Routers** (milestones 3-5): `build_notes_router()` and `build_bookmarks_router()` build fresh
+    `APIRouter`s; each route translates repository results into status codes (`None` becomes 404,
+    `DuplicateBookmarkError` becomes 409).
+  * **Dependency injection**: `create_app(notes=..., bookmarks=..., clock=...)` puts the repositories on
+    `app.state`; `get_note_repository(request)` reads them. Tests pass a pre-filled repository or a fake
+    clock without patching anything.
+  * **OpenAPI**: FastAPI generates the schema from type hints. `summary`, `tags`, `responses={404: ...}`
+    and `generate_unique_id_function` turn it from "technically there" into documentation people use.
+environment: local
+starterKit: projects/rest-api
+setup: |
+  You need Python 3.11 or newer. From the repository root:
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\rest-api
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/rest-api
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  To run the API and explore it in the browser:
+
+  ```bash
+  python -m uvicorn --factory notes_api:create_app --app-dir starter --reload
+  ```
+
+  Then open `http://127.0.0.1:8000/docs`. The dependencies are FastAPI, Pydantic, Uvicorn, httpx (for
+  the test client) and pytest; no accounts, databases or network access are needed.
+milestones:
+  - id: m1-models
+    title: Request and response models with validation
+    description: |
+      Implement `normalise_tags` and add the constraints to the request models: `extra="forbid"` and
+      `str_strip_whitespace=True`, title 1-200 characters, body at most 10,000, a tags validator,
+      `HttpUrl` for bookmark URLs, and a `NoteUpdate` model validator that uses `model_fields_set` to
+      reject an empty update and explicit `null`s. Make `Note` and `Bookmark` frozen with tuple tags.
+
+      **Tests (`TestMilestone1Models`)** call the models directly: stripping and defaults, length
+      limits, invalid and too many tags, `extra_forbidden` for an `id` field, PATCH models that remember
+      which fields were sent, `ftp:` and `javascript:` URLs rejected, and immutable notes.
+  - id: m2-repository
+    title: A repository interface and an in-memory implementation
+    description: |
+      Implement `InMemoryNoteRepository.add`, `get`, `page`, `update` and `delete` behind the provided
+      `NoteRepository` protocol. Use the injected clock for `created_at` / `updated_at`, guard the
+      dictionary with the lock, never reuse an id, and build updated notes with `Note.model_validate`.
+
+      **Tests (`TestMilestone2Repository`)** check `isinstance(repo, NoteRepository)`, sequential ids
+      and clock timestamps, that an update changes only the sent fields and bumps `updated_at`, that
+      delete reports what happened, that deleted ids are not reused, paging and tag filtering, and that a
+      returned note cannot be used to change the stored one.
+  - id: m3-endpoints
+    title: CRUD endpoints and status codes
+    description: |
+      Fill in the `/notes` routes: `POST` returns 201 and a `Location` header built with
+      `request.url_for`, `GET` and `PATCH` return the note or raise `not_found(...)`, `DELETE` returns an
+      empty 204. Add `ge=1` to the id path parameter.
+
+      **Tests (`TestMilestone3Endpoints`)** use `TestClient` to check the exact JSON (including
+      `2026-01-15T09:30:00Z` timestamps from the fake clock), 404 bodies, 422 with `loc` for bad ids and
+      bodies, that clients cannot set `id`, PATCH errors, 204 then 404 on delete, 405 for `PUT`, that an
+      injected repository is used, and that two apps do not share state.
+  - id: m4-pagination
+    title: Pagination and filtering
+    description: |
+      Implement `next_offset` and `GET /notes` with `limit` (1-100, default 20), `offset` (>= 0) and an
+      optional `tag` filter normalised like stored tags. Return a `Page[Note]`.
+
+      **Tests (`TestMilestone4Pagination`)** create 25 notes and check the default page, the last page
+      (`next_offset` is null), custom limits, 422 for `limit=0`, `limit=101` and `offset=-1`, an offset
+      past the end, case-insensitive tag filtering with correct totals, and that following
+      `next_offset` visits every note exactly once after a delete.
+  - id: m5-bookmarks-docs
+    title: A second resource and OpenAPI documentation
+    description: |
+      Implement `InMemoryBookmarkRepository` (raising `DuplicateBookmarkError` for a saved URL) and the
+      four `/bookmarks` routes with 409 on duplicates. Then make the docs useful: an API description,
+      `openapi_tags`, a `summary` on every route, `responses=` for 404/409 with `ErrorResponse`, and
+      `generate_unique_id_function=operation_id`.
+
+      **Tests (`TestMilestone5BookmarksAndDocs`)** check URL normalisation, 409 for duplicates (even with
+      a different-case host), 422 for `javascript:` URLs, list/read/delete, and read `/openapi.json` for
+      the exact paths and methods, documented status codes, the `ErrorResponse` reference, clean unique
+      operation ids, summaries, tags and pagination parameter bounds; `/docs` must serve the Swagger UI.
+testing: |
+  Run the tests from `projects/rest-api` (they target `starter/` by default):
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone3   # one milestone
+  python -m pytest -x -q           # stop at the first failure
+  ```
+
+  Compare against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The suite never starts a server or touches the network: FastAPI's `TestClient` calls the app in
+  process. Every test builds a fresh app with `create_app(clock=FakeClock())`, so tests are independent
+  and timestamps are exact. Milestones 1 and 2 test models and the repository directly (fast, precise
+  failures); milestones 3-5 test behaviour over HTTP, including the generated OpenAPI document.
+security:
+  - "Mass assignment: if request bodies were the stored model, a client could send `id`, `created_at` or (later) `owner_id`. Separate request models with `extra=\"forbid\"` accept only the fields clients may set."
+  - "Unbounded input: without length limits a single request can store megabytes. Limit title, body and tag counts in the models, and cap `limit` at 100 so one call cannot ask for the whole table."
+  - "Dangerous URLs: a bookmark list rendered as links would happily serve `javascript:alert(1)`. `HttpUrl` allows only http and https; a front end must still escape titles when rendering them."
+  - "Information leaks in errors: 404 bodies say only `note 42 not found`. Never return stack traces or internal exception text (FastAPI returns a plain 500 unless you turn on debug mode)."
+  - "Id enumeration: sequential ids reveal how many notes exist and invite guessing. That is acceptable for a single-user app; add authentication and per-user ownership checks (see [auth-demo](project:auth-demo)) before sharing data, and consider UUIDs for public ids."
+  - "Shared mutable state: module-level dictionaries leak data between tests and between users of different app instances. Each `create_app()` gets its own repository, and the lock prevents lost updates when sync endpoints run in parallel threads."
+extensions:
+  - "Add `ETag` headers on `GET /notes/{id}` and support `If-None-Match` (304) and `If-Match` on `PATCH` (412 on a stale version) for optimistic concurrency."
+  - "Replace offset pagination with cursor pagination (`?after=<id>`) and explain why it stays correct when items are inserted or deleted between page requests."
+  - "Add full-text search (`?q=`) over title and body, and sorting (`?sort=-updated_at`) restricted to an allow-list of fields."
+  - "Persist the notes in SQLite by implementing `NoteRepository` against a database: that is the [crud-database-app](project:crud-database-app) project."
+  - "Return errors in the RFC 9457 `application/problem+json` format with an exception handler, and update the OpenAPI responses to match."
+rubric:
+  - criterion: Resource and status-code design
+    needsWork: Verbs in URLs (`/createNote`), 200 for everything, or errors returned with a success code.
+    meets: Nouns for resources, 201 + Location, 204, 404, 405, 409 and 422 used exactly as specified and tested.
+    exceeds: Adds conditional requests (ETag / 412) or problem+json errors, and can justify each status code choice.
+  - criterion: Validation and models
+    needsWork: Request bodies are plain dicts or the stored model; limits are checked by hand inside routes, or not at all.
+    meets: Separate request and response models with limits, normalisation, `extra="forbid"` and correct PATCH semantics.
+    exceeds: Error messages tell a client exactly how to fix the request; shared rules (tags) live in one function reused everywhere.
+  - criterion: Separation of concerns
+    needsWork: Routes manipulate a global dictionary directly; tests share state.
+    meets: Routes depend on a repository protocol injected through `create_app`; each app has its own state.
+    exceeds: A second implementation (SQLite or a fake) passes the same tests without touching the routes.
+  - criterion: Pagination and documentation
+    needsWork: Lists return everything; `/docs` shows auto-generated names such as `create_note_notes_post` and no error models.
+    meets: Bounded `limit`/`offset` with `total` and `next_offset`; every operation has a summary, tag, error responses and a clean operation id.
+    exceeds: Adds cursor pagination or a generated client, and documents examples for every request body.

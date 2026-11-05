@@ -1,0 +1,203 @@
+id: rag.hybrid-search
+concept: rag.hybrid-search
+title: Hybrid search
+subtitle: Combine keyword and vector results (for example with reciprocal rank fusion) to get the strengths of both
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Combine keyword and vector results (for example with reciprocal rank fusion) to get the strengths of both.
+objectives:
+- Explain the role of hybrid search in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods (Cormack, Clarke and
+    Buettcher, 2009)
+  url: https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf
+  publisher: University of Waterloo (SIGIR 2009)
+- title: Hybrid and multi-stage queries
+  url: https://qdrant.tech/documentation/search/hybrid-queries/
+  publisher: Qdrant
+- title: Reciprocal rank fusion
+  url: https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion
+  publisher: Elastic
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Combine keyword and vector results (for example with reciprocal rank fusion) to get the strengths of both.
+      Keyword search catches exact terms and rare identifiers; vector search catches paraphrases. Each misses what
+      the other finds, so combining them is one of the most reliable quality improvements in RAG.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+
+      - Reciprocal rank fusion (RRF) scores each document as the sum over lists of 1 / (k + rank); it uses ranks
+      only, so incompatible score scales do not matter. The original paper used k = 60 (also Elasticsearch''s default);
+      other engines choose different defaults.
+
+      - Score-based fusion (normalise each list, then weight, e.g. 0.7 vector + 0.3 keyword) can beat RRF when tuned,
+      but normalisation is fragile across queries.
+
+      - Learned sparse models such as SPLADE sit in between — sparse, term-based vectors with learned term expansion.
+
+      - Retrieve generously from each side (e.g. 20-50 candidates each), fuse, then rerank the top of the fused
+      list.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+
+      - Hybrid is not automatically better; confirm on your evaluation set, because on some corpora one retriever
+      dominates.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def reciprocal_rank_fusion(rankings, k=60):\n    scores={}\n    for ranking in rankings:\n        for\
+      \ rank,doc_id in enumerate(ranking,1): scores[doc_id]=scores.get(doc_id,0)+1/(k+rank)\n    return sorted(scores,\
+      \ key=scores.get, reverse=True)\n\nprint(reciprocal_rank_fusion([[\"a\",\"b\"],[\"b\",\"c\"]]))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: hybrid-search-code
+  - type: item
+    ref: hybrid-search-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+
+      - Reciprocal rank fusion (RRF) scores each document as the sum over lists of 1 / (k + rank); it uses ranks
+      only, so incompatible score scales do not matter. The original paper used k = 60 (also Elasticsearch''s default);
+      other engines choose different defaults.
+
+      - Score-based fusion (normalise each list, then weight, e.g. 0.7 vector + 0.3 keyword) can beat RRF when tuned,
+      but normalisation is fragile across queries.
+
+      - Learned sparse models such as SPLADE sit in between — sparse, term-based vectors with learned term expansion.
+
+      - Retrieve generously from each side (e.g. 20-50 candidates each), fuse, then rerank the top of the fused
+      list.
+
+
+      **Limitations**
+
+      - Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+
+      - Hybrid is not automatically better; confirm on your evaluation set, because on some corpora one retriever
+      dominates.'
+  - type: item
+    ref: hybrid-search-mcq
+  - type: item
+    ref: hybrid-search-tf
+  - type: item
+    ref: hybrid-search-code
+items:
+- id: hybrid-search-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of hybrid search?
+  explanation: Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+  options:
+  - id: a
+    text: Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: hybrid-search-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: hybrid-search-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding hybrid search to an application. Describe the design, one failure mode, and how you would
+    evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: hybrid-search-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for hybrid search. The assertions include the normal path and a meaningful
+    edge case.
+  starterCode: "def reciprocal_rank_fusion(rankings, k=60):\n    raise NotImplementedError('Complete this function')"
+  solution: "def reciprocal_rank_fusion(rankings, k=60):\n    scores={}\n    for ranking in rankings:\n        for\
+    \ rank,doc_id in enumerate(ranking,1): scores[doc_id]=scores.get(doc_id,0)+1/(k+rank)\n    return sorted(scores,\
+    \ key=scores.get, reverse=True)"
+  tests:
+  - name: Core behaviour
+    code: assert reciprocal_rank_fusion([["a","b"],["b","c"]])[0] == "b"
+  - name: Edge case
+    code: assert reciprocal_rank_fusion([]) == []
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - hybrid-search-mcq
+  - hybrid-search-tf
+  - hybrid-search-code
+cheatsheet: '**Key ideas**
+
+  - Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+
+  - Reciprocal rank fusion (RRF) scores each document as the sum over lists of 1 / (k + rank); it uses ranks only,
+  so incompatible score scales do not matter. The original paper used k = 60 (also Elasticsearch''s default); other
+  engines choose different defaults.
+
+  - Score-based fusion (normalise each list, then weight, e.g. 0.7 vector + 0.3 keyword) can beat RRF when tuned,
+  but normalisation is fragile across queries.
+
+  - Learned sparse models such as SPLADE sit in between — sparse, term-based vectors with learned term expansion.
+
+  - Retrieve generously from each side (e.g. 20-50 candidates each), fuse, then rerank the top of the fused list.
+
+
+  **Failure modes**
+
+  - Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+
+  - Hybrid is not automatically better; confirm on your evaluation set, because on some corpora one retriever dominates.'

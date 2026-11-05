@@ -1,0 +1,1499 @@
+id: python.inheritance
+concept: python.inheritance
+title: Inheritance and Composition
+subtitle: Reusing behaviour with is-a and has-a
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Build specialised classes from existing ones with inheritance, override and extend methods with
+  super(), and see how Python's method resolution order decides which method runs. Then learn why
+  composition — building objects from parts — is usually the safer default, with a worked refactor.
+objectives:
+  - Distinguish is-a relationships (inheritance) from has-a relationships (composition) and choose between them.
+  - Write a subclass that overrides a method and extends its parent with super(), including in __init__.
+  - Predict which method runs using the method resolution order (Class.__mro__), including with multiple inheritance.
+  - Use isinstance() and issubclass() correctly and explain why they respect inheritance.
+  - Refactor an inheritance-based class into composition and explain the fragile base class problem.
+sources:
+  - title: "The Python Tutorial: Inheritance"
+    url: https://docs.python.org/3/tutorial/classes.html#inheritance
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Multiple Inheritance"
+    url: https://docs.python.org/3/tutorial/classes.html#multiple-inheritance
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: super()"
+    url: https://docs.python.org/3/library/functions.html#super
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: isinstance()"
+    url: https://docs.python.org/3/library/functions.html#isinstance
+    publisher: Python Software Foundation
+  - title: The Python 2.3 Method Resolution Order (C3, still used by Python 3)
+    url: https://docs.python.org/3/howto/mro.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why inheritance exists
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Suppose your bank charges most accounts a monthly fee of 5, but student accounts pay nothing.
+          Everything else — owner, balance, how fees are charged, how an account prints — is identical.
+
+          Without inheritance you would copy the whole `BankAccount` class, rename it `StudentAccount`
+          and change one number. Now there are two copies of every method. Fix a bug in one and you must
+          remember to fix the other — and one day someone won't.
+
+          [Inheritance](glossary:inheritance) lets you say "a student account **is a** bank account,
+          except for this one difference" and write only the difference:
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  self.owner = owner
+                  self.balance = balance
+
+              def monthly_fee(self):
+                  return 5
+
+              def charge_fee(self):
+                  self.balance -= self.monthly_fee()
+
+              def __repr__(self):
+                  return f"{type(self).__name__}({self.owner!r}, {self.balance})"
+
+
+          class StudentAccount(BankAccount):
+              def monthly_fee(self):
+                  return 0
+
+
+          regular = BankAccount("Ada", 100)
+          student = StudentAccount("Sam", 100)
+          for account in [regular, student]:
+              account.charge_fee()
+          print(regular, student)
+        expectedOutput: |
+          BankAccount('Ada', 95) StudentAccount('Sam', 100)
+        annotations:
+          - line: 12
+            text: "`type(self).__name__` makes the repr show the real class, so subclasses print correctly too."
+          - line: 15
+            text: StudentAccount inherits everything from BankAccount...
+          - line: 16
+            text: "...and overrides just this one method."
+          - line: 23
+            text: charge_fee is inherited, but self.monthly_fee() finds the student version for student.
+      - type: markdown
+        body: |
+          Inheritance is powerful, and also the most over-used feature in object-oriented code. This
+          lesson teaches how it works precisely, then when **not** to use it — and the alternative,
+          [composition](glossary:composition), that experienced engineers reach for first.
+
+  - id: subclassing
+    title: Subclasses inherit everything
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `class SavingsAccount(BankAccount):` defines a [subclass](glossary:subclass) (also called a
+          *child* or *derived* class) of the [base class](glossary:base-class) `BankAccount` (the *parent*
+          or *superclass*). The subclass:
+
+          - **inherits** every attribute and method of the base class, including `__init__`;
+          - can **add** new methods and attributes;
+          - can **override** inherited methods by defining one with the same name.
+
+          An instance of the subclass is also an instance of the base class: a savings account *is* a bank
+          account. Every class ultimately inherits from the built-in class `object`.
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  self.owner = owner
+                  self.balance = balance
+
+              def deposit(self, amount):
+                  self.balance += amount
+
+
+          class SavingsAccount(BankAccount):
+              def add_interest(self, rate):
+                  self.deposit(self.balance * rate)
+
+
+          s = SavingsAccount("Ada", 200)
+          s.deposit(100)
+          s.add_interest(0.1)
+          print(s.balance)
+          print(isinstance(s, SavingsAccount), isinstance(s, BankAccount))
+          print(SavingsAccount.__bases__)
+        expectedOutput: |
+          330.0
+          True True
+          (<class '__main__.BankAccount'>,)
+        annotations:
+          - line: 14
+            text: SavingsAccount has no __init__ of its own, so BankAccount.__init__ runs.
+          - line: 15
+            text: deposit is not on SavingsAccount, so the lookup continues to BankAccount.
+          - line: 16
+            text: "add_interest is new: 300 * 0.1 = 30.0 is deposited."
+          - line: 19
+            text: "__bases__ lists the direct parents."
+
+  - id: overriding
+    title: Overriding and extending with super()
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Overriding](glossary:method-overriding) a method **replaces** the inherited version for the
+          subclass. Often you don't want to replace it completely — you want the parent's behaviour **plus**
+          something extra. [`super()`](glossary:super-function) gives you access to the parent's version:
+
+          - `super().describe()` — run the parent's `describe` on this same object, then build on its result.
+          - `super().__init__(owner, balance)` — let the parent set up *its* attributes, then add yours.
+
+          Overriding `__init__` is the case that matters most: if your subclass defines `__init__`, the
+          parent's `__init__` **no longer runs automatically**. Python only ever calls one `__init__` — the
+          first it finds. Calling `super().__init__(...)` is how you make the parent's run too.
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  self.owner = owner
+                  self.balance = balance
+
+              def describe(self):
+                  return f"{self.owner}: {self.balance}"
+
+
+          class SavingsAccount(BankAccount):
+              def __init__(self, owner, balance=0, rate=0.02):
+                  super().__init__(owner, balance)
+                  self.rate = rate
+
+              def describe(self):
+                  return super().describe() + f" (saving at {self.rate:.0%})"
+
+
+          s = SavingsAccount("Ada", 500, 0.04)
+          print(s.describe())
+          print(vars(s))
+        expectedOutput: |
+          Ada: 500 (saving at 4%)
+          {'owner': 'Ada', 'balance': 500, 'rate': 0.04}
+        annotations:
+          - line: 12
+            text: "Parent first: BankAccount.__init__ sets owner and balance on this object. Note: no self in the arguments."
+          - line: 13
+            text: Then the subclass adds its own attribute.
+          - line: 16
+            text: Extend, don't copy — reuse the parent's text and append to it.
+          - line: 21
+            text: One object, with attributes set by both __init__ methods.
+      - type: callout
+        variant: tip
+        title: Keep the signature compatible
+        body: |
+          An overriding method should accept the same arguments and return the same kind of value as the
+          one it overrides. Code written for `BankAccount` calls `account.describe()` and expects a string;
+          a subclass that suddenly requires an argument, or returns `None`, breaks that code.
+
+  - id: lookup
+    title: "Mental model: lookup walks up a chain"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Extend the model from the classes lesson: to find `obj.name`, Python looks in the **instance**,
+          then the instance's **class**, then that class's **parent**, and so on up to `object`. **The first
+          match wins.** That chain is called the [method resolution order](glossary:mro) (MRO).
+
+          Two consequences follow, and both surprise people:
+
+          1. `self` is always the **original object**. When an inherited method calls `self.something()`,
+             the lookup starts again at the object's own class — so it finds the subclass's override, even
+             though the calling method was written in the base class.
+          2. Nothing runs "automatically" from parent classes. A parent's method runs only if the lookup
+             finds it, or if you call it with `super()`.
+
+          Step through `super().__init__` and watch the second `__init__` frame appear on top of the first,
+          working on the same object:
+      - type: visualization
+        component: python-tracer
+        title: super().__init__ sets up the same object
+        caption: >-
+          Both __init__ frames receive the same self. The parent adds owner and balance; when it returns,
+          the subclass adds rate.
+        props:
+          code: |
+            class Account:
+                def __init__(self, owner):
+                    self.owner = owner
+                    self.balance = 0
+
+            class SavingsAccount(Account):
+                def __init__(self, owner, rate):
+                    super().__init__(owner)
+                    self.rate = rate
+
+            s = SavingsAccount("Ada", 0.04)
+            print(s.owner, s.balance, s.rate)
+      - type: markdown
+        body: |
+          Now apply consequence 1. `render` is written in `Report`, but `self` may be a subclass:
+      - type: item
+        ref: predict-dispatch
+      - type: visualization
+        component: python-tracer
+        title: An inherited method calling an override
+        caption: When render runs for a SalesReport, self.title() is looked up on SalesReport first.
+        props:
+          code: |
+            class Report:
+                def title(self):
+                    return "Report"
+
+                def render(self):
+                    return "== " + self.title() + " =="
+
+            class SalesReport(Report):
+                def title(self):
+                    return "Sales"
+
+            print(Report().render())
+            print(SalesReport().render())
+
+  - id: mro
+    title: Method resolution order and multiple inheritance
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A class may list several bases: `class Service(Logging, Caching):`. Then "go to the parent" is
+          ambiguous, so Python computes one linear order for every class, stored as `Class.__mro__`. It
+          uses the **C3 linearization** algorithm, which guarantees:
+
+          - a class always comes **before its parents**;
+          - parents keep the **order you listed them** in the class statement;
+          - every class appears **once**.
+
+          `super()` means "**the next class in the MRO of this object's class**" — not "my parent". In a
+          diamond-shaped hierarchy that difference is what makes every class run exactly once:
+      - type: code
+        runnable: true
+        code: |
+          class Base:
+              def setup(self):
+                  print("Base.setup")
+
+          class Logging(Base):
+              def setup(self):
+                  print("Logging.setup")
+                  super().setup()
+
+          class Caching(Base):
+              def setup(self):
+                  print("Caching.setup")
+                  super().setup()
+
+          class Service(Logging, Caching):
+              def setup(self):
+                  print("Service.setup")
+                  super().setup()
+
+          Service().setup()
+          print([cls.__name__ for cls in Service.__mro__])
+        expectedOutput: |
+          Service.setup
+          Logging.setup
+          Caching.setup
+          Base.setup
+          ['Service', 'Logging', 'Caching', 'Base', 'object']
+        annotations:
+          - line: 8
+            text: "For a Service object, the class after Logging in the MRO is Caching — not Base!"
+          - line: 21
+            text: The MRO is a plain tuple of classes you can inspect.
+      - type: item
+        ref: predict-mro
+      - type: callout
+        variant: production
+        title: Multiple inheritance in practice
+        body: |
+          Real code uses multiple inheritance mostly for **mixins**: small classes that add one capability
+          (for example `to_json()`) and are combined with a main base class. Each method in the chain must
+          call `super()` and accept compatible arguments for the cooperation to work. If you find yourself
+          drawing a complicated diamond on a whiteboard, composition is probably the better design.
+
+  - id: isinstance
+    title: isinstance() and issubclass()
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `isinstance(obj, Class)` asks "is obj an instance of Class **or of any subclass of it**?".
+          `issubclass(A, B)` asks the same question about two classes. Both accept a tuple of classes,
+          meaning "any of these". Because they respect inheritance, they are almost always what you want —
+          `type(obj) is Class` rejects subclasses, which breaks the promise that a subclass instance can be
+          used wherever its parent is expected.
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              pass
+
+          class SavingsAccount(BankAccount):
+              pass
+
+          s = SavingsAccount()
+          print(isinstance(s, SavingsAccount), isinstance(s, BankAccount), isinstance(s, object))
+          print(type(s) is BankAccount, type(s).__name__)
+          print(issubclass(SavingsAccount, BankAccount), issubclass(BankAccount, SavingsAccount))
+          print(isinstance(True, int), isinstance(3, (str, float)))
+          print(bool.__mro__)
+        expectedOutput: |
+          True True True
+          False SavingsAccount
+          True False
+          True False
+          (<class 'bool'>, <class 'int'>, <class 'object'>)
+        annotations:
+          - line: 9
+            text: type() reports only the exact class.
+          - line: 11
+            text: "Surprise: bool is a subclass of int, so True is an int (True + True == 2)."
+      - type: callout
+        variant: tip
+        title: Prefer behaviour over type checks
+        body: |
+          A long `if isinstance(x, A): ... elif isinstance(x, B): ...` chain usually means each class
+          should have its own method instead — like `monthly_fee()` above — so the caller simply calls it.
+          That idea, [polymorphism](concept:python.polymorphism), is the next step after this lesson.
+
+  - id: composition
+    title: "Composition: the default alternative"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Inheritance models **is-a**: every `SavingsAccount` is a `BankAccount` and must work anywhere a
+          `BankAccount` is expected. [Composition](glossary:composition) models **has-a**: an object holds
+          other objects as attributes and **delegates** work to them. A car *has an* engine; an order *has*
+          line items; a notifier *has a* message sender.
+
+          | Ask | If yes | Example |
+          |---|---|---|
+          | Is every X truly a Y, usable anywhere a Y is expected? | Inheritance can fit | `SavingsAccount(BankAccount)` |
+          | Does X just need some of Y's abilities? | Composition | A `Stack` that stores items in a list |
+          | Might you want to swap the part (another sender, a fake in tests)? | Composition | `OrderNotifier(sender)` |
+          | Would X inherit methods that break its own rules? | Composition | `Stack(list)` inherits `insert` |
+      - type: item
+        ref: is-a-or-has-a
+      - type: markdown
+        body: |
+          ### Worked refactor: a stack that is not a list
+
+          A [stack](https://docs.python.org/3/tutorial/datastructures.html#using-lists-as-stacks) allows
+          only three things: push an item on top, look at the top, pop the top. Its invariant is "the only
+          item you can remove is the one added most recently". A tempting shortcut is to inherit from
+          `list`, since a list already stores items:
+      - type: code
+        runnable: true
+        code: |
+          class Stack(list):
+              def push(self, item):
+                  self.append(item)
+
+              def peek(self):
+                  return self[-1]
+
+          s = Stack()
+          s.push("a")
+          s.push("b")
+          s.insert(0, "sneaky")     # inherited from list
+          s.sort()                  # also inherited
+          print(s, s.peek())
+        expectedOutput: |
+          ['a', 'b', 'sneaky'] sneaky
+        caption: The "top" of the stack is now an item that was never pushed last. The stack's rules are broken.
+      - type: markdown
+        body: |
+          The stack inherited every list method — `insert`, `sort`, `remove`, `reverse`, `clear` and dozens
+          more — and each one is a way to break its invariant. A stack is not a list; it **has** a list.
+          The refactor takes four steps:
+
+          1. Remove the base class and store a list in an attribute: `self._items = []` (the underscore says
+             "internal").
+          2. Write the methods the stack really offers, each **delegating** to the list.
+          3. Everything else disappears from the public interface — callers can only do what a stack allows.
+          4. The storage is now a private detail: you could later switch to another structure without
+             changing any caller.
+      - type: code
+        runnable: true
+        code: |
+          class Stack:
+              def __init__(self):
+                  self._items = []
+
+              def push(self, item):
+                  self._items.append(item)
+
+              def pop(self):
+                  if not self._items:
+                      raise IndexError("pop from empty stack")
+                  return self._items.pop()
+
+              def peek(self):
+                  if not self._items:
+                      raise IndexError("peek at empty stack")
+                  return self._items[-1]
+
+              def size(self):
+                  return len(self._items)
+
+              def __repr__(self):
+                  return f"Stack({self._items})"
+
+          s = Stack()
+          s.push("a")
+          s.push("b")
+          print(s, s.peek(), s.size())
+          print(s.pop(), s)
+          print(hasattr(s, "insert"), isinstance(s, list))
+        expectedOutput: |
+          Stack(['a', 'b']) b 2
+          b Stack(['a'])
+          False False
+        annotations:
+          - line: 3
+            text: Has-a — the stack owns a list instead of being one.
+          - line: 9
+            text: A clear, stack-specific error instead of the list's.
+          - line: 29
+            text: "insert no longer exists on a Stack: the invariant is protected."
+      - type: markdown
+        body: |
+          ### Composition lets you swap parts
+
+          Because the part is just an attribute, the caller can choose it. Here a notifier *has a* sender. In
+          production it gets a real sender; in a test it gets a fake that records messages (a preview of
+          [test doubles](concept:python.mocking)). If `OrderNotifier` inherited from `EmailSender`, it would
+          be welded to email forever.
+      - type: code
+        runnable: true
+        code: |
+          class EmailSender:
+              def send(self, to, text):
+                  return f"email to {to}: {text}"
+
+          class FakeSender:
+              def __init__(self):
+                  self.sent = []
+
+              def send(self, to, text):
+                  self.sent.append((to, text))
+                  return "recorded"
+
+          class OrderNotifier:
+              def __init__(self, sender):
+                  self.sender = sender
+
+              def order_shipped(self, customer):
+                  return self.sender.send(customer, "Your order has shipped")
+
+          print(OrderNotifier(EmailSender()).order_shipped("ada@example.com"))
+          fake = FakeSender()
+          OrderNotifier(fake).order_shipped("sam@example.com")
+          print(fake.sent)
+        expectedOutput: |
+          email to ada@example.com: Your order has shipped
+          [('sam@example.com', 'Your order has shipped')]
+        annotations:
+          - line: 15
+            text: The notifier has a sender — whichever one it was given.
+          - line: 18
+            text: Delegation — the notifier asks its part to do the work.
+
+  - id: fragile
+    title: When inheritance goes wrong
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A subclass is tightly coupled to its base class: it sees, and often depends on, how the base
+          class is implemented *inside*. This example wants to count how many items were ever added, so it
+          overrides **both** adding methods:
+      - type: code
+        runnable: true
+        code: |
+          class Inventory:
+              def __init__(self):
+                  self.items = []
+
+              def add(self, item):
+                  self.items.append(item)
+
+              def add_many(self, items):
+                  for item in items:
+                      self.add(item)
+
+
+          class CountingInventory(Inventory):
+              def __init__(self):
+                  super().__init__()
+                  self.added = 0
+
+              def add(self, item):
+                  self.added += 1
+                  super().add(item)
+
+              def add_many(self, items):
+                  self.added += len(items)
+                  super().add_many(items)
+
+
+          inv = CountingInventory()
+          inv.add_many(["pen", "ink"])
+          print(inv.added, inv.items)
+        expectedOutput: |
+          4 ['pen', 'ink']
+        caption: Two items, counted four times.
+      - type: markdown
+        body: |
+          Trace it: `CountingInventory.add_many` adds 2, then calls `Inventory.add_many`, which calls
+          `self.add(item)` for each item. `self` is a `CountingInventory`, so the **overridden** `add` runs
+          and counts each item again: 2 + 2 = 4.
+
+          The subclass author could not see this from `Inventory`'s public behaviour — it depends on an
+          internal detail ("add_many happens to call add"). Worse, if the base class author later
+          "optimises" `add_many` to `self.items.extend(items)`, a subclass that relied on the old detail
+          silently starts counting differently. A harmless-looking change in the base class breaks the
+          subclass: this is the [fragile base class problem](glossary:fragile-base-class).
+
+          **The composition version** wraps an `Inventory` and counts in its own methods. It only uses the
+          inventory's public methods, so the inventory's internals cannot affect the count:
+      - type: code
+        runnable: true
+        code: |
+          class Inventory:
+              def __init__(self):
+                  self.items = []
+
+              def add(self, item):
+                  self.items.append(item)
+
+              def add_many(self, items):
+                  for item in items:
+                      self.add(item)
+
+
+          class CountingInventory:
+              def __init__(self):
+                  self.inventory = Inventory()
+                  self.added = 0
+
+              def add(self, item):
+                  self.added += 1
+                  self.inventory.add(item)
+
+              def add_many(self, items):
+                  self.added += len(items)
+                  self.inventory.add_many(items)
+
+
+          inv = CountingInventory()
+          inv.add_many(["pen", "ink"])
+          print(inv.added, inv.inventory.items)
+        expectedOutput: |
+          2 ['pen', 'ink']
+        annotations:
+          - line: 15
+            text: Has-a. When Inventory.add_many calls self.add, self is the Inventory, not the counter.
+      - type: markdown
+        body: |
+          **Warning signs that inheritance is the wrong tool:**
+
+          - The subclass inherits methods that make no sense for it, or overrides them just to raise an
+            error. It is not really an "is-a".
+          - The subclass breaks a promise of the base class. If code relies on "a rectangle's width and
+            height can change independently", a `Square` subclass that forces them equal breaks that code.
+            The rule that a subclass must be usable anywhere its base is expected is called the
+            [Liskov substitution principle](glossary:liskov-substitution).
+          - You inherit only to reuse a few helper methods ("inheritance for code reuse").
+          - The hierarchy is more than two or three levels deep and nobody can say which method runs.
+      - type: item
+        ref: explain-fragile-base
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `AttributeError: 'SavingsAccount' object has no attribute 'owner'` | The subclass defines `__init__` but never calls `super().__init__(...)`, so the parent's attributes were never set | Call `super().__init__(owner, balance)` at the start of the subclass's `__init__` |
+          | `TypeError: BankAccount.__init__() missing 1 required positional argument: 'owner'` | `super().__init__()` was called without the arguments the parent needs | Pass the parent's arguments (not `self`) |
+          | `TypeError: ... takes from 2 to 3 positional arguments but 4 were given` | `super().__init__(self, ...)` — `super()` already supplies `self` | Remove `self` from the argument list |
+          | An overridden method returns `None` | `super().describe() + "..."` computed but not returned | `return super().describe() + "..."` |
+          | `TypeError: Cannot create a consistent method resolution order (MRO) for bases ...` | The bases are listed in an order C3 cannot satisfy, e.g. a parent before its own subclass | List more specific classes first, or simplify the hierarchy |
+          | A parent's method runs twice | Calling `Parent.method(self)` directly in a diamond hierarchy | Use `super()` consistently in every class |
+          | A subclass's rules can be bypassed with inherited methods | Inheriting from a class (like `list`) for convenience | Use composition and delegate only what you need |
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  self.owner = owner
+                  self.balance = balance
+
+          class SavingsAccount(BankAccount):
+              def __init__(self, owner, balance, rate):
+                  self.rate = rate                 # forgot super().__init__(owner, balance)
+
+          s = SavingsAccount("Ada", 100, 0.02)
+          print(s.owner)
+        expectError: AttributeError
+        caption: "The object only has rate. Python calls exactly one __init__ — the subclass's — and it never asked the parent to run."
+      - type: code
+        runnable: true
+        code: |
+          class Animal:
+              pass
+
+          class Dog(Animal):
+              pass
+
+          class Puppy(Animal, Dog):
+              pass
+        expectError: TypeError
+        caption: "Animal is listed before its own subclass Dog, which contradicts 'a class comes before its parents'."
+      - type: item
+        ref: mcq-super-args
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks inspect your class structure as well as its output, so reuse the parent with `super()`
+          rather than copying its code.
+      - type: item
+        ref: discounted-product
+      - type: item
+        ref: debug-missing-super
+      - type: item
+        ref: queue-composition
+      - type: item
+        ref: parsons-super-init
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The MRO is computed once, when the class is created.** C3 builds it by merging the parents'
+          MROs: `L[Service] = Service + merge(L[Logging], L[Caching], [Logging, Caching])`. The merge
+          repeatedly takes the first class that does not appear later in any other list. With
+          `L[Logging] = [Logging, Base, object]` and `L[Caching] = [Caching, Base, object]`, Base cannot be
+          taken until Caching has been, giving `Service, Logging, Caching, Base, object`. If no class can be
+          taken, the hierarchy is inconsistent and the `class` statement raises `TypeError`.
+
+          **Attribute lookup walks `type(obj).__mro__`**, checking each class's namespace in order (after
+          the instance's own `__dict__`, apart from data descriptors such as properties, which win).
+          CPython keeps a per-type cache of lookups so long MROs do not slow down repeated method calls;
+          the cache is invalidated when a class is modified.
+
+          **Zero-argument `super()`** works because the compiler gives any method that uses `super` (or
+          `__class__`) a hidden reference to the class it was defined in. `super()` inside
+          `SavingsAccount.__init__` is therefore shorthand for `super(SavingsAccount, self)`: "search
+          `type(self).__mro__`, starting just after SavingsAccount". That is why it reaches Caching in the
+          diamond example — the search uses the MRO of the actual object's class.
+
+          **Calling a parent directly** (`Base.__init__(self)`) also works in a simple chain, but it
+          bypasses the MRO. In a diamond, both branches call Base directly and Base runs twice:
+      - type: code
+        runnable: true
+        code: |
+          class Base:
+              def __init__(self):
+                  print("Base init")
+
+          class Left(Base):
+              def __init__(self):
+                  Base.__init__(self)
+                  print("Left init")
+
+          class Right(Base):
+              def __init__(self):
+                  Base.__init__(self)
+                  print("Right init")
+
+          class Both(Left, Right):
+              def __init__(self):
+                  Left.__init__(self)
+                  Right.__init__(self)
+
+          Both()
+        expectedOutput: |
+          Base init
+          Left init
+          Base init
+          Right init
+        caption: Replace each direct call with super().__init__() and Base runs exactly once, in MRO order.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `class Child(Base):` — the subclass inherits everything, can add methods and can override them.
+          - Attribute lookup: instance → class → parents in **MRO** order (`Class.__mro__`). First match
+            wins; `self` is always the original object, so base-class code reaches subclass overrides.
+          - Overriding `__init__` replaces the parent's; call `super().__init__(...)` (without `self`) to
+            run it.
+          - `super()` means "next class in the MRO of this object's class", which makes cooperative
+            multiple inheritance run each class once.
+          - `isinstance` / `issubclass` respect inheritance; `type(x) is C` does not.
+          - **Is-a → inheritance; has-a → composition.** Prefer composition when in doubt: smaller
+            interface, swappable parts, no fragile base class.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Composition or inheritance?" is a favourite design question. Give the is-a / has-a test, mention
+          the Liskov substitution principle, and back it up with an example such as `Stack(list)` exposing
+          `insert`. Senior interviews may ask you to explain the MRO of a diamond and why `super()` calls a
+          sibling rather than the parent.
+
+items:
+  - id: predict-dispatch
+    type: predict-output
+    skill: prediction
+    prompt: Predict both lines, then step through the tracer below to check.
+    code: |
+      class Report:
+          def title(self):
+              return "Report"
+
+          def render(self):
+              return "== " + self.title() + " =="
+
+      class SalesReport(Report):
+          def title(self):
+              return "Sales"
+
+      print(Report().render())
+      print(SalesReport().render())
+    answer: |
+      == Report ==
+      == Sales ==
+    explanation: >-
+      render is inherited, but self is the SalesReport object, so self.title() starts its lookup at
+      SalesReport and finds the override. Where a method is written does not decide which methods it calls
+      through self.
+    wrongAnswers:
+      - answer: |
+          == Report ==
+          == Report ==
+        feedback: >-
+          This assumes render, being written in Report, calls Report's title. But self.title() looks up title
+          on the object's own class first, and the object is a SalesReport.
+      - answer: |
+          == Report ==
+          Sales
+        feedback: SalesReport does not override render, so the inherited render still adds the == decorations around the title.
+
+  - id: predict-mro
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this print? Work out D.__mro__ first.
+    code: |
+      class A:
+          def who(self):
+              return "A"
+
+      class B(A):
+          def who(self):
+              return "B" + super().who()
+
+      class C(A):
+          def who(self):
+              return "C" + super().who()
+
+      class D(B, C):
+          def who(self):
+              return "D" + super().who()
+
+      print(D().who())
+    answer: "DBCA"
+    explanation: >-
+      D.__mro__ is D, B, C, A, object. Each super() call moves to the next class in that order for the D
+      object: D → B → C → A. So B's super() reaches C, not A, and A runs once at the end.
+    wrongAnswers:
+      - answer: "DBA"
+        feedback: >-
+          super() is not "my parent". Inside B, for a D object, the next class in D's MRO after B is C. C is
+          skipped only if someone stops calling super().
+      - answer: "DBACA"
+        feedback: C3 linearization lists every class once, so A appears only at the end of the MRO and runs once.
+      - answer: "DCBA"
+        feedback: The bases are listed as (B, C), and C3 keeps that order, so B comes before C.
+
+  - id: is-a-or-has-a
+    type: mcq
+    skill: design
+    prompt: Which pair is the best fit for inheritance (`class X(Y)`) rather than composition?
+    explanation: >-
+      Inheritance fits a true is-a relationship where the subclass can be used anywhere the base is
+      expected. Every savings account is a bank account. The other pairs are has-a or uses relationships.
+    options:
+      - id: a
+        text: SavingsAccount and BankAccount
+        correct: true
+        feedback: Every savings account is a bank account and should work wherever one is expected — a genuine is-a.
+      - id: b
+        text: Car and Engine
+        feedback: A car has an engine; it is not a kind of engine. Store an Engine in an attribute and delegate start().
+      - id: c
+        text: ShoppingCart and list (a cart stores items)
+        feedback: A cart has a list of items. Inheriting from list would expose insert, sort and clear, letting callers bypass the cart's rules.
+      - id: d
+        text: InvoiceReport and EmailSender (the report must be emailed)
+        feedback: The report uses a sender. Pass the sender in as an attribute, so you can swap it for SMS or a test fake.
+
+  - id: explain-fragile-base
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: >-
+      In your own words: why did the first CountingInventory report 4 instead of 2, why is this called the
+      fragile base class problem, and how does the composition version avoid it?
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that the base add_many calls self.add, and since self is a CountingInventory the overridden add counts each item again.
+      - Says the subclass depends on an internal detail of the base class (which of its methods call which), not on its public behaviour.
+      - Explains that a change to the base class's internals could silently change or break the subclass — hence "fragile".
+      - Explains that the composition version only calls the inventory's public methods, and inside the Inventory self is the Inventory, so the count cannot be affected.
+    modelAnswer: |
+      The subclass added len(items) in add_many and then called the base add_many. That method loops and
+      calls self.add(item) — and because self is a CountingInventory, the lookup finds the overridden add,
+      which counts every item a second time: 2 + 2 = 4. The subclass silently depended on an internal
+      implementation detail of Inventory, namely that add_many calls add. If the Inventory author later
+      changed add_many to use items.extend, the subclass's behaviour would change without any change in
+      the subclass — a base class that cannot safely change its internals is "fragile". With composition,
+      CountingInventory holds an Inventory and calls its public methods. Inside Inventory.add_many, self is
+      the Inventory object, so nothing calls back into the counter, and the count depends only on the
+      counter's own code.
+
+  - id: mcq-super-args
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This subclass fails with `TypeError: BankAccount.__init__() takes from 2 to 3 positional arguments but 4 were given`. Why?
+
+      ```python
+      class SavingsAccount(BankAccount):
+          def __init__(self, owner, balance, rate):
+              super().__init__(self, owner, balance)
+              self.rate = rate
+      ```
+    explanation: >-
+      super() returns an object already bound to self, just like calling a method on an instance. Passing
+      self explicitly adds it a second time, so BankAccount.__init__ receives (self, self, owner, balance) —
+      four positional arguments instead of at most three.
+    options:
+      - id: a
+        text: super() already passes self, so writing self again adds an extra argument.
+        correct: true
+        feedback: Right. Write super().__init__(owner, balance).
+      - id: b
+        text: super() cannot be used inside __init__.
+        feedback: Calling super().__init__ inside __init__ is the standard way to run the parent's initialiser.
+      - id: c
+        text: BankAccount.__init__ must also accept rate.
+        feedback: The parent doesn't need to know about rate — the subclass stores it itself after calling super().
+      - id: d
+        text: SavingsAccount must also list object as a base class.
+        feedback: Every class already inherits from object; listing it changes nothing here.
+
+  - id: discounted-product
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a subclass `DiscountedProduct` of `Product`:
+
+      - `__init__(self, name, price, percent)` lets `Product` store `name` and `price` (use `super()`), then
+        stores `percent`;
+      - `final_price()` takes the parent's `final_price()` (use `super()`) and reduces it by `percent` per cent.
+
+      The program should then print:
+
+      ```text
+      Product('pen', 50) DiscountedProduct('book', 300.0)
+      True
+      ```
+    starterCode: |
+      class Product:
+          def __init__(self, name, price):
+              self.name = name
+              self.price = price
+
+          def final_price(self):
+              return self.price
+
+          def __repr__(self):
+              return f"{type(self).__name__}({self.name!r}, {self.final_price()})"
+
+
+      # Write class DiscountedProduct(Product) here.
+
+
+      pen = Product("pen", 50)
+      book = DiscountedProduct("book", 400, 25)
+      print(pen, book)
+      print(isinstance(book, Product))
+    solution: |
+      class Product:
+          def __init__(self, name, price):
+              self.name = name
+              self.price = price
+
+          def final_price(self):
+              return self.price
+
+          def __repr__(self):
+              return f"{type(self).__name__}({self.name!r}, {self.final_price()})"
+
+
+      class DiscountedProduct(Product):
+          def __init__(self, name, price, percent):
+              super().__init__(name, price)
+              self.percent = percent
+
+          def final_price(self):
+              return super().final_price() * (100 - self.percent) / 100
+
+
+      pen = Product("pen", 50)
+      book = DiscountedProduct("book", 400, 25)
+      print(pen, book)
+      print(isinstance(book, Product))
+    expectedOutput: |
+      Product('pen', 50) DiscountedProduct('book', 300.0)
+      True
+    tests:
+      - name: DiscountedProduct is a subclass of Product
+        code: |
+          assert defined("DiscountedProduct"), "Define a class named DiscountedProduct."
+          assert issubclass(DiscountedProduct, Product), "Write class DiscountedProduct(Product): so it inherits from Product."
+      - name: stores name, price and percent
+        code: |
+          attrs = vars(DiscountedProduct("lamp", 200, 10))
+          assert attrs == {"name": "lamp", "price": 200, "percent": 10}, f"Expected attributes name, price and percent, got {attrs!r}."
+      - name: final_price applies the discount for any values
+        code: |
+          assert DiscountedProduct("lamp", 200, 10).final_price() == 180, "200 with 10% off should be 180."
+          assert DiscountedProduct("mug", 80, 0).final_price() == 80, "0% off should leave the price unchanged."
+      - name: reuses the parent with super()
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "DiscountedProduct")
+          methods = {f.name: f for f in cls.body if isinstance(f, ast.FunctionDef)}
+          for name in ("__init__", "final_price"):
+              assert name in methods, f"DiscountedProduct needs its own {name} method."
+              calls_super = any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "super" for c in ast.walk(methods[name]))
+              assert calls_super, f"In DiscountedProduct.{name}, call super() to reuse Product's version instead of copying it."
+      - name: prints the two lines
+        code: |
+          assert output_lines() == ["Product('pen', 50) DiscountedProduct('book', 300.0)", "True"], f"Your program printed {output()!r}."
+    hints:
+      - "Start with `class DiscountedProduct(Product):` and an `__init__(self, name, price, percent)`."
+      - "First line of that __init__: `super().__init__(name, price)` — no self in the brackets."
+      - "In final_price: `return super().final_price() * (100 - self.percent) / 100`."
+    feedback:
+      - when: { errorType: NameError }
+        message: DiscountedProduct is not defined yet. Write the class between the comment and the program lines.
+      - when: { errorMessageContains: "positional arguments but" }
+        message: super() already passes self. Call super().__init__(name, price), without self.
+      - when: { errorType: AttributeError }
+        message: An attribute is missing. Did your __init__ call super().__init__(name, price) before storing percent?
+    explanation: >-
+      super().__init__ lets Product set name and price on the new object, so that code exists once. The
+      override of final_price builds on the parent's result. Product's __repr__ is inherited and, because
+      it calls self.final_price(), shows the discounted price for a DiscountedProduct.
+
+  - id: debug-missing-super
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `Grace 6500` but crashes with an AttributeError. Fix `Manager` so that
+      `Employee` sets up the attributes it is responsible for.
+    starterCode: |
+      class Employee:
+          def __init__(self, name, salary):
+              self.name = name
+              self.salary = salary
+
+          def pay(self):
+              return self.salary
+
+
+      class Manager(Employee):
+          def __init__(self, name, salary, bonus):
+              self.bonus = bonus
+
+          def pay(self):
+              return super().pay() + self.bonus
+
+
+      boss = Manager("Grace", 5000, 1500)
+      print(boss.name, boss.pay())
+    solution: |
+      class Employee:
+          def __init__(self, name, salary):
+              self.name = name
+              self.salary = salary
+
+          def pay(self):
+              return self.salary
+
+
+      class Manager(Employee):
+          def __init__(self, name, salary, bonus):
+              super().__init__(name, salary)
+              self.bonus = bonus
+
+          def pay(self):
+              return super().pay() + self.bonus
+
+
+      boss = Manager("Grace", 5000, 1500)
+      print(boss.name, boss.pay())
+    expectedOutput: |
+      Grace 6500
+    tests:
+      - name: prints Grace 6500
+        code: |
+          assert output().strip() == "Grace 6500", f"Your program printed {output()!r}."
+      - name: a Manager has all three attributes
+        code: |
+          attrs = vars(Manager("Ana", 100, 5))
+          assert attrs == {"name": "Ana", "salary": 100, "bonus": 5}, f"Expected name, salary and bonus, got {attrs!r}."
+          assert Manager("Ana", 100, 5).pay() == 105, "pay() should be salary + bonus."
+      - name: Employee's __init__ does the Employee part
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "Manager")
+          init = next(f for f in cls.body if isinstance(f, ast.FunctionDef) and f.name == "__init__")
+          assert any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "super" for c in ast.walk(init)), "Let Employee set name and salary by calling super().__init__(name, salary) instead of repeating its code."
+    hints:
+      - The error says the Manager object has no attribute name. Which method was supposed to set it?
+      - Manager defines its own __init__, so Employee.__init__ never runs on its own.
+      - "Add `super().__init__(name, salary)` as the first line of Manager.__init__."
+    feedback:
+      - when: { errorType: AttributeError }
+        message: The Manager still lacks name or salary. Call super().__init__(name, salary) inside Manager.__init__.
+      - when: { errorMessageContains: "positional arguments but" }
+        message: Do not pass self to super().__init__ — super() supplies it already.
+    explanation: >-
+      Defining __init__ in Manager replaced Employee's, and Python calls only one __init__. The fix calls
+      super().__init__(name, salary) so the parent sets its attributes, then Manager adds bonus.
+
+  - id: queue-composition
+    type: code
+    skill: design
+    difficulty: 3
+    prompt: |
+      `TicketQueue` inherits from `list`, so any caller can `insert(0, ...)` to jump the queue, or `sort()`
+      it. Refactor it to use **composition**: it must **not** inherit from list, but store a list in an
+      attribute and delegate to it. Keep the same public methods:
+
+      - `join(name)` adds a name at the back;
+      - `serve()` removes and returns the name at the front (an empty queue raises `IndexError`);
+      - `size()` returns how many are waiting;
+      - `__repr__()` returns text like `TicketQueue(['Ben', 'Cy'])`.
+
+      The program's output must stay the same.
+    starterCode: |
+      class TicketQueue(list):
+          def join(self, name):
+              self.append(name)
+
+          def serve(self):
+              return self.pop(0)
+
+          def size(self):
+              return len(self)
+
+          def __repr__(self):
+              return f"TicketQueue({list(self)})"
+
+
+      q = TicketQueue()
+      q.join("Ana")
+      q.join("Ben")
+      q.join("Cy")
+      print(q.serve(), q.size())
+      print(q)
+    solution: |
+      class TicketQueue:
+          def __init__(self):
+              self._items = []
+
+          def join(self, name):
+              self._items.append(name)
+
+          def serve(self):
+              return self._items.pop(0)
+
+          def size(self):
+              return len(self._items)
+
+          def __repr__(self):
+              return f"TicketQueue({self._items})"
+
+
+      q = TicketQueue()
+      q.join("Ana")
+      q.join("Ben")
+      q.join("Cy")
+      print(q.serve(), q.size())
+      print(q)
+    expectedOutput: |
+      Ana 2
+      TicketQueue(['Ben', 'Cy'])
+    tests:
+      - name: TicketQueue is not a list
+        code: |
+          assert not issubclass(TicketQueue, list), "A queue is not a list. Remove (list) from the class line and store a list in an attribute instead."
+      - name: list-only methods are gone
+        code: |
+          q2 = TicketQueue()
+          for name in ["insert", "sort", "append", "remove", "reverse"]:
+              assert not hasattr(q2, name), f"TicketQueue still has .{name}() — callers could use it to break the queue's order."
+      - name: first in, first out
+        code: |
+          q2 = TicketQueue()
+          for person in ["x", "y", "z"]:
+              q2.join(person)
+          assert q2.serve() == "x" and q2.serve() == "y", "serve() must return the earliest-joined name first."
+          assert q2.size() == 1, f"After 3 joins and 2 serves, size() should be 1, got {q2.size()!r}."
+      - name: serving an empty queue raises IndexError
+        code: |
+          try:
+              TicketQueue().serve()
+          except IndexError:
+              pass
+          else:
+              raise AssertionError("serve() on an empty queue should raise IndexError.")
+      - name: queues are independent and print correctly
+        code: |
+          a = TicketQueue()
+          b = TicketQueue()
+          a.join("Ana")
+          assert b.size() == 0, "Two queues share their list. Create the list inside __init__."
+          assert repr(a) == "TicketQueue(['Ana'])", f"repr should look like TicketQueue(['Ana']), got {repr(a)!r}."
+      - name: output unchanged
+        code: |
+          assert output_lines() == ["Ana 2", "TicketQueue(['Ben', 'Cy'])"], f"Your program printed {output()!r}."
+    hints:
+      - "Change the first line to `class TicketQueue:` and add an `__init__` that creates `self._items = []`."
+      - "Each method delegates to the list: `self._items.append(name)`, `self._items.pop(0)`, `len(self._items)`."
+      - "`__repr__` can show the list directly: `f\"TicketQueue({self._items})\"`."
+    feedback:
+      - when: { errorType: AttributeError }
+        message: Some method still uses list methods on self. After removing the base class, call them on the stored list, e.g. self._items.append(name).
+    explanation: >-
+      The queue now has a list instead of being one, so its public interface is exactly join, serve, size
+      and repr — nobody can insert at the front. Because the list is private, you could later swap it for
+      collections.deque (whose popleft() is faster than list.pop(0)) without changing a single caller.
+
+  - id: parsons-super-init
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so that `Square` reuses `Shape`'s initialiser and the program prints `square 3`.
+      Two lines are distractors.
+    solution: |
+      class Shape:
+          def __init__(self, name):
+              self.name = name
+      class Square(Shape):
+          def __init__(self, side):
+              super().__init__("square")
+              self.side = side
+      sq = Square(3)
+      print(sq.name, sq.side)
+    distractors:
+      - "class Square:"
+      - "        super().__init__(self, \"square\")"
+    expectedOutput: |
+      square 3
+    explanation: >-
+      Square must list Shape as its base, and its __init__ calls super().__init__("square") — without self,
+      which super() supplies — before adding its own side attribute.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-init-chain
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      class A:
+          def __init__(self):
+              print("A init")
+
+      class B(A):
+          def __init__(self):
+              print("B init")
+
+      class C(B):
+          def __init__(self):
+              print("C init")
+              super().__init__()
+
+      C()
+    answer: |
+      C init
+      B init
+    explanation: >-
+      Python calls C.__init__ only. It explicitly calls super().__init__(), which runs B.__init__. B never
+      calls super(), so A.__init__ never runs. Parent initialisers are not called automatically.
+    wrongAnswers:
+      - answer: |
+          C init
+          B init
+          A init
+        feedback: The chain continues only while each __init__ calls super(). B.__init__ does not, so A is never reached.
+      - answer: |
+          A init
+          B init
+          C init
+        feedback: Some languages run parent constructors first automatically. Python does not — only the explicitly called methods run, in the order they are called.
+      - answer: "C init"
+        feedback: C.__init__ does call super().__init__(), which finds B's version next in the MRO.
+
+  - id: m-mcq-composition
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A `Car` needs to start and stop an engine, and you want to test cars with a fake engine that does
+      not make noise. Which design is best?
+    explanation: >-
+      A car has an engine — a has-a relationship. Storing the engine in an attribute (passed in when the
+      car is created) lets Car delegate start/stop and lets tests pass a fake engine.
+    options:
+      - id: a
+        text: class Car(Engine) so that Car gets start() and stop() for free.
+        feedback: A car is not a kind of engine, and inheriting welds Car to one engine class — you could not substitute a fake.
+      - id: b
+        text: Give Car an engine attribute, set from an argument to __init__, and delegate start/stop to it.
+        correct: true
+        feedback: Composition — has-a, delegate, and the part is swappable (a real engine or a test fake).
+      - id: c
+        text: class Engine(Car), because the engine belongs to the car.
+        feedback: An engine is not a kind of car either. Belonging-to is has-a, not is-a.
+      - id: d
+        text: Copy Engine's methods into Car.
+        feedback: Copying duplicates code and still cannot be swapped for a fake.
+
+  - id: m-tf-super-parent
+    type: true-false
+    skill: recognition
+    difficulty: 2
+    prompt: "True or false: `super().method()` always calls the method defined in the direct parent class of the class where it is written."
+    answer: false
+    explanation: >-
+      super() looks for the next class after the current one in the MRO of the object's actual class. In
+      single inheritance that is the parent, but with multiple inheritance it can be a sibling — as in the
+      diamond where Logging's super() reached Caching.
+
+  - id: m-code-bike
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Given `Vehicle`, write a subclass `Bike`:
+
+      - `__init__(self, brand)` calls the parent's initialiser with 2 wheels (use `super()`), then stores `brand`;
+      - `describe()` returns the brand, then `" bike with "`, then the parent's description (use `super()`).
+
+      The program should print `Raleigh bike with 2 wheels`.
+    starterCode: |
+      class Vehicle:
+          def __init__(self, wheels):
+              self.wheels = wheels
+
+          def describe(self):
+              return f"{self.wheels} wheels"
+
+
+      # Write class Bike here.
+
+
+      print(Bike("Raleigh").describe())
+    solution: |
+      class Vehicle:
+          def __init__(self, wheels):
+              self.wheels = wheels
+
+          def describe(self):
+              return f"{self.wheels} wheels"
+
+
+      class Bike(Vehicle):
+          def __init__(self, brand):
+              super().__init__(2)
+              self.brand = brand
+
+          def describe(self):
+              return f"{self.brand} bike with " + super().describe()
+
+
+      print(Bike("Raleigh").describe())
+    expectedOutput: |
+      Raleigh bike with 2 wheels
+    tests:
+      - name: Bike inherits from Vehicle
+        code: |
+          assert defined("Bike"), "Define a class named Bike."
+          assert issubclass(Bike, Vehicle), "Write class Bike(Vehicle): so a bike is a vehicle."
+      - name: a Bike has wheels and brand
+        code: |
+          attrs = vars(Bike("Brompton"))
+          assert attrs == {"wheels": 2, "brand": "Brompton"}, f"Expected wheels=2 and brand, got {attrs!r}."
+      - name: describe works for any brand
+        code: |
+          assert Bike("Brompton").describe() == "Brompton bike with 2 wheels", f"Got {Bike('Brompton').describe()!r}."
+      - name: both methods use super()
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "Bike")
+          for f in cls.body:
+              if isinstance(f, ast.FunctionDef) and f.name in ("__init__", "describe"):
+                  assert any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "super" for c in ast.walk(f)), f"Bike.{f.name} should reuse Vehicle's version through super()."
+      - name: prints the description
+        code: |
+          assert output().strip() == "Raleigh bike with 2 wheels", f"Your program printed {output()!r}."
+    hints:
+      - "`class Bike(Vehicle):` with `def __init__(self, brand):`."
+      - "`super().__init__(2)` sets wheels; then `self.brand = brand`."
+      - '`return f"{self.brand} bike with " + super().describe()`'
+    feedback:
+      - when: { errorType: AttributeError }
+        message: The Bike is missing an attribute — call super().__init__(2) in Bike.__init__ so Vehicle sets wheels.
+    explanation: >-
+      Bike passes the fixed value 2 to Vehicle's initialiser and adds brand. describe extends the parent's
+      text rather than rebuilding it, so a later change to Vehicle.describe flows through automatically.
+
+  - id: m-debug-override-return
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This should print `a circle of radius 2`, but it prints `None`. Fix the bug in `Circle`.
+    starterCode: |
+      class Shape:
+          def __init__(self, name):
+              self.name = name
+
+          def describe(self):
+              return f"a {self.name}"
+
+
+      class Circle(Shape):
+          def __init__(self, radius):
+              super().__init__("circle")
+              self.radius = radius
+
+          def describe(self):
+              super().describe() + f" of radius {self.radius}"
+
+
+      print(Circle(2).describe())
+    solution: |
+      class Shape:
+          def __init__(self, name):
+              self.name = name
+
+          def describe(self):
+              return f"a {self.name}"
+
+
+      class Circle(Shape):
+          def __init__(self, radius):
+              super().__init__("circle")
+              self.radius = radius
+
+          def describe(self):
+              return super().describe() + f" of radius {self.radius}"
+
+
+      print(Circle(2).describe())
+    expectedOutput: |
+      a circle of radius 2
+    tests:
+      - name: prints the description
+        code: |
+          assert output().strip() == "a circle of radius 2", f"Your program printed {output()!r}."
+      - name: works for any radius
+        code: |
+          assert Circle(5).describe() == "a circle of radius 5", f"Circle(5).describe() returned {Circle(5).describe()!r}."
+      - name: still builds on Shape.describe
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "Circle")
+          describe = next(f for f in cls.body if isinstance(f, ast.FunctionDef) and f.name == "describe")
+          assert any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "super" for c in ast.walk(describe)), "Keep using super().describe() instead of typing 'a circle' yourself."
+    hints:
+      - What does a function return if it never reaches a return statement?
+      - The expression on the last line of Circle.describe is computed and then thrown away.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Circle.describe builds the string but never returns it. Put return in front of the expression.
+    explanation: >-
+      An expression statement computes a value and discards it; without return the method returns None.
+      Adding return passes the combined string back to the caller.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-init-chain, m-mcq-composition, m-tf-super-parent, m-code-bike, m-debug-override-return]
+
+cheatsheet: |
+  ```python
+  class SavingsAccount(BankAccount):          # is-a: inherits everything
+      def __init__(self, owner, balance, rate):
+          super().__init__(owner, balance)    # run the parent's __init__ (no self!)
+          self.rate = rate
+      def describe(self):                     # override + extend
+          return super().describe() + f" at {self.rate:.0%}"
+
+  SavingsAccount.__mro__                      # lookup order: class, parents..., object
+  isinstance(obj, BankAccount)                # True for subclasses too
+  issubclass(SavingsAccount, BankAccount)     # True
+
+  class Stack:                                # has-a: composition
+      def __init__(self):
+          self._items = []                    # the part
+      def push(self, item):
+          self._items.append(item)            # delegate
+  ```
+  - Lookup: instance → class → MRO… → object; first match wins; `self` is the original object
+  - `super()` = next class in the MRO of `type(self)` (not always the parent)
+  - Prefer composition unless it is a true is-a that honours the parent's promises

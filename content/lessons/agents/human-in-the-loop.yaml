@@ -1,0 +1,206 @@
+id: agents.human-in-the-loop
+concept: agents.human-in-the-loop
+title: Human approval and intervention
+subtitle: Require confirmation before irreversible or costly actions, let people edit plans, and design escalation
+  paths
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Require confirmation before irreversible or costly actions, let people edit plans, and design escalation
+  paths.
+objectives:
+- Explain the architecture and trade-offs behind human approval and intervention.
+- Apply the idea in a small deterministic example.
+- Identify security, state, reliability or operational failure modes.
+sources:
+- title: Interrupts
+  url: https://docs.langchain.com/oss/python/langgraph/interrupts
+  publisher: LangChain
+- title: LLM06:2025 Excessive Agency
+  url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
+  publisher: OWASP GenAI Security Project
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Require confirmation before irreversible or costly actions, let people edit plans, and design escalation
+      paths. Agents make mistakes, and some actions — payments, deletions, external messages — cannot be undone.
+      Well-placed human checkpoints prevent costly errors while keeping the agent useful.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible
+      or costly actions (require explicit approval).
+
+      - An approval request must show exactly what will happen — the tool, its arguments and the expected effect
+      — and let the reviewer approve, edit or reject.
+
+      - Implementing approval needs pausable, resumable execution — persist state, wait (possibly for hours), then
+      continue from the checkpoint.
+
+      - Give the agent escalation paths, asking for clarification or handing off to a person when confidence is
+      low or a step keeps failing.
+
+      - Avoid approval fatigue; too many prompts lead to rubber-stamping, so reserve approvals for actions that
+      matter.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+
+      - Approval is not a substitute for least privilege; restrict what tools can do regardless.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python example isolates one deterministic rule from the architecture. It does not connect to
+      external services, grant permissions or execute untrusted tools.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def approval_required(action, risk):\n    return action in {\"send_email\",\"delete_data\",\"make_payment\"\
+      ,\"publish\"} or risk == \"high\"\n\nprint(approval_required(\"delete_data\", \"low\"), approval_required(\"\
+      search\", \"low\"))"
+    caption: Runnable local model; production implementations need additional controls and tests.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the helper and test both normal behaviour and a failure case. Explain what this small model leaves
+      out of a production implementation.
+  - type: item
+    ref: human-in-the-loop-code
+  - type: item
+    ref: human-in-the-loop-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible or
+      costly actions (require explicit approval).
+
+      - An approval request must show exactly what will happen — the tool, its arguments and the expected effect
+      — and let the reviewer approve, edit or reject.
+
+      - Implementing approval needs pausable, resumable execution — persist state, wait (possibly for hours), then
+      continue from the checkpoint.
+
+      - Give the agent escalation paths, asking for clarification or handing off to a person when confidence is
+      low or a step keeps failing.
+
+      - Avoid approval fatigue; too many prompts lead to rubber-stamping, so reserve approvals for actions that
+      matter.
+
+
+      **Limitations**
+
+      - An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+
+      - Approval is not a substitute for least privilege; restrict what tools can do regardless.'
+  - type: item
+    ref: human-in-the-loop-mcq
+  - type: item
+    ref: human-in-the-loop-tf
+  - type: item
+    ref: human-in-the-loop-code
+items:
+- id: human-in-the-loop-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of human approval and intervention?
+  explanation: 'Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible
+    or costly actions (require explicit approval).'
+  options:
+  - id: a
+    text: 'Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible
+      or costly actions (require explicit approval).'
+    correct: true
+    feedback: 'Correct: this captures the central mechanism or design choice.'
+  - id: b
+    text: An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+    feedback: This is a misconception; explicit validation, tests and boundaries remain necessary.
+  - id: c
+    text: The most autonomous or complex design is always the best choice.
+    feedback: Prefer the simplest design that satisfies the requirements and risk constraints.
+- id: human-in-the-loop-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+  answer: false
+  explanation: The statement is a known misconception. More components create additional interfaces, state and failure
+    modes; justify complexity with measurable requirements.
+- id: human-in-the-loop-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are designing human approval and intervention for a production application. Explain the main design
+    decision, one alternative, a failure mode and how you would test the result.
+  rubric:
+  - Describe the core mechanism and why it fits the requirement.
+  - Compare at least one simpler or alternative approach.
+  - Identify a concrete failure mode and a verification or recovery step.
+  modelAnswer: Start from the user requirement and risk level. Choose the smallest architecture that meets it, define
+    its contracts and state boundaries, then test success, failure, retries and permission checks. Document what
+    the simplified model does not guarantee.
+  explanation: A strong answer reasons about trade-offs and operational consequences instead of naming a framework
+    as the solution.
+- id: human-in-the-loop-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for human approval and intervention. The tests cover the main rule and
+    a boundary or failure case.
+  starterCode: "def approval_required(action, risk):\n    raise NotImplementedError('Complete this function')"
+  solution: "def approval_required(action, risk):\n    return action in {\"send_email\",\"delete_data\",\"make_payment\"\
+    ,\"publish\"} or risk == \"high\""
+  tests:
+  - name: Core behaviour
+    code: assert approval_required("make_payment","low") is True
+  - name: Failure or edge case
+    code: 'assert approval_required("search","low") is False
+
+      assert approval_required("search","high") is True'
+  hints:
+  - Make the contract explicit before implementing it.
+  - Validate inputs and reject unsupported operations safely.
+  - Run the tests and explain what the model does not cover.
+  explanation: This exercise checks the design rule and an important failure condition.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - human-in-the-loop-mcq
+  - human-in-the-loop-tf
+  - human-in-the-loop-code
+cheatsheet: '**Key ideas**
+
+  - Classify actions by risk: read-only (auto-approve), reversible writes (approve or log), irreversible or costly
+  actions (require explicit approval).
+
+  - An approval request must show exactly what will happen — the tool, its arguments and the expected effect — and
+  let the reviewer approve, edit or reject.
+
+  - Implementing approval needs pausable, resumable execution — persist state, wait (possibly for hours), then continue
+  from the checkpoint.
+
+  - Give the agent escalation paths, asking for clarification or handing off to a person when confidence is low
+  or a step keeps failing.
+
+  - Avoid approval fatigue; too many prompts lead to rubber-stamping, so reserve approvals for actions that matter.
+
+
+  **Trade-offs**
+
+  - An approval step does not make an action safe if the reviewer cannot see the real arguments or consequences.
+
+  - Approval is not a substitute for least privilege; restrict what tools can do regardless.'

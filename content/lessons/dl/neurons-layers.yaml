@@ -1,0 +1,999 @@
+id: dl.neurons-layers
+concept: dl.neurons-layers
+title: Neurons, Weights and Layers
+subtitle: From one weighted sum to a network that solves XOR
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Build neural networks from scratch in pure Python. A neuron is a weighted sum plus a bias passed through
+  an activation; a layer is many neurons computed as a matrix–vector product; stacking layers with
+  non-linear activations lets a tiny 2-2-1 network solve XOR, which no single neuron can.
+objectives:
+  - Compute a neuron's output as activation(w · x + b) by hand and in code.
+  - Explain the perceptron, its linear decision boundary, and why a single perceptron cannot compute XOR.
+  - Implement a dense layer as a matrix–vector product with list comprehensions, and apply it to a batch.
+  - Count the parameters of a multilayer perceptron from its layer sizes.
+  - Show algebraically and in code that stacked linear layers collapse into one, and explain why non-linear activations prevent this.
+  - Trace a 2-2-1 network with hand-chosen weights that solves XOR, and relate it to PyTorch's nn.Linear.
+sources:
+  - title: "Dive into Deep Learning: Multilayer Perceptrons"
+    url: https://d2l.ai/chapter_multilayer-perceptrons/index.html
+    publisher: Zhang, Lipton, Li and Smola
+  - title: "Deep Learning, chapter 6: Deep Feedforward Networks (including 'Example: Learning XOR')"
+    url: https://www.deeplearningbook.org/contents/mlp.html
+    publisher: Goodfellow, Bengio and Courville (MIT Press)
+  - title: torch.nn.Linear
+    url: https://docs.pytorch.org/docs/stable/generated/torch.nn.Linear.html
+    publisher: PyTorch Foundation
+  - title: Build the Neural Network (PyTorch tutorial)
+    url: https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html
+    publisher: PyTorch Foundation
+sections:
+  - id: why
+    title: What one weighted sum cannot do
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          You already know [logistic regression](concept:ml.logistic-regression): compute a weighted sum
+          of the features, add a bias, and squash the result. That is a single artificial neuron, and it
+          draws a **straight** decision boundary. Many patterns are not straight.
+
+          The classic example is **XOR** ("exclusive or"): output 1 when *exactly one* of two inputs is 1 —
+          say, approve a request when exactly one of two managers signed it. The program below tries 729
+          different weight settings for a single neuron with a step activation on three logic functions:
+      - type: code
+        runnable: true
+        code: |
+          def step(z):
+              return 1 if z >= 0 else 0
+
+          inputs = [(0, 0), (0, 1), (1, 0), (1, 1)]
+          targets = {"AND": [0, 0, 0, 1], "OR": [0, 1, 1, 1], "XOR": [0, 1, 1, 0]}
+          values = [v / 2 for v in range(-4, 5)]          # -2.0, -1.5, ..., 2.0
+
+          for name, target in targets.items():
+              solutions = 0
+              for w1 in values:
+                  for w2 in values:
+                      for b in values:
+                          outputs = [step(w1 * x1 + w2 * x2 + b) for x1, x2 in inputs]
+                          if outputs == target:
+                              solutions += 1
+              print(f"{name}: {solutions} of {len(values) ** 3} weight settings work")
+        expectedOutput: |
+          AND: 10 of 729 weight settings work
+          OR: 30 of 729 weight settings work
+          XOR: 0 of 729 weight settings work
+        caption: Many settings compute AND or OR. None computes XOR — and no setting ever could, as you will see.
+        annotations:
+          - line: 13
+            text: The neuron's output for all four input pairs with these weights.
+      - type: markdown
+        body: |
+          The fix is to **stack** neurons into layers, so that later neurons combine what earlier ones
+          computed. That is all a neural network is. By the end of this lesson you will have built one,
+          with weights you can check by hand, that computes XOR exactly.
+
+  - id: neuron
+    title: A neuron is a weighted sum, a bias and an activation
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An **[artificial neuron](glossary:artificial-neuron)** takes a list of inputs `x`, has one
+          **weight** per input and one **bias** `b`, and computes two things:
+
+          ```text
+          z = w1·x1 + w2·x2 + ... + wn·xn + b     (pre-activation: a dot product plus the bias)
+          a = g(z)                                 (activation: a fixed function applied to z)
+          ```
+
+          - The **weights** say how strongly, and in which direction, each input pushes the output.
+          - The **bias** shifts the threshold: it lets the neuron fire even when all inputs are 0, or
+            demand a larger total before it fires.
+          - The **activation function** `g` is usually non-linear. Common choices are ReLU
+            `max(0, z)` and the sigmoid `1 / (1 + e^-z)`; the full menu is in
+            [activation functions](concept:dl.activation-functions).
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def neuron(inputs, weights, bias, activation):
+              z = sum(w * x for w, x in zip(weights, inputs)) + bias     # weighted sum plus bias
+              return activation(z)
+
+          def relu(z):
+              return max(0.0, z)
+
+          def sigmoid(z):
+              return 1 / (1 + math.exp(-z))
+
+          x = [1.0, 2.0, 3.0]
+          w = [0.5, -1.0, 0.25]
+          b = 1.0
+          print("z =", sum(wi * xi for wi, xi in zip(w, x)) + b)
+          print("ReLU output:   ", neuron(x, w, b, relu))
+          print("sigmoid output:", round(neuron(x, w, b, sigmoid), 4))
+        expectedOutput: |
+          z = 0.25
+          ReLU output:    0.25
+          sigmoid output: 0.5622
+        caption: "By hand: 0.5 × 1 − 1 × 2 + 0.25 × 3 + 1 = 0.25. ReLU passes positive values through; the sigmoid maps 0.25 to about 0.56."
+        annotations:
+          - line: 4
+            text: "`zip` pairs each weight with its input — this is the dot product w · x."
+          - line: 5
+            text: The activation function is passed in, so the same neuron code works with any of them.
+      - type: callout
+        variant: misconception
+        title: Artificial neurons are not brain cells
+        body: |
+          The name comes from a loose 1940s–50s analogy with biological neurons. A real neuron is a living
+          cell with complex electrical and chemical dynamics; an artificial neuron is one line of
+          arithmetic. Treat the biology as history, not as a guide to how networks behave.
+      - type: item
+        ref: predict-neuron
+
+  - id: perceptron
+    title: The perceptron and its straight-line boundary
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The **[perceptron](glossary:perceptron)**, introduced by Frank Rosenblatt in 1958, is a neuron
+          with a **step** activation: output 1 if `z >= 0`, else 0. With hand-picked weights it computes
+          logic gates:
+      - type: code
+        runnable: true
+        code: |
+          def step(z):
+              return 1 if z >= 0 else 0
+
+          def perceptron(x1, x2, w1, w2, b):
+              return step(w1 * x1 + w2 * x2 + b)
+
+          gates = {"AND": (1, 1, -1.5), "OR": (1, 1, -0.5), "NAND": (-1, -1, 1.5)}
+          print("x1 x2  AND OR NAND")
+          for x1, x2 in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+              outs = [perceptron(x1, x2, *gates[g]) for g in ("AND", "OR", "NAND")]
+              print(f" {x1}  {x2}    {outs[0]}   {outs[1]}   {outs[2]}")
+        expectedOutput: |
+          x1 x2  AND OR NAND
+           0  0    0   0   1
+           0  1    0   1   1
+           1  0    0   1   1
+           1  1    1   1   0
+        caption: "AND needs both inputs (1 + 1 − 1.5 ≥ 0); OR needs either (1 − 0.5 ≥ 0); NAND flips AND by negating everything."
+        annotations:
+          - line: 7
+            text: Each gate is just a different (w1, w2, b). The neuron's code never changes.
+      - type: markdown
+        body: |
+          **Why XOR is impossible.** The perceptron outputs 1 exactly where `w1·x1 + w2·x2 + b >= 0`. The
+          boundary `w1·x1 + w2·x2 + b = 0` is a straight line in the plane of inputs, with 1s on one side.
+          XOR needs (0, 1) and (1, 0) on the "1" side but (0, 0) and (1, 1) on the "0" side — they sit at
+          opposite corners of a square, and no single straight line separates the diagonals. Data that a
+          straight line (or flat plane) can separate is called
+          **[linearly separable](glossary:linearly-separable)**; XOR is not.
+
+          Rosenblatt also gave a learning rule: for each mistake, nudge every weight by
+          `error × input`. On separable data it is guaranteed to stop making mistakes; on XOR it never does:
+      - type: code
+        runnable: true
+        code: |
+          def step(z):
+              return 1 if z >= 0 else 0
+
+          def train_perceptron(targets, epochs=20):
+              inputs = [(0, 0), (0, 1), (1, 0), (1, 1)]
+              w1 = w2 = b = 0.0
+              for epoch in range(1, epochs + 1):
+                  mistakes = 0
+                  for (x1, x2), target in zip(inputs, targets):
+                      error = target - step(w1 * x1 + w2 * x2 + b)     # -1, 0 or +1
+                      if error:
+                          mistakes += 1
+                          w1 += error * x1
+                          w2 += error * x2
+                          b += error
+                  if mistakes == 0:
+                      return f"learned in {epoch} epochs: w1={w1}, w2={w2}, b={b}"
+              return f"still {mistakes} mistakes after {epochs} epochs"
+
+          print("OR: ", train_perceptron([0, 1, 1, 1]))
+          print("XOR:", train_perceptron([0, 1, 1, 0]))
+        expectedOutput: |
+          OR:  learned in 4 epochs: w1=1.0, w2=1.0, b=-1.0
+          XOR: still 4 mistakes after 20 epochs
+        caption: The perceptron learning rule finds OR, then stops changing. On XOR it cycles forever.
+        annotations:
+          - line: 10
+            text: The error is +1 if the neuron should have fired, -1 if it should not have, 0 if it was right.
+          - line: 13
+            text: Move each weight in the direction that would have reduced this mistake.
+      - type: item
+        ref: mcq-perceptron
+
+  - id: layers
+    title: Layers as matrix–vector products
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **[dense layer](glossary:dense-layer)** (fully connected layer) is many neurons that all read
+          the same inputs. Store each neuron's weights as one **row** of a matrix `W` and the biases in a
+          vector `b`. Then the whole layer is a [matrix–vector product](concept:math.matrices) plus a
+          bias, followed by the activation applied to each entry:
+
+          ```text
+          h = g(W x + b)        W has shape (n_out, n_in): one row per neuron, one column per input
+          ```
+
+          In Python, "for each row, a dot product with x, plus that row's bias" is one list comprehension.
+          Step through it:
+      - type: visualization
+        component: python-tracer
+        title: A 2-input, 2-neuron layer
+        caption: >-
+          The outer comprehension visits one row (neuron) at a time; the inner generator computes that
+          neuron's dot product. ReLU then clips the negative pre-activation to 0.
+        props:
+          code: |
+            x = [1.0, 2.0]
+            W = [[0.5, -1.0],
+                 [1.0, 1.0]]
+            b = [0.0, -1.0]
+            z = [sum(w * xi for w, xi in zip(row, x)) + bj for row, bj in zip(W, b)]
+            h = [max(0.0, zj) for zj in z]
+            print(z, h)
+      - type: markdown
+        body: |
+          As a reusable function, applied to one input and to a **batch** of inputs:
+      - type: code
+        runnable: true
+        code: |
+          def relu(z):
+              return max(0.0, z)
+
+          def dense(x, W, b, activation):
+              """One fully connected layer. Row j of W holds the weights of neuron j."""
+              return [activation(sum(w * xi for w, xi in zip(row, x)) + bj) for row, bj in zip(W, b)]
+
+          W = [[0.5, -1.0],      # neuron 1
+               [1.0, 1.0],       # neuron 2
+               [-2.0, 0.5]]      # neuron 3
+          b = [0.0, -1.0, 0.5]
+
+          print(dense([1.0, 2.0], W, b, relu))
+          batch = [[1.0, 2.0], [0.0, 0.0], [2.0, -1.0]]          # 3 examples, 2 features each
+          outputs = [dense(x, W, b, relu) for x in batch]
+          print(outputs)
+          print("shape:", len(batch), "x", len(batch[0]), "->", len(outputs), "x", len(outputs[0]))
+          print("parameters:", len(W) * len(W[0]) + len(b))
+        expectedOutput: |
+          [0.0, 2.0, 0.0]
+          [[0.0, 2.0, 0.0], [0.0, 0.0, 0.5], [2.0, 0.0, 0.0]]
+          shape: 3 x 2 -> 3 x 3
+          parameters: 9
+        caption: A layer maps 2 features to 3. A batch of shape (3, 2) becomes (3, 3). Weights 3 × 2 = 6 plus 3 biases = 9 parameters.
+        annotations:
+          - line: 14
+            text: Real frameworks process the whole batch with one matrix multiplication instead of a Python loop.
+      - type: callout
+        variant: note
+        title: Two ways to write the same layer
+        body: |
+          This lesson writes `W x + b` with `W` of shape `(n_out, n_in)` — the layout PyTorch's
+          `nn.Linear` uses for its `weight`, which computes `x @ W.T + b` for a batch whose rows are
+          examples. Other texts store the transpose, shape `(n_in, n_out)`, and write `x @ W + b`. Same
+          numbers, same result; just check which convention a codebase uses before reading its shapes.
+      - type: markdown
+        body: |
+          **Counting parameters.** A dense layer from `n_in` inputs to `n_out` neurons has
+          `n_in × n_out` weights plus `n_out` biases. A network is a list of layer sizes, so its total is a
+          sum over consecutive pairs:
+      - type: code
+        runnable: true
+        code: |
+          def count_params(sizes):
+              """sizes = [inputs, hidden..., outputs]; each dense layer has n_in * n_out weights + n_out biases."""
+              return sum(n_in * n_out + n_out for n_in, n_out in zip(sizes, sizes[1:]))
+
+          print(count_params([2, 2, 1]))
+          print(count_params([784, 128, 10]))
+          print(count_params([784, 512, 512, 10]))
+        expectedOutput: |
+          9
+          101770
+          669706
+        caption: "784-128-10 (28×28 pixel images, 10 classes): 784 × 128 + 128 + 128 × 10 + 10 = 101,770 parameters."
+        annotations:
+          - line: 3
+            text: "`zip(sizes, sizes[1:])` pairs each layer's input size with its output size."
+
+  - id: nonlinearity
+    title: Why non-linear activations matter
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          What if we stack layers but skip the activation (or use the identity `g(z) = z`)? Substitute one
+          layer into the next:
+
+          ```text
+          y = W2 (W1 x + b1) + b2
+            = (W2 W1) x + (W2 b1 + b2)
+            =    W    x +     b          ← a single linear layer
+          ```
+
+          Matrix multiplication is associative, so `W2 (W1 x) = (W2 W1) x`. **Any stack of linear layers
+          equals one linear layer**, so depth adds nothing — it still draws straight boundaries and still
+          cannot do XOR. Check it numerically, then put a ReLU between the layers:
+      - type: code
+        runnable: true
+        code: |
+          def matvec(W, x):
+              return [sum(w * xi for w, xi in zip(row, x)) for row in W]
+
+          def matmul(A, B):
+              return [[sum(a * b for a, b in zip(row, col)) for col in zip(*B)] for row in A]
+
+          def add(u, v):
+              return [a + b for a, b in zip(u, v)]
+
+          W1, b1 = [[1, 2], [3, -1]], [1, 0]      # layer 1: 2 inputs -> 2 outputs
+          W2, b2 = [[2, -1]], [3]                 # layer 2: 2 inputs -> 1 output
+
+          W = matmul(W2, W1)                      # W2 @ W1
+          b = add(matvec(W2, b1), b2)             # W2 @ b1 + b2
+          print("collapsed layer: W =", W, " b =", b)
+
+          for x in [[0, 0], [1, 2], [-3, 4]]:
+              two_layers = add(matvec(W2, add(matvec(W1, x), b1)), b2)
+              one_layer = add(matvec(W, x), b)
+              with_relu = add(matvec(W2, [max(0, v) for v in add(matvec(W1, x), b1)]), b2)
+              print(x, "two linear layers:", two_layers, " one layer:", one_layer, " with ReLU:", with_relu)
+        expectedOutput: |
+          collapsed layer: W = [[-1, 5]]  b = [5]
+          [0, 0] two linear layers: [5]  one layer: [5]  with ReLU: [5]
+          [1, 2] two linear layers: [14]  one layer: [14]  with ReLU: [14]
+          [-3, 4] two linear layers: [28]  one layer: [28]  with ReLU: [15]
+        caption: The two linear layers and the collapsed single layer agree on every input. With ReLU in between they stop agreeing as soon as a hidden value is negative.
+        annotations:
+          - line: 5
+            text: "`zip(*B)` iterates over the columns of B, so entry (i, j) is row i of A dotted with column j of B."
+          - line: 13
+            text: "W2 @ W1 = [[2·1 − 1·3, 2·2 − 1·(−1)]] = [[−1, 5]]."
+          - line: 20
+            text: "For x = [−3, 4] the hidden pre-activations are [6, −13]; ReLU turns −13 into 0, which changes the answer."
+      - type: markdown
+        body: |
+          For `[0, 0]` and `[1, 2]` every hidden value happens to be positive, so ReLU changes nothing and
+          the network behaves linearly there. For `[-3, 4]` it zeroes a negative value, and the output
+          differs. That piecewise behaviour — linear in regions, bending where units switch on or off — is
+          what lets ReLU networks draw boundaries made of many straight pieces.
+      - type: item
+        ref: explain-collapse
+
+  - id: xor
+    title: "Walkthrough: a 2-2-1 network that computes XOR"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Here is a small [multilayer perceptron](glossary:multilayer-perceptron): 2 inputs, a
+          [hidden layer](glossary:hidden-layer) of 2 ReLU neurons, and 1 linear output neuron.
+          The weights are the hand-chosen solution from Goodfellow, Bengio and Courville's *Deep Learning*
+          (section 6.1, "Example: Learning XOR"):
+
+          - hidden layer: `W = [[1, 1], [1, 1]]`, `c = [0, -1]`, activation ReLU
+          - output: `w = [1, -2]`, `b = 0`
+      - type: code
+        runnable: true
+        code: |
+          def relu(z):
+              return max(0, z)
+
+          W = [[1, 1], [1, 1]]     # hidden layer weights (one row per hidden neuron)
+          c = [0, -1]              # hidden biases
+          w = [1, -2]              # output weights
+          b = 0                    # output bias
+
+          for x in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+              h = [relu(sum(wi * xi for wi, xi in zip(row, x)) + cj) for row, cj in zip(W, c)]
+              y = sum(wi * hi for wi, hi in zip(w, h)) + b
+              print(x, "-> hidden", h, "-> output", y)
+        expectedOutput: |
+          (0, 0) -> hidden [0, 0] -> output 0
+          (0, 1) -> hidden [1, 0] -> output 1
+          (1, 0) -> hidden [1, 0] -> output 1
+          (1, 1) -> hidden [2, 1] -> output 0
+        caption: Exactly XOR. The hidden layer is where the impossible becomes possible.
+        annotations:
+          - line: 10
+            text: "Hidden neuron 1 computes relu(x1 + x2); hidden neuron 2 computes relu(x1 + x2 − 1), which is positive only for (1, 1)."
+          - line: 11
+            text: "Output = h1 − 2·h2: it counts the ones, then cancels the double count when both inputs are 1."
+      - type: markdown
+        body: |
+          **Why it works.** Look at the hidden column. The hidden layer *re-represents* the inputs:
+          (0, 1) and (1, 0) both become `[1, 0]`, (0, 0) becomes `[0, 0]`, and (1, 1) becomes `[2, 1]`.
+          In this new space the two classes **are** separable by a straight line — which the output neuron
+          then draws. That is the central idea of deep learning: **each layer transforms the data into a
+          representation in which the next layer's job is easier.** Here we chose the weights by hand; in
+          practice they are learned by [backpropagation](concept:dl.backpropagation).
+
+          Now explore it interactively. The visualization's output neuron always applies a sigmoid, so it
+          shows a probability instead of exactly 0 or 1. Select **relu** and set: `w11 = 1, w12 = 1,
+          b1 = 0`, `w21 = 2, w22 = 2, b2 = −2`, `v1 = 3, v2 = −3, b_out = −1.5`. Then move the inputs
+          through (0, 0), (0, 1), (1, 0) and (1, 1).
+      - type: visualization
+        component: neural-forward
+        title: Forward pass through a 2-2-1 network
+        caption: >-
+          Each hidden neuron shows z = w·x + b and its activation a. With the settings above the output is
+          about 0.18 for (0, 0) and (1, 1) and about 0.82 for (0, 1) and (1, 0). Then switch the hidden
+          activation to linear — no weight setting will produce XOR any more.
+        props:
+          inputs: [1, 0]
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def relu(z):
+              return max(0.0, z)
+
+          def sigmoid(z):
+              return 1 / (1 + math.exp(-z))
+
+          W1 = [[1.0, 1.0], [2.0, 2.0]]     # w11 w12 / w21 w22
+          b1 = [0.0, -2.0]
+          v = [3.0, -3.0]
+          b_out = -1.5
+
+          for x in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+              h = [relu(sum(w * xi for w, xi in zip(row, x)) + bj) for row, bj in zip(W1, b1)]
+              out = sigmoid(sum(vj * hj for vj, hj in zip(v, h)) + b_out)
+              print(x, "hidden", h, "output", round(out, 3))
+        expectedOutput: |
+          (0, 0) hidden [0.0, 0.0] output 0.182
+          (0, 1) hidden [1.0, 0.0] output 0.818
+          (1, 0) hidden [1.0, 0.0] output 0.818
+          (1, 1) hidden [2.0, 2.0] output 0.182
+        caption: The same computation as the visualization, verified in Python. Read outputs above 0.5 as 1.
+      - type: item
+        ref: parsons-forward
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Output silently wrong, no error | Weights and inputs of different lengths; `zip` drops the extra values | `zip(weights, inputs, strict=True)`, or check shapes explicitly |
+          | Deep network no better than logistic regression | No (or linear) activation between layers — the layers collapse | Put a non-linearity (ReLU, GELU...) after every hidden layer |
+          | All hidden neurons always give the same value | Weights initialised identically (for example all zeros) | Initialise randomly — frameworks do this by default |
+          | Regression outputs are never negative | ReLU (or sigmoid) applied to the output layer | Use no activation on a regression output |
+          | `RuntimeError: mat1 and mat2 shapes cannot be multiplied` (PyTorch) | Layer sizes do not line up | Each layer's `in_features` must equal the previous layer's `out_features` |
+
+          The first row deserves a demonstration, because it produces no error at all:
+      - type: code
+        runnable: true
+        code: |
+          weights = [0.5, -1.0, 0.25]
+          inputs = [1.0, 2.0]                     # one input is missing
+          print(sum(w * x for w, x in zip(weights, inputs)))
+          print(sum(w * x for w, x in zip(weights, inputs, strict=True)))
+        expectedOutput: |
+          -1.5
+        expectError: ValueError
+        caption: "Plain zip quietly ignores the third weight; strict=True raises ValueError: zip() argument 2 is shorter than argument 1."
+      - type: callout
+        variant: deep-dive
+        title: Why identical starting weights are a problem
+        depth: deep
+        body: |
+          If two hidden neurons start with the same weights, they compute the same output for every input,
+          receive the same gradient, and get the same update — forever. They are effectively one neuron.
+          Random initialisation breaks this symmetry. Schemes such as Xavier/Glorot and He initialisation
+          also scale the random values by the number of inputs so that signals neither explode nor vanish
+          as they pass through many layers. PyTorch's `nn.Linear` samples its initial weights and biases
+          uniformly from `[-1/sqrt(in_features), 1/sqrt(in_features)]`.
+      - type: item
+        ref: debug-xor
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: code-neuron
+      - type: item
+        ref: code-dense
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How expressive are these networks?** The *universal approximation theorem* says that a network
+          with a single hidden layer and a suitable non-linear activation can approximate any continuous
+          function on a bounded input region as closely as you like — *given enough hidden units*. It is
+          an existence result: it says nothing about how many units you need, or whether training will
+          find the weights. In practice, deeper networks often represent useful functions with far fewer
+          units than shallow ones.
+
+          **History in one paragraph.** Rosenblatt's perceptron (1958) learned linear boundaries. Minsky
+          and Papert's book *Perceptrons* (1969) analysed the limits of single-layer perceptrons, with XOR
+          as the standard example. Multilayer networks trained with backpropagation, popularised in the
+          1980s, removed that limit, and GPUs plus large datasets made deep networks practical from around
+          2012.
+
+          **What frameworks really do.** A framework stores `W` as a contiguous tensor and computes a whole
+          batch with one matrix multiplication, `X @ W.T + b`, dispatched to optimised BLAS or GPU kernels.
+          That single operation replaces our nested Python loops and is thousands of times faster — the
+          arithmetic, however, is exactly what you wrote.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install torch   (see pytorch.org for the right command for your machine)
+          import torch
+          from torch import nn
+
+          model = nn.Sequential(nn.Linear(2, 2), nn.ReLU(), nn.Linear(2, 1))
+
+          with torch.no_grad():                                   # set the hand-chosen XOR weights
+              model[0].weight.copy_(torch.tensor([[1.0, 1.0], [1.0, 1.0]]))   # shape (out_features, in_features)
+              model[0].bias.copy_(torch.tensor([0.0, -1.0]))
+              model[2].weight.copy_(torch.tensor([[1.0, -2.0]]))
+              model[2].bias.zero_()
+
+              X = torch.tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])   # a batch, shape (4, 2)
+              print(model(X))                                     # tensor([[0.], [1.], [1.], [0.]])
+
+          print(sum(p.numel() for p in model.parameters()))       # 9
+        caption: >-
+          Illustrative: PyTorch cannot run in this browser runtime. Install it locally and run the file.
+          nn.Linear computes x @ weight.T + bias, so its weight has one row per output neuron — the same
+          layout as W in this lesson.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Neuron**: `a = g(w · x + b)` — weighted sum, bias, activation.
+          - **Perceptron**: a neuron with a step activation; its boundary is a straight line, so it cannot
+            compute XOR (not linearly separable).
+          - **Dense layer**: `h = g(W x + b)`, `W` of shape `(n_out, n_in)`; `n_in × n_out + n_out`
+            parameters. Batches are processed row by row (one matrix multiplication in practice).
+          - **Stacked linear layers collapse** to one: `W2(W1 x + b1) + b2 = (W2 W1) x + (W2 b1 + b2)`.
+            Non-linear activations prevent the collapse.
+          - Hidden layers **re-represent** the data so that later layers can separate it — the 2-2-1 ReLU
+            network computes XOR exactly.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "How many parameters does a 784-128-10 MLP have?" (101,770), "Why do we need non-linear
+          activations?" (otherwise layers collapse into one linear map — show the algebra), and "Why not
+          initialise all weights to zero?" (symmetry: every neuron would learn the same thing).
+
+items:
+  - id: predict-neuron
+    type: predict-output
+    skill: prediction
+    prompt: A neuron with a ReLU activation. What does this print?
+    code: |
+      inputs = [1, 2]
+      weights = [0.5, -1]
+      bias = 1
+      z = sum(w * x for w, x in zip(weights, inputs)) + bias
+      print(z, max(0.0, z))
+    answer: "-0.5 0.0"
+    explanation: >-
+      z = 0.5 × 1 + (−1) × 2 + 1 = −0.5. ReLU returns max(0.0, −0.5) = 0.0: negative pre-activations are
+      clipped to zero, so this neuron is "off" for this input.
+    wrongAnswers:
+      - answer: "-0.5 -0.5"
+        feedback: ReLU is max(0, z); it replaces every negative value with 0.
+      - answer: "1.5 1.5"
+        feedback: "The second weight is negative: −1 × 2 = −2, so z = 0.5 − 2 + 1 = −0.5."
+      - answer: "-1.5 0.0"
+        feedback: Don't forget the bias. The weighted sum is −1.5, and adding the bias of 1 gives −0.5.
+
+  - id: mcq-perceptron
+    type: mcq
+    skill: explanation
+    prompt: Why can no single perceptron compute XOR on inputs (0, 0), (0, 1), (1, 0) and (1, 1)?
+    explanation: >-
+      A perceptron fires on one side of the straight line w1·x1 + w2·x2 + b = 0. XOR needs the two
+      diagonal corners (0, 1) and (1, 0) on one side and the other two corners on the other side, and no
+      straight line can separate them: XOR is not linearly separable.
+    options:
+      - id: a
+        text: Its decision boundary is a straight line, and no straight line separates XOR's two classes.
+        correct: true
+        feedback: Correct. XOR is not linearly separable.
+      - id: b
+        text: It does not have enough weights; a third weight would fix it.
+        feedback: With only the inputs x1 and x2, adding weights does not help — the boundary is still a line. You need a hidden layer (or an engineered feature such as x1·x2).
+      - id: c
+        text: The step function is not differentiable.
+        feedback: That makes gradient-based training awkward, but even with a sigmoid, one neuron's boundary is still a straight line.
+      - id: d
+        text: The learning rule is too slow; with more epochs it would succeed.
+        feedback: No weight setting exists at all, so no amount of training can find one.
+
+  - id: explain-collapse
+    type: explain
+    skill: explanation
+    prompt: >-
+      A colleague builds a 5-layer network but forgets the activation functions, so every layer computes
+      W x + b. Explain why the network can only do what one linear layer can do, using the algebra for two
+      layers.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Writes the composition y = W2 (W1 x + b1) + b2.
+      - Expands it to (W2 W1) x + (W2 b1 + b2), noting that W2 W1 is a single matrix and W2 b1 + b2 a single vector.
+      - Concludes the result is one linear layer, and that repeating the argument collapses any number of layers.
+      - States that a non-linear activation between layers prevents the collapse (so the network can model non-linear boundaries such as XOR).
+    modelAnswer: |
+      Two linear layers compute y = W2 (W1 x + b1) + b2. Multiplying out gives (W2 W1) x + (W2 b1 + b2).
+      W2 W1 is just another matrix W and W2 b1 + b2 just another vector b, so the pair is exactly one
+      linear layer y = W x + b. Applying the same step repeatedly collapses all five layers into one, so the
+      network can only draw linear boundaries, like logistic regression. Putting a non-linear activation
+      such as ReLU after each hidden layer breaks this: relu(W1 x + b1) cannot be folded into W2, which is
+      what lets deeper networks represent things like XOR.
+
+  - id: parsons-forward
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to run the XOR network forward for the input `[1, 0]` and print the hidden values
+      and the output. One line is a distractor.
+    solution: |
+      def relu(z):
+          return max(0, z)
+      x = [1, 0]
+      W = [[1, 1], [1, 1]]
+      c = [0, -1]
+      h = [relu(sum(wi * xi for wi, xi in zip(row, x)) + cj) for row, cj in zip(W, c)]
+      y = 1 * h[0] - 2 * h[1]
+      print(h, y)
+    distractors:
+      - y = relu(1 * x[0] - 2 * x[1])
+    expectedOutput: |
+      [1, 0] 1
+    explanation: >-
+      The activation function and the inputs and weights must exist before the hidden layer is computed,
+      and the output is computed from the hidden values h — not directly from the inputs x, which is what
+      the distractor does (skipping the hidden layer entirely).
+
+  - id: debug-xor
+    type: debug
+    skill: debugging
+    prompt: |
+      This network should compute XOR, printing `[0, 1, 1, 0]`, but prints `[-2, -3, -3, -4]`. One hidden
+      parameter has the wrong sign. Trace the hidden values by hand, find it and fix it.
+    starterCode: |
+      def relu(z):
+          return max(0, z)
+
+      W = [[1, 1], [1, 1]]
+      c = [0, 1]
+      w = [1, -2]
+      b = 0
+
+      def xor_net(x1, x2):
+          h = [relu(row[0] * x1 + row[1] * x2 + cj) for row, cj in zip(W, c)]
+          return w[0] * h[0] + w[1] * h[1] + b
+
+      print([xor_net(x1, x2) for x1, x2 in [(0, 0), (0, 1), (1, 0), (1, 1)]])
+    solution: |
+      def relu(z):
+          return max(0, z)
+
+      W = [[1, 1], [1, 1]]
+      c = [0, -1]
+      w = [1, -2]
+      b = 0
+
+      def xor_net(x1, x2):
+          h = [relu(row[0] * x1 + row[1] * x2 + cj) for row, cj in zip(W, c)]
+          return w[0] * h[0] + w[1] * h[1] + b
+
+      print([xor_net(x1, x2) for x1, x2 in [(0, 0), (0, 1), (1, 0), (1, 1)]])
+    expectedOutput: |
+      [0, 1, 1, 0]
+    tests:
+      - name: Computes XOR on all four inputs
+        code: |
+          got = [xor_net(x1, x2) for x1, x2 in [(0, 0), (0, 1), (1, 0), (1, 1)]]
+          assert got == [0, 1, 1, 0], f"Expected [0, 1, 1, 0], got {got}. Work out h for (0, 0): with c = [0, 1], the second hidden neuron outputs relu(0 + 0 + 1) = 1."
+      - name: Fixes the hidden bias, not the output weights
+        code: |
+          assert W == [[1, 1], [1, 1]] and w == [1, -2] and b == 0, "Only one hidden parameter is wrong - leave W, w and b as they were."
+          assert c == [0, -1], f"The second hidden neuron should fire only when both inputs are 1, which needs bias -1. c is {c!r}."
+      - name: Still uses a ReLU hidden layer
+        code: |
+          assert calls("relu"), "Keep the ReLU activation in the hidden layer."
+    hints:
+      - For input (0, 0), what are the two hidden values? Which one should be 0 but is not?
+      - The second hidden neuron should be "on" only for (1, 1). What bias makes relu(x1 + x2 + bias) zero unless both inputs are 1?
+      - Change c[1] from 1 to -1.
+    explanation: >-
+      With c[1] = 1, the second hidden neuron outputs x1 + x2 + 1, which is positive for every input, so
+      the output weight −2 subtracts too much everywhere. With c[1] = −1 it outputs relu(x1 + x2 − 1), which
+      is 1 only for (1, 1), and the output h1 − 2·h2 becomes exactly XOR. Tracing hidden values by hand is
+      the standard way to debug a small network.
+
+  - id: code-neuron
+    type: code
+    skill: implementation
+    prompt: |
+      Write `neuron(inputs, weights, bias)` that returns the output of a ReLU neuron:
+      `max(0.0, w1*x1 + w2*x2 + ... + bias)`. It must work for any number of inputs.
+    starterCode: |
+      def neuron(inputs, weights, bias):
+          pass
+
+      print(neuron([1.0, 2.0, 3.0], [0.5, -1.0, 0.25], 1.0))
+    solution: |
+      def neuron(inputs, weights, bias):
+          z = sum(w * x for w, x in zip(weights, inputs)) + bias
+          return max(0.0, z)
+
+      print(neuron([1.0, 2.0, 3.0], [0.5, -1.0, 0.25], 1.0))
+    expectedOutput: |
+      0.25
+    tests:
+      - name: Positive pre-activation passes through
+        code: |
+          import math
+          got = neuron([1.0, 2.0, 3.0], [0.5, -1.0, 0.25], 1.0)
+          assert got is not None, "neuron returned None. Return the activation."
+          assert math.isclose(got, 0.25), f"0.5 - 2 + 0.75 + 1 = 0.25, got {got!r}."
+      - name: Negative pre-activation becomes 0
+        code: |
+          got = neuron([1.0, 2.0], [0.5, -1.0], 1.0)
+          assert got == 0.0, f"z = -0.5, and ReLU turns negatives into 0.0. Got {got!r}."
+      - name: Works for any number of inputs
+        code: |
+          import math
+          got = neuron([2.0], [3.0], -1.0)
+          assert math.isclose(got, 5.0), f"One input: 3 * 2 - 1 = 5.0, got {got!r}."
+          got = neuron([1.0, 1.0, 1.0, 1.0, 1.0], [0.1, 0.2, 0.3, 0.4, 0.5], 0.0)
+          assert math.isclose(got, 1.5), f"Five inputs: 0.1 + 0.2 + 0.3 + 0.4 + 0.5 = 1.5, got {got!r}."
+      - name: Uses the bias
+        code: |
+          import math
+          assert math.isclose(neuron([0.0, 0.0], [5.0, 5.0], 2.0), 2.0), "With all inputs 0, the output should equal the (positive) bias."
+    hints:
+      - "The weighted sum is `sum(w * x for w, x in zip(weights, inputs))`."
+      - Add the bias, then apply ReLU with `max(0.0, z)`.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Return max(0.0, z).
+      - when: { outputEquals: "-0.75\n" }
+        message: You forgot the bias. Add it to the weighted sum before applying ReLU.
+    explanation: >-
+      A neuron is a dot product plus a bias, passed through an activation. Using zip makes the code work for
+      any number of inputs, and max(0.0, z) is ReLU.
+
+  - id: code-dense
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `dense(x, W, b)` for a ReLU layer: return a list with one value per row of `W`, where value
+      `j` is `max(0.0, dot(W[j], x) + b[j])`. `W` has one row per neuron and one column per input.
+    starterCode: |
+      def dense(x, W, b):
+          pass
+
+      W = [[0.5, -1.0], [1.0, 1.0], [-2.0, 0.5]]
+      b = [0.0, -1.0, 0.5]
+      print(dense([1.0, 2.0], W, b))
+    solution: |
+      def dense(x, W, b):
+          return [max(0.0, sum(w * xi for w, xi in zip(row, x)) + bj) for row, bj in zip(W, b)]
+
+      W = [[0.5, -1.0], [1.0, 1.0], [-2.0, 0.5]]
+      b = [0.0, -1.0, 0.5]
+      print(dense([1.0, 2.0], W, b))
+    expectedOutput: |
+      [0.0, 2.0, 0.0]
+    tests:
+      - name: Matches the lesson's layer
+        code: |
+          got = dense([1.0, 2.0], [[0.5, -1.0], [1.0, 1.0], [-2.0, 0.5]], [0.0, -1.0, 0.5])
+          assert got is not None, "dense returned None. Return a list with one value per neuron."
+          assert list(got) == [0.0, 2.0, 0.0], f"Expected [0.0, 2.0, 0.0], got {got!r}."
+      - name: One output per row of W
+        code: |
+          got = dense([1.0, 1.0, 1.0], [[1.0, 2.0, 3.0]], [0.5])
+          assert list(got) == [6.5], f"A layer with one neuron and three inputs should give [6.5], got {got!r}."
+          got = dense([2.0], [[1.0], [-1.0], [3.0], [0.0]], [0.0, 0.0, -1.0, 4.0])
+          assert list(got) == [2.0, 0.0, 5.0, 4.0], f"Four neurons with one input each: expected [2.0, 0.0, 5.0, 4.0], got {got!r}."
+      - name: Rows are neurons, not inputs
+        code: |
+          got = dense([1.0, 0.0], [[1.0, 5.0], [2.0, 7.0]], [0.0, 0.0])
+          assert list(got) == [1.0, 2.0], f"Row j of W holds neuron j's weights: [1*1 + 5*0, 2*1 + 7*0] = [1.0, 2.0]. Got {got!r}. Did you use columns instead of rows?"
+    hints:
+      - Loop over the neurons with `for row, bj in zip(W, b)`.
+      - Each neuron's value is `sum(w * xi for w, xi in zip(row, x)) + bj`, clipped with `max(0.0, ...)`.
+      - A list comprehension collects one value per row.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: dense returns None. Return the list of neuron outputs.
+    explanation: >-
+      A layer is a list of neurons that share the same inputs. Each row of W is one neuron's weight vector,
+      so the layer is one dot product per row plus its bias, followed by ReLU — a matrix–vector product
+      written as a list comprehension.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-batch
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: A ReLU layer applied to a batch. What does this print?
+    code: |
+      def dense(x, W, b):
+          return [max(0, sum(w * xi for w, xi in zip(row, x)) + bj) for row, bj in zip(W, b)]
+
+      W = [[1, 0, -1], [0, 2, 0]]
+      b = [0, -1]
+      batch = [[1, 1, 1], [2, 0, 1], [0, 1, 3]]
+      out = [dense(x, W, b) for x in batch]
+      print(len(out), len(out[0]), out[1])
+    answer: "3 2 [1, 0]"
+    explanation: >-
+      The batch has 3 examples, so there are 3 outputs; W has 2 rows (neurons), so each output has 2 values.
+      For [2, 0, 1]: neuron 1 gives 2 − 1 + 0 = 1; neuron 2 gives 0 − 1 = −1, which ReLU clips to 0.
+    wrongAnswers:
+      - answer: "3 3 [1, 0, 0]"
+        feedback: The output width is the number of neurons (rows of W), not the number of inputs. W has 2 rows.
+      - answer: "3 2 [1, -1]"
+        feedback: The layer applies ReLU, max(0, z), so the negative value becomes 0.
+
+  - id: m-mcq-init
+    type: mcq
+    skill: explanation
+    prompt: Why are neural-network weights initialised randomly rather than all set to 0?
+    explanation: >-
+      With identical weights, every neuron in a layer computes the same output, receives the same gradient
+      and makes the same update, so they stay identical and the layer behaves like a single neuron. Random
+      initial values break the symmetry.
+    options:
+      - id: a
+        text: Identical weights make every neuron in a layer compute and learn the same thing, so the extra neurons are wasted.
+        correct: true
+        feedback: Correct — random initialisation breaks this symmetry.
+      - id: b
+        text: Zero weights cause a ZeroDivisionError.
+        feedback: Nothing is divided by the weights; the problem is symmetry, not an error.
+      - id: c
+        text: Randomness makes the final model non-deterministic, which improves accuracy.
+        feedback: Random starting points are needed to break symmetry; training is usually made reproducible with a fixed seed.
+      - id: d
+        text: It does not matter; any starting values give the same trained network.
+        feedback: Starting values matter a lot, especially identical ones, which can never become different.
+
+  - id: m-tf-depth-linear
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: a network with ten linear layers and no activation functions can represent functions
+      that a single linear layer cannot.
+    answer: false
+    explanation: >-
+      Composing linear (affine) maps gives another linear map: W2(W1 x + b1) + b2 = (W2 W1) x + (W2 b1 + b2).
+      Ten such layers collapse into one, so depth adds nothing without non-linear activations.
+
+  - id: m-code-count-params
+    type: code
+    skill: transfer
+    prompt: |
+      Write `count_params(sizes)` for a fully connected network described by its layer sizes, for example
+      `[784, 128, 10]` (784 inputs, a hidden layer of 128, 10 outputs). Each dense layer from `n_in` to
+      `n_out` has `n_in * n_out` weights and `n_out` biases. Return the total.
+    starterCode: |
+      def count_params(sizes):
+          pass
+
+      print(count_params([784, 128, 10]))
+    solution: |
+      def count_params(sizes):
+          total = 0
+          for n_in, n_out in zip(sizes, sizes[1:]):
+              total += n_in * n_out + n_out
+          return total
+
+      print(count_params([784, 128, 10]))
+    expectedOutput: |
+      101770
+    tests:
+      - name: MNIST-sized network
+        code: |
+          got = count_params([784, 128, 10])
+          assert got == 101770, f"784*128 + 128 + 128*10 + 10 = 101770, got {got!r}."
+      - name: The XOR network
+        code: |
+          got = count_params([2, 2, 1])
+          assert got == 9, f"(2*2 + 2) + (2*1 + 1) = 9, got {got!r}."
+      - name: Works for any depth
+        code: |
+          got = count_params([10, 5, 5, 5, 1])
+          assert got == 121, f"(10*5+5) + (5*5+5) + (5*5+5) + (5*1+1) = 55 + 30 + 30 + 6 = 121, got {got!r}."
+          got = count_params([3, 1])
+          assert got == 4, f"A single layer from 3 inputs to 1 output has 3 weights + 1 bias = 4, got {got!r}."
+      - name: Includes the biases
+        code: |
+          got = count_params([4, 3])
+          assert got == 15, f"4*3 weights + 3 biases = 15, got {got!r}. Remember each output neuron has a bias."
+    hints:
+      - Consecutive pairs of sizes are the layers; `zip(sizes, sizes[1:])` produces them.
+      - For each pair, add `n_in * n_out + n_out`.
+    feedback:
+      - when: { outputEquals: "101632\n" }
+        message: That counts only the weights. Add one bias per output neuron in each layer.
+      - when: { outputEquals: "None\n" }
+        message: count_params returns None. Return the total.
+    explanation: >-
+      Each consecutive pair of layer sizes is one dense layer with n_in × n_out weights and n_out biases.
+      Summing over the pairs gives the total; for 784-128-10 that is 100,480 + 1,290 = 101,770.
+
+  - id: m-mcq-hidden
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      In the XOR network, the hidden layer maps (0, 0) → [0, 0], (0, 1) → [1, 0], (1, 0) → [1, 0] and
+      (1, 1) → [2, 1]. Why does this make XOR solvable by the output neuron?
+    explanation: >-
+      In the hidden representation the two "1" inputs land on the same point, and the classes become
+      linearly separable, so a single linear output neuron (h1 − 2·h2) can separate them. Learning useful
+      representations layer by layer is the core idea of deep learning.
+    options:
+      - id: a
+        text: The hidden layer re-represents the inputs so that the two classes become linearly separable.
+        correct: true
+        feedback: Correct. The output neuron only has to draw a straight line in the hidden space.
+      - id: b
+        text: The hidden layer memorises the four answers in its biases.
+        feedback: The biases are 0 and −1; the network computes XOR by transforming the inputs, not by storing answers.
+      - id: c
+        text: ReLU outputs are always 0 or 1, which turns the problem into logic gates.
+        feedback: ReLU outputs any non-negative value — note the hidden value 2 for input (1, 1).
+      - id: d
+        text: Two neurons have more parameters than one, and more parameters always solve harder problems.
+        feedback: Parameter count alone is not the reason; two linear layers without ReLU would still fail.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-batch, m-mcq-init, m-tf-depth-linear, m-code-count-params, m-mcq-hidden]
+
+cheatsheet: |
+  ```python
+  z = sum(w * x for w, x in zip(weights, inputs)) + bias     # one neuron
+  a = max(0.0, z)                                            # ReLU
+
+  def dense(x, W, b):                                        # W: (n_out, n_in), one row per neuron
+      return [max(0.0, sum(w * xi for w, xi in zip(row, x)) + bj) for row, bj in zip(W, b)]
+
+  params = n_in * n_out + n_out                              # per dense layer
+  ```
+  - Perceptron = step activation → straight-line boundary → no XOR
+  - Linear layers collapse: W2(W1x + b1) + b2 = (W2W1)x + (W2b1 + b2) → need non-linearities
+  - XOR net: W = [[1,1],[1,1]], c = [0,-1], ReLU; output h1 − 2·h2
+  - PyTorch: `nn.Linear(n_in, n_out)` stores weight as (n_out, n_in) and computes x @ W.T + b

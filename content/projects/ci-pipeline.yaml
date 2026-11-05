@@ -1,0 +1,229 @@
+id: ci-pipeline
+title: CI Pipeline for a Python Library
+track: production
+level: intermediate
+estimatedHours: 6
+summary: >-
+  Put a GitHub Actions pipeline in front of a small text library: lint with ruff, test on a
+  matrix of Python versions, and fail the build when coverage drops below 90% — with
+  least-privilege permissions and no secrets.
+problem: |
+  You maintain `ci_textkit`, a tiny text-utility library. Contributors keep breaking it in
+  ways nobody notices until users complain: a change passes on someone's laptop with
+  Python 3.13 and crashes on 3.11; a pull request deletes half the tests "to make them
+  pass"; an unused import and a shadowed name slip in. Reviewing by eye does not scale.
+
+  You will build the library and a **continuous integration (CI)** workflow that checks
+  every push and pull request automatically, so `main` is always releasable.
+
+  **The library** (milestone 1) has three functions with precise contracts:
+
+  | Function | Example |
+  |---|---|
+  | `slugify(text, max_length=50)` | `"Crème Brûlée!"` → `"creme-brulee"` |
+  | `word_frequencies(text, top=None)` | `"the cat, the hat"` → `[("the", 2), ("cat", 1), ("hat", 1)]` |
+  | `parse_key_values(text)` | `"A=1\nB='two'"` → `{"A": "1", "B": "two"}`; bad lines raise `KeyValueError` with the line number |
+
+  **The workflow** (milestones 2–4) is a GitHub Actions file, `.github/workflows/ci.yml`:
+
+  ```text
+  push / pull_request to main
+          │
+          ▼
+  ┌──────────────┐  passes   ┌────────────────────────────────────────┐
+  │ lint (ruff)  │──────────▶│ test × Python 3.11, 3.12, 3.13, 3.14   │
+  │ check+format │           │ pytest --cov=ci_textkit --cov-fail-    │
+  └──────────────┘           │ under=90   (fail-fast: false)          │
+                             └────────────────────────────────────────┘
+  ```
+
+  A run on GitHub looks like this (abridged):
+
+  ```text
+  ✓ Lint (ruff)                 12s
+  ✓ Test (Python 3.11)          21s   TOTAL  58  0  100%
+  ✓ Test (Python 3.12)          19s
+  ✗ Test (Python 3.13)          20s   FAIL Required test coverage of 90% not reached. Total coverage: 84.48%
+  ✓ Test (Python 3.14)          22s
+  ```
+
+  The workflow cannot run inside this repository — GitHub only executes workflows at the
+  root of a repository — so the kit's tests read your YAML and check its **structure**
+  (triggers, permissions, matrix, steps, gates) with a tiny YAML-subset reader written in
+  plain Python. An optional last milestone pushes it to your own GitHub repository to see
+  it run for real.
+concepts:
+  - mlops.ci-cd
+  - python.testing
+  - python.static-analysis
+  - tooling.git-basics
+  - tooling.github-collaboration
+  - python.virtual-environments
+  - python.regex
+acceptanceCriteria:
+  - "`slugify`, `word_frequencies` and `parse_key_values` meet their docstring contracts, including accent stripping, word-boundary shortening, alphabetical tie-breaking and `KeyValueError` with a `line_number`."
+  - "The workflow runs on `push` and `pull_request` to `main`, never on `pull_request_target`."
+  - "Top-level `permissions` grant only `contents: read`; a `concurrency` group on `github.ref` cancels superseded runs."
+  - "Every job has `runs-on` and a `timeout-minutes` of at most 30, and checks out the code with a version-pinned `actions/checkout`."
+  - "The test job runs on a `fail-fast: false` matrix of at least three **quoted** Python versions including `\"3.11\"`, using `actions/setup-python` with `python-version: ${{ matrix.python-version }}` and `cache: pip`."
+  - "Tools are installed from `requirements-dev.txt` (with version ranges); `ruff check` runs before pytest (same job, earlier step, or a lint job the test job `needs`)."
+  - "pytest runs with `--cov=ci_textkit --cov-fail-under=90`; no `run:` step interpolates `github.event.*` or `github.head_ref`, and no secrets are referenced."
+  - "`python -m pytest` passes for your code, and `ruff check .` and `ruff format --check .` are clean."
+architecture: |
+  ```text
+  projects/ci-pipeline/
+  ├── .github/workflows/ci.yml        reference workflow (kit root = repository root)
+  ├── starter/.github/workflows/ci.yml   ← your workflow (milestones 2–4)
+  ├── starter/ci_textkit.py              ← your library (milestone 1)
+  ├── solution/ci_textkit.py          reference library
+  ├── conftest.py                     picks starter/ or solution/; `workflow_path` fixture
+  ├── requirements-dev.txt            pytest, pytest-cov, ruff (what CI installs)
+  ├── ruff.toml                       one lint/format config for laptop and CI
+  └── tests/test_ci_textkit.py        library tests + workflow structure checks
+  ```
+
+  **Two jobs, one gate.** `lint` runs ruff once (style does not depend on the Python
+  version). `test` declares `needs: lint`, so a lint failure stops the run before four
+  matrix jobs start — fast, cheap feedback. Each matrix entry installs the same pinned
+  tools, runs pytest with coverage and fails below 90%.
+
+  **How the checks work without PyYAML.** `tests/test_ci_textkit.py` contains
+  `parse_yaml_subset`, ~120 lines that read block mappings, lists, `[flow, lists]`, quoted
+  scalars and `|` text blocks into dicts and lists — exactly the subset workflow files
+  use. It treats unquoted `3.10` as a number, like real YAML, which is why the matrix test
+  insists on quoted versions. The tests then assert on the parsed structure rather than on
+  exact text, so you can name steps and order keys as you like.
+
+  **Where your code runs in CI.** `conftest.py` puts `starter/` on `sys.path` unless
+  `GW_TARGET=solution`, so in your own repository CI tests *your* implementation, and
+  `--cov=ci_textkit` measures it.
+environment: local
+starterKit: projects/ci-pipeline
+setup: |
+  You need Python 3.11+ and (only for the optional last milestone) Git and a free GitHub
+  account.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/ci-pipeline
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements-dev.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/ci-pipeline
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements-dev.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/ci_textkit.py` and `starter/.github/workflows/ci.yml`. The tests fail until
+  you implement each milestone — that is expected.
+milestones:
+  - id: m1-library
+    title: The library under test
+    description: |
+      Implement `slugify`, `word_frequencies` and `parse_key_values` in
+      `starter/ci_textkit.py` from their docstrings. Use `unicodedata.normalize("NFKD", ...)`
+      plus `encode("ascii", "ignore")` to strip accents, a regex for word boundaries,
+      `collections.Counter` with a `(-count, word)` sort key for deterministic ranking, and
+      `str.partition("=")` for key/value lines. Raise `KeyValueError(line_number, message)`
+      for lines without `=`, invalid keys and duplicates.
+
+      Tests: `TestMilestone1Library` (`python -m pytest -k Milestone1`).
+  - id: m2-triggers
+    title: Triggers, permissions and concurrency
+    description: |
+      In `starter/.github/workflows/ci.yml`, run on `push` and `pull_request` to `main`,
+      set top-level `permissions: contents: read` (the default token can otherwise write to
+      your repository), and add `concurrency` with `group: ci-${{ github.workflow }}-${{ github.ref }}`
+      and `cancel-in-progress: true` so a new push cancels the stale run.
+
+      Tests: `TestMilestone2Triggers` — name, both triggers, no `pull_request_target`,
+      read-only permissions, concurrency.
+  - id: m3-matrix
+    title: Lint and test on a Python version matrix
+    description: |
+      Give every job `runs-on: ubuntu-latest` and a `timeout-minutes`. Add a
+      `strategy` with `fail-fast: false` and `matrix: python-version: ["3.11", "3.12", "3.13", "3.14"]`
+      (quoted!). Check out the code, set up Python with `actions/setup-python` using
+      `${{ matrix.python-version }}` and `cache: pip`, install `requirements-dev.txt`, and
+      run `ruff check .`. Pin every action to a release tag (or a commit SHA).
+
+      Tests: `TestMilestone3MatrixJob`.
+  - id: m4-quality-gates
+    title: Coverage gate and safe ordering
+    description: |
+      Run `python -m pytest --cov=ci_textkit --cov-report=term-missing --cov-fail-under=90`
+      in the matrix job, but only after lint passes — either a separate `lint` job that the
+      test job `needs`, or a ruff step before the pytest step. Keep `run:` commands free of
+      `${{ github.event.* }}` (script injection) and reference no secrets.
+
+      Tests: `TestMilestone4QualityGates` (also checks version ranges in
+      `requirements-dev.txt`).
+  - id: m5-run-on-github
+    title: Run it for real (optional)
+    description: |
+      Copy the kit outside Groundwork, replace `.github/workflows/ci.yml` with your
+      workflow, push it to a new GitHub repository and open the **Actions** tab. Then
+      break it on purpose: delete a test so coverage drops below 90%, or add an unused
+      import, and confirm the run goes red with a readable message. There is no automated
+      test for this milestone; it needs network access and a GitHub account.
+testing: |
+  ```powershell
+  python -m pytest                       # all milestones against starter/
+  python -m pytest -k Milestone3         # one milestone
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  python -m pytest
+  python -m pytest -k Milestone3
+  GW_TARGET=solution python -m pytest    # compare with the reference
+  ```
+
+  With `GW_TARGET=solution` the library tests import `solution/ci_textkit.py` and the
+  workflow tests read the reference `.github/workflows/ci.yml`.
+
+  The same commands CI runs work locally after installing `requirements-dev.txt`:
+  `ruff check .`, `ruff format --check .` and
+  `python -m pytest --cov=ci_textkit --cov-fail-under=90`.
+
+  **What is not verified here:** the workflow is only checked structurally. Whether GitHub
+  accepts and runs it is confirmed by milestone 5 (pushing to GitHub). The coverage
+  command needs `pytest-cov`, which the default kit test run does not require.
+security:
+  - "The default `GITHUB_TOKEN` can write to the repository; `permissions: contents: read` limits the damage if a dependency or step is compromised."
+  - "`pull_request_target` runs with write permissions and secrets in the context of the base repository; combined with checking out PR code it lets a fork run arbitrary code with your token. Use `pull_request`."
+  - "Interpolating `${{ github.event.pull_request.title }}` or `github.head_ref` into a `run:` script lets an attacker inject shell commands through a PR title or branch name; pass such values through `env:` and quote them."
+  - "Pin actions to a release tag at minimum, and to a full commit SHA for third-party actions, so a moved tag cannot swap in malicious code (supply-chain risk)."
+  - "Give tools version ranges in `requirements-dev.txt` so a surprise major release cannot change CI behaviour silently; consider hash-pinned lock files for stronger guarantees."
+extensions:
+  - "Add a `ruff format --check` step and a [static type check](concept:python.static-analysis) job (for example mypy) that runs in parallel with the tests."
+  - "Upload `coverage.xml` with `actions/upload-artifact` and add a job summary with the coverage table (`$GITHUB_STEP_SUMMARY`)."
+  - "Pin `actions/checkout` and `actions/setup-python` to full commit SHAs and configure Dependabot to update them."
+  - "Add a `windows-latest` and `macos-latest` axis to the matrix and use `include`/`exclude` to keep the job count reasonable."
+  - "Package the library with a `pyproject.toml` and add a release workflow that builds a wheel on version tags."
+rubric:
+  - criterion: Library correctness
+    needsWork: Some contracts are only partly met (accents, tie-breaking or error line numbers are wrong).
+    meets: All three functions meet their docstrings and milestone 1 passes.
+    exceeds: Small helpers with clear names, precise error messages, and extra edge cases tested.
+  - criterion: Workflow design
+    needsWork: One job with no timeout, unpinned actions or a single Python version.
+    meets: Lint and matrix test jobs, timeouts, pinned actions, pip caching, fail-fast off; milestones 2–3 pass.
+    exceeds: Lint gates the matrix, step names make failures obvious, and the YAML is commented for the next maintainer.
+  - criterion: Quality gates
+    needsWork: Coverage is measured but nothing fails when it drops.
+    meets: "`--cov-fail-under=90` and lint-before-test are enforced; milestone 4 passes."
+    exceeds: Coverage report uploaded or summarised, and the gate was demonstrated failing on GitHub (milestone 5).
+  - criterion: CI security
+    needsWork: Default (write) token permissions or untrusted input interpolated into scripts.
+    meets: Read-only permissions, no secrets, no `pull_request_target`, no `github.event.*` in `run:`.
+    exceeds: Actions pinned to commit SHAs with automated updates, and the risks are explained in the README.

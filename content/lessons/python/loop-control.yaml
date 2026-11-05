@@ -1,0 +1,1133 @@
+id: python.loop-control
+concept: python.loop-control
+title: break, continue and Loop else
+subtitle: Leaving early, skipping ahead, and knowing whether a search succeeded
+estimatedMinutes: 35
+reviewedOn: 2026-10-22
+summary: >-
+  break ends a loop immediately, continue skips to the next iteration, and a loop's else block runs
+  only when no break happened. Learn to write clean search loops, choose between flags and break, and
+  handle nested loops, where break leaves only the innermost loop.
+objectives:
+  - Predict the output of loops that use break and continue, in both for and while loops.
+  - Explain precisely when a loop's else block runs — and why it is not "if the loop did not run".
+  - Write search loops that stop at the first match and report "not found" correctly, using break with a flag or with loop else.
+  - Recognise that break exits only the innermost loop, and stop nested loops deliberately.
+  - Diagnose misplaced else blocks, continue-before-update infinite loops and "break outside loop" errors.
+sources:
+  - title: "The Python Tutorial: break and continue Statements"
+    url: https://docs.python.org/3/tutorial/controlflow.html#break-and-continue-statements
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The break statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-break-statement
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The continue statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-continue-statement
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The for statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-for-statement
+    publisher: Python Software Foundation
+  - title: "PEP 3136 – Labeled break and continue (rejected)"
+    url: https://peps.python.org/pep-3136/
+    publisher: Python Software Foundation
+  - title: "PEP 765 – Disallow return/break/continue that exit a finally block"
+    url: https://peps.python.org/pep-0765/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why stop a loop early?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Many loops are **searches**: find the first digit in a code, the first divisor of a number, the
+          first invalid character in a PIN. Once the answer is found, the remaining iterations are wasted
+          work. With only what you know so far, the loop keeps going anyway, and needs an extra condition
+          to avoid overwriting the first match:
+      - type: code
+        runnable: true
+        code: |
+          code = "abc7def9"
+          first_digit = ""
+          checked = 0
+          for ch in code:
+              checked += 1
+              if ch.isdigit() and first_digit == "":
+                  first_digit = ch
+          print("First digit:", first_digit, "- characters checked:", checked)
+        expectedOutput: |
+          First digit: 7 - characters checked: 8
+        caption: Correct, but it inspects all 8 characters, and the condition on line 6 has to guard against the later 9.
+      - type: markdown
+        body: |
+          The [break statement](glossary:break-statement) ends the loop the moment the answer is known:
+      - type: code
+        runnable: true
+        code: |
+          code = "abc7def9"
+          checked = 0
+          for ch in code:
+              checked += 1
+              if ch.isdigit():
+                  print("First digit:", ch, "- characters checked:", checked)
+                  break
+        expectedOutput: |
+          First digit: 7 - characters checked: 4
+        caption: Half the work, and a simpler condition. On a million-character input the difference is a million minus four iterations.
+
+  - id: break
+    title: break — leave the loop now
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Rule:** `break` immediately ends the **innermost** loop that contains it. The rest of the body
+          is skipped, no further iterations happen, and execution continues with the first statement
+          after the loop. It works the same in `for` and `while` loops, and it is almost always inside an
+          `if` — otherwise the loop would stop on its first iteration.
+
+          `break` makes a very readable input loop possible: loop "forever" with `while True:` and leave
+          from the middle once the input is acceptable. Compare it with the priming-read pattern from
+          [while loops](concept:python.while-loops) — here `input()` appears only once:
+      - type: code
+        runnable: true
+        stdin: |
+          maybe
+          YES
+          no
+        code: |
+          while True:
+              answer = input("Continue? (yes/no) ")
+              if answer == "yes" or answer == "no":
+                  break
+              print("Please type yes or no.")
+          print("You chose", answer)
+        expectedOutput: |
+          Continue? (yes/no) Please type yes or no.
+          Continue? (yes/no) Please type yes or no.
+          Continue? (yes/no) You chose no
+        annotations:
+          - line: 1
+            text: The condition is always True, so the ONLY way out is the break on line 4.
+          - line: 4
+            text: Jumps straight to line 6. The print on line 5 is skipped for valid answers.
+          - line: 5
+            text: Runs only for invalid answers ("maybe", and "YES", because comparisons are case-sensitive).
+      - type: callout
+        variant: warning
+        title: while True needs a reachable break
+        body: |
+          A `while True:` loop is an [infinite loop](glossary:infinite-loop) unless some iteration reaches
+          a `break`. Before running one, check that the `if` guarding the break can actually become True.
+
+  - id: continue
+    title: continue — skip to the next iteration
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Rule:** the [continue statement](glossary:continue-statement) skips the **rest of the current
+          iteration**. A `for` loop then moves on to its next item; a `while` loop goes back and checks
+          its condition again. The loop itself keeps running.
+      - type: code
+        runnable: true
+        code: |
+          for ch in "a b-c d":
+              if ch == " " or ch == "-":
+                  continue
+              print(ch, end="")
+          print()
+        expectedOutput: |
+          abcd
+        annotations:
+          - line: 3
+            text: For spaces and dashes, the print below is skipped and the loop moves to the next character.
+      - type: markdown
+        body: |
+          `continue` is handy as a **guard clause**: deal with the items you want to skip at the top of the
+          body, and keep the main work un-indented below. The same loop written with `if`/`else` would
+          work too; choose whichever reads more clearly.
+      - type: callout
+        variant: warning
+        title: continue can skip a while loop's update
+        body: |
+          In a while loop, `continue` jumps back to the condition **without running the rest of the body**
+          — including an update at the bottom. This loop never ends (so it is not run here):
+
+          ```python
+          n = 0
+          while n < 10:
+              if n % 2 == 0:
+                  continue      # n is 0 forever: the update below is never reached
+              print(n)
+              n += 1
+          ```
+
+          Fix it by updating **before** the `continue` (move `n += 1` to the top of the body) or by using
+          `for n in range(10):`, where the next value comes automatically.
+
+  - id: mental-model
+    title: "Mental model: an exit door and a shortcut back to the top"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Picture the loop body as a room you walk through once per iteration:
+
+          | Statement | Where execution goes next |
+          |---|---|
+          | end of the body | back to the top: next item (`for`) or the condition (`while`) |
+          | `continue` | back to the top **now**, skipping the rest of the body |
+          | `break` | **out of the loop** now, to the first statement after it (skipping any loop `else`) |
+
+          Predict this program's output, then step through it:
+      - type: item
+        ref: predict-break-continue
+      - type: visualization
+        component: python-tracer
+        title: continue and break in one loop
+        caption: >-
+          Even numbers hit continue (line 3) and jump back to line 1. When n is 7, the break on line 5
+          jumps straight to line 7.
+        props:
+          code: |
+            for n in range(1, 8):
+                if n % 2 == 0:
+                    continue
+                if n > 5:
+                    break
+                print(n)
+            print("done")
+
+  - id: loop-else
+    title: "Loop else: \"no break happened\""
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Both `for` and `while` loops can have an `else` block, written at the **same indentation as the
+          loop keyword**. The rule ([language reference](https://docs.python.org/3/reference/compound_stmts.html#the-for-statement)):
+
+          - When the loop finishes **normally** — the `for` loop runs out of items, or the `while`
+            condition is false — the `else` block runs.
+          - When the loop is left with **`break`**, the `else` block is **skipped**.
+
+          So read [loop else](glossary:loop-else) as **"no break"**. It answers the question every search
+          has to answer: *did we find it, or did we look everywhere and fail?*
+      - type: code
+        runnable: true
+        code: |
+          n = 91
+          for d in range(2, n):
+              if n % d == 0:
+                  print(n, "is not prime: divisible by", d)
+                  break
+          else:
+              print(n, "is prime")
+        expectedOutput: |
+          91 is not prime: divisible by 7
+        caption: Change 91 to 97 and run again. No divisor is found, the loop runs out of numbers, and the else reports that 97 is prime.
+        annotations:
+          - line: 5
+            text: A divisor proves n is not prime; break also skips the else.
+          - line: 6
+            text: Aligned with for, not with if. It belongs to the loop.
+      - type: callout
+        variant: misconception
+        title: '"else runs if the loop did not run"'
+        body: |
+          No — `else` runs whenever there was **no break**. A loop that runs zero times has no break, so
+          its else **does** run. And a loop that ran a hundred times without breaking runs its else too.
+      - type: code
+        runnable: true
+        code: |
+          for ch in "":
+              print("never printed")
+          else:
+              print("else ran: the loop finished without break")
+        expectedOutput: |
+          else ran: the loop finished without break
+      - type: markdown
+        body: |
+          `while … else` works the same way. Here the else handles "all attempts used up", while the
+          break handles success:
+      - type: code
+        runnable: true
+        stdin: |
+          1111
+          2222
+          3333
+        code: |
+          attempts = 0
+          while attempts < 3:
+              attempts += 1
+              pin = input("PIN: ")
+              if pin == "4321":
+                  print("Unlocked")
+                  break
+          else:
+              print("Locked out after 3 attempts")
+        expectedOutput: |
+          PIN: PIN: PIN: Locked out after 3 attempts
+        caption: Edit the input so the second line is 4321 and run again — the break skips the else.
+      - type: item
+        ref: predict-else-runs
+
+  - id: search-patterns
+    title: Search patterns
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Every search loop has two outcomes, and good code handles both. There are two standard shapes.
+
+          **1. A flag plus break.** A [flag variable](glossary:flag-variable) records whether the item was
+          found; you check it after the loop.
+      - type: code
+        runnable: true
+        code: |
+          word = "rhythm"
+          found = False
+          for ch in word:
+              if ch in "aeiou":
+                  found = True
+                  break
+          if found:
+              print(word, "has a vowel")
+          else:
+              print(word, "has no vowel (a, e, i, o, u)")
+        expectedOutput: |
+          rhythm has no vowel (a, e, i, o, u)
+        annotations:
+          - line: 2
+            text: Assume "not found" until the loop proves otherwise.
+          - line: 7
+            text: An ordinary if/else after the loop, reading the flag.
+      - type: markdown
+        body: |
+          **2. Loop else.** The same logic without a flag: the else block is the "not found" branch.
+      - type: code
+        runnable: true
+        code: |
+          word = "strap"
+          for ch in word:
+              if ch in "aeiou":
+                  print(word, "has a vowel:", ch)
+                  break
+          else:
+              print(word, "has no vowel")
+        expectedOutput: |
+          strap has a vowel: a
+        caption: Press Step through, then change the word to "gym" and step through again to see the else branch run.
+      - type: visualization
+        component: python-tracer
+        title: A search that succeeds
+        caption: The loop checks s, t, r, then finds a and breaks. Line 6's else is never reached.
+        props:
+          code: |
+            word = "strap"
+            for ch in word:
+                if ch in "aeiou":
+                    print(word, "has a vowel:", ch)
+                    break
+            else:
+                print(word, "has no vowel")
+      - type: markdown
+        body: |
+          **"All items are OK" is a search too** — a search for the first *bad* item. Validation loops
+          break at the first failure and use else for "everything passed":
+      - type: code
+        runnable: true
+        code: |
+          pin = "12a4"
+          for ch in pin:
+              if not ch.isdigit():
+                  print("Invalid PIN: found", ch)
+                  break
+          else:
+              print("PIN looks valid")
+        expectedOutput: |
+          Invalid PIN: found a
+      - type: markdown
+        body: |
+          **Find first versus find all.** Only break when you need *one* answer. To count matches, list
+          every match, or find the *last* match, the loop has to see every item — a break would cut it
+          short.
+      - type: item
+        ref: mcq-when-break
+
+  - id: flags-vs-break
+    title: Flags, break or else — which should you use?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Approach | Strengths | Watch out for |
+          |---|---|---|
+          | **Flag without break** | Simple; works when you must scan everything anyway | Wastes work for find-first; the flag must never be reset to False inside the loop |
+          | **Flag + break** | Familiar to everyone; result usable later in the program | One extra variable to name and check |
+          | **break + loop else** | Shortest; the "not found" code sits right next to the loop | Many developers misread `else`; it only fits when the "not found" action happens right after the loop |
+
+          All three are correct Python. Choose the one your readers will understand fastest, and be
+          consistent within a codebase.
+      - type: callout
+        variant: production
+        title: Make loop else obvious
+        body: |
+          Because loop else surprises people, many teams either avoid it or add a short comment:
+          `else:  # no break`. Later you will also meet tools that remove the loop entirely for simple
+          searches, such as `any(ch in "aeiou" for ch in word)` ([comprehensions](concept:python.comprehensions))
+          and putting the search in a [function](concept:python.functions) that `return`s as soon as it
+          finds the answer.
+
+  - id: nested
+    title: break and continue in nested loops
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `break` and `continue` affect **only the innermost loop** that contains them. In a
+          [nested loop](glossary:nested-loop), a break in the inner loop ends the inner loop; the outer
+          loop simply carries on with its next iteration.
+      - type: code
+        runnable: true
+        code: |
+          for row in range(1, 4):
+              for col in range(1, 4):
+                  if col == 2:
+                      break
+                  print(row, col)
+        expectedOutput: |
+          1 1
+          2 1
+          3 1
+        caption: The break stops each row's inner loop at col 2, but all three rows still run.
+      - type: item
+        ref: predict-nested-break
+      - type: markdown
+        body: |
+          **Stopping both loops.** Python has no "break out of two loops" statement (labelled breaks were
+          proposed in [PEP 3136](https://peps.python.org/pep-3136/) and rejected). The usual approaches:
+
+          1. **A flag** set before the inner break and checked right after the inner loop.
+          2. **A function** that `return`s from inside both loops — the cleanest, once you know
+             [functions](concept:python.functions).
+      - type: code
+        runnable: true
+        code: |
+          target = 12
+          found = False
+          for a in range(1, 10):
+              for b in range(1, 10):
+                  if a * b == target:
+                      found = True
+                      break
+              if found:
+                  break
+          print("first pair:", a, b)
+        expectedOutput: |
+          first pair: 2 6
+        annotations:
+          - line: 7
+            text: Ends only the inner loop over b.
+          - line: 8
+            text: Back in the outer loop, the flag tells it to stop too.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `SyntaxError: 'break' outside loop` | `break` used in an `if` that is not inside any loop | `break` only works inside a for or while loop. Outside a loop, restructure with if/else instead. |
+          | `SyntaxError: 'continue' not properly in loop` | Same for `continue` | Move it inside a loop. |
+          | "prime" (or "not found") printed many times | `else` indented under the `if` inside the loop instead of aligned with `for` | Dedent the `else` to line up with `for`. |
+          | while loop never ends after adding `continue` | `continue` skips the update at the bottom of the body | Update before `continue`, or use a for loop. |
+          | Outer loop keeps going after a break | `break` only ends the innermost loop | Use a flag checked after the inner loop, or a function with return. |
+          | Search reports "not found" although the item is there | A flag is reset to False inside the loop, or break was forgotten | Set the flag only to True inside the loop; break once found. |
+          | else ran when you expected it not to | Misreading else as "if the loop didn't run" | else means "the loop ended without break". |
+      - type: code
+        runnable: true
+        code: |
+          age = 20
+          if age >= 18:
+              print("adult")
+              break
+        expectError: SyntaxError
+        caption: An if statement is not a loop, so there is nothing for break to leave. Being a SyntaxError, nothing runs — not even the print.
+      - type: markdown
+        body: |
+          **The misplaced else.** The most common loop-else bug is an indentation mistake. With `else`
+          under the `if`, it is an ordinary if/else that runs on **every** iteration where the test fails:
+      - type: code
+        runnable: true
+        code: |
+          n = 15
+          for d in range(2, n):
+              if n % d == 0:
+                  print(n, "is not prime")
+                  break
+              else:
+                  print(n, "is prime")
+        expectedOutput: |
+          15 is prime
+          15 is not prime
+        caption: "For d = 2 the if is False, so its else prints \"15 is prime\"; then d = 3 divides 15. Aligning else with for fixes it."
+      - type: item
+        ref: debug-else-indent
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          For each loop, decide first: does it need **every** item (no break), or should it **stop at the
+          first** match (break)? And what should happen if nothing is found?
+      - type: item
+        ref: code-password-retry
+      - type: item
+        ref: parsons-letters-before-dot
+      - type: item
+        ref: code-is-prime
+      - type: item
+        ref: explain-loop-else
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The rules in the language reference.** For a `while` loop: "A break statement executed in the
+          first suite terminates the loop without executing the else clause's suite. A continue statement
+          executed in the first suite skips the rest of the suite and goes back to testing the
+          expression." For a `for` loop, `continue` "continues with the next item, or with the else clause
+          if there is no next item". `break` and `continue` may only appear inside a loop, which the compiler checks
+          — hence the `SyntaxError` before anything runs.
+
+          **They compile to jumps.** In CPython 3.14, `dis.dis()` shows a for loop as a `FOR_ITER`
+          instruction (fetch the next item, or jump to the loop's exit when there is none) followed by
+          the body. `continue` becomes a `JUMP_BACKWARD` to that `FOR_ITER`. `break` becomes a `POP_TOP`
+          (discard the loop's iterator) and a `JUMP_FORWARD` to the first statement **after the else
+          block**. The else block sits right after the normal exit point, so only a loop that ran out of
+          items falls into it. Instruction names are an implementation detail and change between
+          versions, but the shape — jumps around one block of code — does not.
+
+          **No labelled break.** Some languages let you write `break outer` to leave a named outer loop.
+          Python deliberately does not: [PEP 3136](https://peps.python.org/pep-3136/) proposed it and
+          Guido van Rossum rejected it, reasoning that code complicated enough to need it is very rare and
+          that the feature would add permanent complexity and be misused more than used well. Such code is
+          usually clearer restructured, for example into a function that returns.
+
+          **New in Python 3.14: break in finally.** When you learn [exceptions](concept:python.exceptions)
+          you will meet `try`/`finally`. A `break` or `continue` that jumps out of a `finally` block can
+          silently swallow an exception, so since Python 3.14 the compiler emits a `SyntaxWarning` for it
+          ([PEP 765](https://peps.python.org/pep-0765/)).
+      - type: code
+        runnable: true
+        code: |
+          import warnings
+
+          source = "for i in range(3):\n    try:\n        pass\n    finally:\n        break\n"
+          with warnings.catch_warnings(record=True) as caught:
+              warnings.simplefilter("always")
+              compile(source, "<example>", "exec")
+          for warning in caught:
+              print(warning.category.__name__ + ":", warning.message)
+        expectedOutput: |
+          SyntaxWarning: 'break' in a 'finally' block
+        caption: Compiling (not running) a loop with break inside finally. Python 3.14 warns about it; earlier versions accepted it silently.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `break` ends the **innermost** loop immediately; execution continues after the loop.
+          - `continue` skips the rest of this iteration: next item (`for`) or re-check the condition
+            (`while`). In a while loop, make sure it cannot skip the update.
+          - A loop's `else` runs when the loop ends **without break** — including when it ran zero times.
+            Think "no break".
+          - Search loops: break at the first match and handle "not found" with a flag or loop else. Don't
+            break when you need every item.
+          - Nested loops: break only leaves the inner loop. Stop both with a flag (or, later, a function
+            that returns).
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "When does a for loop's else run?" is a classic Python trivia question — answer "when the loop
+          wasn't ended by break, including zero iterations" and give the search/prime example. Also be
+          ready to explain how you would exit two nested loops in Python (flag, function with return)
+          and why `continue` in a while loop can cause an infinite loop.
+
+items:
+  - id: predict-break-continue
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (One value per line.)
+    code: |
+      for n in range(1, 8):
+          if n % 2 == 0:
+              continue
+          if n > 5:
+              break
+          print(n)
+      print("done")
+    answer: |
+      1
+      3
+      5
+      done
+    explanation: >-
+      Even numbers hit continue and are skipped. Odd numbers 1, 3 and 5 pass both tests and are printed.
+      When n is 7, n > 5 is True and break ends the loop; "done" is printed after it.
+    wrongAnswers:
+      - answer: |
+          1
+          3
+          5
+          7
+          done
+        feedback: When n is 7, the test n > 5 is True, so break runs before the print.
+      - answer: |
+          1
+          3
+          done
+        feedback: 5 > 5 is False, so 5 is printed. The break only happens for 7.
+      - answer: |
+          1
+          done
+        feedback: >-
+          continue does not end the loop — it only skips the rest of that iteration. After 2 is skipped,
+          the loop carries on with 3.
+
+  - id: predict-else-runs
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      for n in range(3):
+          if n == 5:
+              break
+      else:
+          print("no break")
+      print("end")
+    answer: |
+      no break
+      end
+    explanation: >-
+      The loop runs for 0, 1 and 2; none of them equals 5, so break never runs. The loop finishes
+      normally, so its else block runs, and then "end" is printed.
+    wrongAnswers:
+      - answer: end
+        feedback: >-
+          This treats else as "only if the loop did not run". The else runs whenever the loop ends
+          without break — here it ran three times and never broke.
+      - answer: |
+          no break
+          no break
+          no break
+          end
+        feedback: The loop's else is not part of the body; it runs at most once, after the loop finishes.
+
+  - id: mcq-when-break
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A program scans a very large log, one line per iteration. For which task is adding a `break`
+      correct?
+    explanation: >-
+      break is right only when one answer is enough. Counting, listing every match, or finding the last
+      match all require seeing every line.
+    options:
+      - id: a
+        text: Report whether the log contains at least one line with ERROR.
+        correct: true
+        feedback: One ERROR line answers the question, so stopping at the first one saves scanning the rest.
+      - id: b
+        text: Count how many lines contain ERROR.
+        feedback: A break after the first match would always report 1. Counting needs every line.
+      - id: c
+        text: Print every line that contains ERROR.
+        feedback: Breaking after the first print would hide all the other error lines.
+      - id: d
+        text: Find the last line that contains ERROR.
+        feedback: When scanning from the start, you only know which match is last after reaching the end, so you cannot break early.
+
+  - id: predict-nested-break
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      for i in range(3):
+          for j in range(3):
+              if j == i:
+                  break
+              print(i, j)
+      print("end")
+    answer: |
+      1 0
+      2 0
+      2 1
+      end
+    explanation: >-
+      The break ends only the inner loop, as soon as j reaches i. For i = 0 it breaks immediately (nothing
+      printed); for i = 1 it prints j = 0; for i = 2 it prints j = 0 and 1. The outer loop runs all three
+      times.
+    wrongAnswers:
+      - answer: end
+        feedback: >-
+          The very first break (i = 0, j = 0) ends only the inner loop. The outer loop continues with
+          i = 1 and i = 2.
+      - answer: |
+          0 0
+          1 0
+          1 1
+          2 0
+          2 1
+          2 2
+          end
+        feedback: The if comes before the print, so when j equals i the break happens and that pair is never printed.
+      - answer: |
+          1 0
+          end
+        feedback: After the inner loop breaks for i = 1, the outer loop still runs i = 2, which prints two pairs.
+
+  - id: debug-else-indent
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should print a single line saying whether `n` is prime. For 15 it prints two
+      contradictory lines. Fix it so it prints only `15 is not prime` — and still works if `n` is
+      changed.
+    starterCode: |
+      n = 15
+      for d in range(2, n):
+          if n % d == 0:
+              print(n, "is not prime")
+              break
+          else:
+              print(n, "is prime")
+    solution: |
+      n = 15
+      for d in range(2, n):
+          if n % d == 0:
+              print(n, "is not prime")
+              break
+      else:
+          print(n, "is prime")
+    expectedOutput: |
+      15 is not prime
+    tests:
+      - name: prints one line for 15
+        code: |
+          assert output_lines() == ["15 is not prime"], f"Expected exactly one line, '15 is not prime', but got {output_lines()}."
+      - name: works for other values of n
+        code: |
+          import re, io, contextlib
+          for value, expected in [(13, "13 is prime"), (9, "9 is not prime"), (2, "2 is prime")]:
+              changed = re.sub(r"n\s*=\s*15", f"n = {value}", source, count=1)
+              assert changed != source, "Keep the first line as n = 15."
+              buffer = io.StringIO()
+              with contextlib.redirect_stdout(buffer):
+                  exec(compile(changed, "<variant>", "exec"), {})
+              lines = buffer.getvalue().strip().split("\n")
+              assert lines == [expected], f"With n = {value} expected one line, {expected!r}, but got {lines}."
+      - name: keeps the loop and break
+        code: |
+          assert uses("For") and uses("Break"), "Keep the for loop and its break; fix where the else belongs."
+    hints:
+      - Which statement is the else attached to right now — the if, or the for?
+      - An else aligned with the if runs every time the if test is False. An else aligned with for runs once, only if the loop never hit break.
+      - Move the else (and its print) four spaces to the left so it lines up with for.
+    feedback:
+      - when: { outputContains: "15 is prime" }
+        message: >-
+          The "is prime" line is still printed during the loop. The else must belong to the for loop (same
+          indentation as for), so it only runs when no divisor was found.
+    explanation: >-
+      Indented under the if, the else is an ordinary if/else branch that runs whenever d does not divide
+      n — on many iterations. Aligned with for, it becomes the loop's else: it runs once, only when the
+      loop finished without break, which is exactly "no divisor found". For n = 2 the range is empty,
+      the loop runs zero times, and the else correctly reports that 2 is prime.
+
+  - id: code-password-retry
+    type: code
+    skill: implementation
+    prompt: |
+      Keep asking for a password until the user enters one with **at least 8 characters**. Print
+      `Too short` after each password that is too short. When one is accepted, print
+      `Accepted. Attempts:` followed by the number of passwords typed in total.
+
+      Use `while True:` and `break`. With the inputs `cat`, `hello`, `longenough` the output is:
+
+      ```text
+      Password: Too short
+      Password: Too short
+      Password: Accepted. Attempts: 3
+      ```
+    stdin: |
+      cat
+      hello
+      longenough
+    starterCode: |
+      attempts = 0
+      # Loop with while True: read a password, count the attempt,
+      # break if it is long enough, otherwise print "Too short".
+
+      print("Accepted. Attempts:", attempts)
+    solution: |
+      attempts = 0
+      while True:
+          password = input("Password: ")
+          attempts += 1
+          if len(password) >= 8:
+              break
+          print("Too short")
+      print("Accepted. Attempts:", attempts)
+    expectedOutput: |
+      Password: Too short
+      Password: Too short
+      Password: Accepted. Attempts: 3
+    tests:
+      - name: uses while True and break
+        code: |
+          assert uses("While") and uses("Break"), "Use a while True loop and leave it with break."
+      - name: example inputs
+        code: |
+          expected = ["Password: Too short", "Password: Too short", "Password: Accepted. Attempts: 3"]
+          assert output_lines() == expected, f"Expected {expected}, but got {output_lines()}."
+      - name: accepted on the first try
+        code: |
+          out = run_program("abcdefgh\n").strip()
+          assert out == "Password: Accepted. Attempts: 1", f"An 8-character password should be accepted at once. Got {out!r}."
+      - name: four attempts
+        code: |
+          out = run_program("a\nbb\n1234567\n12345678\n").strip().split("\n")
+          expected = ["Password: Too short"] * 3 + ["Password: Accepted. Attempts: 4"]
+          assert out == expected, f"7 characters is too short, 8 is enough. Expected {expected}, got {out}."
+    hints:
+      - 'Inside `while True:` read one password with `input("Password: ")` and add 1 to attempts.'
+      - "Test `len(password) >= 8`. If it is True, break; the print after the loop reports the result."
+      - The "Too short" print goes after the if, so it is skipped when the break runs.
+    feedback:
+      - when: { errorType: EOFError }
+        message: >-
+          Your loop asked for more passwords than were typed, so it never reached break for the long one.
+          Check the condition that leads to break: at least 8 characters means len(password) >= 8.
+      - when: { outputContains: "Attempts: 0" }
+        message: attempts is never increased. Add 1 inside the loop, once per password read.
+    explanation: >-
+      while True repeats until a break. Each iteration reads and counts one password; a long enough one
+      triggers break, which jumps to the final print, and a short one falls through to "Too short" and
+      the next iteration. Only one input() call is needed, unlike the priming-read pattern.
+
+  - id: parsons-letters-before-dot
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program counts the letters in `sentence` **before the first full stop**,
+      ignoring spaces. For `"go to bed. now"` it prints `7`. Two lines are distractors.
+    solution: |
+      sentence = "go to bed. now"
+      letters = 0
+      for ch in sentence:
+          if ch == ".":
+              break
+          if ch == " ":
+              continue
+          letters += 1
+      print(letters)
+    distractors:
+      - "        letters += 1"
+      - "    print(letters)"
+    expectedOutput: |
+      7
+    explanation: >-
+      The full stop ends the loop with break, so "now" is never counted. Spaces hit continue, which skips
+      the counter for that character only. The counter update sits at body level so it runs for every
+      other character, and the print runs once, after the loop.
+
+  - id: code-is-prime
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Read a whole number `n` (2 or more) and print `<n> is prime` or `<n> is not prime`.
+
+      Use a for loop over the possible divisors 2 … n − 1 that **breaks** at the first divisor, and a
+      **loop else** for the prime case. For `91` the output ends with `91 is not prime`.
+    stdin: |
+      91
+    starterCode: |
+      n = int(input("n: "))
+      # Try each divisor d from 2 to n - 1.
+      # If d divides n exactly, print "<n> is not prime" and break.
+      # Put the "<n> is prime" print in the loop's else block.
+    solution: |
+      n = int(input("n: "))
+      for d in range(2, n):
+          if n % d == 0:
+              print(n, "is not prime")
+              break
+      else:
+          print(n, "is prime")
+    expectedOutput: |
+      n: 91 is not prime
+    tests:
+      - name: uses break and a loop else
+        code: |
+          import ast
+          loops_with_else = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.For) and node.orelse]
+          assert loops_with_else, "Give the for loop an else block (aligned with for) for the prime case."
+          assert uses("Break"), "Break out of the loop as soon as you find a divisor."
+      - name: 91 is not prime
+        code: |
+          assert output().strip().endswith("91 is not prime") and len(output_lines()) == 1, f"Expected a single line ending in '91 is not prime', got {output()!r}."
+      - name: works for other numbers
+        code: |
+          for typed, expected in [("2\n", "2 is prime"), ("97\n", "97 is prime"), ("9\n", "9 is not prime"), ("4\n", "4 is not prime"), ("13\n", "13 is prime")]:
+              out = run_program(typed).strip()
+              assert out.endswith(expected) and "\n" not in out, f"For n = {typed.strip()} expected one line ending in {expected!r}, but got {out!r}."
+    hints:
+      - "`n % d == 0` is True when d divides n exactly."
+      - "Shape: `for d in range(2, n):` → `if n % d == 0:` → print and break."
+      - The else lines up with the for keyword, not with the if. It runs only if the loop never breaks.
+    feedback:
+      - when: { outputContains: "91 is prime" }
+        message: >-
+          "is prime" is printed during the loop, which means the else is attached to the if. Align it with
+          for so it runs once, only when no divisor was found.
+    explanation: >-
+      The loop tries every candidate divisor. The first one that divides n proves it is not prime, so the
+      loop prints and breaks — skipping the else. If the loop runs out of candidates (including the empty
+      range for n = 2), no break happened and the else prints that n is prime.
+
+  - id: explain-loop-else
+    type: explain
+    skill: explanation
+    prompt: |
+      In your own words, explain when the `else` block of a `for` loop runs. Use a search (such as the
+      prime check) as your example, and say why "else runs if the loop did not run" is wrong.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - States that the else runs when the loop finishes normally (items exhausted / condition false).
+      - States that a break skips the else.
+      - Explains that a loop with zero iterations also runs its else, because no break happened.
+      - Connects it to searching — else is the "not found" branch, break is the "found" branch.
+    modelAnswer: |
+      A loop's else block runs when the loop ends without being stopped by break — the for loop has used
+      up all its items (or a while loop's condition became false). If break runs, the else is skipped.
+      In a prime check, the loop tries each divisor and breaks as soon as one divides n; reaching the
+      else therefore means "no divisor was found", so n is prime. "Else runs if the loop did not run" is
+      wrong: a loop that runs many times without breaking also runs its else, and a loop that runs zero
+      times runs it too, simply because no break happened. "No break" is the right reading.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-while-continue
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      n = 0
+      while n < 6:
+          n += 1
+          if n % 3 == 0:
+              continue
+          print(n, end=" ")
+      print()
+    answer: "1 2 4 5"
+    explanation: >-
+      The update comes first, so continue cannot skip it. n takes the values 1 to 6; multiples of 3 (3
+      and 6) hit continue and are not printed, leaving 1 2 4 5. After n becomes 6, the check 6 < 6 is
+      False and the loop ends.
+    wrongAnswers:
+      - answer: "1 2"
+        feedback: continue does not end the loop; after skipping 3 the loop carries on with 4, 5 and 6.
+      - answer: "1 2 4 5 6"
+        feedback: 6 is a multiple of 3 too, so it also hits continue and is not printed.
+      - answer: "0 1 2 4 5"
+        feedback: n += 1 runs before the print, so the first value printed is 1.
+
+  - id: m-mcq-else-meaning
+    type: mcq
+    skill: recognition
+    prompt: When does the `else` block attached to a `for` loop run?
+    explanation: >-
+      A loop's else runs after the loop completes without break — whether it ran many times or zero
+      times. A break skips it.
+    options:
+      - id: a
+        text: Only when the loop body never ran.
+        feedback: A loop that runs to completion without break also runs its else. Zero iterations is just one special case.
+      - id: b
+        text: When the loop finished without executing break — including when it ran zero times.
+        correct: true
+        feedback: Right. Read it as "no break".
+      - id: c
+        text: Right after a break statement runs.
+        feedback: It is the other way round. break skips the else.
+      - id: d
+        text: On each iteration where the if condition inside the loop is False.
+        feedback: That describes an else attached to an if inside the body, a common indentation mistake.
+
+  - id: m-tf-break-nested
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a `break` inside the inner loop of two nested loops also ends the outer loop."
+    answer: false
+    explanation: >-
+      break ends only the innermost loop that contains it. The outer loop continues with its next
+      iteration. To stop both, set a flag that the outer loop checks, or return from a function.
+
+  - id: m-code-first-repeat
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Read a word and print the **first character that appears for a second time** when reading from
+      left to right, as `First repeat: <ch>`. If no character repeats, print `No repeats`.
+
+      For `programming`: p, r, o, g, then r again — so the output ends with `First repeat: r`.
+
+      Use break to stop at the first repeat and a loop else for the "no repeats" case.
+    stdin: |
+      programming
+    starterCode: |
+      word = input("Word: ")
+      seen = ""      # characters met so far
+      # For each ch: if it is already in seen, report it and stop.
+      # Otherwise add it to seen. If the loop finishes without a repeat, print "No repeats".
+    solution: |
+      word = input("Word: ")
+      seen = ""      # characters met so far
+      for ch in word:
+          if ch in seen:
+              print("First repeat:", ch)
+              break
+          seen += ch
+      else:
+          print("No repeats")
+    expectedOutput: |
+      Word: First repeat: r
+    tests:
+      - name: uses break and a loop else
+        code: |
+          import ast
+          has_else = any(isinstance(node, (ast.For, ast.While)) and node.orelse for node in ast.walk(ast.parse(source)))
+          assert uses("Break") and has_else, "Stop with break at the first repeat, and use the loop's else for 'No repeats'."
+      - name: programming
+        code: |
+          assert output().strip().endswith("First repeat: r"), f"For programming the first repeat is r. Got {output()!r}."
+      - name: other words
+        code: |
+          for typed, expected in [("abcdef\n", "No repeats"), ("hello\n", "First repeat: l"), ("abca\n", "First repeat: a"), ("aa\n", "First repeat: a")]:
+              out = run_program(typed).strip()
+              assert out.endswith(expected) and out.count("\n") == 0, f"For {typed.strip()} expected one line ending in {expected!r}, got {out!r}."
+    hints:
+      - "`ch in seen` tells you whether ch has appeared before."
+      - Add each new character to seen with seen += ch — but only after checking it.
+      - The else lines up with for and holds print("No repeats").
+    feedback:
+      - when: { outputContains: "First repeat: g" }
+        message: >-
+          Your loop keeps going after the first repeat and reports later ones too. Add break right after
+          printing, so only the first repeat is reported.
+    explanation: >-
+      seen is an accumulator of the characters already read. The first character found in seen is the
+      first repeat, so the loop reports it and breaks. If the loop finishes without a break, every
+      character was new, and the else prints "No repeats".
+
+  - id: m-debug-flag-reset
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should say whether a word contains a digit. For `abc1def` it wrongly prints
+      `no digits`. Fix the bug.
+    stdin: |
+      abc1def
+    starterCode: |
+      word = input("Word: ")
+      has_digit = False
+      for ch in word:
+          if ch.isdigit():
+              has_digit = True
+          else:
+              has_digit = False
+      if has_digit:
+          print("contains a digit")
+      else:
+          print("no digits")
+    solution: |
+      word = input("Word: ")
+      has_digit = False
+      for ch in word:
+          if ch.isdigit():
+              has_digit = True
+              break
+      if has_digit:
+          print("contains a digit")
+      else:
+          print("no digits")
+    expectedOutput: |
+      Word: contains a digit
+    tests:
+      - name: abc1def contains a digit
+        code: |
+          assert output().strip().endswith("contains a digit"), f"abc1def contains the digit 1. Your program printed {output()!r}."
+      - name: works for other words
+        code: |
+          for typed, expected in [("abc\n", "no digits"), ("9\n", "contains a digit"), ("12ab\n", "contains a digit"), ("x7y\n", "contains a digit")]:
+              out = run_program(typed).strip()
+              assert out.endswith(expected), f"For {typed.strip()} expected {expected!r}, got {out!r}."
+    hints:
+      - Trace abc1def. What is has_digit after the 1? And after the f that follows?
+      - Once a digit has been seen, nothing later should change the answer back to False.
+      - Remove the else branch inside the loop, and break once a digit is found.
+    feedback:
+      - when: { outputContains: "no digits" }
+        message: >-
+          The flag is still being reset by later characters. Inside the loop, only ever set has_digit to
+          True — and you can break as soon as that happens.
+    explanation: >-
+      The inner else reset the flag for every non-digit, so the answer depended only on the last
+      character. A flag in a search loop should only move from False to True. Breaking once the digit is
+      found makes that explicit and stops the wasted work.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-while-continue, m-mcq-else-meaning, m-tf-break-nested, m-code-first-repeat, m-debug-flag-reset]
+
+cheatsheet: |
+  ```python
+  for ch in text:
+      if ch == " ":
+          continue          # skip the rest of THIS iteration
+      if ch == ".":
+          break             # leave the (innermost) loop now
+      ...
+  else:
+      ...                   # runs only if no break happened (also for 0 iterations)
+
+  while True:               # loop-and-a-half: exit from the middle
+      answer = input("> ")
+      if answer == "quit":
+          break
+  ```
+  - Search: break on first match; "not found" → flag checked after the loop, or loop else
+  - Need every item (count / list all / last match)? → no break
+  - Nested loops: break exits only the inner loop → flag (or a function with return)
+  - while + continue: update BEFORE continue, or the loop never ends
+  - `else` aligned with `for`/`while`, not with the `if`

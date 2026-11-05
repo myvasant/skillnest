@@ -1,0 +1,310 @@
+id: python.configuration
+concept: python.configuration
+title: Configuration and Secrets in Python
+subtitle: Keep environment-specific settings outside your source code
+estimatedMinutes: 40
+reviewedOn: 2026-11-04
+summary: >-
+  Learn to separate application configuration from code, read environment variables safely, parse strings into
+  validated types, define precedence, fail clearly when required settings are missing and keep credentials out
+  of version control and logs.
+objectives:
+  - Explain why development, testing and production need different configuration values.
+  - Read environment variables with `os.environ` and `os.getenv`.
+  - Convert and validate string settings such as integers, timeouts and booleans.
+  - Define a predictable configuration precedence and fail fast for missing required values.
+  - Distinguish ordinary configuration from secrets and protect both in source control and logs.
+  - Explain why a `.env` file is not automatically loaded by Python.
+sources:
+  - title: The Twelve-Factor App — Config
+    url: https://12factor.net/config
+    publisher: Adam Wiggins
+  - title: os — Miscellaneous operating system interfaces
+    url: https://docs.python.org/3/library/os.html#os.environ
+    publisher: Python Software Foundation
+  - title: OWASP Secrets Management Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    publisher: OWASP Foundation
+sections:
+  - id: why-configuration
+    title: Why configuration must live outside code
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          **Configuration** is information that changes how an application runs without changing the program's
+          logic: a database address, log level, feature flag, API endpoint or request timeout. The same code
+          should be usable on a developer's laptop, in automated tests and in production with different values.
+
+          If you hard-code `https://test-api.example` into a function, changing environments requires editing
+          source code. That risks committing a production URL or deploying the wrong setting. Instead, keep
+          configuration outside the code and read it when the application starts.
+      - type: callout
+        variant: analogy
+        title: A program is a recipe; configuration is the chosen ingredients
+        body: |
+          The recipe describes the steps. Configuration supplies environment-specific choices, such as which
+          database to use. You should not rewrite the recipe every time you cook in a different kitchen.
+      - type: callout
+        variant: misconception
+        title: A `.env` file is not magic
+        body: |
+          Python does not automatically read a `.env` file. A library such as `python-dotenv` can load one, or
+          your shell, IDE or deployment platform can provide environment variables. Do not assume a variable
+          exists just because a file named `.env` is present.
+
+  - id: environment-variables
+    title: Read environment variables
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An environment variable is a named string supplied to a process by its operating environment. Use
+          `os.getenv(name)` when a value may be absent, or `os.environ[name]` when absence should raise
+          `KeyError`. You can provide a default with `os.getenv(name, default)`.
+
+          Environment variables are strings. Convert them before using them as numbers or booleans. Never use
+          `bool(os.getenv("DEBUG"))` to parse a boolean: the non-empty string `"false"` is still truthy.
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          os.environ["APP_RETRIES"] = "3"
+          retries = int(os.getenv("APP_RETRIES", "2"))
+          print(retries, type(retries).__name__)
+          del os.environ["APP_RETRIES"]
+        expectedOutput: |
+          3 int
+        annotations:
+          - line: 3
+            text: Environment values are text, so the example stores the number as the string "3".
+          - line: 4
+            text: Convert the value to int before using it as a number.
+      - type: item
+        ref: config-env-predict
+
+  - id: parse-and-validate
+    title: Parse values and reject invalid configuration
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A setting is not valid merely because it exists. A timeout such as `"fast"` cannot be converted to a
+          number, and an unknown boolean spelling should not silently become False. Validate configuration at
+          startup so the application fails with a clear message rather than failing much later during a request.
+
+          For booleans, accept an explicit set of true and false spellings. For numeric settings, convert and
+          check sensible ranges. For required settings, reject missing or blank values. Keep the parser small
+          and test its edge cases.
+      - type: code
+        runnable: true
+        code: |
+          def parse_bool(value, default=False):
+              if value is None:
+                  return default
+              normalized = value.strip().lower()
+              if normalized in {"1", "true", "yes", "on"}:
+                  return True
+              if normalized in {"0", "false", "no", "off"}:
+                  return False
+              raise ValueError(f"invalid boolean setting: {value!r}")
+
+          print(parse_bool("false", default=True))
+          print(parse_bool(None, default=True))
+        expectedOutput: |
+          False
+          True
+        annotations:
+          - line: 2
+            text: Missing values use the documented default rather than being guessed from truthiness.
+          - line: 5
+            text: Explicit accepted spellings make the configuration contract predictable.
+      - type: callout
+        variant: warning
+        title: Fail fast, but fail safely
+        body: |
+          A missing required database URL should stop startup with a clear error. Do not include the secret value
+          in the exception message. A useful error says which setting is missing, not what credential was
+          supplied.
+      - type: item
+        ref: config-boolean-code
+
+  - id: precedence-and-secrets
+    title: Precedence, secrets and safe defaults
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          A project should document one configuration precedence. A common arrangement is:
+
+          1. Safe defaults for local development.
+          2. A non-secret configuration file for shared defaults, if the project needs one.
+          3. Environment variables supplied by the current deployment, which override the defaults.
+          4. A dedicated secret store or platform-managed secret injection for credentials.
+
+          The exact order is a project decision; consistency and documentation matter more than copying this exact
+          list. Secrets include database passwords, API keys, signing keys and access tokens. Do not commit them,
+          paste them into issue trackers, print them in logs or put them in a frontend bundle. A browser-delivered
+          application cannot keep a secret from its users.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          # Example only: set a value for the process started from this shell.
+          export APP_LOG_LEVEL=INFO
+          export SERVICE_API_KEY='provided-by-a-secret-manager'
+          python app.py
+        caption: |
+          Illustrative POSIX shell commands. PowerShell uses `$env:APP_LOG_LEVEL = "INFO"`; Windows Command
+          Prompt uses `set APP_LOG_LEVEL=INFO`. The example credential is a placeholder, not a real key.
+      - type: code
+        language: powershell
+        status: illustrative
+        code: |
+          # Example only: set values in this PowerShell session.
+          $env:APP_LOG_LEVEL = "INFO"
+          $env:SERVICE_API_KEY = "provided-by-a-secret-manager"
+          python app.py
+        caption: Illustrative PowerShell equivalent. These values are inherited by child processes started from this session.
+      - type: callout
+        variant: tip
+        title: Commit an example, not a secret
+        body: |
+          Commit `.env.example` with variable names and safe placeholder values. Add the real `.env` file to
+          `.gitignore`. Remember that `.gitignore` does not remove a secret that was already committed; rotate
+          exposed credentials and clean repository history using the team's approved process.
+
+  - id: startup-configuration
+    title: Build a small validated settings loader
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Read settings once near application startup, validate them and pass the resulting values to the parts
+          of the program that need them. This makes configuration dependencies visible and easier to test.
+          Avoid reading global environment variables from dozens of unrelated functions.
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          def load_settings():
+              raw_timeout = os.getenv("APP_TIMEOUT", "5")
+              try:
+                  timeout = float(raw_timeout)
+              except ValueError as error:
+                  raise ValueError("APP_TIMEOUT must be a number") from error
+              if not 0 < timeout <= 120:
+                  raise ValueError("APP_TIMEOUT must be greater than 0 and at most 120")
+              return {"timeout": timeout}
+
+          os.environ["APP_TIMEOUT"] = "8.5"
+          print(load_settings())
+          del os.environ["APP_TIMEOUT"]
+        expectedOutput: |
+          {'timeout': 8.5}
+        annotations:
+          - line: 5
+            text: Catch only the conversion error you expect; do not hide unrelated programming errors.
+          - line: 8
+            text: Range validation catches values that are numeric but operationally unsafe.
+      - type: item
+        ref: config-transfer
+
+  - id: summary
+    title: Summary and checklist
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Keep environment-specific settings outside source code.
+          - Environment variables are strings; parse and validate them.
+          - Define and document configuration precedence.
+          - Fail fast when required settings are missing or invalid.
+          - Keep credentials in a secret manager or deployment-provided secret store.
+          - Commit `.env.example`, ignore real `.env` files and rotate exposed credentials.
+          - Load settings at startup and pass them explicitly where possible.
+      - type: item
+        ref: config-transfer
+items:
+  - id: config-env-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this program print?
+    code: |
+      import os
+      os.environ["APP_PORT"] = "8080"
+      port = int(os.getenv("APP_PORT", "5000"))
+      print(port + 1)
+      del os.environ["APP_PORT"]
+    answer: |
+      8081
+    wrongAnswers:
+      - answer: |
+          80801
+        feedback: The environment value is converted to an integer before addition.
+      - answer: |
+          5001
+        feedback: The variable exists, so the default value is not used.
+    explanation: "`os.getenv` returns the supplied string 8080; `int` converts it to 8080, then one is added."
+  - id: config-boolean-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `parse_bool(value, default=False)`. Accept `true`, `1`, `yes`, `on` and their false equivalents case-insensitively. Return `default` for None. Raise ValueError for any other string.
+    explanation: Explicit accepted values prevent a non-empty string such as false from being misread as True.
+    starterCode: |
+      def parse_bool(value, default=False):
+          # Parse only documented values.
+          pass
+    solution: |
+      def parse_bool(value, default=False):
+          if value is None:
+              return default
+          normalized = value.strip().lower()
+          if normalized in {"1", "true", "yes", "on"}:
+              return True
+          if normalized in {"0", "false", "no", "off"}:
+              return False
+          raise ValueError(f"invalid boolean setting: {value!r}")
+    tests:
+      - name: parses true values
+        code: assert parse_bool(" YES ") is True and parse_bool("1") is True
+      - name: parses false values
+        code: assert parse_bool("False") is False and parse_bool("off") is False
+      - name: uses the default for missing values
+        code: assert parse_bool(None, default=True) is True
+      - name: rejects unknown values
+        code: |
+          try:
+              parse_bool("sometimes")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("unknown values must be rejected")
+    hints:
+      - Handle None before calling string methods.
+      - Normalize with strip() and lower().
+      - Use explicit sets for true and false values; reject everything else.
+  - id: config-transfer
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A developer commits a `.env` file containing an API key, then adds `.env` to `.gitignore`. Is the key now safe? Explain what should happen next.
+    rubric:
+      - Explains that ignore rules do not remove a file already tracked or erase previous commits.
+      - Recommends revoking or rotating the exposed key and removing it from repository history using an approved process.
+    modelAnswer: No. `.gitignore` prevents matching untracked files from being added in the future; it does not untrack an already committed file or erase the key from old commits. Revoke or rotate the key immediately, remove the secret from the current repository state and clean history with the team's approved procedure. Review logs and access for possible use of the exposed credential.
+    explanation: Treat a committed credential as compromised. Hiding the file in a later commit does not invalidate the credential or erase previous copies.
+masteryCheck:
+  passThreshold: 0.75
+  items: [config-env-predict, config-boolean-code, config-transfer]
+cheatsheet: |
+  - `os.getenv("NAME", "default")` reads a string setting.
+  - Parse booleans explicitly; `bool("false")` is True.
+  - Validate ranges and required settings at startup.
+  - Document configuration precedence.
+  - Never commit, log or bundle secrets in client-side code.
+  - `.gitignore` does not erase already committed credentials; rotate exposed keys.

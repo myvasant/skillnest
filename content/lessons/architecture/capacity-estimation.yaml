@@ -1,0 +1,204 @@
+id: architecture.capacity-estimation
+concept: architecture.capacity-estimation
+title: Back-of-the-envelope estimation
+subtitle: Estimate requests per second, storage, bandwidth and latency budgets from a few known numbers to choose
+  a sensible design
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Estimate requests per second, storage, bandwidth and latency budgets from a few known numbers to choose
+  a sensible design.
+objectives:
+- Explain the core engineering decisions behind back-of-the-envelope estimation.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: Latency Numbers Every Programmer Should Know
+  url: https://gist.github.com/jboner/2841832
+  publisher: Jonas Bonér (after Jeff Dean and Peter Norvig)
+- title: 'The Site Reliability Workbook: Non-Abstract Large System Design'
+  url: https://sre.google/workbook/non-abstract-design/
+  publisher: Google
+- title: The System Design Primer (appendix - powers of two and latency numbers)
+  url: https://github.com/donnemartin/system-design-primer
+  publisher: Donne Martin (GitHub)
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Estimate requests per second, storage, bandwidth and latency budgets from a few known numbers to choose
+      a sensible design. A few rough numbers reveal early whether a design needs one server or a thousand, and stop
+      you over- or under-engineering it.
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths);
+      multiply by a peak factor, often 2-10x, for peak load.
+
+      - Storage = new items per day x size per item x retention days x replication factor; bandwidth = requests
+      per second x payload size.
+
+      - Know rough latencies - main memory reference about 100 ns, SSD random read tens to hundreds of microseconds,
+      round trip inside a data centre about 0.5 ms, California to Europe and back about 150 ms.
+
+      - Powers of two - 2^10 is about a thousand (KB), 2^20 about a million (MB), 2^30 about a billion (GB), 2^40
+      about a trillion (TB).
+
+      - State assumptions and round aggressively; the goal is the right order of magnitude, not precision.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- You do not design for average load; size for peak plus headroom.
+
+      - Precision is not the point; spending ten minutes on exact arithmetic misses what the estimate is for.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def required_capacity(requests_per_second, average_seconds, utilisation=0.7):\n    if average_seconds<0\
+      \ or not 0<utilisation<=1: raise ValueError(\"invalid assumptions\")\n    return requests_per_second*average_seconds/utilisation\n\
+      \nprint(required_capacity(100,0.2,0.7))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: capacity-estimation-code
+  - type: item
+    ref: capacity-estimation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths); multiply
+      by a peak factor, often 2-10x, for peak load.
+
+      - Storage = new items per day x size per item x retention days x replication factor; bandwidth = requests
+      per second x payload size.
+
+      - Know rough latencies - main memory reference about 100 ns, SSD random read tens to hundreds of microseconds,
+      round trip inside a data centre about 0.5 ms, California to Europe and back about 150 ms.
+
+      - Powers of two - 2^10 is about a thousand (KB), 2^20 about a million (MB), 2^30 about a billion (GB), 2^40
+      about a trillion (TB).
+
+      - State assumptions and round aggressively; the goal is the right order of magnitude, not precision.
+
+
+      **Watch for**
+
+      - You do not design for average load; size for peak plus headroom.
+
+      - Precision is not the point; spending ten minutes on exact arithmetic misses what the estimate is for.'
+  - type: item
+    ref: capacity-estimation-mcq
+  - type: item
+    ref: capacity-estimation-tf
+  - type: item
+    ref: capacity-estimation-code
+items:
+- id: capacity-estimation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of back-of-the-envelope estimation?
+  explanation: Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths);
+    multiply by a peak factor, often 2-10x, for peak load.
+  options:
+  - id: a
+    text: Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths); multiply
+      by a peak factor, often 2-10x, for peak load.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: You do not design for average load; size for peak plus headroom.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: capacity-estimation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: You do not design for average load; size for peak plus headroom.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: capacity-estimation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply back-of-the-envelope estimation to a realistic engineering scenario. State your assumptions, explain
+    your decision, compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: capacity-estimation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for back-of-the-envelope estimation. The assertions cover the expected path and an
+    important boundary case.
+  starterCode: "def required_capacity(requests_per_second, average_seconds, utilisation=0.7):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def required_capacity(requests_per_second, average_seconds, utilisation=0.7):\n    if average_seconds<0\
+    \ or not 0<utilisation<=1: raise ValueError(\"invalid assumptions\")\n    return requests_per_second*average_seconds/utilisation"
+  tests:
+  - name: Core behaviour
+    code: assert abs(required_capacity(100,0.2,0.7)-28.5714285714)<1e-8
+  - name: Boundary behaviour
+    code: assert required_capacity(0,0.2,0.7) == 0
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - capacity-estimation-mcq
+  - capacity-estimation-tf
+  - capacity-estimation-code
+cheatsheet: '**Key principles**
+
+  - Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths); multiply
+  by a peak factor, often 2-10x, for peak load.
+
+  - Storage = new items per day x size per item x retention days x replication factor; bandwidth = requests per
+  second x payload size.
+
+  - Know rough latencies - main memory reference about 100 ns, SSD random read tens to hundreds of microseconds,
+  round trip inside a data centre about 0.5 ms, California to Europe and back about 150 ms.
+
+  - Powers of two - 2^10 is about a thousand (KB), 2^20 about a million (MB), 2^30 about a billion (GB), 2^40 about
+  a trillion (TB).
+
+  - State assumptions and round aggressively; the goal is the right order of magnitude, not precision.
+
+
+  **Trade-offs**
+
+  - You do not design for average load; size for peak plus headroom.
+
+  - Precision is not the point; spending ten minutes on exact arithmetic misses what the estimate is for.'

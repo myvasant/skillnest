@@ -1,0 +1,290 @@
+id: cs.dynamic-arrays
+concept: cs.dynamic-arrays
+title: Arrays and Dynamic Arrays
+subtitle: Why Python list operations have different costs
+estimatedMinutes: 50
+reviewedOn: 2026-11-04
+summary: >-
+  Understand contiguous arrays, direct indexing, spare capacity and resizing. Connect the dynamic-array
+  model to Python list operations, explain amortised append cost, and choose a deque or another structure
+  when repeated front insertion or removal would be expensive.
+objectives:
+  - Explain why an array can access an element by index in constant time.
+  - Describe how a dynamic array grows when its capacity is exhausted.
+  - Explain why append is amortised O(1) while inserting or removing at the front is O(n).
+  - Distinguish a Python list's array of object references from the objects it references.
+  - Choose between list, deque and numeric arrays based on the operation and data shape.
+sources:
+  - title: Python FAQ — How are lists implemented in CPython?
+    url: https://docs.python.org/3/faq/design.html#how-are-lists-implemented-in-cpython
+    publisher: Python Software Foundation
+  - title: Python Wiki — Time Complexity
+    url: https://wiki.python.org/moin/TimeComplexity
+    publisher: Python Wiki
+  - title: collections.deque
+    url: https://docs.python.org/3/library/collections.html#collections.deque
+    publisher: Python Software Foundation
+  - title: array — Efficient arrays of numeric values
+    url: https://docs.python.org/3/library/array.html
+    publisher: Python Software Foundation
+sections:
+  - id: array-mental-model
+    title: An array stores values in indexed positions
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          An **array** is a sequence whose elements occupy a contiguous block of memory. Each position has
+          an index: position 0, position 1, position 2, and so on. Because each element slot has a known
+          size, the computer can calculate the address of position `i` directly from the starting address
+          and the index. That is why indexed access is **O(1)**: its work does not grow with the number of
+          elements.
+
+          Python's built-in `list` behaves like a dynamic array. You can grow and shrink it, and it can hold
+          references to objects of different types. The list stores those references in a contiguous array;
+          the objects themselves may live elsewhere in memory.
+      - type: callout
+        variant: analogy
+        title: Numbered seats in a row
+        body: |
+          If every seat is numbered and arranged in a row, going directly to seat 400 does not require
+          checking seats 1 through 399. You calculate where seat 400 is. A linked list is different: each
+          node points to the next node, so reaching a later position requires following links.
+      - type: code
+        runnable: true
+        code: |
+          values = [12, 25, 38, 51, 64]
+          print(values[0])
+          print(values[3])
+          print(len(values))
+        expectedOutput: |
+          12
+          51
+          5
+        caption: Indexing reads a position directly. The list length does not change the number of indexing operations.
+  - id: capacity-and-resizing
+    title: Capacity and resizing
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A fixed-size array has a fixed number of slots. A **dynamic array** keeps extra capacity so it can
+          accept more elements without moving memory every time you append.
+
+          Imagine a list with length 3 and capacity 4. One slot is free. Appending a fourth item fills the
+          current allocation. When another item is appended, the implementation allocates a larger block,
+          copies the existing references and adds the new one. The old block can then be released.
+
+          CPython's exact growth formula is an implementation detail and can change between versions. The
+          important idea is that it grows geometrically enough to make repeated appends efficient overall.
+      - type: code
+        runnable: true
+        code: |
+          values = []
+          for number in range(5):
+              values.append(number)
+              print(len(values), values)
+        expectedOutput: |
+          1 [0]
+          2 [0, 1]
+          3 [0, 1, 2]
+          4 [0, 1, 2, 3]
+          5 [0, 1, 2, 3, 4]
+        caption: The visible list length grows one item at a time. Python manages spare capacity internally; normal code should not depend on its exact allocation size.
+  - id: operation-costs
+    title: Understand the cost of common operations
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The operation matters more than the fact that both values are lists:
+
+          | Operation | Typical time | Why |
+          |---|---:|---|
+          | `items[i]` | O(1) | Calculate the indexed slot directly |
+          | `len(items)` | O(1) | Length is maintained by the list |
+          | `items.append(x)` | Amortised O(1) | Usually use a spare slot; occasionally resize and copy |
+          | `items.pop()` | O(1) | Remove the last reference |
+          | `items.insert(0, x)` | O(n) | Shift existing references one position right |
+          | `items.pop(0)` | O(n) | Shift remaining references left |
+          | `x in items` | O(n) | Compare items until a match is found or the list ends |
+
+          **Amortised O(1)** means a single append can occasionally be expensive, but averaged over a long
+          sequence of appends, each append has constant amortised cost. It does not mean every append takes
+          exactly the same time.
+      - type: code
+        runnable: true
+        code: |
+          items = ["b", "c", "d"]
+          items.insert(0, "a")
+          print(items)
+          removed = items.pop(0)
+          print(removed, items)
+        expectedOutput: |
+          ['a', 'b', 'c', 'd']
+          a ['b', 'c', 'd']
+        caption: The result is simple, but inserting or removing at the front shifts the other references.
+      - type: callout
+        variant: warning
+        title: A loop can turn a slow operation into a quadratic algorithm
+        body: |
+          Repeating `pop(0)` once for every item shifts roughly n + (n-1) + ... + 1 references. That total
+          grows as O(n²). For a first-in, first-out queue, use `collections.deque` and `popleft()` instead.
+  - id: python-list-implementation
+    title: What a Python list actually stores
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          A Python list stores **references** to Python objects, not the raw bytes of each object's value.
+          This explains why one list can contain an integer, a string and another list. Each slot points to
+          an object that has its own type and representation.
+
+          It also explains a common aliasing surprise: assigning `other = values` does not copy the list.
+          Both names refer to the same list object. To make a shallow copy, use `values.copy()` or `values[:]`.
+      - type: code
+        runnable: true
+        code: |
+          first = [10, "hello", [1, 2]]
+          second = first
+          second[0] = 99
+          print(first)
+          print(first is second)
+        expectedOutput: |
+          [99, 'hello', [1, 2]]
+          True
+        caption: Both names refer to one list. Rebinding a new variable and copying a container are different operations.
+      - type: callout
+        variant: note
+        title: Lists are general-purpose, not packed numeric arrays
+        body: |
+          If you need large, homogeneous numeric data, a Python list has per-object and per-reference
+          overhead. The standard-library `array` module stores compact numeric values of one type, and NumPy
+          arrays are designed for efficient numerical operations when NumPy is installed. The best choice
+          depends on the workload; a list remains the right default for many application tasks.
+  - id: choose-structure
+    title: Choose a structure for the operation you need
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          - Use a **list** for indexed access, iteration, appending at the end and general-purpose sequences.
+          - Use **`collections.deque`** when you repeatedly add or remove at both ends, such as a queue or a
+            breadth-first search frontier.
+          - Use **`array.array`** for compact, homogeneous numeric values when its supported type codes fit.
+          - Use **NumPy arrays** for vectorised numerical computing, broadcasting and scientific workloads.
+
+          Do not replace a list simply because another structure sounds more advanced. Measure the actual
+          workload and choose based on the operations that dominate it.
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          queue = deque(["first", "second", "third"])
+          print(queue.popleft())
+          queue.append("fourth")
+          print(list(queue))
+        expectedOutput: |
+          first
+          ['second', 'third', 'fourth']
+        caption: deque provides efficient operations at both ends and is a natural queue for breadth-first search.
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A dynamic array stores elements in indexed slots and can grow when its capacity is exhausted.
+          - Indexing is O(1); append is amortised O(1); insertion or removal at the front is O(n).
+          - A Python list stores references to objects, so aliases refer to the same underlying list.
+          - `deque` is usually the better choice for frequent operations at both ends.
+          - Choose a structure based on the operations and measure real performance when it matters.
+      - type: item
+        ref: array-predict
+      - type: item
+        ref: array-choose-structure
+      - type: item
+        ref: array-code
+items:
+  - id: array-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this code print?
+    code: |
+      values = [1, 2, 3]
+      alias = values
+      alias.append(4)
+      print(values)
+    answer: |
+      [1, 2, 3, 4]
+    explanation: "`alias` and `values` refer to the same list object. Appending through either name changes that one list."
+  - id: array-choose-structure
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: A program must repeatedly remove the oldest item from a queue containing thousands of values. Which structure is the best standard-library fit?
+    options:
+      - id: a
+        text: A list with pop(0)
+        correct: false
+        feedback: pop(0) shifts the remaining elements and costs O(n) per removal.
+      - id: b
+        text: collections.deque with popleft()
+        correct: true
+        feedback: deque is designed for efficient operations at both ends, including FIFO queue removal.
+      - id: c
+        text: A tuple
+        correct: false
+        feedback: Tuples are immutable and do not provide efficient repeated queue removal.
+    explanation: Choose the data structure based on the operations that need to be efficient. deque provides approximately O(1) append and popleft operations.
+  - id: array-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Complete `remove_front(items)` so it removes and returns the first value. Use a deque so the front removal is efficient. Return None when the deque is empty.
+    explanation: Check for an empty deque before calling popleft. The deque operation removes the leftmost value efficiently and avoids shifting every remaining list element.
+    starterCode: |
+      from collections import deque
+
+      def remove_front(items):
+          # Remove and return the first value, or None if empty.
+          pass
+
+      print(remove_front(deque(["a", "b"])))
+      print(remove_front(deque()))
+    solution: |
+      from collections import deque
+
+      def remove_front(items):
+          if not items:
+              return None
+          return items.popleft()
+
+      print(remove_front(deque(["a", "b"])))
+      print(remove_front(deque()))
+    tests:
+      - name: removes first item
+        code: assert remove_front(deque(["a", "b"])) == "a"
+      - name: empty queue returns none
+        code: assert remove_front(deque()) is None
+    hints:
+      - Check whether the deque is empty before removing an item.
+      - popleft() removes the item from the left side.
+      - Do not use pop(0) on a list for a queue that grows large.
+    expectedOutput: |
+      a
+      None
+masteryCheck:
+  passThreshold: 0.8
+  items:
+    - array-predict
+    - array-choose-structure
+    - array-code
+cheatsheet: |
+  `items[index]` — direct indexed access, O(1).
+  `items.append(value)` — amortised O(1).
+  `items.insert(0, value)` / `items.pop(0)` — O(n) due to shifting.
+  `collections.deque` with `append()` / `popleft()` — efficient FIFO queue operations.
+  `other = items` aliases the same list; `items.copy()` makes a shallow copy.

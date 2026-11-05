@@ -1,0 +1,207 @@
+id: databases.schema-design
+concept: databases.schema-design
+title: Schema design and normalisation
+subtitle: Normalise to avoid duplicated facts, enforce rules with constraints (NOT NULL, UNIQUE, CHECK, foreign
+  keys) and choose precise data types
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Normalise to avoid duplicated facts, enforce rules with constraints (NOT NULL, UNIQUE, CHECK, foreign keys)
+  and choose precise data types.
+objectives:
+- Explain the core model behind schema design and normalisation.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL: Constraints'
+  url: https://www.postgresql.org/docs/current/ddl-constraints.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: Data Types'
+  url: https://www.postgresql.org/docs/current/datatype.html
+  publisher: PostgreSQL Global Development Group
+- title: Don't Do This (PostgreSQL wiki)
+  url: https://wiki.postgresql.org/wiki/Don%27t_Do_This
+  publisher: PostgreSQL wiki
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Normalise to avoid duplicated facts, enforce rules with constraints (NOT NULL, UNIQUE, CHECK, foreign
+      keys) and choose precise data types. A schema that stores the same fact in two places will eventually disagree
+      with itself, and constraints catch bad data at write time instead of in a report months later.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Normalise to third normal form by default - store each fact once, and make every non-key column depend
+      on the key, the whole key and nothing but the key.
+
+      - Constraints are guarantees the database enforces: `NOT NULL`, `UNIQUE`, `CHECK (price >= 0)`, `PRIMARY KEY`
+      and `FOREIGN KEY ... ON DELETE ...`.
+
+      - Choose precise types: `numeric` for money (never floating point), `timestamptz` for moments in time, `boolean`,
+      `uuid`, and `text` with CHECK constraints rather than arbitrary `varchar(n)` limits.
+
+      - Denormalise deliberately (read models, caches, analytics tables) when measurements show joins are the bottleneck,
+      and document how the copies are kept in sync.
+
+      - Name things consistently, for example `snake_case` columns and `<table>_id` foreign keys.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Validation in application code alone is not enough; scripts, other services and bugs bypass it, but
+      database constraints cannot be bypassed.
+
+      - A comma-separated list in one column is not a substitute for a related table.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def order_total(lines):\n    return sum(line[\"quantity\"] * line[\"unit_price\"] for line in lines)\n\
+      \nprint(order_total([{\"quantity\":2,\"unit_price\":5},{\"quantity\":1,\"unit_price\":7}]))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: schema-design-code
+  - type: item
+    ref: schema-design-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Normalise to third normal form by default - store each fact once, and make every non-key column depend on
+      the key, the whole key and nothing but the key.
+
+      - Constraints are guarantees the database enforces: `NOT NULL`, `UNIQUE`, `CHECK (price >= 0)`, `PRIMARY KEY`
+      and `FOREIGN KEY ... ON DELETE ...`.
+
+      - Choose precise types: `numeric` for money (never floating point), `timestamptz` for moments in time, `boolean`,
+      `uuid`, and `text` with CHECK constraints rather than arbitrary `varchar(n)` limits.
+
+      - Denormalise deliberately (read models, caches, analytics tables) when measurements show joins are the bottleneck,
+      and document how the copies are kept in sync.
+
+      - Name things consistently, for example `snake_case` columns and `<table>_id` foreign keys.
+
+
+      **Avoid**
+
+      - Validation in application code alone is not enough; scripts, other services and bugs bypass it, but database
+      constraints cannot be bypassed.
+
+      - A comma-separated list in one column is not a substitute for a related table.'
+  - type: item
+    ref: schema-design-mcq
+  - type: item
+    ref: schema-design-tf
+  - type: item
+    ref: schema-design-code
+items:
+- id: schema-design-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of schema design and normalisation?
+  explanation: Normalise to third normal form by default - store each fact once, and make every non-key column depend
+    on the key, the whole key and nothing but the key.
+  options:
+  - id: a
+    text: Normalise to third normal form by default - store each fact once, and make every non-key column depend
+      on the key, the whole key and nothing but the key.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Validation in application code alone is not enough; scripts, other services and bugs bypass it, but database
+      constraints cannot be bypassed.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: schema-design-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Validation in application code alone is not enough; scripts, other services and bugs bypass it, but database
+    constraints cannot be bypassed.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: schema-design-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing schema design and normalisation in a real application. What design decisions would
+    you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: schema-design-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for schema design and normalisation. Implement the stated rule and make sure both
+    ordinary and edge-case tests pass.
+  starterCode: "def order_total(lines):\n    raise NotImplementedError('Complete this function')"
+  solution: "def order_total(lines):\n    return sum(line[\"quantity\"] * line[\"unit_price\"] for line in lines)"
+  tests:
+  - name: Core behaviour
+    code: assert order_total([{"quantity":2,"unit_price":5},{"quantity":1,"unit_price":7}]) == 17
+  - name: Edge cases
+    code: assert order_total([]) == 0
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - schema-design-mcq
+  - schema-design-tf
+  - schema-design-code
+cheatsheet: '**Core model**
+
+  - Normalise to third normal form by default - store each fact once, and make every non-key column depend on the
+  key, the whole key and nothing but the key.
+
+  - Constraints are guarantees the database enforces: `NOT NULL`, `UNIQUE`, `CHECK (price >= 0)`, `PRIMARY KEY`
+  and `FOREIGN KEY ... ON DELETE ...`.
+
+  - Choose precise types: `numeric` for money (never floating point), `timestamptz` for moments in time, `boolean`,
+  `uuid`, and `text` with CHECK constraints rather than arbitrary `varchar(n)` limits.
+
+  - Denormalise deliberately (read models, caches, analytics tables) when measurements show joins are the bottleneck,
+  and document how the copies are kept in sync.
+
+  - Name things consistently, for example `snake_case` columns and `<table>_id` foreign keys.
+
+
+  **Common mistakes**
+
+  - Validation in application code alone is not enough; scripts, other services and bugs bypass it, but database
+  constraints cannot be bypassed.
+
+  - A comma-separated list in one column is not a substitute for a related table.'

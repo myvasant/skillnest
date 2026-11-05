@@ -1,0 +1,286 @@
+id: cs.refactoring
+concept: cs.refactoring
+title: Refactoring
+subtitle: Improve structure while preserving behaviour
+estimatedMinutes: 50
+summary: Learn the behaviour-preservation rule, characterisation tests, small refactoring steps, common
+  refactoring patterns and how to separate structural cleanup from feature work.
+objectives:
+- Define refactoring and distinguish it from rewriting or feature development.
+- Identify observable behaviour that must remain stable.
+- Use characterisation tests to create a safety net for legacy code.
+- Apply small refactorings such as rename and extract function.
+- Recognise code smells without treating them as automatic redesign instructions.
+- Use tests and small commits to reduce refactoring risk.
+sources:
+- title: Refactoring — Catalog of Refactorings
+  url: https://refactoring.com/catalog/
+  publisher: Martin Fowler
+- title: Refactoring — First and Second Editions
+  url: https://martinfowler.com/books/refactoring.html
+  publisher: Martin Fowler
+- title: pytest documentation — Getting started
+  url: https://docs.pytest.org/en/stable/getting-started.html
+  publisher: pytest contributors
+- title: Software Engineering at Google — Testing Overview
+  url: https://abseil.io/resources/swe-book/html/ch11.html
+  publisher: Google
+reviewedOn: '2026-11-04'
+sections:
+- id: why-refactor
+  title: Why code needs refactoring
+  kind: why
+  blocks:
+  - type: markdown
+    body: '**Refactoring** is improving the internal structure of code without changing its externally
+      observable behaviour. As features are added, names become misleading, functions grow, logic gets
+      duplicated and dependencies become tangled. Small refactorings keep the code understandable before
+      change becomes expensive.
+
+
+      A rewrite replaces a large amount at once. Refactoring changes one small piece at a time while keeping
+      the program working.'
+- id: safety-contract
+  title: The behaviour-preservation rule
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Before changing structure, identify what callers and users can observe: returned values, output,
+      stored data, exceptions, network calls and ordering guarantees. A refactor must preserve the behaviour
+      that forms the current contract.
+
+
+      Tests are the most practical safety net. If the legacy code has no tests, create **characterisation
+      tests**: tests that record the current behaviour for representative inputs, including edge cases.
+      They do not claim the current behaviour is ideal; they make it visible before you change it.'
+- id: small-steps
+  title: 'Small steps: extract a function'
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: 'A common refactoring is **Extract Function**: move a coherent piece of logic into a named helper.
+      Keep the original function as the public entry point so callers do not need to change.'
+  - type: code
+    language: python
+    code: "def line_total(quantity, unit_price):\n    return quantity * unit_price\n\ndef invoice_total(lines):\n\
+      \    return sum(line_total(quantity, price) for quantity, price in lines)\n\nprint(invoice_total([(2,\
+      \ 3.5), (1, 4.0)]))"
+    runnable: true
+    expectedOutput: '11.0'
+    caption: The extracted helper names the business operation. The public function still returns the
+      same total.
+- id: catalog
+  title: Common refactorings and code smells
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Useful refactorings include:
+
+
+      - **Rename Variable/Function:** make intent explicit.
+
+      - **Extract Function:** give a coherent block a name and boundary.
+
+      - **Extract Variable:** name a complex expression.
+
+      - **Move Function:** place behaviour near the data or responsibility it belongs to.
+
+      - **Replace Conditional with Polymorphism:** when several stable variants genuinely share a contract.
+
+      - **Introduce Parameter Object:** group parameters that always travel together.
+
+
+      Common smells include long functions, duplicated rules, long parameter lists, feature envy (code
+      repeatedly reaching into another object), and changes that require editing many unrelated modules.
+      A smell invites investigation; it is not an automatic instruction to redesign everything.'
+- id: safe-workflow
+  title: A safe refactoring workflow
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '1. Make sure the working tree is understood and tests pass before you begin.
+
+      2. Choose one small structural change with a clear purpose.
+
+      3. Add or improve tests if the behaviour is not adequately protected.
+
+      4. Make the change without adding new behaviour.
+
+      5. Run focused tests, then the relevant broader suite.
+
+      6. Review the diff for accidental API, output or data changes.
+
+      7. Commit a known-good step before moving on.
+
+
+      If tests fail, stop and understand whether the refactor changed behaviour or exposed an existing
+      defect. Do not simply update expected results to make the suite green.'
+- id: feature-vs-refactor
+  title: Keep feature work separate
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A feature changes what the program does. A refactor changes how the program is organised while
+      keeping what it does the same. These changes often happen near each other, but separating them makes
+      reviews, rollbacks and debugging much easier.
+
+
+      A practical sequence is “make the change easy, then make the easy change”: first improve the structure,
+      then add the new behaviour behind the clearer design.'
+- id: practice
+  title: Practise preserving behaviour
+  kind: practice
+  blocks:
+  - type: item
+    ref: refactor-definition-mcq
+  - type: item
+    ref: refactor-tests-tf
+  - type: item
+    ref: refactor-helper-predict
+  - type: item
+    ref: refactor-fee-code
+  - type: item
+    ref: refactor-characterization-explain
+- id: summary
+  title: Refactoring checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: 'Can you state the behaviour that must remain unchanged? Are tests protecting it? Is the next
+      step small and reversible? Does the new structure make a responsibility or dependency clearer? Did
+      you keep feature changes separate?
+
+
+      Refactoring is not cosmetic rewriting. It is controlled structural change supported by evidence.'
+items:
+- id: refactor-definition-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Which change is a refactoring?
+  options:
+  - id: feature
+    text: Add a new field to an API response and change the business rule.
+    correct: false
+    feedback: This changes externally visible behaviour, so it is a feature change, not a pure refactoring.
+  - id: rename
+    text: Rename a local variable to clarify intent, then run tests to confirm behaviour is unchanged.
+    correct: true
+    feedback: A behaviour-preserving rename changes internal structure/readability without changing the
+      result.
+  - id: rewrite
+    text: Replace the entire service with a new framework in one release.
+    correct: false
+    feedback: A large rewrite is risky and does not preserve a working system step by step.
+  - id: format
+    text: Change the output from JSON to XML while reorganising functions.
+    correct: false
+    feedback: The output format changes, so observable behaviour changes.
+  explanation: Refactoring changes the internal structure while preserving externally observable behaviour.
+- id: refactor-tests-tf
+  type: true-false
+  skill: recognition
+  difficulty: 1
+  prompt: If code has no tests, a large refactor is still safe as long as the new implementation looks
+    cleaner.
+  answer: false
+  explanation: Without tests or another reliable oracle, you cannot confidently tell whether behaviour
+    changed. Add characterisation tests first when possible.
+- id: refactor-helper-predict
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: What is printed after extracting the calculation into a helper?
+  code: "def line_total(quantity, unit_price):\n    return quantity * unit_price\n\ndef invoice_total(lines):\n\
+    \    return sum(line_total(quantity, price) for quantity, price in lines)\n\nprint(invoice_total([(2,\
+    \ 3.5), (1, 4.0)]))"
+  answer: '11.0'
+  wrongAnswers:
+  - answer: '7.5'
+    feedback: The helper is called for both lines and the results are summed.
+  - answer: '10.5'
+    feedback: The second line contributes 4.0, not 3.0.
+  - answer: None
+    feedback: invoice_total returns the sum; print displays it.
+  explanation: 'Extracting the line calculation does not alter the arithmetic: 2 × 3.5 + 1 × 4.0 = 11.0.'
+- id: refactor-fee-code
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: 'Refactor the starter into small helpers while preserving its public behaviour. Implement `invoice_total(lines,
+    tax_rate)`: each line is `(quantity, unit_price)`, quantity must be a non-negative integer but not
+    bool, price must be non-negative numeric but not bool, and tax rate must be between 0 and 1. Return
+    the total rounded to two decimals. Use `_line_subtotal` and `_validate_rate` helpers.'
+  starterCode: "def invoice_total(lines, tax_rate):\n    # TODO: extract validation and line calculation\
+    \ into helpers\n    return 0\n"
+  solution: "def _validate_rate(tax_rate):\n    if isinstance(tax_rate, bool) or not isinstance(tax_rate,\
+    \ (int, float)):\n        raise TypeError(\"tax rate must be numeric\")\n    if not 0 <= tax_rate\
+    \ <= 1:\n        raise ValueError(\"tax rate must be between 0 and 1\")\n\n\ndef _line_subtotal(quantity,\
+    \ unit_price):\n    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 0:\n\
+    \        raise ValueError(\"quantity must be a non-negative integer\")\n    if isinstance(unit_price,\
+    \ bool) or not isinstance(unit_price, (int, float)):\n        raise TypeError(\"unit price must be\
+    \ numeric\")\n    if unit_price < 0:\n        raise ValueError(\"unit price cannot be negative\")\n\
+    \    return quantity * unit_price\n\n\ndef invoice_total(lines, tax_rate):\n    _validate_rate(tax_rate)\n\
+    \    subtotal = sum(_line_subtotal(quantity, price) for quantity, price in lines)\n    return round(subtotal\
+    \ * (1 + tax_rate), 2)\n"
+  tests:
+  - name: preserves normal result
+    code: assert invoice_total([(2, 3.5), (1, 4)], 0.1) == 12.1
+  - name: empty input
+    code: assert invoice_total([], 0.2) == 0.0
+  - name: rejects boolean quantity
+    code: "try:\n    invoice_total([(True, 10)], 0)\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError(\"\
+      boolean quantity must be rejected\")"
+  - name: rejects negative price
+    code: "try:\n    invoice_total([(1, -1)], 0)\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError(\"\
+      negative price must be rejected\")"
+  - name: rejects invalid rate
+    code: "try:\n    invoice_total([(1, 10)], 2)\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError(\"\
+      invalid tax rate must be rejected\")"
+  hints:
+  - Extract one helper for validating the tax rate and one for calculating a validated line subtotal.
+  - Keep the public function signature unchanged.
+  - Use the same arithmetic as before, then run the existing behaviour tests.
+  explanation: The public function remains invoice_total(lines, tax_rate), while validation and line calculation
+    are extracted into named helpers. This reduces the amount of detail in the orchestration function
+    without changing the expected result.
+- id: refactor-characterization-explain
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: You must improve a legacy function that has no tests and whose intended behaviour is poorly
+    documented. Explain how you would establish a safety net before refactoring, and how you would separate
+    a requested feature change from structural cleanup.
+  explanation: Refactoring should preserve current observable behaviour. When the intended behaviour is
+    unclear, capture what the current program actually does before changing its structure.
+  rubric:
+  - Suggests collecting representative inputs and observed outputs or side effects.
+  - Suggests adding characterisation tests around important normal, boundary and error cases.
+  - Describes small structural steps with tests run after each step.
+  - Separates behaviour changes into a distinct change or commit and explains why.
+  modelAnswer: I would first identify the public inputs, outputs and side effects, then capture current
+    behaviour with representative examples. These characterisation tests document what the program actually
+    does, including awkward edge cases that may be relied on. I would make one small structural change
+    at a time, run the tests and commit a known-good state. A new feature changes the contract, so I would
+    add its tests and implement it separately rather than mixing it into a behaviour-preserving refactor.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - refactor-definition-mcq
+  - refactor-tests-tf
+  - refactor-helper-predict
+  - refactor-fee-code
+  - refactor-characterization-explain
+cheatsheet: '- Refactoring changes structure, not externally observable behaviour.
+
+  - Add characterisation tests when legacy behaviour is unclear.
+
+  - Work in small, reversible steps; run tests after each step.
+
+  - Common patterns: rename, extract function/variable, move function, parameter object.
+
+  - A code smell is a signal to investigate, not an automatic rewrite command.
+
+  - Keep feature changes separate from structural cleanup.
+
+  - Never make a failing test pass by blindly changing its expected result.'

@@ -1,0 +1,1199 @@
+id: math.vectors
+concept: math.vectors
+title: Vectors, Norms and the Dot Product
+subtitle: The geometry behind feature rows, embeddings and similarity search
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Treat lists of numbers as vectors: add and scale them, measure their length (norm), and compare them with
+  the dot product and cosine similarity — the measure embedding search uses. Everything is implemented
+  from scratch in plain Python with the math module, so each formula becomes code you can test.
+objectives:
+  - Represent data as vectors and explain why Python lists do not behave like vectors under + and *.
+  - Implement vector addition, subtraction and scalar multiplication, and describe their geometric meaning.
+  - Compute the L2 and L1 norms and the Euclidean distance between two vectors.
+  - Compute the dot product and interpret its sign and size geometrically (a·b = |a||b| cos θ).
+  - Implement cosine similarity, explain why it ignores length, and why embedding search uses it.
+  - Normalise vectors to unit length and explain why dot product, cosine and distance then rank results the same way.
+sources:
+  - title: Mathematics for Machine Learning (Ch. 2-3, linear algebra and analytic geometry)
+    url: https://mml-book.github.io/
+    publisher: Deisenroth, Faisal and Ong (Cambridge University Press, free PDF)
+  - title: "Essence of linear algebra: Dot products and duality"
+    url: https://www.3blue1brown.com/lessons/dot-products/
+    publisher: 3Blue1Brown
+  - title: "Dive into Deep Learning: Linear Algebra"
+    url: https://d2l.ai/chapter_preliminaries/linear-algebra.html
+    publisher: Zhang, Lipton, Li and Smola (d2l.ai)
+  - title: math — Mathematical functions (hypot, dist, sumprod, isclose)
+    url: https://docs.python.org/3/library/math.html
+    publisher: Python Software Foundation
+    version: "3.14"
+sections:
+  - id: why
+    title: Why turn things into lists of numbers?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A streaming service wants to recommend a film. Comparing films by hand — "this one has a bit more
+          action, but less comedy..." — does not scale to millions of films and users. Instead, describe each
+          film by a few numbers, here scores from 0 to 5 for *action*, *comedy* and *romance*, describe the
+          viewer's taste the same way, and compute **one similarity score per film**:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def cosine(a, b):
+              dot = sum(x * y for x, y in zip(a, b))
+              return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+          # each film scored 0-5 for [action, comedy, romance]
+          films = {
+              "Star Raid": [5, 1, 0],
+              "Laugh Lane": [1, 5, 1],
+              "Heart Song": [0, 2, 5],
+              "Fast Fury": [4, 2, 1],
+          }
+          taste = [5, 2, 0]   # what this viewer enjoys
+
+          ranked = sorted(films, key=lambda name: cosine(taste, films[name]), reverse=True)
+          for name in ranked:
+              print(f"{name:<10} {cosine(taste, films[name]):.3f}")
+        expectedOutput: |
+          Star Raid  0.983
+          Fast Fury  0.973
+          Laugh Lane 0.536
+          Heart Song 0.138
+        caption: Four lines of maths turn "which film is most like this taste?" into a sort.
+      - type: markdown
+        body: |
+          Each list is a [vector](glossary:vector), and `cosine` is
+          [cosine similarity](glossary:cosine-similarity). The same idea, with hundreds of numbers per item
+          instead of three, powers recommendation systems, semantic search and retrieval-augmented generation:
+          a model turns text into an [embedding](concept:rag.embeddings) vector, and "find relevant documents"
+          means "find the vectors most similar to the query's vector". By the end of this lesson you will have
+          built every piece of that function yourself and know exactly why it works.
+
+  - id: what-is-a-vector
+    title: What a vector is
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **vector** is an **ordered list of n numbers**, written v = (v₁, v₂, …, vₙ). The count n is its
+          **dimension**; the set of all such vectors is called ℝⁿ. Two views of the same object, both useful:
+
+          - **A point or an arrow.** In 2-D, (3, 1) is the arrow from the origin to the point 3 right, 1 up.
+            It has a **length** and a **direction**. The maths is identical in 3, 300 or 3,000 dimensions —
+            we just cannot draw those.
+          - **A row of features.** A customer as `[age, visits_per_month, basket_size]`, a pixel as
+            `[red, green, blue]`, a sentence as a 768-number embedding.
+
+          **Order matters**: (3, 1) and (1, 3) are different vectors. And you can only combine or compare
+          vectors of the **same dimension** whose positions mean the same thing.
+
+          In plain Python a vector is a list (or tuple) of numbers — but Python's list operators do **list**
+          things, not vector things:
+      - type: code
+        runnable: true
+        code: |
+          a = [1, 2]
+          b = [3, 4]
+          print(a + b)                               # list concatenation
+          print(3 * a)                               # list repetition
+          print([x + y for x, y in zip(a, b)])       # vector addition, element by element
+          print([3 * x for x in a])                  # scalar multiplication
+        expectedOutput: |
+          [1, 2, 3, 4]
+          [1, 2, 1, 2, 1, 2]
+          [4, 6]
+          [3, 6]
+        annotations:
+          - line: 3
+            text: "`+` on lists joins them. It does not add numbers."
+          - line: 5
+            text: "`zip` pairs up elements at the same position, which is what vector operations need."
+      - type: callout
+        variant: note
+        title: NumPy does vector maths with operators
+        body: |
+          In data science code, vectors are usually NumPy arrays, for which `a + b` and `3 * a` *do* mean
+          element-wise addition and scaling, implemented in fast compiled loops (see
+          [NumPy](concept:data.numpy)). This lesson uses plain Python so that every step is visible and
+          runnable here; the formulas are the same.
+      - type: item
+        ref: predict-list-plus
+
+  - id: add-scale
+    title: Adding, subtracting and scaling
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Operation | Rule | Picture |
+          |---|---|---|
+          | **Addition** a + b | (a₁ + b₁, …, aₙ + bₙ) | put b's arrow at the tip of a's: tip-to-tail |
+          | **Subtraction** b − a | (b₁ − a₁, …, bₙ − aₙ) | the arrow **from** a **to** b |
+          | **Scalar multiplication** c·v | (c·v₁, …, c·vₙ) | stretch (c > 1), shrink (0 < c < 1) or flip (c < 0) |
+
+          A *scalar* is just a single number. Implementing these with `zip(..., strict=True)` (Python 3.10+)
+          has a bonus: vectors of different lengths raise an error instead of being silently truncated.
+      - type: code
+        runnable: true
+        code: |
+          def add(a, b):
+              return [x + y for x, y in zip(a, b, strict=True)]
+
+          def sub(a, b):
+              return [x - y for x, y in zip(a, b, strict=True)]
+
+          def scale(c, v):
+              return [c * x for x in v]
+
+          a = [3, 1]
+          b = [1, 2]
+          print(add(a, b), sub(b, a), scale(2, a), scale(-0.5, b))
+          print("midpoint:", scale(0.5, add(a, b)))
+          try:
+              add([1, 2, 3], [4, 5])
+          except ValueError as error:
+              print("ValueError:", error)
+        expectedOutput: |
+          [4, 3] [-2, 1] [6, 2] [-0.5, -1.0]
+          midpoint: [2.0, 1.5]
+          ValueError: zip() argument 2 is shorter than argument 1
+        annotations:
+          - line: 12
+            text: "b − a = (−2, 1): the step that takes you from point a to point b."
+          - line: 13
+            text: The average of vectors (their centroid) — used, for example, to summarise a cluster of embeddings.
+          - line: 15
+            text: Without strict=True, zip would quietly stop after two pairs and return a wrong answer.
+
+  - id: norm
+    title: "Length: the norm"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The length of (3, 4) comes from Pythagoras: √(3² + 4²) = √25 = 5. The same formula works in any
+          dimension and is called the **L2 norm** or Euclidean [norm](glossary:vector-norm):
+
+          ```text
+          ||v|| = √(v₁² + v₂² + … + vₙ²)
+          ```
+
+          Two relatives you will meet:
+
+          - The **L1 norm** `|v₁| + |v₂| + … + |vₙ|` ("Manhattan" length — walking along grid streets).
+          - The [Euclidean distance](glossary:euclidean-distance) between two points is the length of the
+            arrow between them: `||a − b||`.
+
+          Python's `math` module has both: `math.hypot(*v)` computes the L2 norm (any number of coordinates
+          since Python 3.8) and `math.dist(a, b)` the Euclidean distance.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def norm(v):
+              return math.sqrt(sum(x * x for x in v))
+
+          def l1_norm(v):
+              return sum(abs(x) for x in v)
+
+          print(norm([3, 4]), norm([2, 3, 6]), l1_norm([3, -4]))
+          print(math.hypot(3, 4), math.hypot(*[2, 3, 6]))
+          print(math.dist([1, 1], [4, 5]), norm([4 - 1, 5 - 1]))
+        expectedOutput: |
+          5.0 7.0 7
+          5.0 7.0
+          5.0 5.0
+        annotations:
+          - line: 4
+            text: Square every element, add them up, take the square root.
+          - line: 11
+            text: "Distance from (1, 1) to (4, 5) = length of (3, 4) = 5."
+      - type: item
+        ref: mcq-norm
+
+  - id: dot-product
+    title: The dot product
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The [dot product](glossary:dot-product) multiplies two equal-length vectors element by element and
+          adds the results:
+
+          ```text
+          a · b = a₁b₁ + a₂b₂ + … + aₙbₙ
+          ```
+
+          It turns two vectors into **one number**. Step through the loop that computes it:
+      - type: visualization
+        component: python-tracer
+        title: Accumulating a dot product
+        caption: Each pass multiplies one pair of elements and adds the product to the running total.
+        props:
+          code: |
+            a = [3, 1, 2]
+            b = [2, -1, 4]
+            total = 0
+            for x, y in zip(a, b):
+                total = total + x * y
+            print(total)
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          print(dot([3, 1, 2], [2, -1, 4]))
+          print(math.sumprod([3, 1, 2], [2, -1, 4]))
+          print(dot([3, 4], [3, 4]), math.hypot(3, 4) ** 2)
+        expectedOutput: |
+          13
+          13
+          25 25.0
+        annotations:
+          - line: 7
+            text: "`math.sumprod` (Python 3.12+) is the built-in dot product; it also raises ValueError for unequal lengths."
+          - line: 8
+            text: "A vector dotted with itself is its squared length: a · a = ||a||²."
+      - type: markdown
+        body: |
+          **What the number means.** The dot product has a second, geometric formula:
+
+          ```text
+          a · b = ||a|| ||b|| cos θ
+          ```
+
+          where θ is the angle between the arrows. Lengths are never negative, so the **sign** of the dot
+          product is the sign of cos θ:
+
+          | a · b | angle θ | meaning |
+          |---|---|---|
+          | positive | less than 90° | they point in broadly the same direction |
+          | zero | exactly 90° | perpendicular (*orthogonal*): no shared direction |
+          | negative | more than 90° | they point in broadly opposite directions |
+
+          Another reading: if b has length 1, `a · b` is the length of a's "shadow" on b's direction — how much
+          of a lies along b. Rearranging the formula gives the angle itself:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def norm(v):
+              return math.sqrt(dot(v, v))
+
+          def angle_degrees(a, b):
+              cos_theta = dot(a, b) / (norm(a) * norm(b))
+              cos_theta = max(-1.0, min(1.0, cos_theta))
+              return math.degrees(math.acos(cos_theta))
+
+          for a, b in [([3, 1], [1, 2]), ([3, 0], [0, 2]), ([2, 1], [-2, -1]), ([2, 0], [1, 3])]:
+              print(a, b, "dot =", dot(a, b), "angle =", round(angle_degrees(a, b), 1))
+        expectedOutput: |
+          [3, 1] [1, 2] dot = 5 angle = 45.0
+          [3, 0] [0, 2] dot = 0 angle = 90.0
+          [2, 1] [-2, -1] dot = -5 angle = 180.0
+          [2, 0] [1, 3] dot = 2 angle = 71.6
+        annotations:
+          - line: 11
+            text: Rounding can push the ratio a hair past ±1, where acos is undefined. Clamping keeps it in range (see the deep dive).
+          - line: 12
+            text: acos gives the angle in radians; math.degrees converts it.
+      - type: item
+        ref: predict-dot
+      - type: item
+        ref: mcq-dot-sign
+
+  - id: cosine
+    title: Cosine similarity — direction, not length
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The dot product mixes two things: how **aligned** the vectors are (cos θ) and how **long** they are.
+          Divide the lengths out and only the alignment remains — that is cosine similarity:
+
+          ```text
+          cosine_similarity(a, b) = (a · b) / (||a|| ||b||) = cos θ
+          ```
+
+          It always lies between **−1** (opposite) and **1** (same direction), with **0** meaning unrelated
+          (perpendicular). Multiplying either vector by a positive number does not change it. Drag the vectors
+          below and watch the dot product, the cosine and the distance react differently — try the
+          "Same direction, different length" preset:
+      - type: visualization
+        component: vector-similarity
+        title: Dot product vs cosine similarity vs distance
+        caption: "Make b twice as long without turning it: the dot product doubles, the cosine does not move."
+        props:
+          a: [3, 1]
+          b: [1, 2]
+      - type: markdown
+        body: |
+          **Why length is a problem.** Represent documents by word counts over the vocabulary
+          `[cat, dog, purr, bark]`. A long article mentions "cat" a few times among hundreds of dog words; a
+          short note is entirely about cats purring. Which is closer to the query "cat purr"?
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def norm(v):
+              return math.sqrt(dot(v, v))
+
+          def cosine_similarity(a, b):
+              return dot(a, b) / (norm(a) * norm(b))
+
+          # word counts for the vocabulary [cat, dog, purr, bark]
+          query = [1, 0, 1, 0]                       # "cat purr"
+          docs = {
+              "short cat note": [1, 0, 1, 0],
+              "short note x10": [10, 0, 10, 0],      # the same note pasted ten times
+              "long dog article": [3, 8, 0, 6],
+          }
+          for name, vec in docs.items():
+              print(f"{name:<17} dot={dot(query, vec):<3} cosine={cosine_similarity(query, vec):.3f}")
+        expectedOutput: |
+          short cat note    dot=2   cosine=1.000
+          short note x10    dot=20  cosine=1.000
+          long dog article  dot=3   cosine=0.203
+        caption: The dot product prefers the long dog article over the cat note; cosine similarity does not.
+        annotations:
+          - line: 16
+            text: Repeating the note makes it 10× longer but points it in exactly the same direction.
+          - line: 17
+            text: Three "cat"s give this article a bigger dot product than the cat note, purely because it is long.
+      - type: markdown
+        body: |
+          **Why embeddings use cosine similarity.** An embedding model places texts so that *direction*
+          encodes meaning. A vector's length can be influenced by things you usually do not want to rank by —
+          how long or how frequent a text is, for example — so comparing directions is the safer default.
+          In practice:
+
+          - Many embedding models return vectors already normalised to length 1, and then cosine similarity
+            and the dot product are the same number. Whether a particular model does this is model-specific —
+            check its documentation, and use the similarity measure it recommends.
+          - Vector databases let you choose the metric (cosine, inner product or Euclidean distance); see
+            [vector similarity](concept:rag.vector-similarity) and
+            [vector databases](concept:rag.vector-databases).
+          - Similarity scores are only comparable **within one model**. Vectors from two different models
+            live in unrelated spaces, even if they happen to have the same dimension.
+      - type: item
+        ref: predict-cosine-scale
+      - type: item
+        ref: explain-cosine-embeddings
+
+  - id: unit-vectors
+    title: Unit vectors and normalisation
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Dividing a non-zero vector by its length gives a [unit vector](glossary:unit-vector) — same
+          direction, length 1. This is called **normalising** (or L2-normalising) the vector:
+
+          ```text
+          v̂ = v / ||v||
+          ```
+
+          Two consequences make normalisation the standard preprocessing step for similarity search:
+
+          1. For unit vectors, **cosine similarity equals the dot product** (the lengths in the denominator
+             are both 1), and a dot product is cheaper to compute.
+          2. For unit vectors, **Euclidean distance and cosine similarity give the same ranking**, because
+             `||a − b||² = ||a||² + ||b||² − 2 a·b = 2 − 2 cos θ`. Larger cosine ⇔ smaller distance.
+
+          The zero vector has no direction and cannot be normalised.
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def dot(a, b):
+              return sum(x * y for x, y in zip(a, b, strict=True))
+
+          def norm(v):
+              return math.sqrt(dot(v, v))
+
+          def normalize(v):
+              length = norm(v)
+              if length == 0:
+                  raise ValueError("cannot normalise the zero vector")
+              return [x / length for x in v]
+
+          u = normalize([3, 4])
+          print(u, math.isclose(norm(u), 1.0))
+
+          query = normalize([1, 0, 1, 0])
+          docs = {"short": [1, 0, 1, 0], "mixed": [2, 1, 1, 0], "long": [3, 8, 0, 6]}
+          for name, vec in docs.items():
+              d = normalize(vec)
+              print(f"{name:<6} cosine={dot(query, d):.3f}  distance={math.dist(query, d):.3f}")
+        expectedOutput: |
+          [0.6, 0.8] True
+          short  cosine=1.000  distance=0.000
+          mixed  cosine=0.866  distance=0.518
+          long   cosine=0.203  distance=1.262
+        caption: Highest cosine ⇔ smallest distance once everything has length 1. Check one row against √(2 − 2 cos θ).
+        annotations:
+          - line: 16
+            text: "Compare floats with math.isclose: rounding can leave the length a tiny fraction away from 1."
+          - line: 21
+            text: After normalising, the dot product is the cosine similarity.
+      - type: item
+        ref: tf-unit-distance
+
+  - id: under-the-hood
+    title: Under the hood — floating point, speed and high dimensions
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Rounding can push a cosine past 1.** Mathematically, a vector compared with itself has cosine
+          exactly 1. In floating point, `√3 × √3` is slightly *less* than 3, so the ratio comes out slightly
+          *more* than 1 — and `math.acos` rejects anything outside [−1, 1]:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          v = [1, 1, 1]
+          dot_vv = sum(x * x for x in v)
+          c = dot_vv / (math.sqrt(dot_vv) * math.sqrt(dot_vv))
+          print(c)
+          try:
+              math.acos(c)
+          except ValueError:
+              print("math.acos raised ValueError")
+          print(math.degrees(math.acos(max(-1.0, min(1.0, c)))))
+        expectedOutput: |
+          1.0000000000000002
+          math.acos raised ValueError
+          0.0
+        caption: Clamp to [−1, 1] before calling acos. For ranking you rarely need the angle at all — compare cosines directly.
+      - type: markdown
+        body: |
+          `math.sumprod` (3.12+) computes float products and sums with extended precision, and
+          `math.hypot` is accurate to within one unit in the last place, so prefer them when accuracy matters.
+
+          **High dimensions behave unlike 2-D intuition.** Two *random* directions in 2-D are often quite
+          aligned; in 1,000 dimensions they are almost always nearly perpendicular. That is why a cosine of
+          0.3 can be meaningful for embeddings, and why thresholds must be calibrated per model:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+
+          random.seed(7)
+
+          def random_vector(n):
+              return [random.gauss(0, 1) for _ in range(n)]
+
+          def cosine(a, b):
+              return math.sumprod(a, b) / (math.hypot(*a) * math.hypot(*b))
+
+          for n in (2, 10, 1000):
+              sims = [abs(cosine(random_vector(n), random_vector(n))) for _ in range(200)]
+              print(f"n={n:<5} average |cosine| of random pairs: {sum(sims) / len(sims):.3f}")
+        expectedOutput: |
+          n=2     average |cosine| of random pairs: 0.643
+          n=10    average |cosine| of random pairs: 0.237
+          n=1000  average |cosine| of random pairs: 0.023
+        caption: Seeded, so the numbers are reproducible. The average shrinks roughly like 1/√n.
+      - type: markdown
+        body: |
+          **Speed.** A Python loop handles each element as a separate object, costing tens of nanoseconds per
+          multiply-add. NumPy stores numbers in contiguous arrays and runs compiled loops, typically one to two
+          orders of magnitude faster, and it compares a query against a whole matrix of documents in one call
+          (a matrix–vector product — see [matrices](concept:math.matrices)). For millions of vectors, vector
+          databases use approximate nearest-neighbour indexes (such as HNSW) instead of comparing against
+          every vector.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import numpy as np                      # third-party: pip install numpy
+
+          docs = np.array([[1, 0, 1, 0], [2, 1, 1, 0], [3, 8, 0, 6]], dtype=float)
+          query = np.array([1, 0, 1, 0], dtype=float)
+
+          docs /= np.linalg.norm(docs, axis=1, keepdims=True)   # normalise every row
+          query /= np.linalg.norm(query)
+          scores = docs @ query                                  # all cosine similarities at once
+          print(np.argsort(-scores))                             # best match first: [0 1 2]
+        caption: >-
+          The same ranking with NumPy (not run here: NumPy is not part of the verified browser examples). Run it
+          locally after `pip install numpy`.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `[1, 2] + [3, 4]` gives `[1, 2, 3, 4]` | List `+` concatenates | Add element-wise with `zip`, or use NumPy arrays. |
+          | A similarity silently ignores the last features | `zip` stops at the shorter list | `zip(a, b, strict=True)` or `math.sumprod` raise ValueError instead. |
+          | `ZeroDivisionError: float division by zero` | Cosine of a zero vector (e.g. an empty document) | Check for zero length and decide what it should mean. |
+          | `ValueError` from `math.acos` | Rounding pushed the cosine just past ±1 | Clamp with `max(-1.0, min(1.0, c))`. |
+          | Cosine values above 1 or tiny values like 0.1 for parallel vectors | Divided by the squared lengths (forgot the square root) | Divide by `norm(a) * norm(b)`, where norm includes `sqrt`. |
+          | Long documents always win | Ranking by raw dot product of unnormalised vectors | Use cosine similarity, or normalise first. |
+          | Similarity scores look random | Comparing vectors from different embedding models, or features in different orders | Embed everything with one model; keep one feature order. |
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def cosine_similarity(a, b):
+              dot = sum(x * y for x, y in zip(a, b))
+              return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+          print(cosine_similarity([0, 0, 0], [1, 2, 3]))
+        expectError: ZeroDivisionError
+        caption: A zero vector has no direction, so its cosine with anything is undefined.
+      - type: item
+        ref: debug-cosine
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Implement the formulas from their definitions. The checks compare your functions with reference
+          results on many vectors, including random ones, so they must work for any input.
+      - type: item
+        ref: code-vector-ops
+      - type: item
+        ref: code-most-similar
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A vector is an ordered list of n numbers — an arrow with length and direction, or a row of features.
+          - Add/subtract element-wise; multiply by a scalar to stretch, shrink or flip. Python lists need `zip`.
+          - Norm (L2): `||v|| = √Σ vᵢ²` (`math.hypot`); distance: `||a − b||` (`math.dist`); L1: `Σ |vᵢ|`.
+          - Dot product: `a · b = Σ aᵢbᵢ = ||a|| ||b|| cos θ` — positive (aligned), 0 (perpendicular), negative (opposed).
+          - Cosine similarity `a·b / (||a|| ||b||)` ∈ [−1, 1] ignores length; it is the default way to compare embeddings.
+          - Unit vectors: `v / ||v||`. For them, cosine = dot product, and distance gives the same ranking.
+          - Compare floats with `math.isclose`; clamp before `acos`; never compare vectors from different models.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Explain the dot product geometrically" — `a·b = |a||b| cos θ`, the sign tells you the angle class,
+          and with a unit vector it is a projection. "Why cosine similarity for embeddings?" — it compares
+          direction (meaning) and ignores magnitude; for normalised vectors it equals the dot product, and
+          ranking by Euclidean distance gives the same order.
+
+items:
+  - id: predict-list-plus
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      u = [2, 0, 1]
+      v = [1, 1, 1]
+      print(u + v, len(2 * u))
+    answer: "[2, 0, 1, 1, 1, 1] 6"
+    explanation: >-
+      For Python lists, `+` concatenates and `*` repeats. `u + v` is a six-element list, and `2 * u` is u
+      repeated twice, so its length is 6. Vector addition would need `[x + y for x, y in zip(u, v)]`.
+    wrongAnswers:
+      - answer: "[3, 1, 2] 3"
+        feedback: That is what vector addition and scaling would give, but Python lists are not vectors — + joins lists and * repeats them.
+      - answer: "[3, 1, 2] 6"
+        feedback: "`+` on lists concatenates; it does not add the numbers element by element."
+
+  - id: mcq-norm
+    type: mcq
+    skill: recognition
+    prompt: What is the length (L2 norm) of the vector v = (1, 2, 2)?
+    explanation: >-
+      ||v|| = √(1² + 2² + 2²) = √(1 + 4 + 4) = √9 = 3. Square, sum, then take the square root.
+    options:
+      - id: a
+        text: "3"
+        correct: true
+        feedback: Correct — √(1 + 4 + 4) = √9 = 3.
+      - id: b
+        text: "5"
+        feedback: That is the L1 norm (1 + 2 + 2), which adds absolute values instead of squaring.
+      - id: c
+        text: "9"
+        feedback: That is the sum of squares, ||v||². Take the square root to get the length.
+      - id: d
+        text: "√5 ≈ 2.24"
+        feedback: That uses only the first two elements. The norm includes every element.
+
+  - id: predict-dot
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      def dot(a, b):
+          return sum(x * y for x, y in zip(a, b, strict=True))
+
+      print(dot([1, 2, 3], [4, -5, 6]), dot([2, -1], [1, 2]))
+    answer: "12 0"
+    explanation: >-
+      1·4 + 2·(−5) + 3·6 = 4 − 10 + 18 = 12. For the second pair, 2·1 + (−1)·2 = 0 — the vectors are
+      perpendicular.
+    wrongAnswers:
+      - answer: "[4, -10, 18] 0"
+        feedback: Those are the element-wise products. The dot product adds them up into one number.
+      - answer: "32 0"
+        feedback: "The second element of b is −5, so that product is −10, not +10."
+      - answer: "12 4"
+        feedback: "(−1)·2 is −2, so the second dot product is 2 − 2 = 0."
+
+  - id: mcq-dot-sign
+    type: mcq
+    skill: explanation
+    prompt: The dot product of two non-zero vectors is **negative**. What does that tell you?
+    explanation: >-
+      a·b = ||a|| ||b|| cos θ and the lengths are positive, so a negative dot product means cos θ < 0: the angle
+      is more than 90°, and the vectors point in broadly opposite directions.
+    options:
+      - id: a
+        text: The angle between them is more than 90°, so they point in broadly opposite directions.
+        correct: true
+        feedback: Right — the sign of the dot product is the sign of cos θ.
+      - id: b
+        text: One of the vectors has a negative length.
+        feedback: Lengths (norms) are never negative. The sign comes from the angle.
+      - id: c
+        text: They are perpendicular.
+        feedback: Perpendicular vectors have a dot product of exactly zero.
+      - id: d
+        text: The vectors have different dimensions.
+        feedback: The dot product is only defined for vectors of the same dimension.
+
+  - id: predict-cosine-scale
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import math
+
+      def cosine(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          return dot / (math.hypot(*a) * math.hypot(*b))
+
+      print(round(cosine([1, 2, 3], [10, 20, 30]), 6), round(cosine([1, 2], [-2, -4]), 6))
+    answer: "1.0 -1.0"
+    explanation: >-
+      [10, 20, 30] is [1, 2, 3] scaled by 10 — same direction, so the cosine is 1. [−2, −4] is [1, 2] scaled
+      by −2 — exactly opposite, so the cosine is −1. Cosine similarity ignores length.
+    wrongAnswers:
+      - answer: "0.1 -1.0"
+        feedback: Scaling a vector does not reduce its cosine similarity; dividing by both lengths cancels the factor of 10.
+      - answer: "140.0 -10.0"
+        feedback: Those are the dot products. Cosine similarity divides them by the product of the lengths.
+      - answer: "1.0 1.0"
+        feedback: A negative scale factor flips the direction, giving the most dissimilar value, −1.
+
+  - id: explain-cosine-embeddings
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate proposes ranking documents for a search query by the raw dot product of their embedding
+      vectors, because "bigger means more similar". Explain the risk, what cosine similarity does differently,
+      and when the two give the same ranking.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - "States that the dot product grows with the vectors' lengths as well as with their alignment (a·b = |a||b| cos θ)."
+      - Explains that long vectors can therefore outrank better-aligned ones for reasons unrelated to meaning.
+      - Explains that cosine similarity divides by both lengths, so it measures only the angle (direction).
+      - Notes that for unit-normalised vectors the dot product equals cosine similarity, so the rankings coincide.
+    modelAnswer: |
+      The dot product is |a||b| cos θ, so it mixes alignment with length. A document whose vector happens to be
+      long can score higher than a perfectly aligned short one, even though the short one is closer in
+      meaning — the ranking would depend on magnitude, not direction. Cosine similarity divides the dot product
+      by both lengths, leaving cos θ, a value from −1 to 1 that depends only on direction. If all vectors are
+      normalised to length 1 (many embedding models already do this — check the model's docs), the dot product
+      and cosine similarity are identical, and the cheaper dot product gives the same ranking.
+
+  - id: tf-unit-distance
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: if every vector has length 1, ranking documents by smallest Euclidean distance to the
+      query gives the same order as ranking by largest cosine similarity.
+    answer: true
+    explanation: >-
+      For unit vectors, ||a − b||² = 2 − 2 cos θ. Distance shrinks exactly as cosine grows, so the two orders
+      are the same (only the direction of sorting differs).
+
+  - id: debug-cosine
+    type: debug
+    skill: debugging
+    prompt: |
+      This cosine similarity gives `0.1` for two vectors that point in exactly the same direction. Find and fix
+      the bug so it returns values between −1 and 1 (1.0 here).
+    starterCode: |
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          norm_a = sum(x * x for x in a)
+          norm_b = sum(y * y for y in b)
+          return dot / (norm_a * norm_b)
+
+      print(round(cosine_similarity([1, 2], [2, 4]), 6))   # same direction: should be 1.0
+      print(round(cosine_similarity([1, 0], [0, 5]), 6))   # perpendicular: should be 0.0
+    solution: |
+      import math
+
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          norm_a = math.sqrt(sum(x * x for x in a))
+          norm_b = math.sqrt(sum(y * y for y in b))
+          return dot / (norm_a * norm_b)
+
+      print(round(cosine_similarity([1, 2], [2, 4]), 6))   # same direction: should be 1.0
+      print(round(cosine_similarity([1, 0], [0, 5]), 6))   # perpendicular: should be 0.0
+    expectedOutput: |
+      1.0
+      0.0
+    tests:
+      - name: parallel vectors give 1
+        code: |
+          import math
+          for a, b in [([1, 2], [2, 4]), ([3, 1, 2], [30, 10, 20]), ([0.5, 0.5], [7, 7])]:
+              got = cosine_similarity(a, b)
+              assert math.isclose(got, 1.0), f"cosine_similarity({a}, {b}) returned {got}; vectors in the same direction must give 1.0."
+      - name: opposite and perpendicular vectors
+        code: |
+          import math
+          got = cosine_similarity([1, 2], [-3, -6])
+          assert math.isclose(got, -1.0), f"Opposite vectors should give -1.0, got {got}."
+          got = cosine_similarity([2, 1], [-1, 2])
+          assert math.isclose(got, 0.0, abs_tol=1e-12), f"Perpendicular vectors should give 0.0, got {got}."
+      - name: always between -1 and 1 and matches the definition
+        code: |
+          import math, random
+          rng = random.Random(3)
+          for _ in range(50):
+              a = [rng.uniform(-5, 5) for _ in range(6)]
+              b = [rng.uniform(-5, 5) for _ in range(6)]
+              expected = math.sumprod(a, b) / (math.hypot(*a) * math.hypot(*b))
+              got = cosine_similarity(a, b)
+              assert math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-12), f"For a={a}, b={b} you returned {got}, expected {expected}."
+    hints:
+      - "What should the length of [1, 2] be? What does `sum(x * x for x in a)` compute instead?"
+      - The norm is the square root of the sum of squares. The code divides by the squared lengths.
+      - "Wrap both sums in `math.sqrt(...)` (and `import math`)."
+    feedback:
+      - when: { errorType: NameError }
+        message: "Did you use math.sqrt without `import math` at the top?"
+      - when: { outputContains: "0.1" }
+        message: Still dividing by squared lengths. Take the square root of each sum of squares.
+    explanation: >-
+      `sum(x * x for x in a)` is ||a||², not ||a||. Dividing by ||a||²·||b||² shrinks the result by the
+      lengths a second time (10 / (5 · 20) = 0.1). With square roots the denominator is ||a||·||b|| =
+      √5 · √20 = 10, giving 1.0.
+
+  - id: code-vector-ops
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Implement three functions **from their definitions** (without `math.sumprod`, `math.hypot` or
+      `math.dist`; `math.sqrt` is fine):
+
+      - `dot(a, b)` — the dot product; raise `ValueError` if the lengths differ;
+      - `norm(v)` — the L2 length;
+      - `cosine_similarity(a, b)` — `dot / (norm · norm)`; raise `ValueError` if either vector has length 0.
+    starterCode: |
+      import math
+
+      def dot(a, b):
+          """Sum of element-wise products. Raise ValueError if the lengths differ."""
+          ...
+
+      def norm(v):
+          """Euclidean (L2) length of v."""
+          ...
+
+      def cosine_similarity(a, b):
+          """a·b / (|a| |b|). Raise ValueError if either vector has length 0."""
+          ...
+
+      print(dot([1, 2, 3], [4, 5, 6]))
+      print(norm([2, 3, 6]))
+      print(round(cosine_similarity([3, 1], [1, 2]), 4))
+    solution: |
+      import math
+
+      def dot(a, b):
+          """Sum of element-wise products. Raise ValueError if the lengths differ."""
+          return sum(x * y for x, y in zip(a, b, strict=True))
+
+      def norm(v):
+          """Euclidean (L2) length of v."""
+          return math.sqrt(dot(v, v))
+
+      def cosine_similarity(a, b):
+          """a·b / (|a| |b|). Raise ValueError if either vector has length 0."""
+          length_a, length_b = norm(a), norm(b)
+          if length_a == 0 or length_b == 0:
+              raise ValueError("cosine similarity is undefined for a zero vector")
+          return dot(a, b) / (length_a * length_b)
+
+      print(dot([1, 2, 3], [4, 5, 6]))
+      print(norm([2, 3, 6]))
+      print(round(cosine_similarity([3, 1], [1, 2]), 4))
+    expectedOutput: |
+      32
+      7.0
+      0.7071
+    tests:
+      - name: dot product values
+        code: |
+          assert dot([1, 2, 3], [4, 5, 6]) == 32, f"dot([1, 2, 3], [4, 5, 6]) should be 32, got {dot([1, 2, 3], [4, 5, 6])!r}."
+          assert dot([1, -1], [1, 1]) == 0, "dot([1, -1], [1, 1]) should be 0."
+          assert dot([2.5], [4]) == 10.0, "dot([2.5], [4]) should be 10.0."
+      - name: dot rejects different lengths
+        code: |
+          try:
+              dot([1, 2, 3], [4, 5])
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("dot([1, 2, 3], [4, 5]) should raise ValueError. Try zip(a, b, strict=True) or compare len(a) and len(b).")
+      - name: norm values
+        code: |
+          import math
+          for v, expected in [([3, 4], 5.0), ([2, 3, 6], 7.0), ([0, 0], 0.0), ([-1, 0, 0], 1.0)]:
+              got = norm(v)
+              assert got is not None and math.isclose(got, expected, abs_tol=1e-12), f"norm({v}) should be {expected}, got {got!r}."
+      - name: cosine similarity matches the definition on random vectors
+        code: |
+          import math, random
+          rng = random.Random(11)
+          for _ in range(50):
+              n = rng.randint(2, 8)
+              a = [rng.uniform(-10, 10) for _ in range(n)]
+              b = [rng.uniform(-10, 10) for _ in range(n)]
+              expected = math.sumprod(a, b) / (math.hypot(*a) * math.hypot(*b))
+              got = cosine_similarity(a, b)
+              assert got is not None and math.isclose(got, expected, rel_tol=1e-9, abs_tol=1e-12), f"cosine_similarity({a}, {b}) returned {got!r}, expected {expected}."
+      - name: zero vectors raise ValueError
+        code: |
+          try:
+              cosine_similarity([0, 0], [1, 2])
+          except ValueError:
+              pass
+          except ZeroDivisionError:
+              raise AssertionError("A zero vector caused ZeroDivisionError. Check the lengths first and raise ValueError yourself.")
+          else:
+              raise AssertionError("cosine_similarity([0, 0], [1, 2]) should raise ValueError.")
+      - name: implemented from the definitions
+        code: |
+          assert not (calls("sumprod") or calls("hypot") or calls("dist")), "Implement the formulas yourself with sum, zip and math.sqrt instead of math.sumprod, math.hypot or math.dist."
+    hints:
+      - "dot: `sum(x * y for x, y in zip(a, b, strict=True))` — strict=True raises ValueError for different lengths."
+      - "norm: the square root of the vector dotted with itself, `math.sqrt(dot(v, v))`."
+      - "cosine_similarity: compute both norms first; if either is 0, `raise ValueError(...)`; otherwise divide."
+    feedback:
+      - when: { outputContains: "None" }
+        message: A function returned None. Each function needs a `return` statement with its result.
+      - when: { errorType: ZeroDivisionError }
+        message: Check for a zero-length vector before dividing, and raise ValueError instead.
+    explanation: >-
+      The dot product pairs elements with zip (strict, so mismatched lengths fail loudly) and sums the products;
+      the norm is the square root of a vector dotted with itself; cosine similarity divides the dot product by
+      both norms, after refusing zero vectors, whose direction is undefined.
+
+  - id: code-most-similar
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Write `most_similar(query, items)` for a tiny product search. `items` is a dict mapping a product name
+      to its vector. Return the **name** whose vector has the highest **cosine similarity** to `query`.
+      A `cosine_similarity` helper is provided.
+    starterCode: |
+      import math
+
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+      def most_similar(query, items):
+          """Return the key of `items` whose vector is most similar (cosine) to `query`."""
+          ...
+
+      catalogue = {
+          "hiking boots": [0.9, 0.1, 0.0],
+          "running shoes": [0.7, 0.6, 0.1],
+          "rain jacket": [0.2, 0.1, 0.9],
+      }
+      print(most_similar([0.8, 0.5, 0.0], catalogue))
+    solution: |
+      import math
+
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))
+          return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+      def most_similar(query, items):
+          """Return the key of `items` whose vector is most similar (cosine) to `query`."""
+          return max(items, key=lambda name: cosine_similarity(query, items[name]))
+
+      catalogue = {
+          "hiking boots": [0.9, 0.1, 0.0],
+          "running shoes": [0.7, 0.6, 0.1],
+          "rain jacket": [0.2, 0.1, 0.9],
+      }
+      print(most_similar([0.8, 0.5, 0.0], catalogue))
+    expectedOutput: |
+      running shoes
+    tests:
+      - name: finds the best match in the catalogue
+        code: |
+          got = most_similar([0.8, 0.5, 0.0], catalogue)
+          assert got == "running shoes", f"Expected 'running shoes', got {got!r}. Return the name (the dict key), not the vector or the score."
+      - name: ranks by direction, not length
+        code: |
+          got = most_similar([1, 0, 0], {"long": [10, 10, 0], "aligned": [1, 0, 0]})
+          assert got == "aligned", (
+              f"Got {got!r}. 'long' has the bigger dot product only because it is long; 'aligned' points exactly "
+              "the same way as the query. Rank by cosine similarity, not by the dot product."
+          )
+      - name: works with negative values and other sizes
+        code: |
+          got = most_similar([-1, 0], {"right": [3, 0], "left": [-3, 1], "up": [0, 2]})
+          assert got == "left", f"Expected 'left', got {got!r}."
+          got = most_similar([0.1, 0.9, 0.2, 0.0], {"a": [1, 0, 0, 0], "b": [0, 5, 1, 0], "c": [0, 1, 1, 1]})
+          assert got == "b", f"Expected 'b', got {got!r}."
+    hints:
+      - "`max` takes a `key` function: `max(items, key=...)` returns the key (name) with the largest score."
+      - "The key function should compute `cosine_similarity(query, items[name])`."
+      - "Iterating over a dict gives its keys, which is exactly what you want to return."
+    feedback:
+      - when: { outputContains: "[" }
+        message: You printed a vector. Return the product name (the dictionary key) instead.
+    explanation: >-
+      `max(items, key=...)` scores each name by the cosine similarity of its vector with the query and returns
+      the best name. Using cosine rather than the raw dot product means a vector that is merely long cannot
+      outrank one that points in the query's direction.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-normalize
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import math
+
+      v = [0, 3, 4]
+      length = math.sqrt(sum(x * x for x in v))
+      unit = [x / length for x in v]
+      print(length, unit)
+    answer: "5.0 [0.0, 0.6, 0.8]"
+    explanation: >-
+      √(0 + 9 + 16) = √25 = 5.0 (math.sqrt always returns a float). Dividing every element by 5.0 gives the
+      unit vector [0.0, 0.6, 0.8] — floats, because `/` always produces floats.
+    wrongAnswers:
+      - answer: "5 [0, 0.6, 0.8]"
+        feedback: math.sqrt returns a float (5.0), and `/` always produces floats, so 0 / 5.0 is 0.0.
+      - answer: "7 [0.0, 0.42857142857142855, 0.5714285714285714]"
+        feedback: 7 is the L1 norm (0 + 3 + 4). The code squares, sums and takes the square root — the L2 norm.
+      - answer: "25 [0.0, 0.12, 0.16]"
+        feedback: 25 is the sum of squares; math.sqrt turns it into the length 5.0.
+
+  - id: m-mcq-dims
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Product descriptions were embedded last year with model A (768 dimensions). Today, search queries are
+      embedded with a newer model B, which also outputs 768 dimensions. Cosine similarity runs without errors.
+      Are the search results trustworthy?
+    explanation: >-
+      Each model defines its own vector space: dimension 17 in model A has nothing to do with dimension 17 in
+      model B. Matching dimension counts only make the arithmetic possible. Re-embed the products with model B
+      (or keep using model A for queries).
+    options:
+      - id: a
+        text: Yes — both are 768-dimensional, and cosine similarity is length-independent.
+        feedback: Equal dimensions make the computation run, but the coordinates mean different things in each model's space.
+      - id: b
+        text: No — vectors from different models live in unrelated spaces, so re-embed the products with model B.
+        correct: true
+        feedback: Correct. Compare only vectors produced by the same model (and the same preprocessing).
+      - id: c
+        text: Yes, as long as both sets of vectors are normalised to length 1.
+        feedback: Normalising fixes lengths, not the meaning of the directions; the spaces are still unrelated.
+      - id: d
+        text: Only if you switch from cosine similarity to Euclidean distance.
+        feedback: Every similarity measure assumes both vectors come from the same space.
+
+  - id: m-code-euclidean
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write two functions without `math.dist` or `math.hypot`:
+
+      - `euclidean_distance(a, b)` — the straight-line distance √Σ(aᵢ − bᵢ)²; raise `ValueError` if the
+        lengths differ;
+      - `nearest(point, points)` — the **index** in `points` of the point closest to `point`.
+    starterCode: |
+      import math
+
+      def euclidean_distance(a, b):
+          ...
+
+      def nearest(point, points):
+          ...
+
+      points = [[0, 0], [5, 5], [1, 2], [-3, 1]]
+      print(euclidean_distance([0, 0], [3, 4]))
+      print(nearest([2, 2], points))
+    solution: |
+      import math
+
+      def euclidean_distance(a, b):
+          return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
+
+      def nearest(point, points):
+          return min(range(len(points)), key=lambda i: euclidean_distance(point, points[i]))
+
+      points = [[0, 0], [5, 5], [1, 2], [-3, 1]]
+      print(euclidean_distance([0, 0], [3, 4]))
+      print(nearest([2, 2], points))
+    expectedOutput: |
+      5.0
+      2
+    tests:
+      - name: distances
+        code: |
+          import math
+          for a, b, expected in [([0, 0], [3, 4], 5.0), ([1, 2, 3], [1, 2, 3], 0.0), ([1, 1, 1], [2, 3, 3], 3.0), ([-1], [2], 3.0)]:
+              got = euclidean_distance(a, b)
+              assert got is not None and math.isclose(got, expected, abs_tol=1e-12), f"euclidean_distance({a}, {b}) should be {expected}, got {got!r}."
+      - name: rejects different lengths
+        code: |
+          try:
+              euclidean_distance([1, 2], [1, 2, 3])
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("euclidean_distance([1, 2], [1, 2, 3]) should raise ValueError (zip(..., strict=True) does this).")
+      - name: nearest returns the index of the closest point
+        code: |
+          got = nearest([2, 2], [[0, 0], [5, 5], [1, 2], [-3, 1]])
+          assert got == 2, f"nearest([2, 2], ...) should be index 2 (the point [1, 2]), got {got!r}."
+          got = nearest([10, -1, 0], [[0, 0, 0], [9, 0, 1], [10, 5, 0]])
+          assert got == 1, f"Expected index 1, got {got!r}. Return the position in the list, not the point."
+          got = nearest([0, 0], [[3, 3]])
+          assert got == 0, "With a single point the answer is index 0."
+      - name: implemented from the definition
+        code: |
+          assert not (calls("dist") or calls("hypot")), "Compute the distance yourself with zip, ** 2, sum and math.sqrt."
+    hints:
+      - "Subtract matching elements, square, sum, square-root: `math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))`."
+      - "For nearest, loop over `range(len(points))` and keep the index with the smallest distance — or use `min` with a `key`."
+    feedback:
+      - when: { outputContains: "[1, 2]" }
+        message: nearest should return the index of the closest point (2), not the point itself.
+    explanation: >-
+      The distance is the norm of the difference vector. `min(range(len(points)), key=...)` scores every index by
+      its distance to the query point and returns the index with the smallest score — a brute-force nearest-neighbour
+      search, which vector databases speed up with approximate indexes.
+
+  - id: m-debug-zip
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A bug elsewhere in a pipeline sometimes drops the last feature from a vector. This `dot` function hides the
+      problem by quietly returning a wrong number. Change it so that vectors of different lengths raise
+      `ValueError` instead.
+    starterCode: |
+      def dot(a, b):
+          return sum(x * y for x, y in zip(a, b))
+
+      print(dot([1, 2, 3], [4, 5, 6]))
+      try:
+          print(dot([1, 2, 3], [4, 5]))     # a feature went missing!
+      except ValueError as error:
+          print("refused:", error)
+    solution: |
+      def dot(a, b):
+          return sum(x * y for x, y in zip(a, b, strict=True))
+
+      print(dot([1, 2, 3], [4, 5, 6]))
+      try:
+          print(dot([1, 2, 3], [4, 5]))     # a feature went missing!
+      except ValueError as error:
+          print("refused:", error)
+    expectedOutput: |
+      32
+      refused: zip() argument 2 is shorter than argument 1
+    tests:
+      - name: equal lengths still work
+        code: |
+          assert dot([1, 2, 3], [4, 5, 6]) == 32, "dot([1, 2, 3], [4, 5, 6]) must still be 32."
+          assert dot([], []) == 0, "The dot product of two empty vectors is 0."
+      - name: different lengths raise ValueError
+        code: |
+          for a, b in [([1, 2, 3], [4, 5]), ([1], [1, 2])]:
+              try:
+                  dot(a, b)
+              except ValueError:
+                  continue
+              raise AssertionError(f"dot({a}, {b}) returned a number instead of raising ValueError.")
+    hints:
+      - "What does `zip` do when one list is shorter? Try `list(zip([1, 2, 3], [4, 5]))`."
+      - "Python 3.10 added `zip(..., strict=True)`, which raises ValueError on unequal lengths. Or compare `len(a)` and `len(b)` and raise yourself."
+    feedback:
+      - when: { outputContains: "14" }
+        message: "dot still returned 14 for vectors of different lengths: zip silently dropped the 3. Make it strict."
+    explanation: >-
+      Plain `zip` stops at the shorter input, so `[1, 2, 3]·[4, 5]` became 1·4 + 2·5 = 14 — a plausible-looking
+      wrong answer. `zip(a, b, strict=True)` (or an explicit length check) turns the silent bug into an error at
+      the point where it happens.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-normalize, m-mcq-dims, m-code-euclidean, m-debug-zip]
+
+cheatsheet: |
+  ```python
+  import math
+  add   = [x + y for x, y in zip(a, b, strict=True)]     # vector addition
+  scale = [c * x for x in v]                              # scalar multiplication
+  dot   = sum(x * y for x, y in zip(a, b, strict=True))  # or math.sumprod(a, b)  (3.12+)
+  norm  = math.sqrt(sum(x * x for x in v))                # or math.hypot(*v)
+  dist  = math.dist(a, b)                                 # ||a - b||
+  cos   = dot / (norm_a * norm_b)                         # in [-1, 1]; undefined for zero vectors
+  unit  = [x / norm for x in v]                           # length 1
+  ```
+  - a·b = |a||b| cos θ → positive: < 90°, zero: perpendicular, negative: > 90°
+  - Cosine ignores length; for unit vectors cosine = dot, and distance ranks the same way (|a−b|² = 2 − 2cos θ)
+  - Lists: `+` concatenates, `*` repeats · floats: `math.isclose`, clamp before `acos` · one embedding model per index

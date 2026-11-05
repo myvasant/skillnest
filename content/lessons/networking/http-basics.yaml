@@ -1,0 +1,1151 @@
+id: networking.http-basics
+concept: networking.http-basics
+title: HTTP Requests and Responses
+subtitle: Reading and writing the messages behind every web page and API
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  HTTP is a request-response protocol: a client sends a method, a target, headers and an optional body; the
+  server answers with a status code, headers and a body. In HTTP/1.1 these messages are plain text over a
+  TCP connection, so you can build and parse them yourself. Do exactly that in Python, learn the methods and
+  status code classes, read curl output, and see how HTTP/2 and HTTP/3 carry the same meaning in binary
+  frames.
+objectives:
+  - Identify the request line, header fields, blank line and body of an HTTP/1.1 request, and the status line of a response.
+  - Choose the status code class (1xx-5xx) that matches a situation, and name the common methods.
+  - Build a valid HTTP/1.1 request as bytes, with a Content-Length counted in bytes.
+  - Parse a raw response into status, case-insensitive headers and body.
+  - Split a URL into the parts that go into the request line and the Host header with urllib.parse.
+  - Explain statelessness and what changes (and what does not) in HTTP/2 and HTTP/3.
+sources:
+  - title: Overview of HTTP
+    url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview
+    publisher: MDN Web Docs
+  - title: HTTP messages
+    url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Messages
+    publisher: MDN Web Docs
+  - title: "RFC 9110: HTTP Semantics"
+    url: https://www.rfc-editor.org/rfc/rfc9110
+    publisher: IETF
+  - title: "RFC 9112: HTTP/1.1"
+    url: https://www.rfc-editor.org/rfc/rfc9112
+    publisher: IETF
+  - title: "RFC 9113: HTTP/2"
+    url: https://www.rfc-editor.org/rfc/rfc9113
+    publisher: IETF
+  - title: "RFC 9114: HTTP/3"
+    url: https://www.rfc-editor.org/rfc/rfc9114
+    publisher: IETF
+  - title: urllib.parse — Parse URLs into components
+    url: https://docs.python.org/3/library/urllib.parse.html
+    publisher: Python Software Foundation
+  - title: "http — HTTP modules (HTTPStatus)"
+    url: https://docs.python.org/3/library/http.html#http.HTTPStatus
+    publisher: Python Software Foundation
+  - title: curl man page
+    url: https://curl.se/docs/manpage.html
+    publisher: curl project
+sections:
+  - id: why
+    title: Why read raw HTTP
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Every web page, every JSON API and every LLM service you call speaks [HTTP](glossary:http). When
+          something fails, "the API is broken" is not a diagnosis. The actual response is:
+      - type: code
+        runnable: true
+        code: |
+          response = (
+              "HTTP/1.1 401 Unauthorized\r\n"
+              "Content-Type: application/json\r\n"
+              "WWW-Authenticate: Bearer\r\n"
+              "\r\n"
+              '{"error": "invalid_token"}'
+          )
+          print(response)
+        expectedOutput: |
+          HTTP/1.1 401 Unauthorized
+          Content-Type: application/json
+          WWW-Authenticate: Bearer
+
+          {"error": "invalid_token"}
+        caption: The status line already tells you the request reached the server and was rejected for authentication.
+      - type: markdown
+        body: |
+          A 401 means *fix your credentials*, a 404 means *wrong URL*, a 503 means *the server is overloaded,
+          try later* — three completely different actions. In HTTP/1.1 these messages are just text with a
+          few strict rules, so you can read them, write them and debug them yourself. That is what this lesson
+          does, using Python strings and bytes.
+
+          You already know that TCP delivers a reliable [stream of bytes](concept:networking.tcp-udp) between
+          two programs. HTTP defines what those bytes mean.
+
+  - id: requests
+    title: Anatomy of a request
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An [HTTP request](glossary:http-request) has four parts, in this order:
+
+          1. **Request line**: `METHOD target HTTP-version`, separated by single spaces, e.g.
+             `POST /notes HTTP/1.1`. The [method](glossary:http-method) says what you want to do; the
+             *target* is usually the path plus an optional query string.
+          2. **Header fields**: zero or more `Name: value` lines carrying metadata. HTTP/1.1 requires a `Host`
+             header naming the server, because one IP address can host many sites.
+          3. **An empty line** that marks the end of the headers.
+          4. **The body** (optional): data such as JSON. Its size is given by `Content-Length`, in **bytes**.
+
+          Every line in the head ends with [CRLF](glossary:crlf) — the two bytes carriage return and line
+          feed, written `"\r\n"` in Python. Build one:
+      - type: code
+        runnable: true
+        code: |
+          body = '{"title": "Buy oat milk"}'
+          body_bytes = body.encode("utf-8")
+
+          request = (
+              "POST /notes HTTP/1.1\r\n"
+              "Host: api.example.com\r\n"
+              "Content-Type: application/json\r\n"
+              f"Content-Length: {len(body_bytes)}\r\n"
+              "\r\n"
+          ).encode("ascii") + body_bytes
+
+          print(request.decode("utf-8"))
+          print(request[:24])
+        expectedOutput: |
+          POST /notes HTTP/1.1
+          Host: api.example.com
+          Content-Type: application/json
+          Content-Length: 25
+
+          {"title": "Buy oat milk"}
+          b'POST /notes HTTP/1.1\r\nHo'
+        annotations:
+          - line: 2
+            text: A socket sends bytes, so the body is encoded first; its byte length is what Content-Length needs.
+          - line: 5
+            text: "Request line: method, target, version."
+          - line: 6
+            text: Host is mandatory in HTTP/1.1.
+          - line: 8
+            text: "25 bytes here; with non-ASCII text the byte count is larger than the character count."
+          - line: 9
+            text: The empty line - CRLF on its own - ends the head.
+          - line: 13
+            text: The raw bytes show the CRLF line endings that print() hides.
+      - type: markdown
+        body: |
+          [Header fields](glossary:http-header) you will see constantly:
+
+          | Header | Direction | Meaning |
+          |---|---|---|
+          | `Host` | request | Which site (host and optional port) the request is for |
+          | `Accept` | request | Formats the client can handle, e.g. `application/json` |
+          | `Authorization` | request | Credentials, e.g. `Bearer <token>` |
+          | `User-Agent` | request | Which client software is calling |
+          | `Content-Type` | both | Format of the body, e.g. `application/json` or `text/html; charset=utf-8` |
+          | `Content-Length` | both | Body size in bytes |
+          | `Cache-Control` | both | Caching rules |
+          | `Location` | response | Where a new resource is, or where to go for a redirect |
+
+          **Header names are case-insensitive**: `Content-Type`, `content-type` and `CONTENT-TYPE` are the same
+          header. Values are generally case-sensitive.
+      - type: markdown
+        body: |
+          The **methods** you will use most (their exact guarantees are covered in
+          [HTTP semantics](concept:networking.http-semantics)):
+
+          | Method | Typical use | Has a request body? |
+          |---|---|---|
+          | `GET` | Read a resource | No (a body has no defined meaning) |
+          | `HEAD` | Like GET but return headers only | No |
+          | `POST` | Submit data, create something, trigger an action | Usually |
+          | `PUT` | Replace a resource with the body | Yes |
+          | `PATCH` | Change part of a resource | Yes |
+          | `DELETE` | Remove a resource | Rarely |
+          | `OPTIONS` | Ask what is allowed (used by browser CORS preflights) | Rarely |
+      - type: item
+        ref: request-line-mcq
+
+  - id: responses
+    title: Anatomy of a response
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An [HTTP response](glossary:http-response) has the same shape, except that it starts with a
+          **status line**: `HTTP-version status-code reason-phrase`, e.g. `HTTP/1.1 201 Created`. The
+          three-digit [status code](glossary:http-status-code) is for programs; the reason phrase is for humans
+          and clients must not depend on it (HTTP/2 and HTTP/3 drop it entirely).
+
+          The **first digit** gives the class:
+
+          | Class | Meaning | Common examples |
+          |---|---|---|
+          | **1xx** | Informational, keep going | 100 Continue, 101 Switching Protocols |
+          | **2xx** | Success | 200 OK, 201 Created, 204 No Content |
+          | **3xx** | Redirection, look elsewhere | 301 Moved Permanently, 304 Not Modified |
+          | **4xx** | Client error: the request must change | 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 429 Too Many Requests |
+          | **5xx** | Server error: the server failed; retrying later may work | 500 Internal Server Error, 502 Bad Gateway, 503 Service Unavailable |
+
+          Python's standard library knows the official reason phrases:
+      - type: code
+        runnable: true
+        code: |
+          from http import HTTPStatus
+
+          for code in [200, 201, 204, 301, 400, 401, 404, 422, 500, 503]:
+              status = HTTPStatus(code)
+              print(code, status.phrase)
+        expectedOutput: |
+          200 OK
+          201 Created
+          204 No Content
+          301 Moved Permanently
+          400 Bad Request
+          401 Unauthorized
+          404 Not Found
+          422 Unprocessable Content
+          500 Internal Server Error
+          503 Service Unavailable
+        caption: 422's phrase follows RFC 9110; older documents call it "Unprocessable Entity".
+      - type: item
+        ref: status-class-mcq
+
+  - id: lifecycle
+    title: The request-response lifecycle
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          HTTP/1.1 sends messages over a TCP connection. The receiver needs to know where each message ends,
+          and the rules are simple: **the head ends at the first empty line, and the body is exactly
+          `Content-Length` bytes** (or uses chunked encoding, covered in the deep dive). Step through one
+          exchange:
+      - type: visualization
+        component: step-diagram
+        title: One HTTP/1.1 exchange
+        caption: Click through. The payload shows the bytes or data at each step.
+        props:
+          width: 760
+          height: 240
+          nodes:
+            - { id: client, label: Client, x: 90, y: 120, shape: actor }
+            - { id: tcp, label: TCP connection, x: 290, y: 120, shape: pill }
+            - { id: server, label: HTTP server, x: 490, y: 120 }
+            - { id: app, label: Application code, x: 670, y: 120 }
+          edges:
+            - { id: c-t, from: client, to: tcp, label: bytes }
+            - { id: t-s, from: tcp, to: server, label: bytes }
+            - { id: s-a, from: server, to: app, label: parsed request }
+          steps:
+            - title: Connect (or reuse a connection)
+              body: >-
+                After DNS has turned the host name into an address, the client opens a TCP connection to port
+                80 (http) or 443 (https, with TLS on top). HTTP/1.1 keeps connections open by default, so the
+                next request can reuse it.
+              active: [client, tcp, c-t]
+            - title: Send the head
+              body: The client writes the request line and headers, then an empty line.
+              active: [client, tcp, server, c-t, t-s]
+              payload: |
+                POST /notes HTTP/1.1\r\n
+                Host: api.example.com\r\n
+                Content-Type: application/json\r\n
+                Content-Length: 25\r\n
+                \r\n
+            - title: Send the body
+              body: Then exactly 25 bytes of body, as promised by Content-Length.
+              active: [client, tcp, server, c-t, t-s]
+              payload: '{"title": "Buy oat milk"}'
+            - title: The server parses the message
+              body: >-
+                The server reads until it sees CRLF CRLF, splits the request line and headers, then reads
+                Content-Length more bytes for the body. If the client never sends the empty line, the server
+                keeps waiting for more headers.
+              active: [server]
+            - title: The application decides
+              body: >-
+                Your code (usually inside a web framework) receives the method, path, headers and body, does
+                the work and chooses a status code, headers and body.
+              active: [server, app, s-a]
+              payload: "status 201, headers {Content-Type: application/json, Location: /notes/7}, body {\"id\": 7}"
+            - title: Send the response
+              body: The server writes the status line, headers, an empty line and the body.
+              active: [client, tcp, server, c-t, t-s]
+              payload: |
+                HTTP/1.1 201 Created\r\n
+                Content-Type: application/json\r\n
+                Location: /notes/7\r\n
+                Content-Length: 9\r\n
+                \r\n
+                {"id": 7}
+            - title: The client reads it
+              body: >-
+                The client reads the head, then Content-Length bytes of body, and acts on the status code. The
+                connection stays open for the next request unless either side sent Connection: close.
+              active: [client]
+      - type: markdown
+        body: |
+          **HTTP is [stateless](glossary:stateless-protocol).** Each request must carry everything the server
+          needs to understand it; the server does not remember that the previous request on this connection
+          (or from this user) logged in. Continuity is added on top: the client sends a token in
+          `Authorization` or a session id in a `Cookie` header with **every** request (see
+          [cookies and sessions](concept:networking.cookies-sessions)). Statelessness is what lets a load
+          balancer send consecutive requests to different servers.
+
+  - id: parsing
+    title: Parsing a response by hand
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Parsing reverses the rules above:
+
+          1. Split the raw bytes at the **first** `\r\n\r\n` into head and body.
+          2. Decode the head (header bytes are ASCII in practice; HTTP libraries decode them as ISO-8859-1
+             so that no byte can fail) and split it into lines.
+          3. The first line is the status line: split it into **at most three** parts, because the reason
+             phrase may contain spaces.
+          4. Split each header line at the **first** colon only (values such as dates and `host:port` contain
+             colons), strip spaces, and store names in **lower case** so lookups are case-insensitive.
+      - type: code
+        runnable: true
+        code: |
+          raw = (
+              b"HTTP/1.1 404 Not Found\r\n"
+              b"Content-Type: application/json\r\n"
+              b"content-length: 24\r\n"
+              b"Date: Thu, 22 Oct 2026 09:30:00 GMT\r\n"
+              b"\r\n"
+              b'{"error": "no such note"}'
+          )
+
+          head, _, body = raw.partition(b"\r\n\r\n")
+          lines = head.decode("iso-8859-1").split("\r\n")
+          version, status, reason = lines[0].split(" ", 2)
+
+          headers = {}
+          for line in lines[1:]:
+              name, _, value = line.partition(":")
+              headers[name.strip().lower()] = value.strip()
+
+          print(version, int(status), reason)
+          print(headers["content-type"], headers["date"])
+          print(int(headers["content-length"]) == len(body))
+          print(body.decode("utf-8"))
+        expectedOutput: |
+          HTTP/1.1 404 Not Found
+          application/json Thu, 22 Oct 2026 09:30:00 GMT
+          False
+          {"error": "no such note"}
+        annotations:
+          - line: 10
+            text: "`partition` splits at the first separator only and returns (before, separator, after)."
+          - line: 12
+            text: "maxsplit=2 keeps 'Not Found' together as the reason phrase."
+          - line: 16
+            text: Split at the first colon only, so the Date value keeps its colons.
+          - line: 17
+            text: Lower-case names make content-length and Content-Length the same key.
+          - line: 21
+            text: Not equal! The server claimed 24 bytes but sent 25 - see the next paragraph.
+      - type: markdown
+        body: |
+          The last check caught a deliberately wrong `Content-Length`: the body is 25 bytes, but the header
+          says 24. A real client would read 24 bytes and stop, leaving `}` in the connection to corrupt the
+          *next* response. Getting message length right is fundamental; disagreements about it between
+          proxies and servers are even the root of a class of attacks called *request smuggling*.
+
+          Step through the header loop to watch the dictionary fill up:
+      - type: visualization
+        component: python-tracer
+        title: Building a case-insensitive header dictionary
+        caption: Each line is split at its first colon, and the name is lower-cased before it becomes a key.
+        props:
+          code: |
+            head = "Host: localhost:8000\r\nAccept: */*\r\nX-Request-ID: abc-123"
+            headers = {}
+            for line in head.split("\r\n"):
+                name, _, value = line.partition(":")
+                headers[name.strip().lower()] = value.strip()
+            print(headers["host"], headers["x-request-id"])
+      - type: item
+        ref: predict-headers
+      - type: item
+        ref: predict-content-length
+
+  - id: urls
+    title: From URL to request line
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A URL such as `https://api.example.com:8443/v1/notes?tag=work&limit=2#top` is split across the
+          request: the scheme chooses the protocol and default port (80 for http, 443 for https), the host and
+          port go into the TCP connection and the `Host` header, the path and query become the request target,
+          and the **fragment** after `#` is never sent — it is used only by the browser. Do not cut URLs apart
+          with string slicing; `urllib.parse` handles the edge cases (details in
+          [URLs and query strings](concept:networking.urls)).
+      - type: code
+        runnable: true
+        code: |
+          from urllib.parse import urlsplit, parse_qs, urlencode
+
+          url = "https://api.example.com:8443/v1/notes?tag=work&limit=2#top"
+          parts = urlsplit(url)
+          print(parts.scheme, parts.hostname, parts.port)
+          print(parts.path, parts.query, parts.fragment)
+          print(parse_qs(parts.query))
+
+          print(f"GET {parts.path}?{parts.query} HTTP/1.1")
+          print(f"Host: {parts.netloc}")
+          print(urlencode({"q": "oat milk & honey", "limit": 2}))
+        expectedOutput: |
+          https api.example.com 8443
+          /v1/notes tag=work&limit=2 top
+          {'tag': ['work'], 'limit': ['2']}
+          GET /v1/notes?tag=work&limit=2 HTTP/1.1
+          Host: api.example.com:8443
+          q=oat+milk+%26+honey&limit=2
+        annotations:
+          - line: 7
+            text: Query values are lists because a name can repeat (?tag=a&tag=b), and they are always strings.
+          - line: 9
+            text: The request target is path plus query - no scheme, no host, no fragment.
+          - line: 10
+            text: The Host header includes the port when it is not the default.
+          - line: 11
+            text: urlencode escapes spaces and the & inside a value, so it cannot be mistaken for a separator.
+      - type: callout
+        variant: warning
+        title: Query strings are not secret
+        body: |
+          URLs - including query strings - end up in server logs, proxy logs and browser history. Send
+          passwords and tokens in headers (such as `Authorization`) or in the body over HTTPS, never in the
+          URL.
+
+  - id: curl
+    title: Seeing real HTTP with curl
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          `curl` is a command-line HTTP client installed on Linux, macOS and Windows 10/11. Real network
+          requests cannot run in this browser lesson, so these are illustrative transcripts; run them in your
+          own terminal. `-i` includes the response status line and headers in the output; `-v` (verbose) also
+          shows the request curl sent (lines starting `>`), the response headers (`<`) and connection details
+          (`*`).
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ curl -v --http1.1 http://example.com/ -o /dev/null
+          * Host example.com:80 was resolved.
+          ...
+          > GET / HTTP/1.1
+          > Host: example.com
+          > User-Agent: curl/8.21.0
+          > Accept: */*
+          >
+          < HTTP/1.1 200 OK
+          < Content-Type: text/html
+          < Content-Length: 513
+          ...
+        caption: >-
+          The request lines match what you built in Python. Header values, sizes and versions vary between
+          runs, servers and curl versions.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ curl -i https://example.com/
+          HTTP/2 200
+          content-type: text/html
+          content-length: 513
+          date: Thu, 22 Oct 2026 09:30:00 GMT
+
+          <!doctype html><html lang="en"><head><title>Example Domain</title>...
+        caption: >-
+          Over HTTPS curl usually negotiates HTTP/2: the status line has no reason phrase and header names
+          are lower case. curl prints them in HTTP/1.1-like form for readability; on the wire they are binary
+          frames.
+      - type: callout
+        variant: tip
+        title: curl in Windows PowerShell
+        body: |
+          In Windows PowerShell 5.1, `curl` is an alias for `Invoke-WebRequest`, which takes different options.
+          Type `curl.exe` to run the real curl. (PowerShell 7 removed the alias.) Use `-o NUL` instead of
+          `-o /dev/null` on Windows.
+      - type: item
+        ref: blank-line-mcq
+
+  - id: versions
+    title: Message framing, HTTP/2 and HTTP/3
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Chunked transfer coding.** When a server does not know the body length in advance (streaming), an
+          HTTP/1.1 response can use `Transfer-Encoding: chunked` instead of `Content-Length`: the body is a
+          series of chunks, each preceded by its size in hexadecimal, ending with a zero-size chunk.
+      - type: code
+        runnable: true
+        code: |
+          chunked = b"7\r\nMozilla\r\n11\r\nDeveloper Network\r\n0\r\n\r\n"
+
+          body = b""
+          rest = chunked
+          while True:
+              size_line, _, rest = rest.partition(b"\r\n")
+              size = int(size_line, 16)
+              if size == 0:
+                  break
+              body += rest[:size]
+              rest = rest[size + 2:]
+          print(body)
+        expectedOutput: |
+          b'MozillaDeveloper Network'
+        caption: 0x11 is 17, the length of "Developer Network". The +2 skips the CRLF after each chunk.
+      - type: markdown
+        body: |
+          **Same semantics, different wire formats.** [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110)
+          defines what methods, status codes and header fields *mean*; separate documents define how messages
+          travel:
+
+          | Version | Transport | Wire format | Notes |
+          |---|---|---|---|
+          | HTTP/1.1 ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112)) | TCP | Text lines as in this lesson | One request at a time per connection; browsers open several connections |
+          | HTTP/2 ([RFC 9113](https://www.rfc-editor.org/rfc/rfc9113)) | TCP (with TLS in practice) | Binary frames (HEADERS, DATA...) | Many concurrent *streams* multiplexed on one connection; headers compressed with HPACK |
+          | HTTP/3 ([RFC 9114](https://www.rfc-editor.org/rfc/rfc9114)) | QUIC over UDP | Binary frames | QUIC integrates TLS 1.3; a lost packet delays only its own stream; QPACK header compression |
+
+          In HTTP/2 and HTTP/3 the request line becomes *pseudo-header fields* (`:method`, `:scheme`,
+          `:authority`, `:path`), the status line becomes `:status`, header names must be lower case, and there
+          is no reason phrase. Your application code sees the same method, path, headers, status and body
+          regardless of version - which is why frameworks and APIs do not change when a server upgrades.
+          HTTPS (HTTP inside TLS) encrypts every version on the wire, so none of this is readable by
+          observers.
+
+          **Lenient parsing.** RFC 9112 allows recipients to accept a bare LF as a line ending, so some servers
+          tolerate `"\n"`. Do not rely on it: always send CRLF.
+
+  - id: mistakes
+    title: Common mistakes
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Client or server hangs until a timeout | No empty line after the headers, or a body shorter than Content-Length | End the head with `\r\n\r\n`; compute Content-Length from the encoded body |
+          | Body cut off, or the next response is garbage | Content-Length counted characters, not bytes | `len(body.encode("utf-8"))` |
+          | `KeyError: 'Content-Type'` in your parser | Header lookup is case-sensitive in your code | Store and look up lower-case names |
+          | `ValueError: too many values to unpack` while parsing headers | `line.split(":")` on a value containing colons | `line.partition(":")` or `split(":", 1)` |
+          | Server answers `400 Bad Request` | Malformed request: missing Host, bad line endings, spaces in the target | Build requests with a library, or follow the format exactly |
+          | Monitoring shows no errors while users see failures | Server returns 200 with an error message in the body | Use the right 4xx/5xx status (see [HTTP semantics](concept:networking.http-semantics)) |
+      - type: code
+        runnable: true
+        code: |
+          headers = {"content-type": "application/json"}
+          print(headers["Content-Type"])
+        expectError: KeyError
+        caption: Python dicts are case-sensitive; HTTP header names are not. Normalise the case on both sides.
+      - type: code
+        runnable: true
+        code: |
+          line = "Date: Thu, 22 Oct 2026 09:30:00 GMT"
+          name, value = line.split(":")
+        expectError: ValueError
+        caption: "ValueError: too many values to unpack (expected 2, got 4) - the time contains two more colons."
+      - type: code
+        runnable: true
+        code: |
+          body = '{"title": "Pay ₹500 rent"}'
+          print(len(body), len(body.encode("utf-8")))
+        expectedOutput: |
+          26 28
+        caption: Sending Content-Length 26 here would cut the last two bytes off the JSON.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build the two halves of an HTTP/1.1 conversation. The checks use several messages, including
+          headers whose values contain colons and bodies with non-ASCII text.
+      - type: item
+        ref: parse-response
+      - type: item
+        ref: build-request
+      - type: item
+        ref: debug-header-split
+      - type: item
+        ref: explain-stateless
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Request = request line (`METHOD target HTTP/1.1`) + headers + empty line + optional body.
+          - Response = status line (`HTTP/1.1 404 Not Found`) + headers + empty line + body.
+          - HTTP/1.1 lines end with CRLF; the head ends at the first `\r\n\r\n`; `Content-Length` counts
+            **bytes**.
+          - Status classes: 1xx info, 2xx success, 3xx redirect, 4xx client error, 5xx server error.
+          - Header names are case-insensitive; split header lines at the first colon only.
+          - The URL's path and query form the request target; host and port go in `Host`; the fragment is
+            never sent. Use `urllib.parse`.
+          - HTTP is stateless: tokens or cookies travel with every request.
+          - HTTP/2 and HTTP/3 carry the same semantics in binary frames; HTTPS encrypts all versions.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect to describe the parts of a request and a response, explain what a status code class tells a
+          client, and say what changes between HTTP/1.1, HTTP/2 and HTTP/3 (framing, multiplexing, transport)
+          and what does not (semantics). See
+          [the interview question](interview:networking.http-basics.anatomy).
+
+items:
+  - id: request-line-mcq
+    type: mcq
+    skill: recognition
+    prompt: "In the request line `GET /users/42?fields=name HTTP/1.1`, what is `/users/42?fields=name`?"
+    explanation: >-
+      The request line is method, request target and protocol version. The target here is a path plus a query
+      string; the host travels separately in the Host header.
+    options:
+      - id: a
+        text: The request target - the path and query of the resource.
+        correct: true
+        feedback: Right. The scheme, host and fragment of the URL are not part of it.
+      - id: b
+        text: The full URL including the host.
+        feedback: In ordinary requests to a server the target is just the path and query; the host goes in the Host header.
+      - id: c
+        text: A header field.
+        feedback: Header fields are the Name - value lines after the request line.
+      - id: d
+        text: The request body.
+        feedback: The body comes after the empty line that ends the headers. A GET request normally has none.
+
+  - id: status-class-mcq
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A client sends JSON that is missing a required field. The server's validation code raises an exception
+      and the response is `500 Internal Server Error`. Why is this a problem, and what should the server send?
+    explanation: >-
+      5xx tells clients the server failed and that retrying later may succeed; monitoring treats it as a
+      server bug. A malformed request is the client's fault, so a 4xx such as 400 Bad Request (or 422 for
+      validation errors) with an explanation tells the client to change the request instead of retrying.
+    options:
+      - id: a
+        text: It blames the server for a client mistake; a 4xx such as 400 or 422 with an error message tells the client to fix the request.
+        correct: true
+        feedback: Right. The status class tells the client who must act and whether retrying could help.
+      - id: b
+        text: Nothing is wrong; any error is a 500.
+        feedback: The classes exist so clients can react differently - fix the request (4xx) or retry later (5xx).
+      - id: c
+        text: The server should send 200 OK with an error message in the body.
+        feedback: That hides the failure from clients, caches, retries and monitoring that rely on the status code.
+      - id: d
+        text: It should send 301 so the client tries another URL.
+        feedback: 3xx is for redirection. The URL is fine; the data is not.
+
+  - id: predict-headers
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      lines = ["Content-Type: text/html", "content-type: application/json", "Host: localhost:8000"]
+      headers = {}
+      for line in lines:
+          name, _, value = line.partition(":")
+          headers[name.strip().lower()] = value.strip()
+      print(len(headers), headers["content-type"], headers["host"])
+    answer: "2 application/json localhost:8000"
+    explanation: >-
+      Both content-type lines lower-case to the same key, so the second overwrites the first (2 keys in total).
+      partition splits at the first colon only, so the Host value keeps ":8000".
+    wrongAnswers:
+      - answer: "3 text/html localhost:8000"
+        feedback: After lower-casing, the two Content-Type names are the same dictionary key, so there are only 2 keys and the later value wins.
+      - answer: "2 application/json localhost"
+        feedback: partition(":") splits only at the first colon, so "localhost:8000" stays intact.
+      - answer: "2 text/html localhost:8000"
+        feedback: Assigning to an existing key replaces its value; the later application/json line wins.
+
+  - id: predict-content-length
+    type: predict-output
+    skill: prediction
+    prompt: The body is sent as UTF-8. What does this print?
+    code: |
+      body = '{"name": "Zoë"}'
+      print(len(body), len(body.encode("utf-8")))
+    answer: "15 16"
+    explanation: >-
+      The string has 15 characters; ë takes two bytes in UTF-8, so the encoded body is 16 bytes. Content-Length
+      must be 16.
+    wrongAnswers:
+      - answer: "15 15"
+        feedback: ë is outside ASCII and needs two bytes in UTF-8, so the byte count is one more than the character count.
+      - answer: "16 16"
+        feedback: len() of a str counts characters (code points), and ë is one character.
+
+  - id: blank-line-mcq
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Your hand-written client sends these bytes over a socket and then waits for a response. The server never
+      answers, and eventually the connection times out. What is wrong?
+
+      ```text
+      GET /health HTTP/1.1\r\nHost: localhost:8000\r\n
+      ```
+    explanation: >-
+      The head ends only at an empty line (CRLF CRLF). Without it the server cannot know the headers are
+      complete, so it keeps waiting for more - and the client waits for a response that never comes.
+    options:
+      - id: a
+        text: The request is missing the empty line (a second \r\n) that ends the headers, so the server waits for more headers.
+        correct: true
+        feedback: Correct. Send "...\r\n\r\n".
+      - id: b
+        text: GET requests must include a body.
+        feedback: GET normally has no body. The problem is the unfinished head.
+      - id: c
+        text: The Host header must not include a port.
+        feedback: Host includes the port when it is not the default for the scheme, as here.
+      - id: d
+        text: HTTP/1.1 requires header names in lower case.
+        feedback: Header names are case-insensitive in HTTP/1.1. (HTTP/2 requires lower case on the wire.)
+
+  - id: parse-response
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `parse_response(raw)` that takes the raw bytes of an HTTP/1.1 response and returns a tuple
+      `(status, headers, body)`:
+
+      - `status`: the status code as an **int**,
+      - `headers`: a dict with **lower-case** names and values stripped of surrounding spaces,
+      - `body`: the bytes after the **first** empty line (`b"\r\n\r\n"`).
+
+      Header values may contain colons, and reason phrases may contain spaces.
+    starterCode: |
+      def parse_response(raw: bytes) -> tuple[int, dict[str, str], bytes]:
+          # 1. split head and body  2. status line  3. header lines
+          return 0, {}, b""
+
+      raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+      print(parse_response(raw))
+    solution: |
+      def parse_response(raw: bytes) -> tuple[int, dict[str, str], bytes]:
+          head, _, body = raw.partition(b"\r\n\r\n")
+          lines = head.decode("iso-8859-1").split("\r\n")
+          status = int(lines[0].split(" ", 2)[1])
+          headers = {}
+          for line in lines[1:]:
+              name, _, value = line.partition(":")
+              headers[name.strip().lower()] = value.strip()
+          return status, headers, body
+
+      raw = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+      print(parse_response(raw))
+    expectedOutput: |
+      (200, {'content-type': 'text/plain', 'content-length': '5'}, b'hello')
+    tests:
+      - name: parses a simple response
+        code: |
+          got = parse_response(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello")
+          assert got == (200, {"content-type": "text/plain", "content-length": "5"}, b"hello"), f"Got {got!r}."
+      - name: status is an int and the reason phrase can have spaces
+        code: |
+          status, headers, body = parse_response(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+          assert status == 404 and isinstance(status, int), f"status should be the int 404, got {status!r}."
+          assert body == b"", f"An empty body should be b'', got {body!r}."
+      - name: header values keep their colons
+        code: |
+          _, headers, _ = parse_response(b"HTTP/1.1 200 OK\r\nDate: Thu, 22 Oct 2026 09:30:00 GMT\r\nLocation: http://localhost:8000/x\r\n\r\n")
+          assert headers.get("date") == "Thu, 22 Oct 2026 09:30:00 GMT", f"Split each header line at the FIRST colon only. date = {headers.get('date')!r}."
+          assert headers.get("location") == "http://localhost:8000/x", f"location = {headers.get('location')!r}."
+      - name: names are lower-cased and values stripped
+        code: |
+          _, headers, _ = parse_response(b"HTTP/1.1 200 OK\r\nX-Request-ID:    abc-123   \r\nCONTENT-TYPE: text/html\r\n\r\n")
+          assert headers == {"x-request-id": "abc-123", "content-type": "text/html"}, f"Lower-case the names and strip the values; got {headers!r}."
+      - name: only the first blank line separates head and body
+        code: |
+          _, _, body = parse_response(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\na\r\n\r\nb!!")
+          assert body == b"a\r\n\r\nb!!", f"The body may itself contain a blank line; split at the first one only. Got {body!r}."
+    hints:
+      - "`raw.partition(b\"\\r\\n\\r\\n\")` returns (head, separator, body) and splits at the first match only."
+      - "Decode the head, split it on `\"\\r\\n\"`, and take the status code from `lines[0].split(\" \", 2)`."
+      - "For each header line, `name, _, value = line.partition(\":\")`."
+    feedback:
+      - when: { errorType: ValueError, errorMessageContains: "too many values to unpack" }
+        message: A header value contains colons. Split each header line at the first colon only, with partition(":") or split(":", 1).
+      - when: { errorType: ValueError, errorMessageContains: "invalid literal for int" }
+        message: The status code is the second word of the status line. Check which part you pass to int().
+    explanation: >-
+      partition splits head from body at the first empty line; the status line is split into at most three
+      parts; header lines are split at their first colon and the names lower-cased so later lookups ignore
+      case. This is the core of every HTTP/1.1 client.
+
+  - id: build-request
+    type: code
+    skill: implementation
+    prompt: |
+      Write `build_request(method, path, host, body="")` that returns the request as **bytes**:
+
+      - the request line `METHOD path HTTP/1.1`,
+      - a `Host` header,
+      - **only if `body` is not empty**, a `Content-Length` header with the number of **bytes** in the UTF-8
+        encoded body,
+      - an empty line, then the UTF-8 encoded body.
+
+      Every line ends with `\r\n`. Headers must appear in the order Host, then Content-Length.
+    starterCode: |
+      def build_request(method: str, path: str, host: str, body: str = "") -> bytes:
+          lines = [f"{method} {path} HTTP/1.1", f"Host: {host}"]
+          return "\n".join(lines).encode("utf-8")
+
+      print(build_request("GET", "/notes", "api.example.com"))
+    solution: |
+      def build_request(method: str, path: str, host: str, body: str = "") -> bytes:
+          body_bytes = body.encode("utf-8")
+          lines = [f"{method} {path} HTTP/1.1", f"Host: {host}"]
+          if body_bytes:
+              lines.append(f"Content-Length: {len(body_bytes)}")
+          head = "".join(line + "\r\n" for line in lines) + "\r\n"
+          return head.encode("ascii") + body_bytes
+
+      print(build_request("GET", "/notes", "api.example.com"))
+    expectedOutput: |
+      b'GET /notes HTTP/1.1\r\nHost: api.example.com\r\n\r\n'
+    tests:
+      - name: GET without a body
+        code: |
+          got = build_request("GET", "/notes", "api.example.com")
+          expected = b"GET /notes HTTP/1.1\r\nHost: api.example.com\r\n\r\n"
+          assert got == expected, f"Expected {expected!r}, got {got!r}. Every line ends with \\r\\n and the head ends with an empty line."
+      - name: POST with an ASCII body
+        code: |
+          got = build_request("POST", "/notes", "localhost:8000", '{"title": "Buy milk"}')
+          expected = b'POST /notes HTTP/1.1\r\nHost: localhost:8000\r\nContent-Length: 21\r\n\r\n{"title": "Buy milk"}'
+          assert got == expected, f"Expected {expected!r}, got {got!r}."
+      - name: Content-Length counts bytes, not characters
+        code: |
+          text = '{"title": "Pay ₹500"}'
+          got = build_request("POST", "/notes", "localhost", text)
+          n = len(text.encode("utf-8"))
+          assert f"Content-Length: {n}\r\n".encode() in got, f"For a body containing ₹ the Content-Length must be {n} bytes, not {len(text)} characters."
+          assert got.endswith(text.encode("utf-8")), "The body must be UTF-8 encoded at the end of the message."
+      - name: returns bytes
+        code: |
+          assert isinstance(build_request("GET", "/", "x"), bytes), "Return bytes (encode the message), because sockets send bytes."
+    hints:
+      - "End every line with `\"\\r\\n\"`, then add one more `\"\\r\\n\"` for the empty line."
+      - "Encode the body first and use `len(body_bytes)` for Content-Length."
+      - Only add the Content-Length line when there is a body.
+    feedback:
+      - when: { outputContains: "HTTP/1.1\\nHost" }
+        message: The lines are separated by a bare newline. HTTP/1.1 requires CRLF - "\r\n" - at the end of each line.
+    explanation: >-
+      The head is ASCII text with CRLF line endings and a final empty line; the body is whatever bytes the
+      Content-Length announces. Encoding the body before measuring it keeps the length correct for any text.
+
+  - id: debug-header-split
+    type: debug
+    skill: debugging
+    prompt: |
+      `parse_headers` crashes with `ValueError: too many values to unpack (expected 2, got 4)` on real
+      responses. Fix it so that it handles values containing colons, lower-cases names and strips spaces.
+    starterCode: |
+      def parse_headers(lines: list[str]) -> dict[str, str]:
+          headers = {}
+          for line in lines:
+              name, value = line.split(":")
+              headers[name.lower()] = value.strip()
+          return headers
+
+      print(parse_headers(["Content-Type: text/html", "Date: Thu, 22 Oct 2026 09:30:00 GMT"]))
+    solution: |
+      def parse_headers(lines: list[str]) -> dict[str, str]:
+          headers = {}
+          for line in lines:
+              name, _, value = line.partition(":")
+              headers[name.strip().lower()] = value.strip()
+          return headers
+
+      print(parse_headers(["Content-Type: text/html", "Date: Thu, 22 Oct 2026 09:30:00 GMT"]))
+    expectedOutput: |
+      {'content-type': 'text/html', 'date': 'Thu, 22 Oct 2026 09:30:00 GMT'}
+    tests:
+      - name: values with colons survive
+        code: |
+          got = parse_headers(["Date: Thu, 22 Oct 2026 09:30:00 GMT", "Host: localhost:8000"])
+          assert got == {"date": "Thu, 22 Oct 2026 09:30:00 GMT", "host": "localhost:8000"}, f"Got {got!r}. Split at the first colon only."
+      - name: names lower-cased and stripped
+        code: |
+          got = parse_headers(["  Accept : */*"])
+          assert got == {"accept": "*/*"}, f"Strip spaces around the name and the value; got {got!r}."
+    hints:
+      - The time 09:30:00 contains colons too. How many pieces does split(":") produce?
+      - "`line.partition(\":\")` or `line.split(\":\", 1)` splits at the first colon only."
+    feedback:
+      - when: { errorType: ValueError }
+        message: The line is still being split at every colon. Split at the first colon only.
+    explanation: >-
+      HTTP header syntax is name, colon, value - and only the first colon separates them. Values such as dates,
+      URLs and host:port pairs legitimately contain more colons.
+
+  - id: explain-stateless
+    type: explain
+    skill: explanation
+    prompt: |
+      A beginner asks: "If HTTP is stateless, how does a website remember that I am logged in?" Explain what
+      stateless means and how continuity is added.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says each request must be understandable on its own; the protocol does not remember previous requests.
+      - Explains that the client sends a session cookie or token with every request.
+      - Explains that the server uses that value to look up or verify who the user is.
+      - Mentions a benefit, such as any server behind a load balancer being able to handle any request.
+    modelAnswer: |
+      Stateless means HTTP itself keeps no memory between requests: each request must carry everything needed
+      to understand it, even on a reused connection. Logins work by adding state on top. After you log in, the
+      server gives the client a session ID in a cookie or a signed token, and the browser or app sends it in a
+      Cookie or Authorization header with every later request. The server looks up the session or verifies
+      the token each time to know who you are. Because no request depends on a previous one, any of several
+      servers behind a load balancer can handle it, which makes scaling simpler.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-urlsplit
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      from urllib.parse import urlsplit, parse_qs
+
+      parts = urlsplit("http://localhost:8000/search?q=milk&q=bread#results")
+      print(parts.path, parts.port)
+      print(parse_qs(parts.query))
+      print(parts.fragment)
+    answer: |
+      /search 8000
+      {'q': ['milk', 'bread']}
+      results
+    explanation: >-
+      The path excludes the query and fragment; port is parsed as an int. parse_qs collects repeated names into
+      a list, keeping both values. The fragment is available to the client but is never sent to the server.
+    wrongAnswers:
+      - answer: |
+          /search?q=milk&q=bread 8000
+          {'q': ['milk', 'bread']}
+          results
+        feedback: urlsplit separates the query from the path; parts.path is only /search.
+      - answer: |
+          /search 8000
+          {'q': 'bread'}
+          results
+        feedback: parse_qs keeps every value for a repeated name, always as a list of strings.
+
+  - id: m-fragment-mcq
+    type: mcq
+    skill: recognition
+    prompt: |
+      For `https://shop.example.com/items?id=7#reviews`, which part does the browser **not** send to the
+      server at all?
+    explanation: >-
+      The fragment (#reviews) is used only by the client, for example to scroll to a section. The path and
+      query form the request target, and the host goes in the Host header (and TLS SNI).
+    options:
+      - id: a
+        text: "#reviews (the fragment)"
+        correct: true
+        feedback: Right. The request line is GET /items?id=7 HTTP/1.1.
+      - id: b
+        text: "?id=7 (the query)"
+        feedback: The query is part of the request target and is sent - which is also why it appears in server logs.
+      - id: c
+        text: shop.example.com (the host)
+        feedback: The host is sent in the Host header (or :authority in HTTP/2 and HTTP/3).
+      - id: d
+        text: /items (the path)
+        feedback: The path is the main part of the request target.
+
+  - id: m-tf-http2
+    type: true-false
+    skill: transfer
+    prompt: |
+      True or false: when a server upgrades from HTTP/1.1 to HTTP/2, API clients must change the methods and
+      status codes they use, because HTTP/2 is a binary protocol.
+    answer: false
+    explanation: >-
+      HTTP/2 changes the framing (binary frames, multiplexed streams, compressed headers), not the semantics.
+      Methods, status codes and header meanings are defined once in RFC 9110 and are the same in HTTP/1.1,
+      HTTP/2 and HTTP/3.
+
+  - id: m-parse-request
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write `parse_request(raw)` for the **server** side. Return a dictionary with:
+
+      - `"method"` (str), `"path"` (the path only, without the query),
+      - `"query"`: the query parsed with `parse_qs` (a dict of lists; `{}` if there is none),
+      - `"headers"`: lower-case names, stripped values,
+      - `"body"`: the bytes after the first empty line.
+
+      Use `urlsplit` and `parse_qs` from `urllib.parse`.
+    starterCode: |
+      from urllib.parse import urlsplit, parse_qs
+
+      def parse_request(raw: bytes) -> dict:
+          return {}
+
+      raw = b"GET /notes?tag=work&limit=2 HTTP/1.1\r\nHost: localhost:8000\r\nAccept: application/json\r\n\r\n"
+      print(parse_request(raw))
+    solution: |
+      from urllib.parse import urlsplit, parse_qs
+
+      def parse_request(raw: bytes) -> dict:
+          head, _, body = raw.partition(b"\r\n\r\n")
+          lines = head.decode("iso-8859-1").split("\r\n")
+          method, target, version = lines[0].split(" ")
+          parts = urlsplit(target)
+          headers = {}
+          for line in lines[1:]:
+              name, _, value = line.partition(":")
+              headers[name.strip().lower()] = value.strip()
+          return {
+              "method": method,
+              "path": parts.path,
+              "query": parse_qs(parts.query),
+              "headers": headers,
+              "body": body,
+          }
+
+      raw = b"GET /notes?tag=work&limit=2 HTTP/1.1\r\nHost: localhost:8000\r\nAccept: application/json\r\n\r\n"
+      print(parse_request(raw))
+    expectedOutput: |
+      {'method': 'GET', 'path': '/notes', 'query': {'tag': ['work'], 'limit': ['2']}, 'headers': {'host': 'localhost:8000', 'accept': 'application/json'}, 'body': b''}
+    tests:
+      - name: GET with a query string
+        code: |
+          got = parse_request(b"GET /notes?tag=work&limit=2 HTTP/1.1\r\nHost: localhost:8000\r\n\r\n")
+          assert got.get("method") == "GET", f"method should be 'GET', got {got.get('method')!r}."
+          assert got.get("path") == "/notes", f"path should exclude the query; got {got.get('path')!r}."
+          assert got.get("query") == {"tag": ["work"], "limit": ["2"]}, f"query should be parse_qs of the query string; got {got.get('query')!r}."
+          assert got.get("headers") == {"host": "localhost:8000"}, f"headers = {got.get('headers')!r}."
+          assert got.get("body") == b"", f"body = {got.get('body')!r}."
+      - name: POST with a body and no query
+        code: |
+          raw = b'POST /notes HTTP/1.1\r\nHost: api.example.com\r\nContent-Type: application/json\r\nContent-Length: 17\r\n\r\n{"title": "Milk"}'
+          got = parse_request(raw)
+          assert got.get("method") == "POST" and got.get("path") == "/notes", f"Got method={got.get('method')!r}, path={got.get('path')!r}."
+          assert got.get("query") == {}, f"With no query string, query should be {{}}; got {got.get('query')!r}."
+          assert got.get("headers", {}).get("content-type") == "application/json", "Header names should be lower-case."
+          assert got.get("body") == b'{"title": "Milk"}', f"body = {got.get('body')!r}."
+    hints:
+      - Start like parse_response - partition at the first empty line and split the head into lines.
+      - "The request line has three parts: `method, target, version = lines[0].split(\" \")`."
+      - "`urlsplit(target)` gives `.path` and `.query`; `parse_qs(\"\")` returns `{}`."
+    feedback:
+      - when: { errorType: ValueError, errorMessageContains: "too many values to unpack" }
+        message: Split header lines at the first colon only - Host values contain a colon before the port.
+    explanation: >-
+      A server reverses what the client built: request line, target split into path and query, headers
+      normalised to lower case, and the body. Web frameworks do exactly this before calling your code.
+
+  - id: m-debug-content-length
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Clients report that responses containing ₹ or accented names lose their last few bytes. Fix
+      `make_response` so the `Content-Length` header is always correct.
+    starterCode: |
+      def make_response(text: str) -> bytes:
+          body = text.encode("utf-8")
+          head = (
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: text/plain; charset=utf-8\r\n"
+              f"Content-Length: {len(text)}\r\n"
+              "\r\n"
+          )
+          return head.encode("ascii") + body
+
+      print(make_response("Total: ₹500"))
+    solution: |
+      def make_response(text: str) -> bytes:
+          body = text.encode("utf-8")
+          head = (
+              "HTTP/1.1 200 OK\r\n"
+              "Content-Type: text/plain; charset=utf-8\r\n"
+              f"Content-Length: {len(body)}\r\n"
+              "\r\n"
+          )
+          return head.encode("ascii") + body
+
+      print(make_response("Total: ₹500"))
+    expectedOutput: |
+      b'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 13\r\n\r\nTotal: \xe2\x82\xb9500'
+    tests:
+      - name: Content-Length matches the body bytes
+        code: |
+          for text in ["Total: ₹500", "naïve café", "plain ascii"]:
+              raw = make_response(text)
+              head, _, body = raw.partition(b"\r\n\r\n")
+              length = [line for line in head.split(b"\r\n") if line.lower().startswith(b"content-length:")][0].split(b":")[1].strip()
+              assert int(length) == len(body), f"For {text!r} the header says {int(length)} but the body has {len(body)} bytes. Measure the encoded body."
+    hints:
+      - Which length does the header use - the str or the encoded bytes?
+      - "Use `len(body)`, the length of the bytes actually sent."
+    feedback:
+      - when: { outputContains: "Content-Length: 11" }
+        message: >-
+          11 is the number of characters in "Total: ₹500". The body is 13 bytes because ₹ takes 3 bytes in
+          UTF-8.
+    explanation: >-
+      Content-Length counts bytes on the wire. ₹ is one character but three UTF-8 bytes, so measuring the str
+      under-reports the size and the client stops reading early.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-urlsplit, m-fragment-mcq, m-tf-http2, m-parse-request, m-debug-content-length]
+
+cheatsheet: |
+  ```http
+  POST /notes?draft=1 HTTP/1.1          <- request line: METHOD target version
+  Host: api.example.com                 <- headers (names case-insensitive)
+  Content-Type: application/json
+  Content-Length: 25                    <- body size in BYTES
+                                        <- empty line (CRLF CRLF ends the head)
+  {"title": "Buy oat milk"}             <- body
+
+  HTTP/1.1 201 Created                  <- status line: version code reason
+  Location: /notes/7
+  ```
+  ```python
+  head, _, body = raw.partition(b"\r\n\r\n")
+  name, _, value = line.partition(":")          # first colon only
+  headers[name.strip().lower()] = value.strip()
+  urlsplit(url).path / .query / .port ; parse_qs(query) ; urlencode(dict)
+  ```
+  - 1xx info · 2xx success · 3xx redirect · 4xx client error · 5xx server error
+  - HTTP/2, HTTP/3: same semantics, binary frames; HTTPS encrypts every version

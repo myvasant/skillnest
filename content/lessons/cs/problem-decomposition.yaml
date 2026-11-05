@@ -1,0 +1,323 @@
+id: cs.problem-decomposition
+concept: cs.problem-decomposition
+title: Problem Decomposition and Computational Thinking
+subtitle: Turn a vague task into small, testable steps
+estimatedMinutes: 50
+reviewedOn: 2026-11-04
+summary: >-
+  Learn to understand a problem before coding, identify inputs and outputs, discover constraints and edge
+  cases, split work into smaller responsibilities, and test each part. Practise turning a vague reporting
+  task into a clear algorithm and a set of small Python functions.
+objectives:
+  - Restate a problem precisely and identify its inputs, outputs and constraints.
+  - Use examples and edge cases to clarify expected behaviour before writing code.
+  - Decompose a task into small steps with clear responsibilities.
+  - Recognise common patterns such as filtering, counting, grouping and aggregation.
+  - Explain how abstraction removes irrelevant detail while preserving what affects the answer.
+sources:
+  - title: How to Design Programs — The Design Recipe
+    url: https://htdp.org/
+    publisher: Felleisen, Findler, Flatt and Krishnamurthi
+  - title: Think Python, 3rd edition
+    url: https://allendowney.github.io/ThinkPython/
+    publisher: Allen B. Downey
+  - title: Problem Solving with Algorithms and Data Structures using Python
+    url: https://runestone.academy/ns/books/published/pythonds3/index.html
+    publisher: Runestone Academy
+sections:
+  - id: start-with-the-problem
+    title: Understand the task before writing code
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          A request such as **"build a sales report"** sounds simple, but it hides many questions. What counts
+          as a sale? Which dates are included? Should cancelled orders count? What should happen when there are
+          no orders? What form should the report take?
+
+          **Problem solving** is the process of turning a goal into a sequence of steps that reliably produces
+          the required result. Coding is only one part of that process. If you misunderstand the task, fast,
+          elegant code can still produce the wrong answer.
+      - type: callout
+        variant: tip
+        title: Write down four things first
+        body: |
+          1. **Input:** What information will the solution receive?
+          2. **Output:** What exact result must it produce?
+          3. **Rules:** What conditions define a correct result?
+          4. **Constraints:** What limits matter — size, time range, memory, allowed tools or invalid data?
+      - type: markdown
+        body: |
+          For a simple order-total task, a precise statement might be: "Given a list of order dictionaries,
+          return the sum of `amount` for orders whose `status` is `paid`. Ignore other statuses. Return `0`
+          for an empty list." This is much more useful than "calculate sales" because it can be tested.
+  - id: examples-and-edge-cases
+    title: Work through examples before choosing an algorithm
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **test case** is one input together with the result you expect. Work through small cases by hand.
+          Include ordinary examples and edge cases — inputs near the boundaries of what is allowed.
+
+          For the paid-order total, ask:
+
+          | Input | Expected result | What it checks |
+          |---|---:|---|
+          | One paid order for 25 | 25 | Basic case |
+          | One pending order for 25 | 0 | Status filter |
+          | Paid 10, pending 7, paid 5 | 15 | Filtering and accumulation |
+          | Empty list | 0 | Empty input |
+          | Paid order with amount 0 | 0 | Zero is valid data |
+
+          Examples often reveal missing requirements. If a record can omit `amount`, decide whether that is an
+          error, a skipped record or a default before implementing the function.
+      - type: code
+        runnable: true
+        code: |
+          orders = [
+              {"status": "paid", "amount": 25},
+              {"status": "pending", "amount": 40},
+              {"status": "paid", "amount": 15},
+          ]
+
+          total = 0
+          for order in orders:
+              if order["status"] == "paid":
+                  total += order["amount"]
+
+          print(total)
+          print(sum(order["amount"] for order in [] if order["status"] == "paid"))
+        expectedOutput: |
+          40
+          0
+        caption: The first example checks a mixed list. The second confirms that the chosen rule gives zero for no matching orders.
+        annotations:
+          - line: 8
+            text: The condition decides which records contribute to the result.
+          - line: 9
+            text: The accumulator combines each accepted amount into one running total.
+  - id: split-into-subproblems
+    title: Decompose the task into smaller responsibilities
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **Decomposition** means splitting a large task into smaller tasks that can be understood, implemented
+          and checked separately. For the order report, one useful plan is:
+
+          1. Select only paid orders.
+          2. Calculate their total amount.
+          3. Count how many paid orders there are.
+          4. Combine those results into a report.
+
+          Each step has a clear responsibility. It can become a function with inputs and an output. Small
+          functions are easier to test because each test can focus on one behaviour.
+      - type: code
+        runnable: true
+        code: |
+          def paid_orders(orders):
+              return [order for order in orders if order["status"] == "paid"]
+
+          def total_amount(orders):
+              return sum(order["amount"] for order in orders)
+
+          def build_report(orders):
+              selected = paid_orders(orders)
+              return {
+                  "paid_count": len(selected),
+                  "paid_total": total_amount(selected),
+              }
+
+          sample = [
+              {"status": "paid", "amount": 25},
+              {"status": "pending", "amount": 40},
+              {"status": "paid", "amount": 15},
+          ]
+          print(build_report(sample))
+        expectedOutput: |
+          {'paid_count': 2, 'paid_total': 40}
+        annotations:
+          - line: 1
+            text: This function owns only the selection rule.
+          - line: 4
+            text: This function assumes it receives the selected orders; it does not need to know about status values.
+          - line: 7
+            text: The top-level function coordinates the smaller steps and returns one result.
+      - type: callout
+        variant: misconception
+        title: Decomposition is not the same as making many tiny functions
+        body: |
+          A function should represent a meaningful responsibility. Splitting every single line into its own
+          function adds navigation and indirection without necessarily improving clarity. Decompose where a
+          step has a clear purpose, can be tested independently, or is likely to change separately.
+  - id: patterns-and-abstraction
+    title: Recognise patterns and use abstraction
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Many programming tasks are combinations of a few recurring patterns:
+
+          - **Filtering:** keep only values that satisfy a condition.
+          - **Mapping:** transform each value into another value.
+          - **Counting:** count how many values satisfy a condition.
+          - **Aggregation:** combine many values into one result, such as a sum or maximum.
+          - **Grouping:** collect values that share a key, such as orders by customer.
+          - **Searching:** find an item that matches a condition.
+
+          **Abstraction** means keeping the details that matter and ignoring details that do not. If the task is
+          to calculate paid-order revenue, the customer's display colour is irrelevant; order status and amount
+          matter. A useful abstraction makes a complicated situation easier to reason about without changing
+          the answer.
+      - type: code
+        runnable: true
+        code: |
+          scores = [72, 91, 64, 91, 83]
+
+          # Filtering: keep passing scores.
+          passing = [score for score in scores if score >= 70]
+          # Counting: how many passed?
+          count = len(passing)
+          # Aggregation: calculate the average of the passing scores.
+          average = sum(passing) / count
+
+          print(passing)
+          print(count)
+          print(round(average, 1))
+        expectedOutput: |
+          [72, 91, 91, 83]
+          4
+          84.2
+        caption: One small dataset supports three different problem-solving patterns.
+  - id: refine-and-test
+    title: Refine the plan and test each part
+    kind: debugging
+    blocks:
+      - type: markdown
+        body: |
+          Decomposition is iterative. You may discover that a sub-problem is still too large, or that an
+          assumption was wrong. Split it again, revise the plan and add a test for the new rule.
+
+          A practical workflow is:
+
+          1. Restate the problem and clarify ambiguous words.
+          2. Write representative examples, including edge cases.
+          3. Sketch the steps in plain language or pseudocode.
+          4. Identify functions and their responsibilities.
+          5. Implement one part at a time.
+          6. Test each part, then test the complete solution.
+          7. Review whether the solution meets the original constraints.
+
+          Do not confuse a plan with proof of correctness. Tests provide evidence for selected cases; they do
+          not prove that every possible input is handled. Add tests where risk or uncertainty is highest.
+      - type: callout
+        variant: interview
+        title: Explain your reasoning out loud
+        body: |
+          In a coding interview, clarify requirements, describe a simple baseline approach, walk through an
+          example, then improve the approach if needed. State assumptions and complexity. This gives the
+          interviewer a chance to correct a misunderstanding before you spend time implementing it.
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Understand the input, output, rules and constraints before coding.
+          - Use small examples and edge cases to clarify expected behaviour.
+          - Split large tasks into meaningful, independently testable responsibilities.
+          - Recognise reusable patterns: filtering, mapping, counting, aggregation, grouping and searching.
+          - Use abstraction to ignore irrelevant details while preserving what affects the answer.
+          - Refine the plan when examples or tests expose a missing requirement.
+      - type: item
+        ref: decomposition-predict
+      - type: item
+        ref: decomposition-design
+      - type: item
+        ref: decomposition-code
+items:
+  - id: decomposition-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this code print?
+    code: |
+      values = [3, 8, 5, 2]
+      selected = [value for value in values if value > 4]
+      print(len(selected), sum(selected))
+    answer: |
+      2 13
+    explanation: The filter keeps 8 and 5. There are two selected values and their sum is 13.
+  - id: decomposition-design
+    type: explain
+    skill: design
+    difficulty: 2
+    prompt: You are asked to build a function that reports the number of completed tasks per user. Identify the input, output, one important rule to clarify, and two useful sub-problems.
+    explanation: Before coding, specify what a task record contains, what the result should look like, and how to treat users with no completed tasks. Filtering completed tasks and grouping them by user are separate responsibilities.
+    rubric:
+      - Identifies a collection of task records with user and completion information as input.
+      - Identifies a mapping from user to completed-task count as output.
+      - Names a meaningful ambiguity, such as how missing users or incomplete status values should be handled.
+      - Proposes separate filtering and grouping/counting steps.
+    modelAnswer: Input could be a list of task records containing a user ID and status. Output could be a dictionary mapping each user ID to the number of completed tasks. Clarify whether users with zero completed tasks should appear. Decompose into selecting completed tasks, then grouping and counting them by user.
+  - id: decomposition-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Complete `count_passing(scores, threshold)` so it returns the number of scores greater than or equal to the threshold. Return zero for an empty list.
+    explanation: Count each score that meets the inclusive threshold. A generator expression keeps the implementation compact and sum returns zero when no values match.
+    starterCode: |
+      def count_passing(scores, threshold):
+          # Count values that meet or exceed the threshold.
+          pass
+
+      print(count_passing([55, 70, 91, 69], 70))
+      print(count_passing([], 70))
+    solution: |
+      def count_passing(scores, threshold):
+          return sum(1 for score in scores if score >= threshold)
+
+      print(count_passing([55, 70, 91, 69], 70))
+      print(count_passing([], 70))
+    tests:
+      - name: counts values at the threshold and above
+        code: assert count_passing([55, 70, 91, 69], 70) == 2
+      - name: handles empty input
+        code: assert count_passing([], 70) == 0
+      - name: handles no passing values
+        code: assert count_passing([1, 2], 70) == 0
+    hints:
+      - Start with the filtering condition `score >= threshold`.
+      - "`sum(1 for ...)` counts each value that passes the condition."
+      - The generator produces no values for an empty input, so sum returns zero.
+    expectedOutput: |
+      2
+      0
+  - id: decomposition-transfer
+    type: explain
+    skill: transfer
+    difficulty: 3
+    prompt: A request says "find the best customer" but does not define best. Explain why coding immediately is risky and list two clarifying questions.
+    explanation: Best is not a precise requirement. Different metrics and time windows can produce different winners, so clarify the measure and the eligible data before choosing an algorithm.
+    rubric:
+      - Recognises that best is ambiguous and can mean revenue, order count, retention or another metric.
+      - Asks about the metric and the time period or eligibility rules.
+      - Explains that different definitions produce different correct outputs.
+    modelAnswer: >-
+      "Best" is not a measurable rule. Ask which metric defines best (total revenue, number of orders, profit
+      or retention) and what time window or customer eligibility rules apply. Without these details, the code
+      may be internally correct but answer the wrong question.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+    - decomposition-predict
+    - decomposition-design
+    - decomposition-code
+    - decomposition-transfer
+cheatsheet: |
+  Before coding: define inputs, outputs, rules and constraints.
+  Test small examples and edge cases by hand.
+  Decompose a task into meaningful steps and small functions.
+  Reuse patterns: filter, map, count, aggregate, group and search.
+  Refine the plan when a test reveals a missing rule.

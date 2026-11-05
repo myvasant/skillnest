@@ -1,0 +1,185 @@
+id: tooling.gitignore-hygiene
+concept: tooling.gitignore-hygiene
+title: .gitignore and Repository Hygiene
+subtitle: Keep environments, generated files and credentials out of Git
+estimatedMinutes: 35
+reviewedOn: '2026-11-04'
+summary: Learn how Git ignore patterns work, why tracked files behave differently, how to keep secrets out of commits
+  and what to do after a credential is exposed.
+objectives:
+- Write ignore patterns for virtual environments, caches, build output and local secrets.
+- Explain why ignore rules do not untrack existing files.
+- Use `git rm --cached` appropriately.
+- Explain why deleting a pushed secret does not make it safe.
+- Describe a practical secret-exposure response.
+sources:
+- title: gitignore documentation
+  url: https://git-scm.com/docs/gitignore
+  publisher: Git project
+- title: Removing sensitive data from a repository
+  url: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository
+  publisher: GitHub Docs
+- title: GitHub secret scanning
+  url: https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning
+  publisher: GitHub Docs
+sections:
+- id: why
+  title: Keep generated files and secrets out
+  kind: why
+  blocks:
+  - type: markdown
+    body: A repository should contain source code and the files needed to reproduce the project, not virtual environments,
+      caches, build output, private datasets or credentials. A `.gitignore` file tells Git which **untracked** paths
+      to ignore. It is repository hygiene, not a secrets manager.
+- id: patterns
+  title: Write useful ignore patterns
+  kind: concept
+  blocks:
+  - type: markdown
+    body: Common patterns include `.venv/`, `__pycache__/`, `*.py[cod]`, `.env`, `.pytest_cache/`, `dist/` and `node_modules/`.
+      Patterns can be rooted at the repository, match directories, use wildcards and be overridden with negation
+      (`!pattern`). Check the Git documentation when patterns behave unexpectedly.
+  - type: code
+    language: text
+    runnable: false
+    code: '# Python environments and generated files
+
+      .venv/
+
+      __pycache__/
+
+      *.py[cod]
+
+      .pytest_cache/
+
+
+      # Local configuration and secrets
+
+      .env
+
+      .env.*
+
+      !.env.example
+
+
+      # Frontend build output
+
+      node_modules/
+
+      dist/'
+    caption: Example for a mixed Python and frontend repository. Adapt it to the actual project.
+  - type: item
+    ref: ignore-tracked-mcq
+- id: tracked
+  title: Already tracked files are different
+  kind: concept
+  blocks:
+  - type: markdown
+    body: If a file is already tracked, adding it to `.gitignore` does not remove it from the index. Use `git rm
+      --cached path/to/file` to stop tracking it while keeping the local copy, then commit the change. If the file
+      contains a secret, this only removes it from the current tree; it does not erase previous commits.
+  - type: callout
+    variant: warning
+    title: Treat pushed secrets as compromised
+    body: Revoke or rotate an exposed credential first. A history rewrite cannot guarantee removal from every clone,
+      fork, cache or log.
+  - type: item
+    ref: secret-delete-tf
+  - type: item
+    ref: secret-response-explain
+- id: workflow
+  title: Safer repository setup
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: Commit an `.env.example` containing names and placeholder values, never real secrets. Keep actual `.env`
+      files local. Use a secret manager or environment variables in deployment, enable secret scanning and push
+      protection where available, and review staged files with `git status` and `git diff --cached` before committing.
+  - type: code
+    language: bash
+    runnable: false
+    code: 'git status --short
+
+      git diff --cached
+
+      git rm --cached .env
+
+      git check-ignore -v .env'
+    caption: Inspect staged changes, untrack a previously committed local file, and see which ignore rule matches.
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- `.gitignore` affects untracked files only.
+
+      - Use `.env.example` for placeholders; never commit real secrets.
+
+      - `git rm --cached` stops tracking but keeps the local file.
+
+      - A pushed secret must be revoked/rotated; deleting it is not enough.'
+  - type: item
+    ref: ignore-tracked-mcq
+  - type: item
+    ref: secret-delete-tf
+  - type: item
+    ref: secret-response-explain
+items:
+- id: ignore-tracked-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: You add `*.log` to `.gitignore`, but a log file that was already committed still appears in `git status`
+    after you edit it. Why?
+  explanation: Git ignore rules apply to untracked files; they do not stop tracking files already in the index.
+  options:
+  - id: a
+    text: Git ignores only files larger than 1 MB.
+    correct: false
+    feedback: File size is not the reason.
+  - id: b
+    text: The file is already tracked; remove it from the index with `git rm --cached`.
+    correct: true
+    feedback: Correct. The ignore rule does not untrack an existing file.
+  - id: c
+    text: '`.gitignore` works only on Linux.'
+    correct: false
+    feedback: Git ignore rules are cross-platform.
+  - id: d
+    text: You must delete the repository and clone again.
+    correct: false
+    feedback: That is unnecessary and does not address the index.
+- id: secret-delete-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: If an API key is accidentally pushed, deleting it in the next commit makes the old key safe again.
+  answer: false
+  explanation: The secret remains in Git history, clones, forks, logs or caches. Revoke and rotate it immediately;
+    history cleanup is secondary.
+- id: secret-response-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: A developer accidentally pushes `.env` containing a live API key to a public repository, then deletes
+    the file in a new commit. List the immediate response steps in the correct order.
+  rubric:
+  - Revoke or rotate the exposed credential immediately.
+  - Check for unauthorized use and affected systems.
+  - Remove the secret from repository history where appropriate and coordinate clone/fork cleanup.
+  - Add ignore rules and secret scanning to prevent recurrence.
+  modelAnswer: First revoke or rotate the key; assume it is compromised. Check provider audit logs and usage for
+    misuse. Then remove the secret from current files and repository history using an appropriate history-rewrite
+    tool, coordinate with collaborators because clones and forks may retain it, and enable secret scanning/push
+    protection. Add `.env` to `.gitignore` and commit only a safe `.env.example` with placeholders.
+  explanation: Deleting a secret from the latest tree does not erase historical copies. Credential rotation is the
+    urgent containment action.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - ignore-tracked-mcq
+  - secret-delete-tf
+  - secret-response-explain
+cheatsheet: 'Ignore untracked files: `.venv/`, `__pycache__/`, `.env`, `*.log`. `.gitignore` does not untrack files
+  already committed; use `git rm --cached file`. If a secret is pushed: revoke/rotate first, investigate, clean
+  history where appropriate, prevent recurrence.'

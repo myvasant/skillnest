@@ -1,0 +1,721 @@
+id: calculator
+title: Menu-driven Calculator
+track: python-beginner
+level: beginner
+estimatedHours: 3
+environment: browser
+summary: >-
+  Build a four-function calculator out of small, tested functions: safe division, input
+  validation that never crashes, and a menu loop that keeps going until the user quits.
+concepts:
+  - python.input-output
+  - python.type-conversion
+  - python.conditionals
+  - python.while-loops
+  - python.functions
+  - python.exceptions
+problem: |
+  Every operating system ships a calculator app. You will build one for the terminal, and the
+  hard part is not the arithmetic: it is making a program that **never crashes**, whatever the
+  user types. `twelve` is not a number, `7 / 0` has no answer, and `9` is not on the menu. A good
+  program explains the problem and asks again.
+
+  You will build it the way professional programs are built: as small
+  [functions](concept:python.functions) that each do one job and can be tested on their own, and
+  only then a loop that connects them to the user.
+
+  | Function | Takes | Returns |
+  |---|---|---|
+  | `add(a, b)`, `subtract(a, b)`, `multiply(a, b)` | two numbers | the result |
+  | `divide(a, b)` | two numbers | `a / b`, or `None` when `b` is 0 |
+  | `calculate(a, op, b)` | a number, `"+"`, `"-"`, `"*"` or `"/"`, a number | the result, or `None` |
+  | `format_number(x)` | a number | text for display: `5.0` → `"5"`, `1/3` → `"0.333333"` |
+  | `parse_number(text)` | what the user typed | a `float`, or `None` if it is not a sensible number |
+  | `choice_to_operator(choice)` | a menu choice such as `"3"` | `"*"`, or `None` |
+  | `main()` | (reads with `input()`) | prints the menu and results until the user types `q` |
+
+  **Input** is one line per question: a menu choice, then two numbers. **Output** is a result line
+  such as `10 / 4 = 2.5`, a helpful message for every mistake, and a goodbye line with the number
+  of calculations done.
+
+  Example session (what the user types is shown after each prompt):
+
+  ```text
+  === Calculator ===
+  1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit
+  Choose an option: 4
+  First number: 10
+  Second number: 4
+  10 / 4 = 2.5
+  1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit
+  Choose an option: 4
+  First number: 7
+  Second number: 0
+  Cannot divide by zero.
+  1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit
+  Choose an option: 9
+  Please choose 1, 2, 3, 4 or q.
+  1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit
+  Choose an option: 1
+  First number: twelve
+  'twelve' is not a number. Please try again.
+  First number: 12
+  Second number: 0.5
+  12 + 0.5 = 12.5
+  1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit
+  Choose an option: q
+  Goodbye! Calculations done: 2
+  ```
+acceptanceCriteria:
+  - "`add`, `subtract`, `multiply` and `divide` **return** (not print) the result; `divide(a, 0)` returns `None` instead of raising `ZeroDivisionError`."
+  - "`calculate(a, op, b)` handles `+ - * /` by reusing the four functions and returns `None` for an unknown operator or a division by zero."
+  - "`format_number` shows whole results without `.0` and rounds others to at most 6 decimal places (`0.1 + 0.2` shows as `0.3`)."
+  - "`parse_number` returns a `float` for valid text (including `0`) and `None` for anything else, such as `abc`, an empty line, `inf`, `nan` or numbers of a trillion or more, using `try`/`except ValueError`."
+  - "The menu loop accepts `1`–`4` and `q`/`Q`, re-asks after an invalid choice or number, reports division by zero, and ends with `Goodbye! Calculations done: N`."
+  - "The program never crashes, including when the input runs out (end of input counts as quitting), and never uses `eval()`."
+architecture: |
+  Four layers, each built in its own milestone. Every layer only calls the layers below it, so you
+  can test each one on its own before the next exists.
+
+  ```text
+   user ──input()──► read_line ──► choice_to_operator ───────────────┐
+                        │                                             ▼
+                        └──► ask_number ──► parse_number ──► calculate(a, op, b) ──► format_number ──► print()
+                                                                │
+                                              add · subtract · multiply · divide
+  ```
+
+  * **Arithmetic** (milestone 1): four one-line functions. `divide` checks for zero *before*
+    dividing, so it can never crash.
+  * **Dispatch and display** (milestone 2): `calculate` chooses the right function with
+    `if`/`elif` ([conditionals](concept:python.conditionals)); `format_number` turns results into
+    friendly text.
+  * **Validation** (milestone 3): `parse_number` wraps `float()` in `try`/`except ValueError`
+    ([exceptions](concept:python.exceptions)) and adds a range check.
+  * **Interaction** (milestone 4): `main()` runs a [while loop](concept:python.while-loops) that
+    shows the menu, reads answers through `read_line`, and stops on `q`. `read_line` turns
+    `EOFError` (no more input) into `None`, which the loop treats as "quit".
+
+  The program finishes with `if __name__ == "__main__": main()`. Groundwork runs your file as the
+  main program, so `main()` runs every time; because it stops politely when the input runs out,
+  the tests can call your functions without any typing.
+setup: |
+  Nothing to install. This project runs in the editor on this page with Python 3.14 in your
+  browser (Pyodide). All milestones share **one code file**: keep your earlier functions as you
+  add new ones, and click **Run milestone tests** to check the milestone you are working on.
+
+  To run the finished program on your own computer as well, save the code as `calculator.py` and
+  run it from a terminal in the same folder. No virtual environment or packages are needed: it
+  uses only built-in Python.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  python calculator.py
+  ```
+
+  (If `python` is not found, try `py calculator.py`.)
+
+  **macOS / Linux**
+
+  ```bash
+  python3 calculator.py
+  ```
+milestones:
+  - id: operations
+    title: The four operations
+    description: |
+      Write `add(a, b)`, `subtract(a, b)`, `multiply(a, b)` and `divide(a, b)`. Each one must
+      **return** its result; a function that only prints gives the caller `None`.
+
+      `divide` must be *safe*: if `b` is `0`, return `None` instead of letting Python raise
+      `ZeroDivisionError`. Check for zero first with an `if`.
+
+      The tests call each function with whole numbers, decimals and negative numbers, check that
+      the argument order matters for `subtract` and `divide`, and check that `divide(5, 0)` returns
+      `None`. They also check that the program does not use `eval()` anywhere.
+    starterCode: |
+      # Menu-driven calculator
+      # One file for the whole project: keep your earlier functions as you add new ones.
+      # Click "Run milestone tests" whenever you finish a milestone.
+
+
+      # --- Milestone 1: the four operations ------------------------------------
+
+      def add(a, b):
+          """Return the sum of a and b."""
+          # TODO: return the result (do not print it)
+          pass
+
+
+      def subtract(a, b):
+          """Return a minus b."""
+          # TODO
+          pass
+
+
+      def multiply(a, b):
+          """Return a times b."""
+          # TODO
+          pass
+
+
+      def divide(a, b):
+          """Return a divided by b, or None when b is 0 (so it never crashes)."""
+          # TODO: check for b == 0 first, then divide
+          pass
+
+
+      # --- Milestone 2: calculate(a, op, b) and format_number(x) -------------
+      # --- Milestone 3: parse_number(text) -------------------------------------
+      # --- Milestone 4: read_line, ask_number, choice_to_operator, main --------
+
+
+      def main():
+          """Run the calculator menu until the user types q."""
+          print("=== Calculator ===")
+          # TODO (milestone 4): the menu loop
+
+
+      if __name__ == "__main__":
+          main()
+    hints:
+      - "A function sends a value back with `return`, for example `return a + b`. `print(a + b)` only shows it on screen; the caller still gets `None`."
+      - "In `divide`, start with `if b == 0:` and `return None` inside it. The division on the next line only runs when `b` is not zero."
+      - "Try your functions with a quick `print(divide(10, 4))` while you work, then delete the line."
+    tests:
+      - name: add, subtract and multiply return the right numbers
+        code: |
+          for name in ["add", "subtract", "multiply", "divide"]:
+              assert defined(name), f"Define a function called {name}(a, b)."
+          assert add(2, 3) is not None, "add(2, 3) returned None. Use return, not print(), to send the result back."
+          assert add(2, 3) == 5, f"add(2, 3) should be 5, but it returned {add(2, 3)!r}."
+          assert add(-1.5, 0.5) == -1.0, f"add(-1.5, 0.5) should be -1.0, but it returned {add(-1.5, 0.5)!r}."
+          assert subtract(10, 4) == 6, f"subtract(10, 4) should be 6, but it returned {subtract(10, 4)!r}."
+          assert subtract(4, 10) == -6, "subtract(4, 10) should be -6: the order of the arguments matters (a - b)."
+          assert multiply(6, 7) == 42, f"multiply(6, 7) should be 42, but it returned {multiply(6, 7)!r}."
+          assert multiply(2.5, -4) == -10.0, f"multiply(2.5, -4) should be -10.0, but it returned {multiply(2.5, -4)!r}."
+      - name: divide works and is safe for zero
+        code: |
+          assert divide(10, 4) == 2.5, f"divide(10, 4) should be 2.5, but it returned {divide(10, 4)!r}."
+          assert divide(4, 10) == 0.4, "divide(4, 10) should be 0.4: the order of the arguments matters (a / b)."
+          assert abs(divide(1, 3) - 0.3333333333) < 1e-9, f"divide(1, 3) should be about 0.3333, not {divide(1, 3)!r}."
+          assert divide(0, 5) == 0, f"divide(0, 5) should be 0, but it returned {divide(0, 5)!r}."
+          try:
+              result = divide(5, 0)
+          except ZeroDivisionError:
+              raise AssertionError("divide(5, 0) crashed with ZeroDivisionError. Check `if b == 0:` first and return None.")
+          assert result is None, f"divide(5, 0) should return None, but it returned {result!r}."
+      - name: the calculator never uses eval()
+        code: |
+          assert not calls("eval") and not calls("exec"), (
+              "Do not use eval() or exec(): they run any Python code the user types, which is a security hole. "
+              "Use your own functions instead."
+          )
+    solution: |
+      # Menu-driven calculator: milestone 1
+
+
+      def add(a, b):
+          """Return the sum of a and b."""
+          return a + b
+
+
+      def subtract(a, b):
+          """Return a minus b."""
+          return a - b
+
+
+      def multiply(a, b):
+          """Return a times b."""
+          return a * b
+
+
+      def divide(a, b):
+          """Return a divided by b, or None when b is 0 (so it never crashes)."""
+          if b == 0:
+              return None
+          return a / b
+  - id: calculate
+    title: One function for every operator
+    description: |
+      Add `calculate(a, op, b)`. It receives an operator as text (`"+"`, `"-"`, `"*"` or `"/"`) and
+      returns the result by **calling your four functions** with `if`/`elif`. For any other
+      operator, return `None`. (Division by zero already returns `None`, because `divide` does.)
+
+      Then add `format_number(x)`, which turns a result into friendly text:
+
+      * round to at most 6 decimal places with `round(x, 6)`, so `0.1 + 0.2` shows as `0.3`;
+      * if the rounded value is a whole number, show it without `.0`: `5.0` → `"5"`, `-3.0` → `"-3"`;
+      * otherwise show it as it is: `2.5` → `"2.5"`, `1/3` → `"0.333333"`.
+
+      The tests try every operator, unknown operators such as `"^"`, and many numbers for
+      `format_number`. They also check that `calculate` reuses your functions rather than
+      repeating the arithmetic.
+    hints:
+      - "`calculate` is a chain: `if op == \"+\":` → `return add(a, b)`, then `elif op == \"-\":` and so on. A final `return None` covers everything else."
+      - "A number is whole when it equals its integer part: `rounded == int(rounded)`. Then `str(int(rounded))` drops the `.0`."
+      - "`format_number` must return text (a `str`), not print it. Use `str(...)` to convert."
+    tests:
+      - name: calculate applies each operator
+        code: |
+          assert defined("calculate"), "Define a function called calculate(a, op, b)."
+          cases = [(8, "+", 2, 10), (8, "-", 2, 6), (8, "*", 2, 16), (8, "/", 2, 4), (3, "-", 5, -2), (1.5, "*", 3, 4.5)]
+          for a, op, b, expected in cases:
+              got = calculate(a, op, b)
+              assert got == expected, f"calculate({a!r}, {op!r}, {b!r}) should be {expected!r}, but it returned {got!r}."
+      - name: calculate returns None for problems instead of crashing
+        code: |
+          try:
+              got = calculate(1, "/", 0)
+          except ZeroDivisionError:
+              raise AssertionError("calculate(1, '/', 0) crashed. Call divide(a, b), which already handles zero.")
+          assert got is None, f"calculate(1, '/', 0) should return None, but it returned {got!r}."
+          for op in ["^", "x", "", "plus", "//"]:
+              got = calculate(2, op, 3)
+              assert got is None, f"calculate(2, {op!r}, 3) should return None for an unknown operator, but it returned {got!r}."
+      - name: calculate reuses the four functions
+        code: |
+          import ast
+          tree = ast.parse(source)
+          calc = None
+          for node in ast.walk(tree):
+              if isinstance(node, ast.FunctionDef) and node.name == "calculate":
+                  calc = node
+          assert calc is not None, "Define a function called calculate(a, op, b)."
+          places = [calc] + [n for n in tree.body if isinstance(n, ast.Assign)]
+          used = set()
+          for place in places:
+              for node in ast.walk(place):
+                  if isinstance(node, ast.Name):
+                      used.add(node.id)
+          missing = [name for name in ["add", "subtract", "multiply", "divide"] if name not in used]
+          assert not missing, (
+              "calculate() should call your four functions instead of repeating the arithmetic. "
+              f"It never uses: {', '.join(missing)}."
+          )
+      - name: format_number shows friendly numbers
+        code: |
+          assert defined("format_number"), "Define a function called format_number(x)."
+          cases = [(5.0, "5"), (-3.0, "-3"), (10, "10"), (2.5, "2.5"), (1 / 3, "0.333333"), (2 / 3, "0.666667"),
+                   (0.1 + 0.2, "0.3"), (0.0, "0"), (-0.25, "-0.25"), (1234567.0, "1234567")]
+          for x, expected in cases:
+              got = format_number(x)
+              assert isinstance(got, str), f"format_number({x!r}) should return text (a str), but it returned {got!r}."
+              assert got == expected, f"format_number({x!r}) should be {expected!r}, but it returned {got!r}."
+    solution: |
+      # Menu-driven calculator: milestones 1-2
+
+
+      def add(a, b):
+          """Return the sum of a and b."""
+          return a + b
+
+
+      def subtract(a, b):
+          """Return a minus b."""
+          return a - b
+
+
+      def multiply(a, b):
+          """Return a times b."""
+          return a * b
+
+
+      def divide(a, b):
+          """Return a divided by b, or None when b is 0 (so it never crashes)."""
+          if b == 0:
+              return None
+          return a / b
+
+
+      def calculate(a, op, b):
+          """Apply op ("+", "-", "*" or "/") to a and b.
+
+          Returns the result, or None for an unknown operator or a division by zero.
+          """
+          if op == "+":
+              return add(a, b)
+          elif op == "-":
+              return subtract(a, b)
+          elif op == "*":
+              return multiply(a, b)
+          elif op == "/":
+              return divide(a, b)
+          return None
+
+
+      def format_number(x):
+          """Return x as friendly text: 5.0 -> "5", 2.5 -> "2.5", 1/3 -> "0.333333"."""
+          rounded = round(x, 6)
+          if rounded == int(rounded):
+              return str(int(rounded))
+          return str(rounded)
+  - id: validation
+    title: Validate what the user types
+    description: |
+      Users type text, and `float("twelve")` raises `ValueError`. Add `parse_number(text)`:
+
+      * convert with `float(text)` inside `try`; in `except ValueError:` return `None`;
+      * `float()` also accepts `"inf"`, `"nan"` and `"1e100"`, which would break the display, so
+        also return `None` unless the number is strictly between `-LIMIT` and `LIMIT`, where
+        `LIMIT = 1_000_000_000_000` (one trillion) is a constant at the top of your file;
+      * otherwise return the number. Careful: `0` is a valid number, so `parse_number("0")` must be
+        `0.0`, not `None`.
+
+      The tests feed valid text (with spaces, negatives, decimals, `1e3`) and invalid text (`abc`,
+      an empty string, `1.2.3`, `inf`, `nan`, huge numbers). They also check that you catch
+      `ValueError` specifically instead of using a bare `except:`, which would hide real bugs.
+    hints:
+      - "The shape is `try:` → `number = float(text)` → `except ValueError:` → `return None`. Code after the try/except only runs when the conversion worked."
+      - "Write the range check as `if not (-LIMIT < number < LIMIT): return None`. `nan` compares as False with every number, so this form rejects it too."
+      - "`float()` already ignores spaces around the number: `float(\" 2.5 \")` is `2.5`."
+    tests:
+      - name: parse_number converts valid text
+        code: |
+          assert defined("parse_number"), "Define a function called parse_number(text)."
+          cases = [("3", 3.0), (" 2.5 ", 2.5), ("-7", -7.0), ("1e3", 1000.0), ("0", 0.0), ("999999999999", 999999999999.0)]
+          for text, expected in cases:
+              got = parse_number(text)
+              assert got == expected and got is not None, f"parse_number({text!r}) should be {expected!r}, but it returned {got!r}."
+              assert isinstance(got, float), f"parse_number({text!r}) should return a float, but it returned {type(got).__name__}."
+      - name: parse_number rejects bad input without crashing
+        code: |
+          for text in ["abc", "", "   ", "1.2.3", "12abc", "inf", "-inf", "nan", "1e100", "1000000000000", "-1000000000000"]:
+              try:
+                  got = parse_number(text)
+              except ValueError:
+                  raise AssertionError(f"parse_number({text!r}) crashed with ValueError. Catch it with try/except and return None.")
+              assert got is None, f"parse_number({text!r}) should return None, but it returned {got!r}."
+      - name: catches ValueError specifically
+        code: |
+          import ast
+          handlers = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ExceptHandler)]
+          assert handlers, "Use try/except ValueError in parse_number."
+          for handler in handlers:
+              assert handler.type is not None, (
+                  "Avoid a bare `except:`; it also hides typos and other bugs. Name the error you expect, e.g. `except ValueError:`."
+              )
+          assert "ValueError" in source, "parse_number should catch ValueError, the error float() raises for text that is not a number."
+    solution: |
+      # Menu-driven calculator: milestones 1-3
+
+      LIMIT = 1_000_000_000_000  # numbers must be strictly between -LIMIT and LIMIT
+
+
+      def add(a, b):
+          """Return the sum of a and b."""
+          return a + b
+
+
+      def subtract(a, b):
+          """Return a minus b."""
+          return a - b
+
+
+      def multiply(a, b):
+          """Return a times b."""
+          return a * b
+
+
+      def divide(a, b):
+          """Return a divided by b, or None when b is 0 (so it never crashes)."""
+          if b == 0:
+              return None
+          return a / b
+
+
+      def calculate(a, op, b):
+          """Apply op ("+", "-", "*" or "/") to a and b.
+
+          Returns the result, or None for an unknown operator or a division by zero.
+          """
+          if op == "+":
+              return add(a, b)
+          elif op == "-":
+              return subtract(a, b)
+          elif op == "*":
+              return multiply(a, b)
+          elif op == "/":
+              return divide(a, b)
+          return None
+
+
+      def format_number(x):
+          """Return x as friendly text: 5.0 -> "5", 2.5 -> "2.5", 1/3 -> "0.333333"."""
+          rounded = round(x, 6)
+          if rounded == int(rounded):
+              return str(int(rounded))
+          return str(rounded)
+
+
+      def parse_number(text):
+          """Convert what the user typed to a float.
+
+          Returns None (instead of crashing) when the text is not a number, or when the
+          number is not strictly between -LIMIT and LIMIT (this also rejects inf and nan).
+          """
+          try:
+              number = float(text)
+          except ValueError:
+              return None
+          if not (-LIMIT < number < LIMIT):
+              return None
+          return number
+  - id: menu-loop
+    title: The menu loop
+    description: |
+      Now connect everything to the user. Add:
+
+      * `read_line(prompt)`: returns `input(prompt).strip()`, or `None` if `input()` raises
+        `EOFError` (there is no more input: the user closed it, or a test script ended);
+      * `choice_to_operator(choice)`: `"1"` → `"+"`, `"2"` → `"-"`, `"3"` → `"*"`, `"4"` → `"/"`,
+        anything else → `None`;
+      * `ask_number(prompt)`: keeps asking until `parse_number` accepts the answer; prints
+        `'<text>' is not a number. Please try again.` after a bad one; returns `None` if the input
+        runs out;
+      * `main()`: prints `=== Calculator ===`, then repeats: show the menu
+        `1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit`, read a choice, and
+
+        * `q` or `Q` (or no more input) → leave the loop;
+        * an invalid choice → print `Please choose 1, 2, 3, 4 or q.` and show the menu again;
+        * otherwise ask for two numbers and print `a op b = result` using `format_number`, or
+          `Cannot divide by zero.` when `calculate` returns `None`.
+
+        After the loop print `Goodbye! Calculations done: N`, counting only successful results.
+
+      The tests run your whole program with scripted input (one line per `input()` call) and read
+      what it printed: every operator, invalid choices, invalid numbers, division by zero,
+      quitting with `q` and the input running out halfway through a calculation.
+    hints:
+      - "Use `while True:` for the menu loop and `break` to leave it. `continue` jumps straight back to the top, which is handy after an invalid choice."
+      - "In `read_line`, put `return input(prompt).strip()` inside `try:` and `return None` inside `except EOFError:`. Then check `if choice is None or choice.lower() == \"q\":` before anything else."
+      - "Keep a counter: `count = 0` before the loop and `count = count + 1` only after printing a real result."
+    tests:
+      - name: a full calculation works
+        code: |
+          out = run_program("1\n2\n3\nq\n")
+          assert "2 + 3 = 5" in out, f"With the input 1, 2, 3, q the program should print '2 + 3 = 5'. It printed:\n{out}"
+      - name: every menu option works
+        code: |
+          out = run_program("2\n10\n4\n3\n6\n7\n4\n10\n4\n1\n0.1\n0.2\nq\n")
+          for expected in ["10 - 4 = 6", "6 * 7 = 42", "10 / 4 = 2.5", "0.1 + 0.2 = 0.3"]:
+              assert expected in out, f"Expected the line '{expected}' in the output. The program printed:\n{out}"
+      - name: invalid menu choices and numbers are asked again
+        code: |
+          out = run_program("9\nhello\n1\ntwelve\n12\n0.5\nq\n")
+          assert out.count("Please choose 1, 2, 3, 4 or q.") == 2, (
+              "Each invalid menu choice (9 and hello) should print 'Please choose 1, 2, 3, 4 or q.' and show the menu again."
+          )
+          assert "'twelve' is not a number. Please try again." in out, (
+              "After the number 'twelve' the program should print: 'twelve' is not a number. Please try again."
+          )
+          assert "12 + 0.5 = 12.5" in out, "After asking again, the calculation 12 + 0.5 should still be done and printed."
+      - name: division by zero is reported, not crashed
+        code: |
+          out = run_program("4\n7\n0\n4\n9\n3\nq\n")
+          assert "Cannot divide by zero." in out, "Dividing by 0 should print 'Cannot divide by zero.'"
+          assert "9 / 3 = 3" in out, "After a division by zero the menu should continue and 9 / 3 should give 3."
+      - name: q quits and reports the number of calculations
+        code: |
+          out = run_program("1\n1\n1\n4\n1\n0\n3\n2\n2\nQ\n1\n2\n3\n")
+          assert "Goodbye! Calculations done: 2" in out, (
+              "After two successful calculations (the division by zero does not count) and Q, the program should print "
+              f"'Goodbye! Calculations done: 2'. It printed:\n{out}"
+          )
+          assert "2 + 3 = 5" not in out, "After Q the program should stop reading input, but it carried on calculating."
+      - name: running out of input ends the program politely
+        code: |
+          for script in ["", "1\n", "1\n5\n", "4\n5\nabc\n"]:
+              try:
+                  out = run_program(script)
+              except RuntimeError as err:
+                  raise AssertionError(f"When the input runs out the program should stop politely (treat it like q). {err}")
+              assert "Goodbye!" in out, f"With the input {script!r} the program should still end with the Goodbye line."
+          assert uses("While"), "Use a while loop for the menu."
+    solution: |
+      # Menu-driven calculator: complete program (milestones 1-4)
+
+      LIMIT = 1_000_000_000_000  # numbers must be strictly between -LIMIT and LIMIT
+      MENU = "1) Add   2) Subtract   3) Multiply   4) Divide   q) Quit"
+
+
+      def add(a, b):
+          """Return the sum of a and b."""
+          return a + b
+
+
+      def subtract(a, b):
+          """Return a minus b."""
+          return a - b
+
+
+      def multiply(a, b):
+          """Return a times b."""
+          return a * b
+
+
+      def divide(a, b):
+          """Return a divided by b, or None when b is 0 (so it never crashes)."""
+          if b == 0:
+              return None
+          return a / b
+
+
+      def calculate(a, op, b):
+          """Apply op ("+", "-", "*" or "/") to a and b.
+
+          Returns the result, or None for an unknown operator or a division by zero.
+          """
+          if op == "+":
+              return add(a, b)
+          elif op == "-":
+              return subtract(a, b)
+          elif op == "*":
+              return multiply(a, b)
+          elif op == "/":
+              return divide(a, b)
+          return None
+
+
+      def format_number(x):
+          """Return x as friendly text: 5.0 -> "5", 2.5 -> "2.5", 1/3 -> "0.333333"."""
+          rounded = round(x, 6)
+          if rounded == int(rounded):
+              return str(int(rounded))
+          return str(rounded)
+
+
+      def parse_number(text):
+          """Convert what the user typed to a float.
+
+          Returns None (instead of crashing) when the text is not a number, or when the
+          number is not strictly between -LIMIT and LIMIT (this also rejects inf and nan).
+          """
+          try:
+              number = float(text)
+          except ValueError:
+              return None
+          if not (-LIMIT < number < LIMIT):
+              return None
+          return number
+
+
+      def read_line(prompt):
+          """Show prompt and return what the user typed, or None if there is no more input."""
+          try:
+              return input(prompt).strip()
+          except EOFError:
+              return None
+
+
+      def choice_to_operator(choice):
+          """Turn a menu choice ("1" to "4") into its operator, or None for anything else."""
+          if choice == "1":
+              return "+"
+          elif choice == "2":
+              return "-"
+          elif choice == "3":
+              return "*"
+          elif choice == "4":
+              return "/"
+          return None
+
+
+      def ask_number(prompt):
+          """Ask until the user types a valid number. Returns None if the input runs out."""
+          while True:
+              text = read_line(prompt)
+              if text is None:
+                  return None
+              number = parse_number(text)
+              if number is not None:
+                  return number
+              print(f"'{text}' is not a number. Please try again.")
+
+
+      def main():
+          """Run the calculator menu until the user types q (or the input runs out)."""
+          print("=== Calculator ===")
+          count = 0
+          while True:
+              print(MENU)
+              choice = read_line("Choose an option: ")
+              if choice is None or choice.lower() == "q":
+                  break
+              op = choice_to_operator(choice)
+              if op is None:
+                  print("Please choose 1, 2, 3, 4 or q.")
+                  continue
+              a = ask_number("First number: ")
+              if a is None:
+                  break
+              b = ask_number("Second number: ")
+              if b is None:
+                  break
+              result = calculate(a, op, b)
+              if result is None:
+                  print("Cannot divide by zero.")
+              else:
+                  count = count + 1
+                  print(f"{format_number(a)} {op} {format_number(b)} = {format_number(result)}")
+          print(f"Goodbye! Calculations done: {count}")
+
+
+      if __name__ == "__main__":
+          main()
+testing: |
+  Click **Run milestone tests** under a milestone. The tests run against your **whole program**
+  (all milestones share one file), so earlier functions must keep working as you add new ones.
+
+  There are two kinds of check:
+
+  * **Function checks** call your functions directly with many inputs, for example
+    `assert divide(5, 0) is None`. They work because Groundwork first runs your program once with
+    no input; your `main()` stops politely, and the functions you defined stay available.
+  * **Program checks** re-run your whole program with a script of answers, one line per
+    `input()` call. For example `run_program("1\n2\n3\nq\n")` chooses Add, types 2 and 3, then quits,
+    and the test looks for `2 + 3 = 5` in what was printed. Prompts appear in the output too,
+    because `input("First number: ")` prints its prompt.
+
+  Every failed check tells you what it tried and what it expected. After your first test run you
+  can open the **reference solution** for the milestone to compare approaches.
+
+  To test the program yourself on your computer, run `python calculator.py` and try the inputs from
+  the example session, including the bad ones. To feed a whole script of answers at once:
+
+  ```powershell
+  "1`n2`n3`nq" | python calculator.py
+  ```
+
+  ```bash
+  printf '1\n2\n3\nq\n' | python3 calculator.py
+  ```
+security:
+  - Never compute user input with eval() or exec(). They run any Python code typed by the user, for example code that deletes files. Parse numbers with float() and choose the operation yourself.
+  - Validate all input at the boundary. parse_number rejects text that is not a number and values outside a sensible range (including inf and nan), so the rest of the program only ever sees good numbers.
+  - Fail safely. Division by zero, bad input and end of input all produce a message and a clean exit, never a traceback that confuses users and exposes program internals.
+  - Catch specific exceptions (ValueError, EOFError). A bare except also swallows typos and KeyboardInterrupt and hides real bugs.
+extensions:
+  - Add more operations to the menu, such as power (**), whole-number division (//) and remainder (%), with safe handling of zero for the last two.
+  - Keep a history of results in a list and add a menu option that prints the last five calculations.
+  - Let the user type "ans" as a number to reuse the previous result.
+  - Accept a whole expression on one line such as "12 * 3.5" by splitting the text on spaces, still without using eval().
+  - Show results with a fixed number of decimal places chosen by the user (for example 2 for money) using an f-string format such as {x:.2f}.
+rubric:
+  - criterion: Correctness
+    needsWork: Some operations give wrong results, or division by zero crashes the program.
+    meets: All four operations, calculate and format_number pass the tests, and division by zero returns None.
+    exceeds: Results are also right for edge cases you tested yourself, such as negative numbers and very small decimals.
+  - criterion: Robust input handling
+    needsWork: Typing text instead of a number, an invalid menu choice or ending the input crashes the program.
+    meets: Every bad input produces a helpful message and the program asks again; end of input exits cleanly.
+    exceeds: Messages tell the user exactly what to type next, and validation lives in one place (parse_number) that everything reuses.
+  - criterion: Function design
+    needsWork: Most code is in one long loop, or functions print instead of returning values.
+    meets: Small functions that each do one job and return their result; calculate reuses the four operations.
+    exceeds: Clear names, docstrings on every function, and no repeated code; adding a new operator only needs a small change.
+  - criterion: Security awareness
+    needsWork: Uses eval() or a bare except.
+    meets: No eval(); only specific exceptions are caught.
+    exceeds: You can explain why eval() is dangerous and why a bare except hides bugs.

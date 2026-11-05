@@ -1,0 +1,528 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ----------------------------------------------------------------- strings
+  - id: python.strings.immutability
+    level: junior
+    kind: conceptual
+    concepts: [python.strings]
+    question: |
+      What does it mean that Python strings are immutable? After `s = "hello"` and `s.upper()`, what
+      is `s`, and how do you "change" a string?
+    answer: |
+      Immutable means a string object's characters can never change after it is created. There is no
+      operation that edits a string in place: `s[0] = "H"` raises
+      `TypeError: 'str' object does not support item assignment`.
+
+      Methods such as `upper()`, `strip()` and `replace()` therefore build and **return a new string**.
+      After `s.upper()` on its own line, `s` is still `"hello"` — the new `"HELLO"` was created and
+      discarded because nothing referred to it. To "change" a string you create a new one and rebind
+      the name: `s = s.upper()`, or `s = "H" + s[1:]`. Any other name that referred to the original
+      object still sees `"hello"`.
+
+      Immutability is useful: strings can be shared safely between names (aliasing is harmless), their
+      hash can be cached, and they can be used as dictionary keys and set members.
+    keyPoints:
+      - A string object can never be modified; item assignment raises TypeError.
+      - String methods return new strings and leave the original untouched.
+      - The result must be assigned (often rebinding the same name) to be kept.
+      - Rebinding a name does not affect other names that refer to the old object.
+      - Immutability makes strings safe to share and usable as dictionary keys (hashable).
+    followUps:
+      - Why can strings be dictionary keys but lists cannot?
+      - What is the cost of building a long string with repeated +?
+    pitfalls:
+      - Saying upper() "changes the string".
+      - Confusing rebinding a name with mutating an object.
+
+  - id: python.strings.building-large-strings
+    level: mid
+    kind: conceptual
+    concepts: [python.strings]
+    question: |
+      A report is built by adding thousands of small pieces with `report += piece` inside a loop.
+      Why is this discouraged, and what should you do instead?
+    answer: |
+      Because strings are immutable, each `+` creates a new string and copies both operands into it.
+      Adding pieces one at a time therefore copies the growing report again and again; in the general
+      case the total work grows roughly with the square of the final length.
+
+      CPython has an optimisation that can sometimes resize the string in place for `s += t` when no
+      other reference to `s` exists, but it is an implementation detail: it does not apply in every
+      situation, and other Python implementations do not have it. PEP 8 explicitly recommends not
+      relying on it.
+
+      The idiomatic solution is to collect the pieces in a list and join them once —
+      `"".join(pieces)` — which computes the final size and copies each piece exactly once. For
+      streaming output, `io.StringIO` or writing directly to a file are alternatives.
+    keyPoints:
+      - Each concatenation creates a new string and copies the data (strings are immutable).
+      - Repeated += in a loop can be quadratic in the total length.
+      - CPython's in-place += optimisation is fragile and not guaranteed (PEP 8 says not to rely on it).
+      - Collect pieces in a list and call "".join(pieces) once.
+      - io.StringIO is an alternative for incremental building.
+    followUps:
+      - How would you measure whether this matters in your program?
+      - Does the same problem apply to building a list with repeated +?
+    pitfalls:
+      - Claiming += is always fine because "CPython optimises it".
+      - Calling join on the list instead of the separator (`pieces.join("")`).
+
+  - id: python.strings.length-and-unicode
+    level: senior
+    kind: scenario
+    concepts: [python.strings]
+    question: |
+      Two strings both display as "café" but `len()` gives 4 for one and 5 for the other, and `==`
+      says they differ. Explain what is going on and how you would handle it in a production system.
+    answer: |
+      A Python `str` is a sequence of Unicode **code points**, and `len()` counts code points — not
+      bytes and not user-perceived characters. "é" can be represented as the single precomposed code
+      point U+00E9, or as "e" followed by the combining acute accent U+0301. Both render the same, but
+      the second string has one more code point, and `==` compares code points, so they are unequal.
+
+      The fix is **Unicode normalisation**: `unicodedata.normalize("NFC", text)` converts text to a
+      canonical composed form (NFD decomposes; NFKC/NFKD also fold compatibility characters). Normalise
+      text at the boundary — when it enters the system — before comparing, using as keys, or storing
+      it. For case-insensitive comparisons use `casefold()` rather than `lower()`.
+
+      Byte length is a separate question: when text is encoded (usually UTF-8), each code point takes
+      1–4 bytes, so `len(text.encode("utf-8"))` can be larger than `len(text)`; database column limits
+      and network protocols often count bytes. Internally CPython stores strings in 1, 2 or 4 bytes per
+      code point depending on the widest character (PEP 393), an implementation detail. Grapheme
+      clusters (what users see as one character, such as emoji with modifiers) need a third-party
+      library to count correctly.
+    keyPoints:
+      - len() counts Unicode code points, not bytes or visible characters.
+      - Precomposed and decomposed forms look the same but differ as code points.
+      - Normalise with unicodedata.normalize (usually NFC) at input boundaries before comparing or storing.
+      - Encoded byte length (UTF-8 uses 1-4 bytes per code point) differs from len().
+      - casefold() is the right tool for caseless matching.
+    followUps:
+      - When would you choose NFKC over NFC?
+      - How do you count user-visible characters in a string with emoji?
+    pitfalls:
+      - Assuming one character equals one byte.
+      - Comparing user input without normalisation.
+
+  # --------------------------------------------------------- type-conversion
+  - id: python.type-conversion.strong-dynamic-typing
+    level: junior
+    kind: conceptual
+    concepts: [python.type-conversion]
+    question: |
+      Python is often described as "dynamically but strongly typed". What does that mean? Use
+      `"5" + 3` as an example.
+    answer: |
+      **Dynamic typing** means types belong to objects, not to names, and are checked while the program
+      runs. A name can be rebound to an object of any type: `x = 5` and later `x = "five"` is allowed.
+
+      **Strong typing** means Python does not silently convert between unrelated types to make an
+      operation work. `"5" + 3` raises `TypeError: can only concatenate str (not "int") to str`
+      because the intent is ambiguous — adding numbers or joining text. A weakly typed language such
+      as JavaScript coerces and produces `"53"`. In Python you state your intent with an explicit
+      conversion: `int("5") + 3` gives 8; `"5" + str(3)` gives `"53"`.
+
+      Python does perform a few well-defined implicit conversions between numeric types (int + float
+      gives a float, `True` behaves as 1), and some operations are legal but surprising, such as
+      `"5" * 3 == "555"` (repetition).
+    keyPoints:
+      - Dynamic - names have no declared types; type checks happen at run time.
+      - Strong - no silent coercion between unrelated types such as str and int.
+      - "\"5\" + 3 raises TypeError; explicit int() or str() states the intent."
+      - Numeric types do mix (int + float -> float; bool is a subclass of int).
+      - "\"5\" * 3 is valid repetition, a common silent bug."
+    followUps:
+      - How do type hints relate to dynamic typing?
+      - Why is an immediate TypeError better than a coerced value?
+    pitfalls:
+      - Confusing dynamic with weak typing.
+      - Claiming Python never converts types implicitly (numeric promotion does happen).
+
+  - id: python.type-conversion.int-round-floor
+    level: junior
+    kind: coding
+    concepts: [python.type-conversion, python.numbers]
+    question: |
+      What do `int(-2.7)`, `round(-2.7)`, `math.floor(-2.7)`, `round(2.5)` and `int("2.7")` each
+      produce? Explain the rule behind each.
+    answer: |
+      - `int(-2.7)` is `-2`: `int()` **truncates toward zero**, dropping the fractional part.
+      - `round(-2.7)` is `-3`: rounding to the nearest integer.
+      - `math.floor(-2.7)` is `-3`: floor always goes **down**, toward negative infinity
+        (`math.ceil` goes up).
+      - `round(2.5)` is `2`: Python's `round()` uses round-half-to-even ("banker's rounding"), so ties
+        go to the even neighbour (`round(3.5)` is 4). With a second argument, the result is subject to
+        binary floating-point representation, e.g. `round(2.675, 2)` is `2.67`.
+      - `int("2.7")` raises `ValueError: invalid literal for int() with base 10: '2.7'`: from a string,
+        `int()` only parses whole numbers. Use `float("2.7")`, or `int(float("2.7"))` if truncation is
+        intended.
+
+      For financial rounding rules, use `decimal.Decimal` with an explicit rounding mode.
+    keyPoints:
+      - int() truncates toward zero (int(-2.7) == -2).
+      - math.floor rounds toward negative infinity; math.ceil toward positive infinity.
+      - round() rounds to nearest with ties to even (round(2.5) == 2).
+      - int() on a string requires whole-number text; "2.7" raises ValueError.
+      - decimal.Decimal for exact decimal rounding rules.
+    followUps:
+      - Why does round(2.675, 2) give 2.67?
+      - How would you round half up for invoices?
+    pitfalls:
+      - Saying int() rounds.
+      - Expecting round(2.5) to be 3.
+
+  - id: python.type-conversion.parse-user-integer
+    level: mid
+    kind: coding
+    concepts: [python.type-conversion, python.exceptions]
+    question: |
+      Write code that converts a user-supplied string to an integer, producing `None` (instead of
+      crashing) when the text is not a valid whole number. What edge cases would you think about?
+    answer: |
+      The idiomatic approach is "easier to ask forgiveness than permission" — attempt the conversion
+      and handle the specific failure:
+
+      ```python
+      def parse_int(text):
+          try:
+              return int(text)
+          except ValueError:
+              return None
+      ```
+
+      `int()` already strips surrounding whitespace and accepts a leading sign. Edge cases worth
+      discussing:
+
+      - **Decimals**: `"3.5"` raises ValueError. Decide whether to reject it or accept
+        `int(float(text))` (which truncates and can lose precision for big values).
+      - **What int() accepts that you may not want**: underscores (`"1_000"`), non-ASCII Unicode
+        digits (`"١٢٣"` is 123), and surrounding whitespace. If only ASCII digits are allowed, validate
+        explicitly (for example with a regular expression or `text.isascii() and text.isdecimal()` after
+        handling a sign).
+      - **Pre-checks are tricky**: `str.isdigit()` accepts characters such as "²" that `int()` rejects,
+        and `isdecimal()` rejects `"-5"` — so try/except is more reliable than checking first.
+      - **Huge inputs**: since Python 3.11, converting strings of more than 4300 digits raises
+        ValueError by default (a denial-of-service protection), which the except clause also catches.
+      - **Wrong types**: `int(None)` raises TypeError, not ValueError; catch it only if non-strings are
+        expected.
+      - **Range validation**: a valid int may still be out of range for the domain (age -5).
+    keyPoints:
+      - Use try/except ValueError around int(text) rather than fragile pre-checks.
+      - int() strips whitespace and accepts signs, underscores and Unicode decimal digits.
+      - isdigit()/isdecimal() pre-checks have gaps (superscripts, negative numbers).
+      - Decide explicitly how to treat decimal text.
+      - Very long digit strings raise ValueError (4300-digit limit); None input raises TypeError.
+      - Validate the range after parsing.
+    followUps:
+      - How would you report why the input was rejected?
+      - Why catch ValueError specifically instead of using a bare except?
+    pitfalls:
+      - Using a bare except that hides unrelated bugs.
+      - Assuming isdigit() guarantees int() will succeed.
+
+  # ------------------------------------------------------------ input-output
+  - id: python.input-output.input-concatenation-bug
+    level: junior
+    kind: debugging
+    concepts: [python.input-output]
+    question: |
+      A program reads two numbers with `a = input()` and `b = input()` and prints `a + b`. The user
+      types 2 and 3, and the program prints 23. Why, and how do you fix it robustly?
+    answer: |
+      `input()` always returns a `str` — the characters the user typed, without the trailing newline.
+      So `a` is `"2"` and `b` is `"3"`, and `+` on strings concatenates: `"2" + "3"` is `"23"`.
+
+      Convert at the boundary: `a = int(input())` (or `float()` if decimals are allowed). A robust
+      program also handles bad input — `int("two")` raises ValueError — typically with try/except and a
+      clear message or a re-prompt, and may strip and validate ranges. Doing the conversion once, right
+      where the data enters, keeps the rest of the program working with real numbers.
+    keyPoints:
+      - input() always returns a string.
+      - + on strings concatenates, so "2" + "3" is "23".
+      - Convert immediately with int() or float().
+      - Handle ValueError for invalid input.
+    followUps:
+      - What happens if the user types 2.5 and you call int()?
+      - How would you keep asking until the input is valid?
+    pitfalls:
+      - Converting in some places but not others.
+      - Assuming users always type valid numbers.
+
+  - id: python.input-output.format-currency
+    level: junior
+    kind: coding
+    concepts: [python.input-output]
+    question: |
+      Given `amount = 1234567.891`, produce the text `  1,234,567.89` — thousands separators, two
+      decimals, right-aligned in a field 14 characters wide. Explain each part of your format.
+    answer: |
+      ```python
+      text = f"{amount:>14,.2f}"
+      ```
+
+      The format specifier after the colon is read in a fixed order: `>` right-aligns, `14` is the
+      minimum field width, `,` inserts thousands separators, and `.2f` formats as fixed-point with
+      two decimal places (rounding the value for display only — `amount` itself is unchanged).
+      `1,234,567.89` is 12 characters, so two spaces of padding are added on the left. The same
+      specifier works with `format(amount, ">14,.2f")` and `"{:>14,.2f}".format(amount)`.
+
+      For locale-aware output (for example `1.234.567,89` in Germany) use the `locale` module or the
+      `n` presentation type, and for money calculations keep values as integers of the smallest unit
+      or `decimal.Decimal`, formatting only at the end.
+    keyPoints:
+      - "f-string format specifier: f\"{amount:>14,.2f}\"."
+      - "> aligns right, 14 is the width, , adds separators, .2f gives two decimals."
+      - Formatting rounds for display; it does not change the value.
+      - Locale-specific separators need the locale module or the n type.
+    followUps:
+      - How would you left-align or centre the value?
+      - Why might f"{2.675:.2f}" show 2.67?
+    pitfalls:
+      - Using round() and then str(), which drops trailing zeros (round(2.5, 2) prints 2.5).
+      - Applying .2f to an unconverted input string (ValueError - Unknown format code 'f').
+
+  - id: python.input-output.when-not-fstrings
+    level: mid
+    kind: conceptual
+    concepts: [python.input-output]
+    question: |
+      f-strings are the usual way to build text in modern Python. When should you **not** build a
+      string with an f-string, and what should you use instead?
+    answer: |
+      - **SQL queries**: interpolating user values into SQL (`f"... WHERE name = '{name}'"`) enables
+        SQL injection. Use the database driver's parameterised queries
+        (`cursor.execute("... WHERE name = ?", (name,))`), which send values separately from the SQL.
+      - **HTML and shell commands**: interpolated values must be escaped for their context; use a
+        templating engine with auto-escaping, and pass subprocess arguments as a list instead of
+        building a shell string.
+      - **Logging**: `logger.debug("user %s", user)` lets the logging module skip formatting when the
+        level is disabled and keeps the message template constant for log aggregation; an f-string
+        is formatted eagerly every time.
+      - **Translations and user-editable templates**: f-strings are evaluated where they are written
+        and cannot be loaded from a file; use `str.format` or `string.Template` with named fields.
+
+      Python 3.14 adds **template strings** (PEP 750): `t"..."` produces a `Template` object that keeps
+      the literal parts and the interpolated values separate, so a library can escape or parameterise
+      each value before combining them — the safe-by-design alternative for these cases.
+    keyPoints:
+      - Never interpolate untrusted values into SQL; use parameterised queries.
+      - HTML and shell contexts need context-aware escaping or argument lists.
+      - Logging should use lazy %-style arguments, not f-strings.
+      - Templates stored outside code need str.format or string.Template.
+      - Python 3.14 t-strings keep values separate for safe processing.
+    followUps:
+      - How does a parameterised query prevent injection?
+      - What does a t-string evaluate to?
+    pitfalls:
+      - Believing escaping quotes by hand is enough to prevent SQL injection.
+      - Thinking t-strings return a str.
+
+  # ---------------------------------------------------------------- booleans
+  - id: python.booleans.or-always-true
+    level: junior
+    kind: debugging
+    concepts: [python.booleans]
+    question: |
+      Why does `if answer == "y" or "yes":` run its block for every answer, including `"no"`? How do
+      you fix it?
+    answer: |
+      Operator precedence: `==` binds tighter than `or`, so the condition is
+      `(answer == "y") or "yes"`. When the comparison is False, `or` returns its right operand, the
+      string `"yes"`, which is non-empty and therefore truthy. The condition is truthy for every
+      answer.
+
+      Fix it by comparing on both sides — `answer == "y" or answer == "yes"` — or with a membership
+      test: `answer in ("y", "yes")`. Normalising the input first (`answer.strip().lower()`) handles
+      case and stray spaces.
+    keyPoints:
+      - == has higher precedence than or.
+      - The expression is (answer == "y") or "yes".
+      - or returns its right operand, a truthy non-empty string.
+      - Fix with full comparisons or answer in ("y", "yes").
+    followUps:
+      - What would `answer == ("y" or "yes")` do?
+      - Why is a set or tuple membership test cleaner for many options?
+    pitfalls:
+      - Writing answer == ("y" or "yes"), which only compares with "y".
+
+  - id: python.booleans.is-vs-equals
+    level: junior
+    kind: conceptual
+    concepts: [python.booleans]
+    question: |
+      What is the difference between `==` and `is`? Why does `x is None` follow a different rule from
+      comparing numbers or strings?
+    answer: |
+      `==` tests **equality of value**; it calls the type's `__eq__` method, which each type can
+      define. `is` tests **identity** — whether both operands are the very same object — and cannot be
+      overridden.
+
+      Two equal values may be different objects: `x = 1000; y = int("1000")` gives `x == y` True but
+      `x is y` False in CPython. Conversely CPython caches small integers (-5 to 256) and interns some
+      strings, so `is` can appear to work for small values — an implementation detail that makes
+      `is` unreliable for comparing values. Python even emits `SyntaxWarning: "is" with 'int' literal`.
+
+      `None` is a singleton: there is exactly one `None` object. So `x is None` is exact, fast, and
+      immune to classes that define a strange `__eq__`; PEP 8 recommends `is None` / `is not None`.
+      The same applies to other singletons such as `True`/`False` in rare cases, but comparing
+      booleans is usually written as plain truthiness (`if flag:`).
+    keyPoints:
+      - == compares values via __eq__; is compares object identity.
+      - Equal objects need not be identical.
+      - Small-int caching and string interning are CPython details; never use is for values.
+      - None is a singleton, so use is None (PEP 8).
+    followUps:
+      - When does == fall back to identity?
+      - Why is `float("nan") == float("nan")` False?
+    pitfalls:
+      - Using is to compare strings or numbers.
+      - Writing == None instead of is None.
+
+  - id: python.booleans.and-or-operands
+    level: mid
+    kind: conceptual
+    concepts: [python.booleans]
+    question: |
+      What do `0 or "default"`, `"" and 5`, `3 and 5` and `[] or None` evaluate to? Explain the rule,
+      and describe a bug this behaviour can cause.
+    answer: |
+      `and` and `or` short-circuit and return **one of their operands**, not necessarily a bool:
+
+      - `x or y` returns `x` if `x` is truthy, otherwise `y`.
+      - `x and y` returns `x` if `x` is falsy, otherwise `y`.
+
+      So `0 or "default"` is `"default"`, `"" and 5` is `""`, `3 and 5` is `5`, and `[] or None` is
+      `None`. Only `not` always returns a bool. Because evaluation stops early, the right operand may
+      never run, which makes guards like `n != 0 and total / n > 1` safe.
+
+      The common bug is the default idiom `value = value or default`: it replaces *every* falsy value,
+      so a legitimate `0`, `""` or empty list is overwritten. When only a missing value (None) should
+      be replaced, write `value if value is not None else default`.
+    keyPoints:
+      - or returns the first truthy operand (or the last operand).
+      - and returns the first falsy operand (or the last operand).
+      - not always returns a bool.
+      - Short-circuiting means the right operand may not be evaluated.
+      - value or default wrongly replaces valid falsy values like 0; test is None instead.
+    followUps:
+      - How are and/or implemented in bytecode?
+      - When is relying on the returned operand considered unidiomatic?
+    pitfalls:
+      - Assuming and/or always return True or False.
+      - Using or-defaults when 0 is a valid value.
+
+  # ------------------------------------------------------------ conditionals
+  - id: python.conditionals.elif-vs-separate-ifs
+    level: junior
+    kind: conceptual
+    concepts: [python.conditionals]
+    question: |
+      What is the difference between an `if`/`elif`/`else` chain and several separate `if`
+      statements? Give an example where choosing the wrong one causes a bug.
+    answer: |
+      An `if`/`elif`/`else` chain evaluates its conditions top to bottom and runs **only the first**
+      branch whose condition is true, then skips the rest; `else` runs only if nothing matched. At most
+      one branch runs. Separate `if` statements are independent: each condition is evaluated and every
+      true block runs.
+
+      Bug example: grading with separate ifs —
+
+      ```python
+      if score >= 90: grade = "A"
+      if score >= 75: grade = "B"
+      if score >= 60: grade = "C"
+      ```
+
+      — gives a score of 95 the grade "C", because all three blocks run and the last assignment wins.
+      Mutually exclusive categories belong in one chain. The opposite mistake — chaining independent
+      checks, such as "low battery" and "no signal" warnings — hides the second warning whenever the
+      first applies.
+    keyPoints:
+      - A chain runs at most one branch - the first true one.
+      - Separate ifs are independent; several blocks can run.
+      - Use a chain for mutually exclusive cases, separate ifs for independent checks.
+      - Show a concrete bug for each wrong choice.
+    followUps:
+      - How does condition order matter in a chain?
+      - When would a dictionary lookup replace a long chain?
+    pitfalls:
+      - Treating elif as merely shorter syntax for if.
+
+  - id: python.conditionals.condition-order-bug
+    level: junior
+    kind: debugging
+    concepts: [python.conditionals]
+    question: |
+      This code is supposed to give free shipping to orders of 1000 or more and half-price shipping to
+      orders of 500 or more, yet no order ever ships free. Find and fix the bug.
+
+      ```python
+      if total >= 500:
+          shipping = 25
+      elif total >= 1000:
+          shipping = 0
+      else:
+          shipping = 50
+      ```
+    answer: |
+      In an `if`/`elif` chain the first true condition wins. Every order of 1000 or more also
+      satisfies `total >= 500`, so the first branch catches it and the `elif total >= 1000` branch is
+      unreachable. Fix it by testing the most specific (narrowest) condition first:
+
+      ```python
+      if total >= 1000:
+          shipping = 0
+      elif total >= 500:
+          shipping = 25
+      else:
+          shipping = 50
+      ```
+
+      Alternatively make each range explicit (`500 <= total < 1000`) so the branches no longer depend
+      on their order. A unit test at each boundary (499.99, 500, 999.99, 1000) would have caught the
+      bug.
+    keyPoints:
+      - The first true branch of a chain wins.
+      - The broader condition shadows the narrower one, making it unreachable.
+      - Order from most specific to most general, or use explicit ranges.
+      - Test boundary values.
+    followUps:
+      - How could a linter or test detect unreachable branches?
+    pitfalls:
+      - Adding more conditions instead of fixing the order.
+
+  - id: python.conditionals.reduce-nesting
+    level: mid
+    kind: design
+    concepts: [python.conditionals]
+    question: |
+      You are reviewing code with `if` statements nested four levels deep. What techniques would you
+      suggest to make it easier to read and test?
+    answer: |
+      - **Combine conditions**: nested ifs without else branches collapse into one condition joined
+        with `and` (`if is_member and total > 100:`).
+      - **Guard clauses / early exit**: inside a function, handle invalid or special cases first and
+        `return` (or `continue` in a loop), so the main logic is not indented under every check.
+      - **Invert conditions** so the short branch comes first and the long one is not nested.
+      - **Name the conditions**: assign complex Boolean expressions to well-named variables
+        (`is_eligible = age >= 18 and has_id`) or small functions.
+      - **Replace value-to-result chains with data**: a dictionary lookup instead of a long
+        `if`/`elif` that maps fixed values to results; `match` for structural cases (3.10+).
+      - **Keep conditional expressions simple**: `a if c else b` for two values only; never nest them.
+
+      Each technique also reduces the number of paths a test must cover, and makes it easier to see
+      that every path assigns the variables used afterwards.
+    keyPoints:
+      - Combine nested conditions with and.
+      - Use guard clauses and early returns to flatten logic.
+      - Give complex conditions descriptive names.
+      - Use dictionaries or match for value-based dispatch.
+      - Avoid nested conditional expressions.
+    followUps:
+      - How does cyclomatic complexity relate to nesting?
+      - When is a nested if still the clearest option?
+    pitfalls:
+      - Replacing nesting with one huge unreadable condition.

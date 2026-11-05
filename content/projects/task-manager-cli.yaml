@@ -1,0 +1,248 @@
+id: task-manager-cli
+title: Layered Task Manager CLI
+track: python-intermediate
+level: intermediate
+estimatedHours: 9
+environment: local
+starterKit: projects/task-manager-cli
+summary: >-
+  Build a command-line to-do list as a small package with clean layers: an immutable task model
+  with priorities, due dates and statuses, one repository interface with JSON and SQLite back
+  ends, and an argparse front end that is the only code that prints.
+concepts:
+  - python.dataclasses
+  - python.classes
+  - python.packages
+  - python.raising-exceptions
+  - python.csv-json
+  - databases.sqlite-python
+  - python.cli-apps
+  - python.type-hints
+problem: |
+  You want a to-do list in your terminal, stored in a file you own. `task_manager` adds tasks
+  with a priority and an optional due date, lists open tasks most-urgent-first with overdue
+  warnings, moves tasks from `todo` to `in-progress` to `done`, and deletes them. The data lives
+  in `tasks.json`, or in an SQLite database when the file name ends in `.db` or `.sqlite`, with
+  identical behaviour.
+
+  **Inputs** are command-line arguments: due dates can be `YYYY-MM-DD`, `today`, `tomorrow` or
+  `+N` days, and `--today` lets you (and the tests) choose what "today" means. **Outputs** are a
+  confirmation line or an aligned table on stdout, `error: ...` on stderr, and an exit code (0
+  success, 1 a problem the user can fix, 2 bad usage).
+
+  ```text
+  > python -m task_manager --today 2026-10-22 add "Submit report" -p high --due tomorrow
+  Added task 1: Submit report (high, due 2026-10-23).
+  > python -m task_manager --today 2026-10-22 add "Read a book" -p low
+  Added task 2: Read a book (low).
+  > python -m task_manager --today 2026-10-22 add "Fix bike" --due 2026-10-25
+  Added task 3: Fix bike (medium, due 2026-10-25).
+  > python -m task_manager --today 2026-10-22 list
+    ID  Priority  Status       Due         Title
+     1  high      todo         2026-10-23  Submit report (due tomorrow)
+     3  medium    todo         2026-10-25  Fix bike (due in 3 days)
+     2  low       todo         -           Read a book
+  3 task(s), 0 overdue.
+  > python -m task_manager start 3
+  Started task 3: Fix bike.
+  > python -m task_manager done 1
+  Completed task 1: Submit report.
+  > python -m task_manager --today 2026-10-27 list --overdue
+    ID  Priority  Status       Due         Title
+     3  medium    in-progress  2026-10-25  Fix bike (overdue by 2 days)
+  1 task(s), 1 overdue.
+  > python -m task_manager delete 9
+  error: task 9 does not exist
+  ```
+
+  The real lesson is the **structure**. Rules about tasks must not know about files or the
+  terminal; storage must hide behind one interface so JSON and SQLite are interchangeable; and only
+  the command-line layer may print. The tests check that layering directly.
+acceptanceCriteria:
+  - "`Task` is a frozen dataclass that validates and normalises itself (positive int id, non-empty title of at most 200 characters, real `Priority`/`Status` members, `date` or `None` for `due`); invalid data raises `TaskError` (a `ValueError`)."
+  - "Status changes return new tasks (`start`, `complete`); starting a done task is an error; `to_dict`/`from_dict` round-trip exactly and `from_dict` rejects malformed data."
+  - "`parse_due` accepts `YYYY-MM-DD`, `today`, `tomorrow` and `+N` relative to an explicit `today` and rejects past or unknown dates; sorting is open first, then priority, then due date (none last), then id."
+  - "`JsonTaskRepository` and `SqliteTaskRepository` implement the same `TaskRepository` ABC and pass the same contract tests: increasing ids that are never reused, `TaskNotFoundError` for unknown ids, validation before any write, data that survives a new repository object."
+  - "JSON saves are atomic (temporary file in the same folder plus `os.replace`), corrupt or invalid files raise `StorageError` naming the file and are never overwritten."
+  - "SQLite uses a schema with CHECK constraints, only constant SQL with `?` placeholders, and connections that are always closed."
+  - "The CLI supports `add`, `list` (status, priority and overdue filters), `start`, `done` and `delete`, plus `--db` and `--today`; it exits 0, 1 with `error: ...` on stderr, or 2 for usage errors."
+  - "`models` imports nothing from storage or the CLI, `storage` never imports the CLI, only `cli.py` prints, and all 122 tests pass with `GW_TARGET=solution`."
+architecture: |
+  A package with three layers. Arrows show imports: each layer may only use the layers below it.
+
+  ```text
+   python -m task_manager ──► __main__.py ──► cli.py      argparse, printing, exit codes, today
+                                                │
+                                                ▼
+                                           storage.py     TaskRepository (ABC)
+                                            │      │        ├── JsonTaskRepository   tasks.json  (atomic writes)
+                                            │      │        └── SqliteTaskRepository tasks.db    (? placeholders)
+                                            ▼      │       open_repository(path) picks one by suffix
+                                           models.py      Task, Priority, Status, TaskError,
+                                                          parse_due, due_note, sort_tasks, filter_tasks
+  ```
+
+  * **models** ([dataclasses](concept:python.dataclasses)): `Task` is frozen, so a change such as
+    `task.start()` returns a new object (`dataclasses.replace`). `__post_init__` validates every
+    field, so an invalid task cannot exist anywhere in the program. `Priority` and `Status` are
+    `Enum`s; priorities have numeric values so they sort naturally. Every date rule takes `today`
+    as a parameter.
+  * **storage** ([classes](concept:python.classes)): `TaskRepository` is an abstract base class
+    with `add`, `get`, `all`, `update` and `delete`. The JSON back end stores
+    `{"version": 1, "next_id": N, "tasks": [...]}` ([JSON](concept:python.csv-json)); the SQLite
+    back end ([sqlite3](concept:databases.sqlite-python)) uses `AUTOINCREMENT` and opens a
+    connection per operation inside a context manager that commits, rolls back and closes.
+    Both translate low-level errors into `StorageError` and missing ids into `TaskNotFoundError`.
+  * **cli** ([command-line apps](concept:python.cli-apps)): `build_parser` defines global `--db`
+    and `--today` and five subcommands; a `COMMANDS` dictionary maps each subcommand to a small
+    handler that returns the message to print. `main` catches the three domain exceptions in one
+    place and turns them into `error: ...` and exit code 1.
+
+  Because the tests run one contract class (`RepositoryContract`) against both back ends, adding a
+  third back end later (say, PostgreSQL) only needs one more fixture.
+setup: |
+  You need Python 3.11 or newer. The program uses only the standard library (`sqlite3` is built
+  in); `pytest` is installed just for the tests. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\task-manager-cli
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+  `.\.venv\Scripts\python.exe -m pytest` without activating.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/task-manager-cli
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Edit the files in `starter/task_manager/`. To try the program, `cd starter` and run
+  `python -m task_manager --help`.
+milestones:
+  - id: model
+    title: An immutable, self-validating model
+    description: |
+      In `models.py`, implement `Priority.parse` and `Status.parse` (case-insensitive, `TaskError`
+      for unknown values), `normalise_title`, the validation in `Task.__post_init__`, `is_done`,
+      `start`, `complete`, `to_dict`, `from_dict` and `parse_iso_date` (exactly `YYYY-MM-DD`).
+
+      The tests check defaults and title clean-up, nine kinds of invalid field (including
+      `True` as an id and a `datetime` as a due date), immutability, that status changes return
+      new objects, and that `from_dict` rejects missing fields, unknown labels and impossible
+      dates. Run `python -m pytest -k Milestone1`.
+  - id: rules
+    title: Due dates, sorting and filtering
+    description: |
+      Still in `models.py`: `parse_due(text, today)` (`YYYY-MM-DD`, `today`, `tomorrow`, `+N`;
+      nothing in the past), `Task.is_overdue(today)`, `due_note` (`overdue by 3 days`,
+      `due tomorrow`...), `sort_key`/`sort_tasks` (open first, then priority, then due date with
+      no date last, then id) and `filter_tasks` (statuses, priority, overdue).
+
+      Every rule receives `today` as a parameter, so the tests can use fixed dates such as
+      2026-10-22 and never depend on the clock. Run `python -m pytest -k Milestone2`.
+  - id: json-storage
+    title: JSON repository with atomic saves
+    description: |
+      In `storage.py`, implement `atomic_write_text` and `JsonTaskRepository`. Keep `next_id` in
+      the file so deleted ids are never reused, validate every task on load (`StorageError`
+      naming the file for invalid JSON, a wrong version, duplicate ids...), and never create the
+      file just by reading it.
+
+      The tests run the shared repository contract (add, get, all, update, delete, persistence,
+      unicode and SQL-like titles) plus JSON-specific checks: the exact file format, six kinds of
+      corrupt file, a corrupt file that must not be overwritten, and a simulated full disk
+      (`os.replace` fails) that must leave the old file intact and no temporary files behind.
+      Run `python -m pytest -k Milestone3`.
+  - id: sqlite-storage
+    title: SQLite repository behind the same interface
+    description: |
+      Implement `SqliteTaskRepository`: create the table from `_SCHEMA`, open and always close a
+      connection per operation (a `@contextmanager` that also turns `sqlite3.DatabaseError` into
+      `StorageError` works well), store priorities as numbers and due dates as ISO text, and use
+      only constant SQL strings with `?` placeholders. Then write `open_repository`, which picks
+      the back end from the file suffix.
+
+      The same contract tests as milestone 3 run against SQLite, plus checks of the schema and row
+      layout, a file that is not a database, the suffix rules, and a scan of `storage.py` that
+      fails if any `execute()` receives an f-string or formatted SQL. Run
+      `python -m pytest -k Milestone4`.
+  - id: cli
+    title: Command line and package structure
+    description: |
+      In `cli.py`, implement `today_option`, `build_parser` (global `--db` and `--today`;
+      subcommands `add`, `list`, `start`, `done`, `delete`), `format_task_table` and `main`.
+      The README's output reference lists every message.
+
+      The tests call `main([...])` with `capsys`: adding, the sorted table, status changes and
+      filters, overdue notes on a later `--today`, deleting, user errors (exit 1, nothing saved),
+      usage errors (exit 2), the SQLite back end, a corrupt file and the default `tasks.json` in
+      the current folder. Four more tests check the architecture: `models` imports no storage or
+      CLI code, `storage` does not import the CLI, only `cli.py` prints, and
+      `python -m task_manager` exists. Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 122 pytest tests in `tests/test_task_manager.py`, one class per milestone
+  (`TestMilestone1Model` … `TestMilestone5Cli`). The repository tests are written once in a
+  `RepositoryContract` base class and inherited by `TestMilestone3JsonStorage` and
+  `TestMilestone4SqliteStorage`, each of which only supplies the class to test and a file name.
+  By default the tests import your `starter/` package:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone4   # one milestone
+  python -m pytest -k "Milestone4 and delete" -x   # only the delete tests for SQLite
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The tests are deterministic: every file lives in pytest's `tmp_path`, "today" is always passed
+  in (`--today 2026-10-22`), failures such as a full disk are simulated with `monkeypatch`, and
+  the CLI runs in-process with `capsys`.
+security:
+  - SQL injection. Pass values as ? parameters and keep SQL text constant; never build queries with f-strings, % or .format(). A test stores a title containing DROP TABLE and another scans storage.py for formatted SQL.
+  - Treat the data file as untrusted input. Validate every task on load (types, labels, dates, unique ids) so a hand-edited or tampered file cannot inject invalid state.
+  - Never destroy data. Save JSON atomically with a temporary file and os.replace, and report a corrupt file instead of overwriting it.
+  - Close database connections deterministically and roll back on errors, so a failure cannot leave a half-applied change or a locked file.
+  - Task titles can be private. Keep tasks.json and tasks.db out of version control and shared folders; tempfile.mkstemp creates files readable only by you on macOS and Linux.
+extensions:
+  - Add an edit command that changes a task's title, priority or due date, reusing the same validation as add.
+  - Add tags (a many-to-many table in SQLite, a list in JSON) and a list --tag filter, with the contract tests extended for both back ends.
+  - Write a migrate command that copies all tasks from a JSON file to an SQLite database (or back), preserving ids.
+  - Add recurring tasks (every N days) that create the next occurrence when one is completed.
+  - Package the project with a pyproject.toml so it installs a task-manager command, and add a --version flag.
+rubric:
+  - criterion: Layered design
+    needsWork: Validation, storage and printing are mixed; models import json or sqlite3, or storage prints.
+    meets: models, storage and cli are separate and depend only downwards; only the CLI prints; the architecture tests pass.
+    exceeds: Adding a new back end or a new command touches only one layer, and you can explain each dependency.
+  - criterion: Model correctness
+    needsWork: Invalid tasks can be created, dates depend on the real clock, or sorting is inconsistent.
+    meets: Frozen, self-validating Task; explicit today everywhere; sorting and filtering match the tests exactly.
+    exceeds: Clear error messages for every invalid value and extra tests for edge cases such as leap days.
+  - criterion: Storage robustness
+    needsWork: Writes files in place, reuses ids, leaks database connections, or builds SQL with string formatting.
+    meets: Both back ends pass the shared contract; atomic JSON saves; SQLite uses placeholders and closes connections.
+    exceeds: Corrupt data is reported with precise locations, and the contract tests are extended for new behaviour.
+  - criterion: CLI quality
+    needsWork: Tracebacks for user mistakes, inconsistent messages, or wrong exit codes.
+    meets: All commands and filters work, messages match the reference, and exit codes are 0, 1 and 2 as specified.
+    exceeds: Helpful --help texts and examples, and the README documents every option.

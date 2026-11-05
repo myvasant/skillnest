@@ -1,0 +1,204 @@
+id: backend.configuration
+concept: backend.configuration
+title: Application configuration
+subtitle: Typed settings loaded from the environment (for example with pydantic-settings), separate per environment
+  and validated at start-up
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Typed settings loaded from the environment (for example with pydantic-settings), separate per environment
+  and validated at start-up.
+objectives:
+- Explain the core model behind application configuration.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Settings Management (pydantic-settings)
+  url: https://pydantic.dev/docs/validation/latest/concepts/pydantic_settings/
+  publisher: Pydantic
+- title: Settings and Environment Variables
+  url: https://fastapi.tiangolo.com/advanced/settings/
+  publisher: FastAPI
+- title: 'The Twelve-Factor App: Config'
+  url: https://12factor.net/config
+  publisher: Adam Wiggins / Twelve-Factor
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Typed settings loaded from the environment (for example with pydantic-settings), separate per environment
+      and validated at start-up. The same code must run on a laptop, in CI and in production with different databases
+      and keys; hard-coded values force code changes, and a missing setting should fail at start-up, not halfway
+      through a request.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+
+      - `class Settings(BaseSettings)` from pydantic-settings reads environment variables (and optionally a `.env`
+      file), converts types and fails fast with a clear error when a value is missing or invalid.
+
+      - Give non-secret settings safe defaults, but require secrets and production endpoints explicitly by giving
+      them no default.
+
+      - Create the settings object once and share it, for example through a dependency wrapped in `functools.lru_cache`,
+      so tests can override it.
+
+      - Use `env_prefix` or nested models to keep settings for different components organised.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+
+      - Reading `os.environ` all over the code base makes settings hard to find and test; centralise them in one
+      typed object.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def resolve_config(defaults, file_values, environment, overrides):\n    result = dict(defaults)\n   \
+      \ for layer in (file_values, environment, overrides): result.update(layer)\n    return result\n\nprint(resolve_config({\"\
+      timeout\":10}, {\"timeout\":15}, {\"timeout\":20}, {}))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: configuration-code
+  - type: item
+    ref: configuration-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+
+      - `class Settings(BaseSettings)` from pydantic-settings reads environment variables (and optionally a `.env`
+      file), converts types and fails fast with a clear error when a value is missing or invalid.
+
+      - Give non-secret settings safe defaults, but require secrets and production endpoints explicitly by giving
+      them no default.
+
+      - Create the settings object once and share it, for example through a dependency wrapped in `functools.lru_cache`,
+      so tests can override it.
+
+      - Use `env_prefix` or nested models to keep settings for different components organised.
+
+
+      **Avoid**
+
+      - A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+
+      - Reading `os.environ` all over the code base makes settings hard to find and test; centralise them in one
+      typed object.'
+  - type: item
+    ref: configuration-mcq
+  - type: item
+    ref: configuration-tf
+  - type: item
+    ref: configuration-code
+items:
+- id: configuration-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of application configuration?
+  explanation: Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+  options:
+  - id: a
+    text: Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: configuration-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: configuration-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing application configuration in a real application. What design decisions would you
+    make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: configuration-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for application configuration. Implement the stated rule and make sure both ordinary
+    and edge-case tests pass.
+  starterCode: "def resolve_config(defaults, file_values, environment, overrides):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def resolve_config(defaults, file_values, environment, overrides):\n    result = dict(defaults)\n \
+    \   for layer in (file_values, environment, overrides): result.update(layer)\n    return result"
+  tests:
+  - name: Core behaviour
+    code: assert resolve_config({"timeout":10}, {"timeout":15}, {"timeout":20}, {})["timeout"] == 20
+  - name: Edge cases
+    code: assert resolve_config({"debug":False}, {}, {}, {"debug":True})["debug"] is True
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - configuration-mcq
+  - configuration-tf
+  - configuration-code
+cheatsheet: '**Core model**
+
+  - Keep configuration that varies between deploys in the environment, not in code (Twelve-Factor).
+
+  - `class Settings(BaseSettings)` from pydantic-settings reads environment variables (and optionally a `.env` file),
+  converts types and fails fast with a clear error when a value is missing or invalid.
+
+  - Give non-secret settings safe defaults, but require secrets and production endpoints explicitly by giving them
+  no default.
+
+  - Create the settings object once and share it, for example through a dependency wrapped in `functools.lru_cache`,
+  so tests can override it.
+
+  - Use `env_prefix` or nested models to keep settings for different components organised.
+
+
+  **Common mistakes**
+
+  - A `.env` file is a development convenience, not a deployment mechanism or a secret store.
+
+  - Reading `os.environ` all over the code base makes settings hard to find and test; centralise them in one typed
+  object.'

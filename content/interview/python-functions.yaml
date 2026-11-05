@@ -1,0 +1,711 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ---------------------------------------------------------------- functions
+  - id: python.functions.return-vs-print
+    level: junior
+    kind: conceptual
+    concepts: [python.functions]
+    question: |
+      What is the difference between `return` and `print` inside a function? What does this code print,
+      and why?
+
+      ```python
+      def add(a, b):
+          print(a + b)
+
+      result = add(2, 3)
+      print(result)
+      ```
+    answer: |
+      `print` displays a value for a human and then the value is gone; `return` ends the function and
+      hands a value back to the caller, so the call expression evaluates to that value and can be stored,
+      combined or tested.
+
+      The code prints `5` (the print inside `add`) and then `None`. `add` has no return statement, and
+      every function that finishes without executing `return value` returns `None`. So `result` is
+      `None`, and `add(2, 3) * 10` would raise `TypeError: unsupported operand type(s) for *: 'NoneType'
+      and 'int'`.
+
+      The usual design is: functions compute and **return**; the code at the edge of the program (the
+      caller, a CLI, a web handler) decides whether to print. `print` itself returns `None` too -
+      `x = print("hi")` binds `x` to `None`.
+    keyPoints:
+      - print displays output; return sends a value back to the caller and ends the function.
+      - A function with no return (or a bare return) returns None.
+      - The code prints 5 and then None.
+      - Returned values can be composed and tested; printed ones cannot.
+    followUps:
+      - How would you return two values from a function?
+      - What does `return` with no expression return?
+    pitfalls:
+      - Saying the function "returns 5" because 5 appeared on screen.
+      - Thinking print returns the value it displays.
+
+  - id: python.functions.call-stack
+    level: mid
+    kind: conceptual
+    concepts: [python.functions]
+    question: |
+      Describe step by step what happens when Python executes `y = square(4)`, and what the call stack is.
+      What happens if a function calls itself without stopping?
+    answer: |
+      1. Python evaluates the argument expressions (here the object `4`).
+      2. It creates a new **frame** for the call - a workspace holding the function's local variables
+         and the current position in its code - and pushes it on the **call stack**, on top of the
+         caller's frame.
+      3. Parameters are bound to the argument objects in that frame (`n = 4`); nothing is copied.
+      4. The body runs. When it executes `return value` (or reaches the end, giving `None`), the frame is
+         popped and discarded, and execution resumes in the caller at the call expression, which now has
+         the returned value.
+      5. Finally the assignment binds `y` to the returned object.
+
+      The call stack is the stack of frames for calls currently in progress; the top frame is running and
+      each one below is waiting for the call it made. A traceback is a printout of it. Each pending call
+      keeps its frame alive, so unbounded self-calls would grow the stack forever; CPython stops this
+      with `RecursionError` once the depth exceeds the recursion limit (`sys.getrecursionlimit()`, 1000
+      by default).
+    keyPoints:
+      - Arguments are evaluated first, then a new frame is created and pushed.
+      - Parameters are bound to the argument objects in the new frame (no copying).
+      - On return the frame is discarded and the call evaluates to the return value (None if none).
+      - The call stack is the stack of active frames; tracebacks print it.
+      - Unbounded recursion raises RecursionError at the recursion limit (default 1000).
+    followUps:
+      - Why can local variables of one call not be seen by another call of the same function?
+      - How does a traceback relate to the call stack?
+    pitfalls:
+      - Saying arguments are copied into the function.
+      - Confusing the call stack with the memory where objects live.
+
+  - id: python.functions.mutate-or-return
+    level: mid
+    kind: design
+    concepts: [python.functions, python.mutability]
+    question: |
+      A teammate's function `normalise(scores)` modifies the list it receives **and** returns it. Callers
+      are surprised when their original data changes. How would you redesign it, and what convention
+      does the standard library follow?
+    answer: |
+      Because arguments are bound to the caller's object, mutating `scores` changes the caller's list.
+      Returning the same list as well hides that side effect: callers write `new = normalise(old)` and
+      assume `old` is untouched.
+
+      Pick one style and make it explicit:
+
+      - **Pure function** (usually preferable): leave the input alone and return a new list, e.g. build
+        `result = []` and append, or start from `scores.copy()`. Callers who want to replace their data
+        write `scores = normalise(scores)`.
+      - **In-place mutator**: change the list and return `None`, with a name and docstring that say so.
+
+      The standard library follows exactly this split: `sorted(xs)` returns a new list while
+      `xs.sort()` sorts in place and returns `None`; `reversed()` vs `list.reverse()`. Pure functions are
+      easier to test and reason about, and safe to call on shared data; in-place mutation can be chosen for
+      very large data when copying is too expensive.
+    keyPoints:
+      - Mutating a parameter changes the caller's object because no copy is made.
+      - Mutating and returning the same object hides the side effect.
+      - Either return a new object without mutating, or mutate and return None.
+      - The stdlib convention - sorted() vs list.sort() - illustrates this.
+      - Document the choice in the name or docstring.
+    followUps:
+      - Is `scores[:]` enough of a copy if the list contains lists?
+    pitfalls:
+      - Suggesting `result = scores` as a copy.
+
+  # --------------------------------------------------------------- parameters
+  - id: python.parameters.mutable-default
+    level: junior
+    kind: debugging
+    concepts: [python.parameters]
+    question: |
+      What is wrong with this function, and how do you fix it?
+
+      ```python
+      def add_tag(tag, tags=[]):
+          tags.append(tag)
+          return tags
+      ```
+    answer: |
+      Default values are evaluated **once**, when the `def` statement runs, and the resulting object is
+      stored on the function (in `add_tag.__defaults__`). Every call that omits `tags` gets that same list,
+      so tags accumulate across calls: `add_tag("a")` returns `['a']`, then `add_tag("b")` returns
+      `['a', 'b']` - and both results are the same list object.
+
+      The fix is the `None` sentinel, so a new list is created inside the function on each call:
+
+      ```python
+      def add_tag(tag, tags=None):
+          if tags is None:
+              tags = []
+          tags.append(tag)
+          return tags
+      ```
+
+      Immutable defaults (numbers, strings, `None`, tuples) are safe because they cannot be changed in
+      place. Linters such as Ruff and pylint flag mutable defaults.
+    keyPoints:
+      - Defaults are evaluated once at definition time and stored on the function object.
+      - A mutable default is shared by all calls that omit the argument.
+      - Fix with a None default and create the object inside the function.
+      - Use `is None`, not truthiness, so an explicitly passed empty list is respected.
+    followUps:
+      - Where exactly is the default stored, and how can you inspect it?
+      - Is `def f(x=())` safe? Why?
+    pitfalls:
+      - Writing `tags = tags or []`, which replaces an empty list the caller passed on purpose.
+
+  - id: python.parameters.pass-by-object-reference
+    level: mid
+    kind: conceptual
+    concepts: [python.parameters, python.mutability]
+    question: |
+      Is Python pass-by-value or pass-by-reference? Explain using a function that receives an int and a
+      list.
+    answer: |
+      Neither. Python passes arguments **by object reference** (also called call by sharing, or "pass by
+      assignment" in the official FAQ): each parameter is bound to the same object the argument expression
+      evaluated to, exactly like an assignment in the function's new frame.
+
+      ```python
+      def change(n, items):
+          n = n + 1          # rebinds the local name only
+          items.append(n)    # mutates the shared list
+          items = []         # rebinds the local name only
+
+      x, data = 10, [1]
+      change(x, data)        # x is still 10, data is [1, 11]
+      ```
+
+      - It is not pass-by-value: no copy is made, so mutating a mutable argument is visible to the caller.
+      - It is not pass-by-reference: the function receives the object, not the caller's variable, so
+        rebinding the parameter never changes what the caller's name refers to.
+
+      The rule is identical for every type. Ints only look "passed by value" because they are immutable:
+      the function can rebind its name but can never change the object. To "update" a caller's value,
+      return it and let the caller rebind: `x = increment(x)`.
+    keyPoints:
+      - Parameters are bound to the same objects as the arguments - no copy.
+      - Mutation through a parameter is visible to the caller.
+      - Rebinding a parameter only affects the local name.
+      - The mechanism is the same for mutable and immutable objects.
+      - Return new values instead of trying to rebind the caller's variable.
+    followUps:
+      - How would you write a function that must not modify a list it receives?
+    pitfalls:
+      - Saying "immutables are passed by value and mutables by reference".
+
+  - id: python.parameters.args-kwargs-forwarding
+    level: mid
+    kind: coding
+    concepts: [python.parameters]
+    question: |
+      Write a function `log_call(func, *args, **kwargs)` that prints the function's name and arguments,
+      calls `func` with exactly the same arguments, and returns its result. Explain what `*` and `**` do
+      in the definition and in the call.
+    answer: |
+      ```python
+      def log_call(func, *args, **kwargs):
+          print(f"calling {func.__name__} with {args} {kwargs}")
+          result = func(*args, **kwargs)
+          print(f"{func.__name__} returned {result!r}")
+          return result
+
+      log_call(pow, 2, 10)              # calling pow with (2, 10) {}
+      log_call(sorted, [3, 1], reverse=True)
+      ```
+
+      In the **definition**, `*args` packs any extra positional arguments into a new tuple and `**kwargs`
+      packs any extra keyword arguments into a new dict (whose order matches the call). In the **call**,
+      `*args` spreads the tuple back into separate positional arguments and `**kwargs` spreads the dict
+      into keyword arguments, so `func` receives exactly what `log_call` received. This forwarding pattern
+      is the basis of decorators and wrapper functions.
+    keyPoints:
+      - "*args collects extra positional arguments into a tuple; **kwargs collects keyword arguments into a dict."
+      - In a call, * and ** unpack a sequence or mapping into arguments.
+      - Forwarding with func(*args, **kwargs) passes the arguments through unchanged.
+      - The function's return value must be returned, not just printed.
+    followUps:
+      - How would you preserve the wrapped function's name and docstring when writing a decorator?
+      - What happens if both log_call and func have a parameter called func?
+    pitfalls:
+      - Calling func(args, kwargs), which passes a tuple and a dict as two positional arguments.
+
+  - id: python.parameters.keyword-only-design
+    level: senior
+    kind: design
+    concepts: [python.parameters]
+    question: |
+      You maintain a widely used function `export(data, path, overwrite, compress)`. Callers write
+      `export(rows, "out.csv", True, False)`, and you want to rename `data` later. How would you redesign
+      the signature with `/` and `*`, and why?
+    answer: |
+      ```python
+      def export(data, /, path, *, overwrite=False, compress=False):
+          ...
+      ```
+
+      - `data` becomes **positional-only** (before `/`, PEP 570). Its name is an implementation detail,
+        so you can rename it later without breaking callers who might otherwise write `export(data=...)`.
+      - `path` stays positional-or-keyword - it is obvious at the call site.
+      - `overwrite` and `compress` become **keyword-only** (after `*`, PEP 3102) with defaults. Calls must
+        read `export(rows, "out.csv", overwrite=True)`, which documents itself and makes it impossible to
+        swap the two booleans silently. New options can be added later in any order without breaking
+        positional callers.
+
+      This mirrors built-ins such as `sorted(iterable, /, *, key=None, reverse=False)`. For a migration,
+      you could first accept the old positional booleans with a deprecation warning before enforcing the
+      new signature.
+    keyPoints:
+      - Parameters before / are positional-only, so their names can change freely.
+      - Parameters after * are keyword-only, which makes flags self-documenting and prevents swaps.
+      - Defaults on the options keep common calls short.
+      - Keyword-only options can be extended without breaking callers.
+      - sorted() uses the same pattern.
+    followUps:
+      - How would you migrate existing callers without breaking them immediately?
+    pitfalls:
+      - Making everything keyword-only, including the obvious primary argument.
+
+  # -------------------------------------------------------------------- scope
+  - id: python.scope.unboundlocalerror
+    level: mid
+    kind: debugging
+    concepts: [python.scope]
+    question: |
+      Why does this raise `UnboundLocalError`, even though `count` exists? Give two fixes and say which
+      you prefer.
+
+      ```python
+      count = 0
+
+      def increment():
+          count += 1
+
+      increment()
+      ```
+    answer: |
+      Scope is decided when the function is compiled: if a function **assigns** to a name anywhere in its
+      body, that name is local for the whole function. `count += 1` is an assignment (`count = count + 1`),
+      so `count` is local to `increment`, and reading it to compute `count + 1` fails because the local has
+      no value yet. The global `count` is never consulted. `UnboundLocalError` is a subclass of `NameError`.
+
+      Fixes:
+
+      1. Preferred - make the data flow explicit:
+         ```python
+         def increment(count):
+             return count + 1
+         count = increment(count)
+         ```
+      2. Declare `global count` at the top of the function. It works, but the function now has hidden
+         input and output (global state), which makes it harder to test, reuse and reason about.
+
+      In a nested function the equivalent declaration for an enclosing function's variable is `nonlocal`.
+    keyPoints:
+      - Any assignment in a function makes the name local for the entire function.
+      - The decision is made at compile time, so the read fails before the assignment runs.
+      - Preferred fix - pass the value in and return the new value.
+      - Alternative - global (or nonlocal in nested functions), with its downsides.
+    followUps:
+      - Why does `items.append(1)` on a global list work without `global`?
+    pitfalls:
+      - Saying Python reads the global until the local assignment line.
+
+  - id: python.scope.legb
+    level: junior
+    kind: conceptual
+    concepts: [python.scope]
+    question: |
+      Explain the LEGB rule. What does this print?
+
+      ```python
+      x = "global"
+      def outer():
+          x = "enclosing"
+          def inner():
+              print(x)
+          inner()
+      outer()
+      print(x)
+      ```
+    answer: |
+      When Python reads a name it searches four scopes in order and uses the first match: **Local** (the
+      current function call), **Enclosing** (functions the current one is written inside), **Global**
+      (module level) and **Built-in** (names such as `print` and `len`). If none has the name, it raises
+      `NameError`.
+
+      The program prints `enclosing` (inner has no local `x`, so the enclosing function's `x` is found)
+      and then `global` (the module-level `x` was never changed - `x = "enclosing"` created a local name
+      in `outer`).
+
+      Scoping is **lexical**: it depends on where a function is written, not on who calls it, so a function
+      can never see its caller's local variables. Only functions, classes and modules create scopes;
+      `if`, `for` and `while` blocks do not.
+    keyPoints:
+      - Lookup order is Local, Enclosing, Global, Built-in; first match wins.
+      - The output is "enclosing" then "global".
+      - Assignment inside a function creates a local name and does not change the global.
+      - Scopes are lexical; callers' locals are not visible.
+      - Blocks such as if/for do not create scopes.
+    followUps:
+      - What happens if you name a variable `list` at module level?
+    pitfalls:
+      - Claiming inner sees the global x because it is called from the module.
+
+  - id: python.scope.global-state
+    level: mid
+    kind: design
+    concepts: [python.scope]
+    question: |
+      A script uses module-level variables `cart` and `total` that many functions modify with `global`.
+      What problems does this cause, and how would you refactor it?
+    answer: |
+      Problems with mutable global state:
+
+      - **Hidden inputs and outputs**: a function's behaviour depends on, and changes, data not visible in
+        its signature, so calls cannot be understood in isolation.
+      - **Action at a distance**: any function anywhere can change the values, so a bad value can come from
+        anywhere.
+      - **Order dependence and poor testability**: tests must set up and reset globals, and results depend
+        on what ran before.
+      - **No reuse**: one global cart means one cart; it also becomes a race-condition risk with
+        concurrency.
+
+      Refactor so data flows through parameters and return values: `def add_item(cart, item, price)`
+      returning the new cart/total (or mutating a cart object passed in explicitly), with the state owned by
+      the caller - later, typically a class or dataclass instance that bundles the cart with its operations.
+      Module-level constants that are only read (`TAX_RATE = 18`) are fine.
+    keyPoints:
+      - Global mutable state hides dependencies and side effects.
+      - It makes functions order-dependent and hard to test.
+      - It prevents reuse (one instance only) and is risky with concurrency.
+      - Pass state in as parameters and return results; let the caller own the state.
+      - Read-only module constants are acceptable.
+    followUps:
+      - When might a module-level variable be acceptable?
+    pitfalls:
+      - Recommending more global statements as the fix.
+
+  # -------------------------------------------------- higher-order functions
+  - id: python.higher-order-functions.sort-by-key
+    level: junior
+    kind: coding
+    concepts: [python.higher-order-functions]
+    question: |
+      Given `people = [{"name": "Ada", "age": 36}, {"name": "Alan", "age": 41}, {"name": "Grace", "age": 36}]`,
+      sort them by age, youngest first, and by name within the same age. Then find the oldest person.
+      Explain how `key` works.
+    answer: |
+      ```python
+      ordered = sorted(people, key=lambda p: (p["age"], p["name"]))
+      oldest = max(people, key=lambda p: p["age"])
+      ```
+
+      `sorted` calls the key function once per item, compares the items by the returned keys and returns a
+      new list of the **original items**. Returning a tuple sorts by age first and uses the name only to
+      break ties, because tuples compare element by element. The result is Ada (36), Grace (36), Alan (41);
+      `max` with the same kind of key returns the whole dict for Alan.
+
+      Python's sort is stable, so an equivalent approach is two passes (sort by name, then by age). For a
+      descending numeric part, negate it in the key (`-p["age"]`) or use `reverse=True`. `list.sort(key=...)`
+      sorts in place and returns `None`.
+    keyPoints:
+      - key is called once per item; items are compared by key; original items are returned.
+      - A tuple key gives multi-level sorting.
+      - min/max accept key and return the original item.
+      - Sorting is stable; reverse=True or negation for descending order.
+      - sorted returns a new list; list.sort sorts in place and returns None.
+    followUps:
+      - How would you sort by age descending but name ascending?
+      - What is operator.itemgetter and when would you use it?
+    pitfalls:
+      - Writing key=p["age"] or key=len() instead of passing a function.
+
+  - id: python.higher-order-functions.lambda-vs-def
+    level: junior
+    kind: conceptual
+    concepts: [python.higher-order-functions]
+    question: |
+      What is a lambda? When would you use one, and when would you write a `def` instead?
+    answer: |
+      `lambda params: expression` creates an anonymous function object whose body is a single expression;
+      the value of that expression is returned automatically. It is an ordinary function object - not faster
+      or special - and its `__name__` is `'<lambda>'`.
+
+      Use a lambda for a short, obvious function passed inline to another function: a sort key
+      (`key=lambda r: r[1]`), a callback, a `max`/`min` key. Use `def` when the function needs a name (PEP 8
+      recommends a def rather than assigning a lambda to a variable), is reused, needs statements
+      (assignments, loops, try/except), needs a docstring, or would be clearer with a descriptive name in
+      tracebacks.
+    keyPoints:
+      - A lambda is an anonymous function limited to one expression, which is returned.
+      - It produces a normal function object.
+      - Good for short inline keys and callbacks.
+      - Use def for named, reused or multi-statement functions (PEP 8).
+    followUps:
+      - "Why might `f = lambda x: x * 2` make debugging harder than a def?"
+    pitfalls:
+      - Believing lambdas are faster than def functions.
+
+  - id: python.higher-order-functions.map-vs-comprehension
+    level: mid
+    kind: conceptual
+    concepts: [python.higher-order-functions, python.comprehensions]
+    question: |
+      Compare `list(map(lambda n: n * 2, nums))`, `list(filter(lambda n: n > 0, nums))` and the equivalent
+      comprehensions. Which would you use, and what is special about the objects map and filter return?
+    answer: |
+      They produce the same lists as `[n * 2 for n in nums]` and `[n for n in nums if n > 0]`. Most Python
+      style guides and reviewers prefer the comprehensions: they read left to right, avoid the lambda
+      call overhead and combine transformation and filtering in one expression. `map` remains neat when you
+      already have a named function: `list(map(str, nums))`.
+
+      `map` and `filter` return **lazy iterators**: values are computed only as they are requested, which
+      saves memory for large inputs and allows pipelines, but the iterator can be consumed only once - a
+      second `list()` over the same map object returns `[]`. Printing one shows `<map object at 0x...>`
+      rather than values. A generator expression `(n * 2 for n in nums)` gives the same laziness with
+      comprehension syntax.
+    keyPoints:
+      - map/filter and comprehensions produce the same results.
+      - Comprehensions are usually considered more readable, especially with lambdas.
+      - map is fine with an existing named function.
+      - map and filter return lazy, single-use iterators.
+      - Generator expressions provide laziness with comprehension syntax.
+    followUps:
+      - When would laziness matter in practice?
+    pitfalls:
+      - Iterating over the same map object twice and expecting the values again.
+
+  # --------------------------------------------------------------- exceptions
+  - id: python.exceptions.bare-except
+    level: junior
+    kind: conceptual
+    concepts: [python.exceptions]
+    question: |
+      Why is `try: ... except: pass` considered bad practice? What should you write instead?
+    answer: |
+      A bare `except:` catches **every** exception, including ones you did not anticipate: typos
+      (`NameError`), wrong types (`TypeError`), logic errors - and also `KeyboardInterrupt` (Ctrl+C) and
+      `SystemExit`, because it catches `BaseException`. With `pass`, the program then silently continues
+      in a wrong state and the traceback that would have pointed at the bug is lost.
+
+      Instead, keep the `try` block around the specific operation that can fail and catch the specific
+      exceptions you know how to handle, e.g. `except ValueError:` around `int(text)`, with a meaningful
+      response (re-prompt, default value, skip and count). Let unexpected exceptions propagate. PEP 8:
+      "mention specific exceptions whenever possible instead of using a bare except: clause". A broad
+      `except Exception` is acceptable only at an application boundary (a request handler, a job runner)
+      where the error is logged with its traceback and the program deliberately carries on.
+    keyPoints:
+      - A bare except catches everything, including bugs.
+      - It also catches KeyboardInterrupt and SystemExit.
+      - except pass discards the error information.
+      - Catch specific exceptions around small try blocks and handle them meaningfully.
+      - Broad handlers only at boundaries, with logging.
+    followUps:
+      - What is the difference between except Exception and a bare except?
+    pitfalls:
+      - "Replacing a bare except with `except Exception: pass` and calling it fixed."
+
+  - id: python.exceptions.else-finally
+    level: mid
+    kind: conceptual
+    concepts: [python.exceptions]
+    question: |
+      What are the `else` and `finally` clauses of a `try` statement for? In what order do the clauses run
+      if the `try` block returns a value?
+    answer: |
+      - `except` clauses run if a matching exception is raised in the `try` block (the first matching clause
+        wins).
+      - `else` runs only if the `try` block completed **without** raising. It is for code that should run on
+        success but whose own exceptions should **not** be caught by the handlers above - it keeps the `try`
+        block minimal.
+      - `finally` runs **always**: after success, after a handled exception, while an unhandled exception
+        propagates, and when the block exits with `return`, `break` or `continue`. It is for clean-up
+        (releasing locks, closing connections); `with` statements package this pattern.
+
+      If the `try` block executes `return value`, the return value is computed, then `finally` runs, then
+      the function actually returns. (`else` is skipped because control left the try block via return.) A
+      `return` inside `finally` would override that value and even discard an in-flight exception; Python
+      3.14 emits a `SyntaxWarning` for it (PEP 765).
+    keyPoints:
+      - else runs only when no exception occurred in the try block.
+      - else keeps code out of the try block so its errors are not caught accidentally.
+      - finally always runs - success, failure or return.
+      - With return in try, finally runs before the function returns.
+      - Returning from finally swallows exceptions (SyntaxWarning in 3.14).
+    followUps:
+      - When would you use a with statement instead of finally?
+    pitfalls:
+      - Saying else runs when the except clause did not match.
+
+  - id: python.exceptions.eafp-lbyl
+    level: mid
+    kind: conceptual
+    concepts: [python.exceptions]
+    question: |
+      Explain EAFP and LBYL with an example. Which does Python favour, and when would you choose the other?
+    answer: |
+      **LBYL** (Look Before You Leap) checks preconditions first: `if key in d: value = d[key]`.
+      **EAFP** (Easier to Ask Forgiveness than Permission) attempts the operation and handles failure:
+      `try: value = d[key] except KeyError: ...`.
+
+      Python idiom generally favours EAFP:
+
+      - The operation is the authority: `int(text)` inside try accepts exactly what int accepts, whereas an
+        LBYL check like `text.isdigit()` rejects valid input such as "-5" or " 7 ".
+      - It avoids time-of-check/time-of-use races: a file can be deleted between `os.path.exists()` and
+        `open()`, so you must handle `FileNotFoundError` anyway.
+      - In CPython, a try block costs almost nothing when no exception is raised.
+
+      LBYL is better when the check is simple and failure is common (raising exceptions is relatively
+      expensive), when it reads more clearly (`if not items:`), or when an action cannot be undone and must
+      be validated first. Often a dedicated API beats both, e.g. `d.get(key, default)`.
+    keyPoints:
+      - LBYL checks before acting; EAFP acts and handles the exception.
+      - EAFP avoids duplicated or mismatched validation logic.
+      - EAFP avoids race conditions between check and use.
+      - LBYL suits cheap checks for frequent, expected cases.
+      - Prefer purpose-built APIs like dict.get when available.
+    followUps:
+      - Why is checking os.path.exists() before open() not sufficient?
+    pitfalls:
+      - Claiming EAFP is always faster.
+
+  - id: python.exceptions.where-to-handle
+    level: senior
+    kind: design
+    concepts: [python.exceptions]
+    question: |
+      In a program that reads records from a file, parses them with helper functions and saves results,
+      where should exceptions such as `ValueError` from parsing be handled? What should low-level helpers do?
+    answer: |
+      Handle an exception where the code has enough context to make a **decision** - usually near the
+      boundary of the program, not where it is detected.
+
+      - Low-level helpers (`parse_age(text)`) cannot know whether a bad value should be skipped, defaulted
+        or treated as fatal, so they should let the exception propagate - or raise a clearer, domain-specific
+        exception (`raise InvalidRecord(...) from err`) that keeps the original as its cause.
+      - The record loop is the natural place to catch per-record errors: skip or quarantine the record, count
+        it, log the record number and message, and continue.
+      - The top level (CLI main, request handler, job runner) catches what remains, logs it with the
+        traceback, reports a clear message and sets an exit status - rather than crashing with a raw
+        traceback or silently continuing.
+
+      Throughout: catch specific exceptions, keep try blocks small, never swallow errors silently, use
+      `finally`/`with` for clean-up so resources are released while exceptions propagate.
+    keyPoints:
+      - Handle exceptions where a meaningful decision can be made.
+      - Helpers should propagate or translate exceptions, preserving the cause.
+      - Per-record handling in the loop allows skipping and counting bad records.
+      - The top level logs, reports and sets exit codes.
+      - Specific exceptions, small try blocks, no silent swallowing, clean-up with finally/with.
+    followUps:
+      - When would you convert a ValueError into a custom exception type?
+    pitfalls:
+      - Catching and printing in every function, producing duplicate messages and lost control flow.
+
+  # ---------------------------------------------------------------- debugging
+  - id: python.debugging.process
+    level: junior
+    kind: scenario
+    concepts: [python.debugging]
+    question: |
+      A function returns the wrong answer for some inputs and there is no error message. Walk through how you
+      would find and fix the bug.
+    answer: |
+      1. **Reproduce** it with a specific input, writing down the expected and actual results. Find the
+         smallest input that still fails.
+      2. **Read** what evidence exists - a traceback if any, otherwise the precise difference between
+         expected and actual.
+      3. **Hypothesise** one specific cause ("the loop skips the last item").
+      4. **Isolate**: check intermediate values at the function's boundaries or halfway through the logic to
+         find where correct data first becomes wrong (bisection).
+      5. **Inspect** state to confirm or reject the hypothesis - labelled prints such as `print(f"{i=}
+         {total=}")`, assertions, or stepping through with `breakpoint()`/pdb or an IDE debugger. If
+         rejected, form a new hypothesis.
+      6. **Fix the cause**, not the symptom, changing one thing at a time.
+      7. **Prevent** recurrence: add a regression test for the failing input and boundary cases, remove
+         debug prints, and check for the same pattern elsewhere.
+
+      Common suspects are off-by-one ranges, wrong indentation, accumulators reset in a loop, aliasing,
+      strings vs numbers and missing returns. Explaining the code to someone (rubber-duck debugging) often
+      exposes the wrong assumption.
+    keyPoints:
+      - Reproduce reliably with expected vs actual written down.
+      - Form specific, testable hypotheses.
+      - Isolate by checking intermediate state (bisection).
+      - Inspect with labelled prints, asserts or a debugger rather than guessing.
+      - Fix the root cause and add a regression test.
+    followUps:
+      - What would you do if the bug only happens occasionally?
+    pitfalls:
+      - Changing several things at once until the output looks right.
+
+  - id: python.debugging.intermittent-production-bug
+    level: senior
+    kind: scenario
+    concepts: [python.debugging]
+    question: |
+      A bug appears in production a few times a day but you cannot reproduce it locally. How do you approach
+      it?
+    answer: |
+      The goal is still to reproduce it, so first gather evidence:
+
+      - **Collect data**: tracebacks, logs and metrics around each occurrence; look for what failing cases
+        share - specific inputs, users, times, load, versions, configuration.
+      - **Add observability** where evidence is missing: structured logging of relevant inputs and decisions
+        (never secrets or personal data), request ids, and assertions that fail loudly with context.
+      - **Compare environments**: dependency versions, configuration, data volume, time zones, concurrency
+        - "works on my machine" usually means the environments differ.
+      - **Form hypotheses** that explain the intermittency: race conditions, timeouts and retries, caching,
+        ordering assumptions (for example relying on set order), resource limits, time-dependent code.
+      - **Build a minimal reproduction** from the captured inputs - replay them in a test, add load or
+        artificial delays to provoke races, fix seeds and clocks.
+      - **Fix and verify**: write a regression test that fails before the fix, deploy, and confirm in
+        monitoring that the error rate drops; keep the useful logging.
+
+      Tools: logging, `python -X faulthandler` for crashes and hangs, and in Python 3.14
+      `python -m pdb -p PID` to attach a debugger to a running process (with great care in production).
+    keyPoints:
+      - Gather evidence from logs, tracebacks and metrics; find what failures have in common.
+      - Add targeted logging or assertions where evidence is missing, without logging secrets.
+      - Compare environments and data between production and local.
+      - Hypothesise causes of intermittency - races, timing, caching, ordering, resources.
+      - Reproduce from captured inputs, fix, add a regression test and verify in production.
+    followUps:
+      - How would you test a suspected race condition?
+    pitfalls:
+      - Attaching a debugger to production as the first step, or deploying speculative fixes without evidence.
+
+  - id: python.debugging.assert-vs-exception
+    level: mid
+    kind: conceptual
+    concepts: [python.debugging]
+    question: |
+      When should you use `assert`, and when should you raise an exception instead?
+    answer: |
+      `assert condition, message` documents and checks an **internal assumption** that should be true if the
+      code is correct - an invariant, a precondition between your own functions - and is the basis of tests
+      (pytest uses plain asserts). If it fails, it reveals a **bug** in the program.
+
+      Because assertions are removed when Python runs with `-O` (they only execute when `__debug__` is
+      True), they must never be used for checks that must always happen: validating user input, data from
+      files or networks, configuration, permissions or anything security-related. Those are expected runtime
+      conditions; raise an appropriate exception (`ValueError`, `TypeError`, a custom one) or handle them
+      (re-prompt, return an error response).
+
+      Also beware `assert (cond, "msg")`: a parenthesised pair is a non-empty tuple and is always true, which
+      Python flags with a SyntaxWarning.
+    keyPoints:
+      - assert checks internal assumptions and is used in tests.
+      - A failing assert indicates a bug in the program.
+      - python -O removes asserts, so they must not guard required checks.
+      - Validate external input by raising or handling exceptions.
+      - assert (cond, msg) is always true.
+    followUps:
+      - How does pytest show useful messages for a plain assert?
+    pitfalls:
+      - Using assert for authentication or input validation.

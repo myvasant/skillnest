@@ -1,0 +1,1203 @@
+id: python.csv-json
+concept: python.csv-json
+title: CSV and JSON Data
+subtitle: Reading and writing the two everyday data-exchange formats
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Spreadsheets export CSV; web APIs and config files speak JSON. Learn to read and write both with the
+  csv and json modules instead of fragile string splitting, how their values map to Python types, why
+  CSV values are always strings, and how to handle invalid data safely — without ever using eval().
+objectives:
+  - Read CSV files with csv.reader and csv.DictReader, converting the string values to the types you need.
+  - Write CSV files with csv.writer and csv.DictWriter, opening them with newline="".
+  - Convert between JSON text and Python objects with json.dumps/loads (strings) and json.dump/load (files).
+  - Predict how Python values map to JSON and back, including tuples, None, booleans and non-string keys.
+  - Diagnose JSONDecodeError, "not JSON serializable" and DictWriter errors, and explain why eval() must never parse data.
+sources:
+  - title: csv — CSV File Reading and Writing
+    url: https://docs.python.org/3/library/csv.html
+    publisher: Python Software Foundation
+  - title: json — JSON encoder and decoder
+    url: https://docs.python.org/3/library/json.html
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Saving structured data with json"
+    url: https://docs.python.org/3/tutorial/inputoutput.html#saving-structured-data-with-json
+    publisher: Python Software Foundation
+  - title: "RFC 8259: The JavaScript Object Notation (JSON) Data Interchange Format"
+    url: https://www.rfc-editor.org/rfc/rfc8259
+    publisher: IETF
+  - title: "RFC 4180: Common Format and MIME Type for CSV Files"
+    url: https://www.rfc-editor.org/rfc/rfc4180
+    publisher: IETF
+sections:
+  - id: why
+    title: Why not just split on commas?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Programs constantly swap data with other programs: a spreadsheet exports a table, a web service
+          returns a user profile, a tool reads its settings from a file. Two plain-text formats cover most
+          of this:
+
+          - [CSV](glossary:csv) (comma-separated values) — a **table**: one row per line, fields separated
+            by commas.
+          - [JSON](glossary:json) — **nested structures**: objects (like dicts) and arrays (like lists)
+            containing strings, numbers, booleans and null.
+
+          Both look simple enough to handle with string methods. They are not. Here is one CSV line where
+          a name contains a comma, so the format wraps it in quotes:
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          line = '"Hopper, Grace",New York,85'
+
+          print(line.split(","))          # naive: wrong
+
+          for row in csv.reader([line]):  # the csv module knows the quoting rules
+              print(row)
+        expectedOutput: |
+          ['"Hopper', ' Grace"', 'New York', '85']
+          ['Hopper, Grace', 'New York', '85']
+        annotations:
+          - line: 5
+            text: split() knows nothing about quotes, so the name is torn in two and the quotes are kept.
+          - line: 7
+            text: csv.reader accepts anything that gives lines — a file, or here a one-item list.
+      - type: markdown
+        body: |
+          The same is true for JSON: hand-built strings break as soon as a value contains a quote or a
+          newline. The standard library's `csv` and `json` modules implement the full rules, so use them
+          for both reading and writing. Turning objects into text like this is called
+          [serialization](glossary:serialization); turning text back into objects is *parsing*.
+
+  - id: csv-reading
+    title: Reading CSV
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A CSV file usually starts with a **header** row naming the columns:
+
+          ```text
+          name,city,age
+          Ada,London,36
+          "Hopper, Grace",New York,85
+          ```
+
+          The rules: fields are separated by commas; a field containing a comma, a double quote or a line
+          break is wrapped in double quotes; a double quote inside such a field is written twice (`""`).
+
+          `csv.reader(f)` turns each line into a **list of strings**. Open CSV files with `newline=""` —
+          the csv module handles line endings itself (more on that below).
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("people.csv", "w", encoding="utf-8", newline="") as f:
+              f.write('name,city,age\nAda,London,36\n"Hopper, Grace",New York,85\n')
+
+          with open("people.csv", encoding="utf-8", newline="") as f:
+              for row in csv.reader(f):
+                  print(row)
+        expectedOutput: |
+          ['name', 'city', 'age']
+          ['Ada', 'London', '36']
+          ['Hopper, Grace', 'New York', '85']
+        annotations:
+          - line: 4
+            text: Writing the raw text ourselves so you can see exactly what is in the file.
+          - line: 7
+            text: Each row is a list; the header is just the first row.
+      - type: markdown
+        body: |
+          Usually you want to refer to columns by name. `csv.DictReader` reads the header for you and turns
+          every following row into a **dict** keyed by the column names:
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("people.csv", "w", encoding="utf-8", newline="") as f:
+              f.write('name,city,age\nAda,London,36\n"Hopper, Grace",New York,85\n')
+
+          with open("people.csv", encoding="utf-8", newline="") as f:
+              reader = csv.DictReader(f)
+              print(reader.fieldnames)
+              for row in reader:
+                  print(row["name"], "is", row["age"])
+        expectedOutput: |
+          ['name', 'city', 'age']
+          Ada is 36
+          Hopper, Grace is 85
+      - type: callout
+        variant: warning
+        title: Every CSV value is a string
+        body: |
+          CSV has no types: `36` in the file arrives as the string `'36'`. `row["age"] + 1` raises
+          `TypeError`, and `row["age"] * 2` gives `'3636'`. Convert explicitly — `int(row["age"])`,
+          `float(row["price"])` — as soon as you read a row.
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("orders.csv", "w", encoding="utf-8", newline="") as f:
+              f.write("item,qty,price\npen,3,1.50\npad,2,4.25\n")
+
+          total = 0.0
+          with open("orders.csv", encoding="utf-8", newline="") as f:
+              for row in csv.DictReader(f):
+                  qty = int(row["qty"])          # '3'    -> 3
+                  price = float(row["price"])    # '1.50' -> 1.5
+                  total += qty * price
+
+          print(f"Order total: {total:.2f}")
+        expectedOutput: |
+          Order total: 13.00
+        caption: Convert each value to the type you need, then do arithmetic.
+      - type: item
+        ref: predict-strings
+
+  - id: csv-writing
+    title: Writing CSV
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `csv.writer(f).writerow(list)` writes one row; `writerows(list_of_lists)` writes many. Values
+          are converted with `str()` (and `None` becomes an empty field), and quoting is added only where
+          it is needed.
+
+          `csv.DictWriter` writes dicts. You list the columns in `fieldnames`, call `writeheader()` once,
+          then `writerow(dict)` for each row:
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          results = [
+              {"name": "Ada", "score": 91},
+              {"name": 'Grace "Amazing" Hopper', "score": 87},
+          ]
+
+          with open("results.csv", "w", encoding="utf-8", newline="") as f:
+              writer = csv.DictWriter(f, fieldnames=["name", "score"])
+              writer.writeheader()
+              writer.writerows(results)
+
+          with open("results.csv", encoding="utf-8", newline="") as f:
+              print(repr(f.read()))
+        expectedOutput: |
+          'name,score\r\nAda,91\r\n"Grace ""Amazing"" Hopper",87\r\n'
+        annotations:
+          - line: 9
+            text: fieldnames fixes the column order and is written as the header.
+          - line: 15
+            text: The quotes inside the name were doubled and the field wrapped in quotes. The csv module ends lines with \r\n, as RFC 4180 specifies.
+      - type: markdown
+        body: |
+          **Why `newline=""`?** The csv module writes its own `"\r\n"` line endings and understands line
+          breaks *inside* quoted fields. Normal text mode would interfere in both directions:
+
+          - **Writing** on Windows, text mode turns every `"\n"` into `"\r\n"`, so the csv module's `"\r\n"`
+            becomes `"\r\r\n"` — spreadsheet programs then show a blank row between every record.
+          - **Reading**, text mode translates line endings before the csv module sees them, which silently
+            changes line breaks stored inside quoted fields:
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("notes.csv", "w", encoding="utf-8", newline="") as f:
+              csv.writer(f).writerow(["memo", "line one\r\nline two"])
+
+          with open("notes.csv", encoding="utf-8") as f:              # no newline=""
+              print(list(csv.reader(f)))
+
+          with open("notes.csv", encoding="utf-8", newline="") as f:  # correct
+              print(list(csv.reader(f)))
+        expectedOutput: |
+          [['memo', 'line one\nline two']]
+          [['memo', 'line one\r\nline two']]
+        caption: Without newline="", the \r inside the quoted field was lost before the csv module could see it.
+      - type: item
+        ref: newline-mcq
+
+  - id: json-basics
+    title: JSON and Python types
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          JSON text looks a lot like Python literals, but it is a separate, stricter language
+          ([RFC 8259](https://www.rfc-editor.org/rfc/rfc8259)): strings **must** use double quotes, the
+          constants are lower-case `true`, `false` and `null`, and trailing commas are not allowed.
+
+          | JSON | Python (after loading) | Notes |
+          |---|---|---|
+          | object `{"k": v}` | `dict` | keys are always strings |
+          | array `[1, 2]` | `list` | tuples are written as arrays too |
+          | string `"text"` | `str` | |
+          | number `3` / `3.5` | `int` / `float` | |
+          | `true` / `false` | `True` / `False` | |
+          | `null` | `None` | |
+
+          Four functions do the conversion. The ones ending in **s** work with **s**trings; the others
+          work with files:
+
+          | Function | Converts | Direction |
+          |---|---|---|
+          | `json.dumps(obj)` | Python object → JSON `str` | serialize |
+          | `json.loads(text)` | JSON `str` → Python object | parse |
+          | `json.dump(obj, f)` | Python object → JSON written to file `f` | serialize |
+          | `json.load(f)` | JSON read from file `f` → Python object | parse |
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          profile = {"name": "Ada", "langs": ["Python", "C"], "active": True, "manager": None}
+
+          text = json.dumps(profile)
+          print(text)
+          print(type(text))
+
+          back = json.loads(text)
+          print(back["langs"][0], back["manager"])
+        expectedOutput: |
+          {"name": "Ada", "langs": ["Python", "C"], "active": true, "manager": null}
+          <class 'str'>
+          Python None
+        annotations:
+          - line: 5
+            text: True became true and None became null — JSON spelling.
+          - line: 9
+            text: Parsing gives ordinary Python objects you can index.
+      - type: visualization
+        component: python-tracer
+        title: From JSON text to Python objects
+        caption: >-
+          Before line 4 runs, text is just one string. Afterwards, data refers to a real dict containing a
+          list and None, which you can change like any other dict. dumps() then builds a brand-new string.
+        props:
+          code: |
+            import json
+
+            text = '{"name": "Ada", "langs": ["Python", "C"], "manager": null}'
+            data = json.loads(text)
+            data["langs"].append("Rust")
+            new_text = json.dumps(data)
+            print(new_text)
+      - type: markdown
+        body: |
+          The round trip is **not always perfect**, because JSON has fewer types than Python. Predict what
+          survives:
+      - type: item
+        ref: predict-roundtrip
+      - type: callout
+        variant: misconception
+        title: '"JSON is just a Python dict written down"'
+        body: |
+          `str(my_dict)` produces Python syntax — single quotes, `True`, `None` — which is **not** valid
+          JSON, and other languages cannot read it. Always produce JSON with `json.dumps`/`json.dump`.
+
+  - id: json-files
+    title: JSON files and pretty printing
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `json.dump(obj, f)` writes straight to an open file and `json.load(f)` reads one back. JSON is
+          text, so open the file in text mode with `encoding="utf-8"` (the JSON standard requires UTF-8
+          for data exchanged between systems).
+
+          Pass `indent=2` to make the output readable — one item per line, nested levels indented. Add
+          `sort_keys=True` to order the keys alphabetically, which keeps files stable under version control.
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          settings = {"theme": "dark", "font_size": 14, "plugins": ["git", "lint"]}
+
+          with open("settings.json", "w", encoding="utf-8") as f:
+              json.dump(settings, f, indent=2)
+
+          with open("settings.json", encoding="utf-8") as f:
+              print(f.read())
+
+          with open("settings.json", encoding="utf-8") as f:
+              loaded = json.load(f)
+
+          loaded["font_size"] += 2
+          print(loaded["font_size"], loaded == settings)
+        expectedOutput: |
+          {
+            "theme": "dark",
+            "font_size": 14,
+            "plugins": [
+              "git",
+              "lint"
+            ]
+          }
+          16 False
+        annotations:
+          - line: 6
+            text: indent=2 puts each item on its own line, indented by two spaces per level.
+          - line: 12
+            text: json.load parses the file's text into a new dict.
+          - line: 14
+            text: loaded is a separate object, so changing it does not change settings — hence False.
+      - type: callout
+        variant: tip
+        title: Non-ASCII text
+        body: |
+          By default `json.dumps("café")` writes `"caf\u00e9"` — an escape that every JSON reader
+          understands. Pass `ensure_ascii=False` to keep the characters as they are (`"café"`), which is
+          friendlier to read; then make sure the file is written with `encoding="utf-8"`.
+
+  - id: mistakes
+    title: Invalid data, errors and safety
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes` | Single quotes — the text is Python syntax, not JSON | Produce it with `json.dumps`; JSON strings need `"` |
+          | `JSONDecodeError: Illegal trailing comma before end of object` | A comma after the last item | Remove it — JSON forbids trailing commas |
+          | `JSONDecodeError: Expecting value: line 1 column 1 (char 0)` | Empty file or empty string (or HTML instead of JSON) | Check what you actually read: `print(repr(text[:100]))` |
+          | `TypeError: Object of type set is not JSON serializable` | JSON has no set, date, or custom object types | Convert first: `sorted(my_set)`, `day.isoformat()` |
+          | `TypeError: can only concatenate str (not "int") to str` with CSV data | CSV values are strings | `int(row["qty"])`, `float(row["price"])` |
+          | `ValueError: dict contains fields not in fieldnames: 'age'` | DictWriter got a key missing from `fieldnames` | Add the column to `fieldnames` (or pass `extrasaction="ignore"`) |
+          | `KeyError: 'name'` though the header says `name` | Excel saved "UTF-8 with BOM"; the first key is really `'\ufeffname'` | Open with `encoding="utf-8-sig"` |
+          | Blank rows between CSV records on Windows | File opened without `newline=""` | `open(path, "w", encoding="utf-8", newline="")` |
+
+          JSON errors report the **line and column** where parsing failed — the mistake is at or just
+          before that position:
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          text = '{"name": "Ada", "age": 36,}'
+          data = json.loads(text)
+        expectError: JSONDecodeError
+        caption: Column 26 is the closing brace, just after the illegal trailing comma.
+      - type: markdown
+        body: |
+          `JSONDecodeError` is a subclass of `ValueError`, so you can catch it specifically and report a
+          helpful message when input comes from a user, a file or the network:
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          def parse_or_none(text):
+              try:
+                  return json.loads(text)
+              except json.JSONDecodeError as err:
+                  print(f"Invalid JSON at line {err.lineno}, column {err.colno}: {err.msg}")
+                  return None
+
+          print(parse_or_none('[1, 2, 3]'))
+          print(parse_or_none("{'name': 'Ada'}"))
+        expectedOutput: |
+          [1, 2, 3]
+          Invalid JSON at line 1, column 2: Expecting property name enclosed in double quotes
+          None
+      - type: markdown
+        body: |
+          Some Python objects have no JSON equivalent, so `dumps` refuses them rather than guessing:
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          tags = {"python", "files"}
+          print(json.dumps({"tags": sorted(tags)}))   # convert the set to a sorted list: works
+          print(json.dumps({"tags": tags}))           # a set: TypeError
+        expectError: TypeError
+        expectedOutput: |
+          {"tags": ["files", "python"]}
+      - type: callout
+        variant: warning
+        title: Never use eval() to parse data
+        body: |
+          JSON looks like Python, so it is tempting to write `eval(text)`. Don't. `eval` **runs** the text
+          as Python code, so data from a file, a user or the internet could do anything your program can do
+          — read secrets, delete files. It also fails on valid JSON (`true` and `null` are not Python
+          names). `json.loads` only ever builds data, so it is safe. (For Python-literal text such as
+          `"{'a': 1}"`, `ast.literal_eval` is the safe tool — but for JSON use `json`.)
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          untrusted = '__import__("os").getcwd()'   # imagine this arrived from a web form
+
+          print(eval(untrusted))     # eval RAN it - it could just as easily delete files
+
+          try:
+              json.loads(untrusted)  # json only parses data: this is not valid JSON
+          except json.JSONDecodeError as err:
+              print("rejected:", err.msg)
+        expectedOutput: |
+          /home/pyodide
+          rejected: Expecting value
+        caption: >-
+          eval executed code that asked the operating system for the current folder. json.loads refused,
+          because the text is not data. More in [secure coding](concept:python.secure-coding).
+      - type: item
+        ref: explain-eval
+      - type: item
+        ref: debug-str-json
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise writes its own data files first, then processes them. The checks re-run your
+          functions on different files, so make them read the path they are given.
+      - type: item
+        ref: revenue
+      - type: item
+        ref: csv-to-json
+      - type: item
+        ref: parsons-dictwriter
+
+  - id: under-the-hood
+    title: Under the hood and in production
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **CSV has no single standard.** RFC 4180 describes the common form, but real files vary:
+          semicolons as separators (common where the comma is the decimal mark), tabs, different quoting.
+          The csv module calls these variations *dialects*: `csv.reader(f, delimiter=";")`, or
+          `csv.Sniffer().sniff(sample)` to guess. Short rows get `None` for missing columns in
+          `DictReader`; extra fields are collected in a list under the key `None`.
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("ragged.csv", "w", encoding="utf-8", newline="") as f:
+              f.write("a,b,c\n1,2\n1,2,3,4\n")
+
+          with open("ragged.csv", encoding="utf-8", newline="") as f:
+              for row in csv.DictReader(f):
+                  print(row)
+        expectedOutput: |
+          {'a': '1', 'b': '2', 'c': None}
+          {'a': '1', 'b': '2', 'c': '3', None: ['4']}
+        caption: Validate row lengths in production code instead of trusting every file.
+      - type: markdown
+        body: |
+          **The Excel BOM.** "CSV UTF-8" files from Excel begin with a byte-order mark (the bytes
+          `EF BB BF`). Decoded as plain UTF-8 it becomes an invisible `'\ufeff'` glued to the first header:
+      - type: code
+        runnable: true
+        code: |
+          import csv
+
+          with open("from-excel.csv", "wb") as f:
+              f.write("name,qty\r\nPens,3\r\n".encode("utf-8-sig"))   # simulate Excel's output
+
+          with open("from-excel.csv", encoding="utf-8", newline="") as f:
+              print(csv.DictReader(f).fieldnames)
+
+          with open("from-excel.csv", encoding="utf-8-sig", newline="") as f:
+              print(csv.DictReader(f).fieldnames)
+        expectedOutput: |
+          ['\ufeffname', 'qty']
+          ['name', 'qty']
+      - type: markdown
+        body: |
+          **JSON details worth knowing.**
+
+          - Python's json module accepts and writes `NaN` and `Infinity` by default, although they are not
+            valid JSON. Pass `allow_nan=False` to `dumps` to get a `ValueError` instead of emitting them.
+          - Duplicate keys in an object are allowed by the parser; the **last** one wins.
+          - Python ints are unlimited, but many JSON readers (JavaScript in particular) store every number
+            as a 64-bit float, so integers above 2**53 lose precision there. APIs often send large IDs as
+            strings for this reason.
+          - `json.dumps(obj, default=func)` calls `func` for objects it cannot serialize — return something
+            serializable (for example `str`), or raise `TypeError`. `json.loads(text, object_hook=func)`
+            lets you transform each decoded object.
+          - `separators=(",", ":")` removes the spaces for the most compact output.
+      - type: code
+        runnable: true
+        code: |
+          import json
+          from datetime import date
+
+          event = {"title": "Launch", "day": date(2026, 10, 22)}
+          print(json.dumps(event, default=str))
+          print(json.loads('{"id": 1, "id": 2}'))
+          print(json.dumps([1, [2, 3]], separators=(",", ":")))
+        expectedOutput: |
+          {"title": "Launch", "day": "2026-10-22"}
+          {'id': 2}
+          [1,[2,3]]
+        annotations:
+          - line: 5
+            text: default=str turns the date into its string form, '2026-10-22'.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Use the `csv` and `json` modules, never `split(",")` or hand-built strings.
+          - CSV: open with `encoding="utf-8", newline=""`. `csv.reader` → lists, `csv.DictReader` → dicts
+            keyed by the header. **Every value is a string** — convert with `int()`/`float()`.
+          - Write with `csv.writer(f).writerow(...)` or `csv.DictWriter(f, fieldnames=[...])` +
+            `writeheader()` + `writerow(dict)`.
+          - JSON ↔ Python: object↔dict, array↔list (tuples become lists), string↔str, numbers↔int/float,
+            true/false↔True/False, null↔None. Object keys are always strings.
+          - `dumps`/`loads` work with strings; `dump`/`load` with files. `indent=2` pretty-prints.
+          - Catch `json.JSONDecodeError` (a `ValueError`) for bad input; convert sets, dates and other
+            objects before dumping. **Never** `eval()` data.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How would you load a JSON config safely, and what changes in a round trip?" — Use `json.load`
+          with an explicit encoding, catch `JSONDecodeError` with a clear message, validate required keys;
+          mention that tuples become lists and non-string keys become strings, and that `eval` is never
+          acceptable because it executes code.
+
+items:
+  - id: predict-strings
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (Two lines.)
+    code: |
+      import csv
+
+      with open("stock.csv", "w", encoding="utf-8", newline="") as f:
+          f.write("item,qty\npens,3\npads,2\n")
+
+      with open("stock.csv", encoding="utf-8", newline="") as f:
+          rows = list(csv.DictReader(f))
+
+      print(rows[0]["qty"] * 2)
+      print(len(rows))
+    answer: |
+      33
+      2
+    explanation: >-
+      CSV values are strings, so rows[0]["qty"] is '3' and '3' * 2 repeats it: '33'. DictReader consumes
+      the header row to make the keys, so there are two data rows.
+    wrongAnswers:
+      - answer: |
+          6
+          2
+        feedback: >-
+          The csv module does not convert types. '3' is a string, and multiplying a string by 2 repeats it.
+          Use int(row["qty"]) to get a number.
+      - answer: |
+          33
+          3
+        feedback: DictReader uses the first line as the header (the dict keys), so it is not counted as a row.
+      - answer: |
+          6
+          3
+        feedback: Two misconceptions — values are strings ('3' * 2 is '33'), and the header is not a data row.
+
+  - id: newline-mcq
+    type: mcq
+    skill: recognition
+    prompt: Why does the csv documentation tell you to open CSV files with `newline=""`?
+    explanation: >-
+      newline="" turns off text mode's newline translation so the csv module sees and writes line endings
+      exactly. Otherwise Windows output gets an extra \r per row (blank rows in spreadsheets) and line
+      breaks inside quoted fields can be altered when reading.
+    options:
+      - id: a
+        text: It stops Python translating line endings, because the csv module handles them itself — including line breaks inside quoted fields.
+        correct: true
+        feedback: Right. The csv module needs to see the raw line endings to read and write them correctly.
+      - id: b
+        text: It removes all newlines from the file so the data fits on one line.
+        feedback: The file still has one record per line; newline="" only controls translation of line endings.
+      - id: c
+        text: It is required for UTF-8 files.
+        feedback: Encoding and newline handling are separate settings. You still pass encoding="utf-8" as well.
+      - id: d
+        text: It makes csv.reader convert numbers to int automatically.
+        feedback: No option makes the csv module guess types (except quoting=csv.QUOTE_NONNUMERIC, which converts unquoted fields to float). Values are strings.
+
+  - id: predict-roundtrip
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Two lines.)
+    code: |
+      import json
+
+      original = {1: ("a", "b"), "ok": None}
+      copy = json.loads(json.dumps(original))
+
+      print(copy)
+      print(copy == original)
+    answer: |
+      {'1': ['a', 'b'], 'ok': None}
+      False
+    explanation: >-
+      JSON object keys are always strings, so the key 1 is written as "1" and comes back as '1'. JSON has
+      no tuples, so ("a", "b") becomes an array and comes back as a list. None survives as null → None. The
+      result differs from the original, so == is False.
+    wrongAnswers:
+      - answer: |
+          {1: ('a', 'b'), 'ok': None}
+          True
+        feedback: >-
+          JSON has fewer types than Python: keys must be strings and there are no tuples, so the round trip
+          changes both.
+      - answer: |
+          {'1': ['a', 'b'], 'ok': null}
+          False
+        feedback: null is JSON spelling. json.loads converts it back to Python's None.
+      - answer: |
+          {'1': ('a', 'b'), 'ok': None}
+          False
+        feedback: A JSON array always loads as a list — the parser cannot know it was a tuple before.
+
+  - id: explain-eval
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate parses JSON received from a web form with `data = eval(request_text)` because "it works
+      in my tests". Explain why this is dangerous and what to use instead.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says eval executes the text as Python code rather than just reading data.
+      - Explains that an attacker controlling the text could run arbitrary code (delete files, read secrets).
+      - Notes that eval does not even handle valid JSON reliably (true, false, null are not Python names).
+      - Recommends json.loads, which only builds data, and catching json.JSONDecodeError for bad input.
+    modelAnswer: |
+      eval() treats its argument as a Python expression and runs it. If the text comes from outside —
+      a form, a file, an API — whoever controls it can make the program do anything it is allowed to
+      do, such as `__import__("os").remove(...)`. It is also simply wrong for JSON: valid JSON like
+      `{"ok": true}` fails because `true` is not a Python name. json.loads parses only JSON data into
+      dicts, lists, strings, numbers, booleans and None, and raises json.JSONDecodeError (which we can
+      catch) for anything else.
+
+  - id: debug-str-json
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program saves settings and loads them again, but loading crashes with a `JSONDecodeError`.
+      Find the cause and fix how the file is **written**, so the file contains real JSON.
+    starterCode: |
+      import json
+
+      settings = {"theme": "dark", "autosave": True, "backup_dir": None}
+
+      with open("prefs.json", "w", encoding="utf-8") as f:
+          f.write(str(settings))
+
+      with open("prefs.json", encoding="utf-8") as f:
+          loaded = json.load(f)
+
+      print(loaded["theme"], loaded["autosave"])
+    solution: |
+      import json
+
+      settings = {"theme": "dark", "autosave": True, "backup_dir": None}
+
+      with open("prefs.json", "w", encoding="utf-8") as f:
+          json.dump(settings, f)
+
+      with open("prefs.json", encoding="utf-8") as f:
+          loaded = json.load(f)
+
+      print(loaded["theme"], loaded["autosave"])
+    expectedOutput: |
+      dark True
+    tests:
+      - name: prints dark True
+        code: |
+          assert output().strip() == "dark True", f"Expected 'dark True', got {output()!r}."
+      - name: prefs.json contains valid JSON
+        code: |
+          import json
+          with open("prefs.json", encoding="utf-8") as check:
+              content = check.read()
+          try:
+              parsed = json.loads(content)
+          except json.JSONDecodeError:
+              raise AssertionError(f"prefs.json still is not valid JSON: {content!r}. Write it with json.dump(settings, f).")
+          assert parsed == settings, "prefs.json should contain all of the settings."
+      - name: does not parse with eval
+        code: |
+          assert not calls("eval"), "Don't use eval() to read the file. Fix the writing side so json.load can read it."
+    hints:
+      - Look at what str(settings) produces — print it. Is that JSON?
+      - "Python's repr uses single quotes, True and None. JSON needs double quotes, true and null."
+      - Replace f.write(str(settings)) with json.dump(settings, f).
+    feedback:
+      - when: { errorType: JSONDecodeError }
+        message: >-
+          The file still is not JSON. str() writes Python syntax (single quotes, True, None). Use
+          json.dump(settings, f) to write JSON.
+      - when: { codeContains: "eval(" }
+        message: eval() runs the file as code. Keep json.load and fix how the file is written instead.
+    explanation: >-
+      str(settings) produced {'theme': 'dark', 'autosave': True, 'backup_dir': None} — Python syntax. The
+      JSON parser stops at the single quote: "Expecting property name enclosed in double quotes".
+      json.dump writes {"theme": "dark", "autosave": true, "backup_dir": null}, which json.load reads back
+      into the original dict.
+
+  - id: revenue
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `sales.csv` has the columns `product,units,unit_price`. Write `total_revenue(path)` that reads the
+      CSV file at `path` with the csv module and **returns** the sum of `units * unit_price` over all rows,
+      as a float.
+
+      Careful: one product name contains a comma.
+    starterCode: |
+      import csv
+
+      with open("sales.csv", "w", encoding="utf-8", newline="") as f:
+          f.write('product,units,unit_price\n"Pens, blue",10,0.5\nNotebook,4,2.25\n')
+
+
+      def total_revenue(path):
+          # Open the file, read rows with csv.DictReader, convert, multiply, add up.
+          pass
+
+
+      print(total_revenue("sales.csv"))
+    solution: |
+      import csv
+
+      with open("sales.csv", "w", encoding="utf-8", newline="") as f:
+          f.write('product,units,unit_price\n"Pens, blue",10,0.5\nNotebook,4,2.25\n')
+
+
+      def total_revenue(path):
+          total = 0.0
+          with open(path, encoding="utf-8", newline="") as f:
+              for row in csv.DictReader(f):
+                  total += int(row["units"]) * float(row["unit_price"])
+          return total
+
+
+      print(total_revenue("sales.csv"))
+    expectedOutput: |
+      14.0
+    tests:
+      - name: total for sales.csv is 14.0
+        code: |
+          result = total_revenue("sales.csv")
+          assert result == 14.0, f"10 * 0.5 + 4 * 2.25 = 14.0, but total_revenue returned {result!r}."
+      - name: works for another file
+        code: |
+          with open("check-sales.csv", "w", encoding="utf-8", newline="") as setup:
+              setup.write('product,units,unit_price\n"Cable, 2m",3,1.5\nMouse,1,8.0\nPad,2,0.25\n')
+          result = total_revenue("check-sales.csv")
+          assert result == 13.0, f"For the check file the total should be 13.0, but got {result!r}. Read the path parameter and handle quoted commas with the csv module."
+      - name: uses the csv module
+        code: |
+          assert calls("DictReader") or calls("reader"), "Read the rows with csv.DictReader (or csv.reader) instead of splitting lines yourself."
+          assert not calls("split"), "Don't split lines on commas — the quoted product name contains a comma. Let the csv module parse it."
+    hints:
+      - '`with open(path, encoding="utf-8", newline="") as f:` then `for row in csv.DictReader(f):`'
+      - "row[\"units\"] is a string like '10'. Convert with int(), and unit_price with float()."
+      - Start with total = 0.0, add each row's units * unit_price, and return total.
+    feedback:
+      - when: { errorType: TypeError }
+        message: CSV values are strings. Convert units with int() and unit_price with float() before multiplying.
+      - when: { errorType: ValueError }
+        message: >-
+          A value could not be converted. If you split lines on commas, "Pens, blue" was broken in two and
+          the columns shifted. Use csv.DictReader.
+      - when: { outputEquals: "None\n" }
+        message: total_revenue must return the total, not just compute it.
+    explanation: >-
+      DictReader handles the quoted "Pens, blue" correctly and gives each row as a dict of strings.
+      Converting units with int() and unit_price with float() before multiplying gives 5.0 + 9.0 = 14.0.
+
+  - id: csv-to-json
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write `csv_to_json(csv_path, json_path)` that reads a CSV file with columns `name,score` and writes
+      a JSON file containing a **list of objects**, with each score converted to an **int**, pretty-printed
+      with `indent=2`. For the starter data, the JSON file should load back as:
+
+      ```python
+      [{"name": "Ada", "score": 91}, {"name": "Linus", "score": 78}]
+      ```
+    starterCode: |
+      import csv
+      import json
+
+      with open("scores.csv", "w", encoding="utf-8", newline="") as f:
+          f.write("name,score\nAda,91\nLinus,78\n")
+
+
+      def csv_to_json(csv_path, json_path):
+          # 1. Read the rows with csv.DictReader and build a list of dicts (score as int).
+          # 2. Write the list to json_path with json.dump(..., indent=2).
+          pass
+
+
+      csv_to_json("scores.csv", "scores.json")
+      with open("scores.json", encoding="utf-8") as f:
+          print(f.read())
+    solution: |
+      import csv
+      import json
+
+      with open("scores.csv", "w", encoding="utf-8", newline="") as f:
+          f.write("name,score\nAda,91\nLinus,78\n")
+
+
+      def csv_to_json(csv_path, json_path):
+          records = []
+          with open(csv_path, encoding="utf-8", newline="") as f:
+              for row in csv.DictReader(f):
+                  records.append({"name": row["name"], "score": int(row["score"])})
+          with open(json_path, "w", encoding="utf-8") as f:
+              json.dump(records, f, indent=2)
+
+
+      csv_to_json("scores.csv", "scores.json")
+      with open("scores.json", encoding="utf-8") as f:
+          print(f.read())
+    expectedOutput: |
+      [
+        {
+          "name": "Ada",
+          "score": 91
+        },
+        {
+          "name": "Linus",
+          "score": 78
+        }
+      ]
+    tests:
+      - name: writes the right data
+        code: |
+          import json, os
+          if os.path.exists("check-scores.json"):
+              os.remove("check-scores.json")
+          csv_to_json("scores.csv", "check-scores.json")
+          assert os.path.exists("check-scores.json"), "csv_to_json should create the JSON file at json_path."
+          with open("check-scores.json", encoding="utf-8") as check:
+              data = json.load(check)
+          assert data == [{"name": "Ada", "score": 91}, {"name": "Linus", "score": 78}], f"The JSON file loads as {data!r}."
+      - name: scores are numbers, not strings
+        code: |
+          import json
+          with open("check-scores.json", encoding="utf-8") as check:
+              data = json.load(check)
+          assert all(isinstance(r.get("score"), int) for r in data), "Convert each score with int() — in the JSON it should be 91, not \"91\"."
+      - name: pretty-printed with indent=2
+        code: |
+          with open("check-scores.json", encoding="utf-8") as check:
+              text = check.read()
+          assert '\n  {' in text, "Write the JSON with json.dump(records, f, indent=2) so it is readable."
+      - name: works for other files
+        code: |
+          import json, os
+          with open("check-in.csv", "w", encoding="utf-8", newline="") as setup:
+              setup.write("name,score\nGrace,100\n")
+          if os.path.exists("check-out.json"):
+              os.remove("check-out.json")
+          csv_to_json("check-in.csv", "check-out.json")
+          assert os.path.exists("check-out.json"), "csv_to_json should create the file named by its json_path parameter."
+          with open("check-out.json", encoding="utf-8") as check:
+              data = json.load(check)
+          assert data == [{"name": "Grace", "score": 100}], f"csv_to_json('check-in.csv', 'check-out.json') produced {data!r}. Use the two path parameters."
+    hints:
+      - Build an empty list, then append one dict per CSV row.
+      - '{"name": row["name"], "score": int(row["score"])} converts the score.'
+      - "Open json_path with \"w\" and call json.dump(records, f, indent=2)."
+    feedback:
+      - when: { outputContains: '"91"' }
+        message: The score is still a string in the JSON. Convert it with int(row["score"]) before saving.
+      - when: { errorType: JSONDecodeError }
+        message: The JSON file is empty or invalid. Make sure csv_to_json writes it with json.dump.
+    explanation: >-
+      The CSV gives strings; the conversion step makes score an int, so the JSON contains 91 rather than
+      "91". json.dump with indent=2 writes a readable list of objects, and the function uses its
+      parameters, so it works for any pair of paths.
+
+  - id: parsons-dictwriter
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to write two rows to `team.csv` with a header, then print the file's lines. One
+      line is a distractor.
+    solution: |
+      import csv
+      rows = [{"name": "Ada", "role": "lead"}, {"name": "Lin", "role": "dev"}]
+      with open("team.csv", "w", encoding="utf-8", newline="") as f:
+          writer = csv.DictWriter(f, fieldnames=["name", "role"])
+          writer.writeheader()
+          writer.writerows(rows)
+      with open("team.csv", encoding="utf-8", newline="") as f:
+          print(f.read().splitlines())
+    distractors:
+      - '    writer.writerow(rows)'
+    expectedOutput: |
+      ['name,role', 'Ada,lead', 'Lin,dev']
+    explanation: >-
+      Create the DictWriter with the column names, write the header once, then all rows. writerow(rows)
+      would try to write the whole list as a single row. The file must be closed (end of the with block)
+      before it is read back.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-quoted
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Two lines.)
+    code: |
+      import csv
+
+      with open("cities.csv", "w", encoding="utf-8", newline="") as f:
+          f.write('city,pop\n"Washington, D.C.",689\nLima,10\n')
+
+      total = 0
+      with open("cities.csv", encoding="utf-8", newline="") as f:
+          reader = csv.reader(f)
+          header = next(reader)
+          for row in reader:
+              total += int(row[1])
+
+      print(len(header), total)
+      print(row[0])
+    answer: |
+      2 699
+      Lima
+    explanation: >-
+      The header has two fields. The quoted "Washington, D.C." is one field, so row[1] is the population
+      in both rows: 689 + 10 = 699. After the loop, row still refers to the last row, so row[0] is Lima.
+      (next(reader) takes one row from the reader — you will meet next() properly in the iterators lesson.)
+    wrongAnswers:
+      - answer: |
+          2 10
+          Lima
+        feedback: >-
+          The csv module keeps "Washington, D.C." together as one field, so its population (689) is in
+          row[1] and is counted.
+      - answer: |
+          2 699
+          Washington, D.C.
+        feedback: After the loop finishes, row refers to the last row read, which is Lima's.
+      - answer: |
+          2 68910
+          Lima
+        feedback: int(row[1]) converts each value to a number, so += adds numbers rather than joining strings.
+
+  - id: m-format-choice
+    type: mcq
+    skill: design
+    prompt: |
+      You need to store a user's settings: a theme name, a font size, a list of recently opened files,
+      and per-plugin options (each plugin has its own small set of key/value options). Which format fits
+      best?
+    explanation: >-
+      The data is nested — a list and a mapping of mappings — which JSON represents directly. CSV is a flat
+      table and would need an awkward encoding for nested values.
+    options:
+      - id: a
+        text: JSON, because it represents nested objects and lists directly.
+        correct: true
+        feedback: Right. json.dump(settings, f, indent=2) writes it, and json.load reads it back into dicts and lists.
+      - id: b
+        text: CSV, because it is the most widely supported format.
+        feedback: CSV is great for tables of rows with the same columns, but it has no way to express nesting.
+      - id: c
+        text: A text file written with str(settings), read back with eval().
+        feedback: str() is not a data format other programs understand, and eval() executes code — a security hole.
+      - id: d
+        text: CSV with one column per setting.
+        feedback: The list of files and the per-plugin options don't fit into single cells without inventing your own sub-format.
+
+  - id: m-tf-dumps
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `json.dumps(data)` writes `data` to a file called data.json."
+    answer: false
+    explanation: >-
+      json.dumps returns a JSON string and writes nothing. json.dump(data, f) writes to an open file object
+      f. The trailing "s" stands for "string".
+
+  - id: m-code-top-scorer
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `players.json` contains a list of objects like `{"name": "Ada", "score": 91}`. Write
+      `top_scorer(path)` that loads the JSON file and **returns the name** of the player with the highest
+      score.
+    starterCode: |
+      import json
+
+      with open("players.json", "w", encoding="utf-8") as f:
+          json.dump([{"name": "Ada", "score": 91}, {"name": "Lin", "score": 97}, {"name": "Sam", "score": 64}], f)
+
+
+      def top_scorer(path):
+          # Load the list with json.load, then find the player with the largest score.
+          pass
+
+
+      print(top_scorer("players.json"))
+    solution: |
+      import json
+
+      with open("players.json", "w", encoding="utf-8") as f:
+          json.dump([{"name": "Ada", "score": 91}, {"name": "Lin", "score": 97}, {"name": "Sam", "score": 64}], f)
+
+
+      def top_scorer(path):
+          with open(path, encoding="utf-8") as f:
+              players = json.load(f)
+          best = players[0]
+          for player in players:
+              if player["score"] > best["score"]:
+                  best = player
+          return best["name"]
+
+
+      print(top_scorer("players.json"))
+    expectedOutput: |
+      Lin
+    tests:
+      - name: Lin has the top score
+        code: |
+          result = top_scorer("players.json")
+          assert result == "Lin", f"top_scorer('players.json') should return 'Lin', but returned {result!r}."
+      - name: works for another file
+        code: |
+          import json
+          with open("check-players.json", "w", encoding="utf-8") as setup:
+              json.dump([{"name": "Kim", "score": 5}, {"name": "Ola", "score": 50}, {"name": "Bo", "score": 49}], setup)
+          result = top_scorer("check-players.json")
+          assert result == "Ola", f"For the check file the answer is 'Ola', but got {result!r}. Load the path you are given."
+      - name: reads the file with json
+        code: |
+          assert calls("load") or calls("loads"), "Load the file with json.load(f)."
+          assert not calls("eval"), "Don't use eval() to read data."
+    hints:
+      - '`with open(path, encoding="utf-8") as f:` then `players = json.load(f)` gives a list of dicts.'
+      - Keep track of the best player so far and compare each player's "score".
+      - 'Or use max(players, key=lambda p: p["score"]) and return its "name".'
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: top_scorer must return the name, not print it or return nothing.
+      - when: { outputEquals: "Sam\n" }
+        message: Sam has the lowest score. Compare scores numerically and keep the largest.
+    explanation: >-
+      json.load turns the file into a list of dicts. Tracking the best player (or max with a key function)
+      finds the highest score; returning its "name" gives the answer for any file.
+
+  - id: m-debug-dictwriter
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should save contacts to `contacts.csv`, but it crashes with
+      `ValueError: dict contains fields not in fieldnames: 'phone'`. Fix it so all three columns are saved
+      (in the order name, email, phone).
+    starterCode: |
+      import csv
+
+      contacts = [
+          {"name": "Ada", "email": "ada@example.com", "phone": "555-0101"},
+          {"name": "Lin", "email": "lin@example.com", "phone": "555-0102"},
+      ]
+
+      with open("contacts.csv", "w", encoding="utf-8", newline="") as f:
+          writer = csv.DictWriter(f, fieldnames=["name", "email"])
+          writer.writeheader()
+          writer.writerows(contacts)
+
+      with open("contacts.csv", encoding="utf-8", newline="") as f:
+          print(f.read().splitlines()[0])
+    solution: |
+      import csv
+
+      contacts = [
+          {"name": "Ada", "email": "ada@example.com", "phone": "555-0101"},
+          {"name": "Lin", "email": "lin@example.com", "phone": "555-0102"},
+      ]
+
+      with open("contacts.csv", "w", encoding="utf-8", newline="") as f:
+          writer = csv.DictWriter(f, fieldnames=["name", "email", "phone"])
+          writer.writeheader()
+          writer.writerows(contacts)
+
+      with open("contacts.csv", encoding="utf-8", newline="") as f:
+          print(f.read().splitlines()[0])
+    expectedOutput: |
+      name,email,phone
+    tests:
+      - name: header has all three columns
+        code: |
+          assert output().strip() == "name,email,phone", f"The header should be 'name,email,phone', but the program printed {output()!r}."
+      - name: every contact is saved with its phone
+        code: |
+          import csv
+          with open("contacts.csv", encoding="utf-8", newline="") as check:
+              rows = list(csv.DictReader(check))
+          assert [r.get("phone") for r in rows] == ["555-0101", "555-0102"], f"contacts.csv should contain both phone numbers, but rows are {rows!r}."
+    hints:
+      - The error names the key that DictWriter does not know about.
+      - fieldnames must list every key that appears in the dicts you write.
+    feedback:
+      - when: { errorType: ValueError }
+        message: Some key in the dicts is still missing from fieldnames. Add "phone" to the list.
+      - when: { outputEquals: "name,email\n" }
+        message: >-
+          The crash is gone but the phone column is missing. extrasaction="ignore" drops data silently —
+          add "phone" to fieldnames instead.
+    explanation: >-
+      DictWriter refuses (by default) to drop data: a key that is not in fieldnames raises ValueError.
+      Listing all three columns makes the header and every row complete.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-quoted, m-format-choice, m-tf-dumps, m-code-top-scorer, m-debug-dictwriter]
+
+cheatsheet: |
+  ```python
+  import csv, json
+
+  with open("in.csv", encoding="utf-8", newline="") as f:
+      for row in csv.DictReader(f):          # dict per row, keys from header
+          qty = int(row["qty"])              # values are ALWAYS strings
+  with open("out.csv", "w", encoding="utf-8", newline="") as f:
+      w = csv.DictWriter(f, fieldnames=["name", "qty"])
+      w.writeheader()
+      w.writerow({"name": "pen", "qty": 3})
+
+  text = json.dumps(obj, indent=2)          # object -> str
+  obj = json.loads(text)                    # str -> object
+  json.dump(obj, f, indent=2)               # object -> file
+  obj = json.load(f)                        # file -> object
+  ```
+  - JSON ↔ Python: object/dict · array/list (tuple → list) · null/None · true/True · keys → str
+  - `json.JSONDecodeError` (a ValueError) for bad JSON · sets/dates → convert before dumping
+  - Never `eval()` data · Excel BOM → `encoding="utf-8-sig"`

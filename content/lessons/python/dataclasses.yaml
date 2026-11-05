@@ -1,0 +1,1394 @@
+id: python.dataclasses
+concept: python.dataclasses
+title: Dataclasses and Enums
+subtitle: Less boilerplate for data, named constants for fixed choices
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Let @dataclass write __init__, __repr__ and __eq__ for classes that mainly hold data. Use defaults and
+  field(default_factory=list) safely, freeze objects, sort them, and validate them in __post_init__. Then
+  replace error-prone strings with Enum members, and learn when to pick a dataclass, a plain class, a dict
+  or an enum.
+objectives:
+  - Write a dataclass with typed fields, defaults and field(default_factory=...), and predict the generated __init__, __repr__ and __eq__.
+  - Explain why mutable defaults are rejected and fix them with default_factory.
+  - Use frozen=True, replace() and order=True, and explain hashing and shallow immutability.
+  - Validate invariants in __post_init__.
+  - Define and use an Enum, look members up by value and by name, and explain why Status.PAID != "paid".
+  - Choose between a dataclass, a plain class, a dict and an enum for a given situation.
+sources:
+  - title: dataclasses — Data Classes
+    url: https://docs.python.org/3/library/dataclasses.html
+    publisher: Python Software Foundation
+  - title: "PEP 557: Data Classes"
+    url: https://peps.python.org/pep-0557/
+    publisher: Python Software Foundation
+  - title: enum — Support for enumerations
+    url: https://docs.python.org/3/library/enum.html
+    publisher: Python Software Foundation
+  - title: Enum HOWTO
+    url: https://docs.python.org/3/howto/enum.html
+    publisher: Python Software Foundation
+  - title: "PEP 435: Adding an Enum type to the Python standard library"
+    url: https://peps.python.org/pep-0435/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why dataclasses exist
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Many classes exist mostly to **hold data**: a point, a book, an order line. Written by hand, even
+          a two-field class needs a surprising amount of code — and it still behaves oddly:
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  self.x = x
+                  self.y = y
+
+              def __repr__(self):
+                  return f"Point(x={self.x}, y={self.y})"
+
+          a = Point(1, 2)
+          b = Point(1, 2)
+          print(a)
+          print(a == b)
+        expectedOutput: |
+          Point(x=1, y=2)
+          False
+        caption: Each field name is typed four times, and two identical points are not equal.
+      - type: markdown
+        body: |
+          `a == b` is `False` because, without an `__eq__` method, `==` falls back to asking "are these the
+          same object?" Fixing that means writing `__eq__` too — more repetitive code to keep in sync every
+          time you add a field.
+
+          A [dataclass](glossary:dataclass) lets you declare the fields once, with
+          [type hints](concept:python.type-hints), and generates those methods for you:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          @dataclass
+          class Point:
+              x: int
+              y: int
+
+          a = Point(1, 2)
+          b = Point(1, 2)
+          print(a)
+          print(a == b)
+        expectedOutput: |
+          Point(x=1, y=2)
+          True
+        annotations:
+          - line: 3
+            text: "@dataclass processes the class right after it is defined and adds methods to it."
+          - line: 5
+            text: "A field: a name with a type annotation in the class body."
+          - line: 11
+            text: The generated __eq__ compares the fields.
+      - type: callout
+        variant: note
+        title: What is the @ line?
+        body: |
+          `@dataclass` is a **decorator**: a function applied to the class immediately after the `class`
+          statement runs, as if you had written `Point = dataclass(Point)`. You will learn to write your
+          own in [decorators](concept:python.decorators); for now, read it as "turn this into a dataclass".
+
+  - id: basics
+    title: Fields and generated methods
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **field** is a class-level name **with a type annotation**. `@dataclass` collects the fields in
+          the order they are written and generates:
+
+          - `__init__` taking the fields as parameters, in that order, and storing each on `self`;
+          - `__repr__` showing the class name and every field;
+          - `__eq__` returning True when the other object is the **same class** with **equal fields**.
+
+          A dataclass is still an ordinary class: you can add methods, and everything from
+          [classes](concept:python.classes) still applies.
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass, fields
+
+          @dataclass
+          class Book:
+              title: str
+              author: str
+              pages: int
+
+              def is_long(self):
+                  return self.pages > 400
+
+          b = Book("Dune", "Frank Herbert", 412)
+          print(b)
+          print(b.is_long(), b == Book("Dune", "Frank Herbert", 412))
+          print([f.name for f in fields(Book)])
+        expectedOutput: |
+          Book(title='Dune', author='Frank Herbert', pages=412)
+          True True
+          ['title', 'author', 'pages']
+        annotations:
+          - line: 9
+            text: Methods work exactly as in any class.
+          - line: 14
+            text: fields() lists the fields @dataclass found, in order.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Roughly what @dataclass writes for Book (simplified):
+          def __init__(self, title: str, author: str, pages: int):
+              self.title = title
+              self.author = author
+              self.pages = pages
+
+          def __repr__(self):
+              return f"Book(title={self.title!r}, author={self.author!r}, pages={self.pages!r})"
+
+          def __eq__(self, other):
+              if other.__class__ is self.__class__:
+                  return (self.title, self.author, self.pages) == (other.title, other.author, other.pages)
+              return NotImplemented
+        caption: Not run — a sketch of the generated methods. The real code lives in the dataclasses module.
+      - type: callout
+        variant: analogy
+        title: "Mental model: a code generator"
+        body: |
+          Think of `@dataclass` as a helper that reads your field list once, when the class is defined, and
+          writes the boilerplate methods you would otherwise type by hand. After that, nothing about a
+          dataclass is magic: instances are ordinary objects with ordinary attributes, and the generated
+          methods are ordinary methods. (The exact generated code differs in details — for example how
+          `__eq__` short-cuts identical objects — but this model predicts the behaviour correctly.)
+      - type: callout
+        variant: warning
+        title: The hints are still not enforced
+        body: |
+          The annotations tell `@dataclass` which names are fields; they are **not checked**.
+          `Book(123, None, "many")` runs and prints `Book(title=123, author=None, pages='many')`. A type
+          checker would flag it, and you can add runtime checks in `__post_init__` (below).
+      - type: item
+        ref: which-are-fields
+      - type: item
+        ref: predict-eq
+
+  - id: defaults
+    title: Defaults and the mutable default trap
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Give a field a default by assigning a value: `express: bool = False`. Two rules apply:
+
+          1. **Fields without defaults come first.** The generated `__init__` is an ordinary function, and a
+             required parameter cannot follow one with a default.
+          2. **No mutable defaults.** You met the [mutable default trap](concept:python.parameters) with
+             functions: a default list is created once and shared by every call. Dataclasses refuse to
+             repeat that mistake — a list, dict or set default raises an error when the class is defined:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          @dataclass
+          class Order:
+              customer: str
+              items: list[str] = []
+        expectError: ValueError
+        caption: "ValueError: mutable default <class 'list'> for field items is not allowed: use default_factory"
+      - type: markdown
+        body: |
+          The fix is [`field(default_factory=list)`](glossary:default-factory). A *factory* is a function
+          that makes a new object; `list` itself is such a function (`list()` returns a new empty list).
+          The generated `__init__` calls the factory **every time** an instance is created without that
+          argument:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass, field
+
+          @dataclass
+          class Order:
+              customer: str
+              express: bool = False
+              items: list[str] = field(default_factory=list)
+
+          a = Order("Ada")
+          b = Order("Sam", express=True)
+          a.items.append("pen")
+          print(a)
+          print(b)
+          print(a.items is b.items)
+        expectedOutput: |
+          Order(customer='Ada', express=False, items=['pen'])
+          Order(customer='Sam', express=True, items=[])
+          False
+        annotations:
+          - line: 7
+            text: Pass the function list itself — no brackets. The dataclass calls it for each new Order.
+          - line: 10
+            text: Generated __init__ accepts keyword arguments too.
+      - type: visualization
+        component: python-tracer
+        title: Every Order gets a new list
+        caption: Each instance's items attribute points at a different list object, so appending to one leaves the other empty.
+        props:
+          code: |
+            from dataclasses import dataclass, field
+
+            @dataclass
+            class Order:
+                customer: str
+                items: list[str] = field(default_factory=list)
+
+            a = Order("Ada")
+            b = Order("Sam")
+            a.items.append("pen")
+            print(a, b)
+
+  - id: frozen
+    title: Immutable dataclasses with frozen=True
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Some values should never change once created — an amount of money, a coordinate, a configuration.
+          `@dataclass(frozen=True)` makes assigning to a field raise
+          [`FrozenInstanceError`](glossary:frozen-dataclass). To get a modified version, create a **new**
+          object with `dataclasses.replace()`.
+
+          Frozen dataclasses (with the default `eq=True`) are also [hashable](glossary:hashable), so they can
+          be dictionary keys and set members.
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass, replace
+
+          @dataclass(frozen=True)
+          class Money:
+              amount: int
+              currency: str
+
+          price = Money(500, "INR")
+          try:
+              price.amount = 1
+          except Exception as error:
+              print(type(error).__name__, "-", error)
+
+          discounted = replace(price, amount=450)
+          print(price, discounted)
+          budget = {Money(100, "INR"): "lunch"}
+          print(budget[Money(100, "INR")])
+        expectedOutput: |
+          FrozenInstanceError - cannot assign to field 'amount'
+          Money(amount=500, currency='INR') Money(amount=450, currency='INR')
+          lunch
+        annotations:
+          - line: 10
+            text: Assignment is refused.
+          - line: 14
+            text: replace() copies the fields, changing only the ones you name.
+          - line: 16
+            text: An equal Money object finds the same dictionary entry.
+      - type: callout
+        variant: warning
+        title: Frozen is shallow
+        body: |
+          `frozen=True` stops you rebinding a field; it does not freeze the object a field refers to. A
+          frozen dataclass holding a list can still have that list mutated (`team.members.append("Sam")`
+          works), and it is no longer hashable, because lists aren't. For truly immutable data, use
+          immutable field types such as `tuple[str, ...]` and `frozenset`.
+      - type: markdown
+        body: |
+          **Why are normal dataclasses unhashable?** Dict keys must keep the same hash for their whole life.
+          A mutable object whose fields can change would change its hash, so with `eq=True` and no
+          `frozen=True`, the dataclass sets `__hash__` to `None` on purpose. Using one as a key raises
+          `TypeError: cannot use 'Point' as a dict key (unhashable type: 'Point')`.
+
+  - id: ordering
+    title: Sorting with order=True
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          By default dataclasses support `==` but not `<`. `@dataclass(order=True)` generates `<`, `<=`, `>`
+          and `>=`, which compare the fields **as a tuple, in definition order**: the first field decides,
+          and the next field only breaks ties. That makes `sorted()`, `min()` and `max()` work.
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          @dataclass(order=True, frozen=True)
+          class Version:
+              major: int
+              minor: int
+              patch: int = 0
+
+          releases = [Version(1, 10), Version(1, 2, 5), Version(0, 9, 9)]
+          print(sorted(releases))
+          print(Version(1, 2) < Version(1, 10), max(releases))
+        expectedOutput: |
+          [Version(major=0, minor=9, patch=9), Version(major=1, minor=2, patch=5), Version(major=1, minor=10, patch=0)]
+          True Version(major=1, minor=10, patch=0)
+        annotations:
+          - line: 11
+            text: "(1, 2, 0) < (1, 10, 0) because 2 < 10 — unlike the strings '1.2' and '1.10', which sort the other way."
+      - type: callout
+        variant: tip
+        title: Field order is now part of the meaning
+        body: |
+          With `order=True`, reordering fields changes how objects sort. If a field should not take part in
+          comparisons (say, a free-text note), declare it with `field(compare=False)`.
+
+  - id: post-init
+    title: Validating in __post_init__
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The generated `__init__` just stores the arguments. To protect an
+          [invariant](glossary:invariant), define [`__post_init__`](glossary:post-init): the generated
+          `__init__` calls it **after** all fields are assigned. Use it to:
+
+          1. **validate** — raise `ValueError` for impossible values;
+          2. **normalise** — for example strip spaces from a name;
+          3. **compute derived fields** — declared with `field(init=False)` so they are not `__init__`
+             parameters.
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass, field
+
+          @dataclass
+          class Product:
+              name: str
+              price: float
+              quantity: int = 0
+              total: float = field(init=False)
+
+              def __post_init__(self):
+                  if self.price < 0:
+                      raise ValueError(f"price cannot be negative: {self.price}")
+                  if self.quantity < 0:
+                      raise ValueError(f"quantity cannot be negative: {self.quantity}")
+                  self.name = self.name.strip()
+                  self.total = self.price * self.quantity
+
+          print(Product("  pen ", 12.5, 4))
+          try:
+              Product("ink", -1.0)
+          except ValueError as error:
+              print("Rejected:", error)
+        expectedOutput: |
+          Product(name='pen', price=12.5, quantity=4, total=50.0)
+          Rejected: price cannot be negative: -1.0
+        annotations:
+          - line: 8
+            text: "init=False: not a parameter of __init__; __post_init__ fills it in."
+          - line: 10
+            text: Called automatically at the end of the generated __init__ — the name must be exactly __post_init__.
+          - line: 15
+            text: Normalising a field is allowed here, because the class is not frozen.
+      - type: callout
+        variant: production
+        title: Validation only runs at creation
+        body: |
+          `__post_init__` runs once, inside `__init__`. A later `product.price = -5` is not checked. For
+          values that must stay valid, combine validation with `frozen=True` — then creation is the only way
+          to set fields, so the check covers the object's whole life.
+
+  - id: enums
+    title: "Enums: a fixed set of named values"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Order status, card suits, log levels, traffic lights: many values come from a **small, fixed set
+          of options**. Storing them as plain strings invites silent bugs — `status == "shiped"` is simply
+          False forever, and nothing tells you about the typo.
+
+          An [Enum](glossary:enum) (enumeration) is a class whose attributes are the only allowed values.
+          Each **member** has a `.name` (the identifier) and a `.value` (whatever you assigned):
+      - type: code
+        runnable: true
+        code: |
+          from enum import Enum
+
+          class Status(Enum):
+              PENDING = "pending"
+              PAID = "paid"
+              SHIPPED = "shipped"
+
+          s = Status.PAID
+          print(s, s.name, s.value)
+          print(Status("shipped"), Status["PENDING"])
+          print(s is Status.PAID, s == "paid")
+          print([member.name for member in Status])
+        expectedOutput: |
+          Status.PAID PAID paid
+          Status.SHIPPED Status.PENDING
+          True False
+          ['PENDING', 'PAID', 'SHIPPED']
+        annotations:
+          - line: 4
+            text: Member names are UPPER_CASE by convention, because they are constants.
+          - line: 10
+            text: "Status(value) looks a member up by value; Status[name] by name."
+          - line: 11
+            text: Each member is a single object, so `is` works. A member is NOT equal to its value.
+          - line: 12
+            text: Iterating an Enum gives its members in definition order.
+      - type: markdown
+        body: |
+          **Why this is safer than strings:**
+
+          - A typo is an error immediately: `Status.SHIPED` raises `AttributeError` (and your editor
+            autocompletes the real names).
+          - Converting outside data is validation for free: `Status("refunded")` raises
+            `ValueError: 'refunded' is not a valid Status`.
+          - A hint like `status: Status` tells readers and type checkers exactly which values are allowed.
+
+          When the values don't matter, `auto()` numbers them for you. Enum members are hashable and
+          immutable, so they make safe dataclass defaults:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+          from enum import Enum, auto
+
+          class Size(Enum):
+              SMALL = auto()
+              MEDIUM = auto()
+              LARGE = auto()
+
+          @dataclass
+          class Coffee:
+              size: Size = Size.MEDIUM
+              extra_shot: bool = False
+
+          print(Coffee(), Size.LARGE.value)
+          print(Coffee(Size.LARGE).size.name)
+        expectedOutput: |
+          Coffee(size=<Size.MEDIUM: 2>, extra_shot=False) 3
+          LARGE
+        annotations:
+          - line: 14
+            text: "Inside a dataclass repr, members show in their repr form: <Size.MEDIUM: 2>."
+      - type: item
+        ref: predict-enum-compare
+
+  - id: choosing
+    title: Dataclass, plain class, dict or enum?
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          A dataclass is not automatically better than a dictionary. Compare them on a user record:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass, asdict
+          import json
+
+          @dataclass(slots=True)
+          class User:
+              name: str
+              age: int
+
+          try:
+              User("Ada")
+          except TypeError as error:
+              print("TypeError:", error)
+
+          user = User("Ada", 36)
+          try:
+              user.nmae = "Grace"
+          except AttributeError as error:
+              print("AttributeError:", error)
+
+          print(json.dumps(asdict(user)))
+          data = json.loads('{"name": "Sam", "age": 29}')
+          print(User(**data))
+        expectedOutput: |
+          TypeError: User.__init__() missing 1 required positional argument: 'age'
+          AttributeError: 'User' object has no attribute 'nmae' and no __dict__ for setting new attributes
+          {"name": "Ada", "age": 36}
+          User(name='Sam', age=29)
+        annotations:
+          - line: 4
+            text: "slots=True gives the class a fixed set of attribute slots, so unknown names are rejected."
+          - line: 10
+            text: A required field cannot be forgotten. A dict happily lacks any key.
+          - line: 16
+            text: "A typo on assignment fails. With a dict, record['nmae'] = ... silently adds a new key."
+          - line: 20
+            text: asdict() converts to a dict, ready for JSON.
+          - line: 22
+            text: "User(**data) passes each key of the dict as a keyword argument."
+      - type: markdown
+        body: |
+          | You need | Choose | Why |
+          |---|---|---|
+          | A record with a known set of named fields, made by your code | `@dataclass` | Fields documented in one place, generated `__init__`/`__repr__`/`__eq__`, type-checkable |
+          | The same, but it must never change or must be a dict key | `@dataclass(frozen=True)` | Immutable and hashable |
+          | Rich behaviour, a complex invariant or unusual construction | A plain class (often still a dataclass underneath) | Full control over `__init__` and state changes |
+          | Arbitrary or dynamic keys, or JSON just passing through | `dict` (a `TypedDict` can describe its shape) | Flexible, no class needed |
+          | One value out of a small fixed set of options | `Enum` | Typos fail loudly; invalid inputs are rejected |
+
+          A common pattern at program boundaries: parse JSON into a `dict`, convert it to a dataclass (with
+          `Enum` fields) as soon as it enters your code, work with the dataclass, and convert back with
+          `asdict()` when sending it out.
+      - type: item
+        ref: choose-structure
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `ValueError: mutable default <class 'list'> for field items is not allowed: use default_factory` | `items: list = []` | `items: list[str] = field(default_factory=list)` |
+          | `TypeError: non-default argument 'b' follows default argument 'a'` | A field without a default after one with a default | Move required fields first (or use `kw_only=True`) |
+          | `TypeError: Point.__init__() takes 2 positional arguments but 3 were given` | A "field" without a type annotation (`y = 0`) is just a class attribute | Annotate it: `y: int = 0` |
+          | `TypeError: 'list' object is not callable` when creating an instance | `field(default_factory=[])` or `default_factory=list()` | Pass the function itself: `default_factory=list` |
+          | Validation never runs | `__post_init__` misspelled (`post_init`, `__postinit__`) | Use exactly `__post_init__` |
+          | `FrozenInstanceError: cannot assign to field 'x'` | Assigning to a frozen dataclass | `replace(obj, x=new_value)` |
+          | `TypeError: cannot use 'Point' as a dict key (unhashable type: 'Point')` | Normal dataclasses are unhashable | `@dataclass(frozen=True)` |
+          | `TypeError: '<' not supported between instances of 'Version' and 'Version'` | No ordering methods | `@dataclass(order=True)` |
+          | `if status == "paid":` is never true | Comparing an Enum member with a string | Compare members: `status is Status.PAID` (or `status.value == "paid"`) |
+          | `ValueError: 'PAID' is not a valid Status` | `Status("PAID")` looks up by **value** | Use `Status["PAID"]` to look up by name |
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          @dataclass
+          class Ticket:
+              price: float = 10.0
+              seat: str
+        expectError: TypeError
+        caption: "The generated __init__(self, price=10.0, seat) would be invalid Python, so the class definition fails."
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          @dataclass
+          class Point:
+              x: int
+              y = 0
+
+          print(Point(1))
+          print(Point(1, 2))
+        expectError: TypeError
+        caption: Point(1) works and prints Point(x=1) — y is not a field at all — then Point(1, 2) fails.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Let `@dataclass` do the repetitive work — the checks look for hand-written `__init__` methods and
+          for shared default lists.
+      - type: item
+        ref: inventory-item
+      - type: item
+        ref: debug-post-init
+      - type: item
+        ref: order-status
+      - type: item
+        ref: parsons-frozen
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **A code generator.** `@dataclass` reads the class's annotations (in Python 3.14 via
+          `annotationlib`), builds a `Field` object for each one and stores them in the class attribute
+          `__dataclass_fields__`. It then writes the *source text* of `__init__`, `__repr__`, `__eq__` and
+          friends, compiles it with `exec`, and attaches the resulting functions to your class. It returns
+          the same class object — except with `slots=True`, where it must build a new class with `__slots__`.
+          (That text-generation strategy is a CPython implementation detail; the documented behaviour is
+          what the methods do.)
+
+          **Which names are fields.** Every annotated class attribute — except those annotated
+          `typing.ClassVar[...]` (shared class data) and `dataclasses.InitVar[...]` (passed to
+          `__post_init__` but not stored). Unannotated attributes are ignored.
+
+          **Hashing rules.** With `eq=True` (the default) and `frozen=False`, `__hash__` is set to `None` —
+          the object is unhashable. With `eq=True` and `frozen=True`, a `__hash__` based on the fields is
+          generated. `unsafe_hash=True` forces one anyway (rarely a good idea).
+
+          **Frozen is implemented by `__setattr__`.** A frozen dataclass overrides `__setattr__` and
+          `__delattr__` to raise `FrozenInstanceError`. Inside `__post_init__` of a frozen class you
+          therefore cannot write `self.total = ...`; the documented workaround is
+          `object.__setattr__(self, "total", ...)`.
+
+          **Enum members are created once.** The `Enum` base class uses a metaclass (`EnumType`) that turns
+          each class attribute into a member object when the class is created; afterwards no new members can
+          be made, which is why `is` comparisons are safe. A second name with an already-used value becomes
+          an **alias** of the first member. Variants exist for special needs: `StrEnum` and `IntEnum` members
+          compare equal to plain strings/ints (convenient, but weaker protection), and `Flag` supports
+          combinable bit flags.
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+          from enum import Enum
+
+          @dataclass
+          class Point:
+              x: int
+              y: int
+
+          @dataclass(frozen=True)
+          class FrozenPoint:
+              x: int
+              y: int
+
+          print(list(Point.__dataclass_fields__), Point.__hash__ is None)
+          print(isinstance(hash(FrozenPoint(1, 2)), int))
+
+          class Color(Enum):
+              RED = 1
+              CRIMSON = 1
+
+          print(Color.CRIMSON is Color.RED, list(Color))
+        expectedOutput: |
+          ['x', 'y'] True
+          True
+          True [<Color.RED: 1>]
+        annotations:
+          - line: 14
+            text: A normal (non-frozen) dataclass is deliberately unhashable.
+          - line: 19
+            text: CRIMSON is an alias for RED; iteration lists each member once.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `@dataclass` turns annotated class attributes into **fields** and generates `__init__`,
+            `__repr__` and `__eq__` (fields compared in order, same class only).
+          - Required fields first; mutable defaults are rejected — use `field(default_factory=list)`.
+          - `frozen=True` → no reassignment, hashable, change with `replace()`. Frozen is **shallow**.
+          - `order=True` → `<`, `>`… comparing fields as a tuple, so `sorted()` works.
+          - `__post_init__` runs after the generated `__init__`: validate, normalise, compute
+            `field(init=False)` values.
+          - `Enum` names a fixed set of values: `.name`, `.value`, `Status(value)`, `Status[name]`. Members
+            are singletons and are **not** equal to their raw values.
+          - Dataclass for records, plain class for heavy behaviour, dict for dynamic keys, Enum for choices.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Common questions: "Why can't a dataclass field default to `[]`?" (shared mutable default; use
+          `default_factory`), "Why is my dataclass unhashable?" (`eq` without `frozen` sets `__hash__ = None`)
+          and "Dataclass, NamedTuple, dict or Pydantic model?" — dataclasses for internal records, Pydantic
+          when you must validate external data at runtime, dicts for truly dynamic data.
+
+items:
+  - id: which-are-fields
+    type: mcq
+    skill: recognition
+    prompt: |
+      Which names become parameters of the generated `__init__`?
+
+      ```python
+      @dataclass
+      class Config:
+          host: str
+          port: int = 8080
+          retries = 3
+          debug: bool = False
+      ```
+    explanation: >-
+      Only annotated names are fields. host, port and debug have annotations; retries = 3 is a plain class
+      attribute that every instance shares, and it is not a parameter of __init__.
+    options:
+      - id: a
+        text: host, port and debug
+        correct: true
+        feedback: Right — retries has no annotation, so @dataclass ignores it.
+      - id: b
+        text: host, port, retries and debug
+        feedback: "A name needs a type annotation to be a field. retries = 3 is an ordinary class attribute."
+      - id: c
+        text: only host, because the others have defaults
+        feedback: Fields with defaults are still parameters — they are just optional ones.
+      - id: d
+        text: none — you must still write __init__ yourself
+        feedback: Generating __init__ is the main job of @dataclass.
+
+  - id: predict-eq
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      from dataclasses import dataclass
+
+      @dataclass
+      class Card:
+          rank: str
+          suit: str
+
+      a = Card("Q", "hearts")
+      b = Card("Q", "hearts")
+      c = a
+      c.suit = "spades"
+      print(a == b, a is c, a)
+    answer: "False True Card(rank='Q', suit='spades')"
+    explanation: >-
+      c = a makes c another name for the same object (no copy), so changing c.suit changes a. Now a's
+      fields ("Q", "spades") differ from b's ("Q", "hearts"), so the generated __eq__ returns False. a is c
+      is True because they are one object.
+    wrongAnswers:
+      - answer: "True True Card(rank='Q', suit='hearts')"
+        feedback: >-
+          c = a does not copy the card; both names refer to the same object, so c.suit = "spades" changes
+          what a refers to as well.
+      - answer: "True False Card(rank='Q', suit='spades')"
+        feedback: >-
+          a and b no longer have equal fields once the suit changed, and c = a binds c to the very same object,
+          so a is c is True.
+
+  - id: predict-enum-compare
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      from enum import Enum
+
+      class Light(Enum):
+          RED = "stop"
+          GREEN = "go"
+
+      signal = Light("go")
+      print(signal.name, signal == "go", signal is Light.GREEN)
+    answer: "GREEN False True"
+    explanation: >-
+      Light("go") looks the member up by value and returns Light.GREEN, whose name is "GREEN". An Enum member
+      is not equal to its raw value, so signal == "go" is False. Members are singletons, so the identity
+      check is True.
+    wrongAnswers:
+      - answer: "GREEN True True"
+        feedback: >-
+          A plain Enum member never equals its value. Compare with Light.GREEN, or use signal.value == "go"
+          (StrEnum is the variant whose members do equal strings).
+      - answer: "go False True"
+        feedback: .name is the identifier (GREEN); .value is what you assigned ("go").
+
+  - id: choose-structure
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Your program reads delivery records from JSON. Each has the same three keys — `id`, `address`,
+      `status` — and status is always one of "pending", "out", "delivered". The code passes records
+      around and changes their status. What representation fits best inside your program?
+    explanation: >-
+      A fixed set of named fields that your code works with suggests a dataclass, and a value drawn from a
+      fixed set of options suggests an Enum. Converting at the boundary (JSON → dataclass, and asdict() on
+      the way out) catches bad data early.
+    options:
+      - id: a
+        text: A dataclass with an Enum field for status, created from each JSON record as it is read.
+        correct: true
+        feedback: Fields are documented and required, a typo in a status value fails at the boundary, and the status can still be updated.
+      - id: b
+        text: Keep each record as a dict with string statuses.
+        feedback: Works, but a missing key or a typo like "deliverd" goes unnoticed until something misbehaves later.
+      - id: c
+        text: A frozen dataclass, so the status can never be changed.
+        feedback: The code needs to change the status. You could replace() each time, but a frozen record doesn't match how this data is used.
+      - id: d
+        text: An Enum whose members are the records.
+        feedback: Enums are for a fixed set of options known when you write the code, not for data loaded at runtime.
+
+  - id: inventory-item
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a dataclass `Item` with these fields, in this order:
+
+      - `name: str`
+      - `price: float`
+      - `quantity: int`, defaulting to 0
+      - `tags: list[str]`, defaulting to a **new empty list for each item**
+
+      and a method `stock_value()` returning price × quantity. Don't write `__init__`, `__repr__` or
+      `__eq__` yourself. The program should print:
+
+      ```text
+      Item(name='pen', price=12.5, quantity=4, tags=['office'])
+      Item(name='ink', price=40.0, quantity=0, tags=[])
+      50.0 True
+      ```
+    starterCode: |
+      from dataclasses import dataclass, field
+
+
+      # Write the Item dataclass here.
+
+
+      pen = Item("pen", 12.5, 4)
+      ink = Item("ink", 40.0)
+      pen.tags.append("office")
+      print(pen)
+      print(ink)
+      print(pen.stock_value(), pen == Item("pen", 12.5, 4, ["office"]))
+    solution: |
+      from dataclasses import dataclass, field
+
+
+      @dataclass
+      class Item:
+          name: str
+          price: float
+          quantity: int = 0
+          tags: list[str] = field(default_factory=list)
+
+          def stock_value(self):
+              return self.price * self.quantity
+
+
+      pen = Item("pen", 12.5, 4)
+      ink = Item("ink", 40.0)
+      pen.tags.append("office")
+      print(pen)
+      print(ink)
+      print(pen.stock_value(), pen == Item("pen", 12.5, 4, ["office"]))
+    expectedOutput: |
+      Item(name='pen', price=12.5, quantity=4, tags=['office'])
+      Item(name='ink', price=40.0, quantity=0, tags=[])
+      50.0 True
+    tests:
+      - name: Item is a dataclass with the right fields
+        code: |
+          import dataclasses
+          assert defined("Item"), "Define a class named Item."
+          assert dataclasses.is_dataclass(Item), "Put @dataclass on the line above class Item."
+          names = [f.name for f in dataclasses.fields(Item)]
+          assert names == ["name", "price", "quantity", "tags"], f"Fields should be name, price, quantity, tags (in that order), got {names}."
+      - name: defaults work
+        code: |
+          x = Item("x", 1.0)
+          assert x.quantity == 0, f"quantity should default to 0, got {x.quantity!r}."
+          assert x.tags == [], f"tags should default to an empty list, got {x.tags!r}."
+      - name: each item gets its own tags list
+        code: |
+          a = Item("a", 1.0)
+          b = Item("b", 2.0)
+          a.tags.append("sale")
+          assert b.tags == [], "Two items share one tags list. Use field(default_factory=list)."
+      - name: stock_value works for any item
+        code: |
+          assert Item("box", 2.5, 10).stock_value() == 25.0, "Item('box', 2.5, 10).stock_value() should be 25.0."
+      - name: no hand-written __init__
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "Item")
+          written = {f.name for f in cls.body if isinstance(f, ast.FunctionDef)}
+          assert not written & {"__init__", "__repr__", "__eq__"}, "Let @dataclass generate __init__, __repr__ and __eq__ — remove your own versions."
+      - name: prints the three lines
+        code: |
+          assert output_lines() == ["Item(name='pen', price=12.5, quantity=4, tags=['office'])", "Item(name='ink', price=40.0, quantity=0, tags=[])", "50.0 True"], f"Your program printed {output()!r}."
+    hints:
+      - "Start with `@dataclass` then `class Item:` and one annotated line per field: `name: str`."
+      - "Defaults: `quantity: int = 0`. A list default must be `tags: list[str] = field(default_factory=list)`."
+      - "stock_value is an ordinary method: `def stock_value(self): return self.price * self.quantity`."
+    feedback:
+      - when: { errorMessageContains: "mutable default" }
+        message: Dataclasses reject a [] default because it would be shared. Use field(default_factory=list).
+      - when: { errorMessageContains: "non-default argument" }
+        message: Fields without defaults (name, price) must come before fields with defaults.
+      - when: { errorMessageContains: "is not callable" }
+        message: Pass the function list itself to default_factory, without brackets.
+    explanation: >-
+      Four annotated fields are all @dataclass needs to generate __init__, __repr__ and __eq__. The tags
+      default uses default_factory=list, so the generated __init__ calls list() for every new item, and
+      stock_value is a normal method.
+
+  - id: debug-post-init
+    type: debug
+    skill: debugging
+    prompt: |
+      Bookings with zero nights should be rejected, but the validation never runs. Find and fix the bug.
+      The program should print:
+
+      ```text
+      Booking(guest='Ada', nights=3)
+      Rejected: a booking needs at least one night
+      ```
+    starterCode: |
+      from dataclasses import dataclass
+
+
+      @dataclass
+      class Booking:
+          guest: str
+          nights: int
+
+          def post_init(self):
+              if self.nights < 1:
+                  raise ValueError("a booking needs at least one night")
+
+
+      print(Booking("Ada", 3))
+      try:
+          Booking("Sam", 0)
+          print("accepted a zero-night booking!")
+      except ValueError as error:
+          print("Rejected:", error)
+    solution: |
+      from dataclasses import dataclass
+
+
+      @dataclass
+      class Booking:
+          guest: str
+          nights: int
+
+          def __post_init__(self):
+              if self.nights < 1:
+                  raise ValueError("a booking needs at least one night")
+
+
+      print(Booking("Ada", 3))
+      try:
+          Booking("Sam", 0)
+          print("accepted a zero-night booking!")
+      except ValueError as error:
+          print("Rejected:", error)
+    expectedOutput: |
+      Booking(guest='Ada', nights=3)
+      Rejected: a booking needs at least one night
+    tests:
+      - name: prints the expected lines
+        code: |
+          assert output_lines() == ["Booking(guest='Ada', nights=3)", "Rejected: a booking needs at least one night"], f"Your program printed {output()!r}."
+      - name: rejects any number of nights below 1
+        code: |
+          try:
+              Booking("Lee", -2)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Booking('Lee', -2) should raise ValueError.")
+          assert Booking("Lee", 1).nights == 1, "A one-night booking is valid."
+      - name: still uses the generated __init__
+        code: |
+          import ast
+          cls = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.ClassDef) and n.name == "Booking")
+          assert not any(isinstance(f, ast.FunctionDef) and f.name == "__init__" for f in cls.body), "No need to write __init__ — the generated one calls the validation hook if it has the right name."
+    hints:
+      - "Does `post_init` ever get called? Add a print inside it to find out."
+      - The generated __init__ only calls a hook with one exact name, written with double underscores on both sides.
+    feedback:
+      - when: { outputContains: "accepted a zero-night booking!" }
+        message: Your validation method never runs. The generated __init__ calls a method named exactly __post_init__.
+    explanation: >-
+      The dataclass's generated __init__ calls self.__post_init__() if the class defines it. A method named
+      post_init is just an ordinary method that nobody calls, so no validation happened.
+
+  - id: order-status
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      An online shop stores order status as strings and keeps shipping bugs caused by typos like
+      `"shiped"`. Rewrite it with an Enum:
+
+      1. `class Status(Enum)` with members `PENDING`, `PAID`, `SHIPPED`, `CANCELLED` whose values are
+         `"pending"`, `"paid"`, `"shipped"`, `"cancelled"`.
+      2. A dataclass `Order` with fields `number: int` and `status: Status`, defaulting to `Status.PENDING`.
+      3. `cancel(order)` sets the status to `Status.CANCELLED`, but raises `ValueError` (changing nothing)
+         if the order has already been shipped.
+      4. `parse_status(text)` converts text such as `"paid"` (read from a file) into a member; unknown text
+         must raise `ValueError`.
+
+      The program should print:
+
+      ```text
+      Order(number=1001, status=<Status.PENDING: 'pending'>)
+      CANCELLED Status.SHIPPED
+      ```
+    starterCode: |
+      from dataclasses import dataclass
+      from enum import Enum
+
+
+      # 1. Status enum
+      # 2. Order dataclass
+      # 3. cancel(order)
+      # 4. parse_status(text)
+
+
+      order = Order(1001)
+      print(order)
+      cancel(order)
+      print(order.status.name, parse_status("shipped"))
+    solution: |
+      from dataclasses import dataclass
+      from enum import Enum
+
+
+      class Status(Enum):
+          PENDING = "pending"
+          PAID = "paid"
+          SHIPPED = "shipped"
+          CANCELLED = "cancelled"
+
+
+      @dataclass
+      class Order:
+          number: int
+          status: Status = Status.PENDING
+
+
+      def cancel(order: Order) -> None:
+          if order.status is Status.SHIPPED:
+              raise ValueError("a shipped order cannot be cancelled")
+          order.status = Status.CANCELLED
+
+
+      def parse_status(text: str) -> Status:
+          return Status(text)
+
+
+      order = Order(1001)
+      print(order)
+      cancel(order)
+      print(order.status.name, parse_status("shipped"))
+    expectedOutput: |
+      Order(number=1001, status=<Status.PENDING: 'pending'>)
+      CANCELLED Status.SHIPPED
+    tests:
+      - name: Status has the four members
+        code: |
+          import enum
+          assert defined("Status") and issubclass(Status, enum.Enum), "Define class Status(Enum)."
+          expected = {"PENDING": "pending", "PAID": "paid", "SHIPPED": "shipped", "CANCELLED": "cancelled"}
+          actual = {m.name: m.value for m in Status}
+          assert actual == expected, f"Status members should be {expected}, got {actual}."
+      - name: Order defaults to PENDING
+        code: |
+          import dataclasses
+          assert dataclasses.is_dataclass(Order), "Order should be a @dataclass."
+          assert Order(7).status is Status.PENDING, "A new Order's status should default to Status.PENDING."
+      - name: cancel works for pending and paid orders
+        code: |
+          o = Order(1, Status.PAID)
+          cancel(o)
+          assert o.status is Status.CANCELLED, f"Cancelling a paid order should set Status.CANCELLED, got {o.status!r}."
+      - name: shipped orders cannot be cancelled
+        code: |
+          o = Order(2, Status.SHIPPED)
+          try:
+              cancel(o)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("cancel() on a SHIPPED order should raise ValueError.")
+          assert o.status is Status.SHIPPED, "A refused cancel must leave the status unchanged."
+      - name: parse_status converts and validates text
+        code: |
+          assert parse_status("paid") is Status.PAID, "parse_status('paid') should return Status.PAID."
+          try:
+              parse_status("payed")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("parse_status('payed') should raise ValueError for unknown text.")
+      - name: prints the two lines
+        code: |
+          assert output_lines() == ["Order(number=1001, status=<Status.PENDING: 'pending'>)", "CANCELLED Status.SHIPPED"], f"Your program printed {output()!r}."
+    hints:
+      - "Enum members are class attributes: `PENDING = \"pending\"` inside `class Status(Enum):`."
+      - "In cancel, compare members, not strings: `if order.status is Status.SHIPPED: raise ValueError(...)`."
+      - "Looking up by value already validates: `Status(text)` raises ValueError for unknown text."
+    feedback:
+      - when: { codeMatches: "status\\s*==\\s*[\"']" }
+        message: Comparing a member with a string is always False. Compare with the member itself, e.g. order.status is Status.SHIPPED.
+      - when: { errorType: KeyError }
+        message: Status[...] looks up by member NAME (like "PAID"). Text from a file holds the VALUE ("paid") — use Status(text).
+    explanation: >-
+      The enum lists every legal status once, so a typo in code fails immediately and bad text from a file
+      fails in parse_status. The dataclass default is a member (hashable and immutable, so it is a safe
+      default), and cancel compares members by identity before changing anything.
+
+  - id: parsons-frozen
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to create an immutable point and a moved copy of it, printing
+      `Point(x=1, y=2) Point(x=1, y=5)`. Two lines are distractors.
+    solution: |
+      from dataclasses import dataclass, replace
+      @dataclass(frozen=True)
+      class Point:
+          x: int
+          y: int
+      p = Point(1, 2)
+      q = replace(p, y=5)
+      print(p, q)
+    distractors:
+      - "p.y = 5"
+      - "    x = int"
+    expectedOutput: |
+      Point(x=1, y=2) Point(x=1, y=5)
+    explanation: >-
+      Fields need annotations (x: int), not assignments. A frozen instance cannot be changed with p.y = 5;
+      replace() builds a new Point with y changed and leaves p as it was.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-sorted
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      from dataclasses import dataclass
+
+      @dataclass(order=True)
+      class Player:
+          score: int
+          name: str
+
+      players = [Player(30, "Zoe"), Player(30, "Ada"), Player(12, "Max")]
+      print([p.name for p in sorted(players)])
+    answer: "['Max', 'Ada', 'Zoe']"
+    explanation: >-
+      order=True compares (score, name) tuples. Max has the lowest score. Zoe and Ada tie on 30, so the
+      second field, name, breaks the tie: "Ada" < "Zoe".
+    wrongAnswers:
+      - answer: "['Max', 'Zoe', 'Ada']"
+        feedback: >-
+          Comparison does not stop at the first field when it ties — the next field (name) breaks the tie,
+          putting Ada before Zoe.
+      - answer: "['Ada', 'Max', 'Zoe']"
+        feedback: The fields are compared in definition order, and score comes first. Name only matters for equal scores.
+
+  - id: m-mcq-unhashable
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This line fails with `TypeError: cannot use 'Point' as a dict key (unhashable type: 'Point')`:
+
+      ```python
+      @dataclass
+      class Point:
+          x: int
+          y: int
+
+      names = {Point(0, 0): "origin"}
+      ```
+
+      What is the best fix?
+    explanation: >-
+      With eq=True and frozen=False, a dataclass sets __hash__ to None, because a mutable object's hash could
+      change while it is a key. Making it frozen gives it a field-based hash and guarantees it never changes.
+    options:
+      - id: a
+        text: "Use @dataclass(frozen=True), so the point is immutable and gets a hash."
+        correct: true
+        feedback: Frozen dataclasses with eq are hashable — and safe to use as keys.
+      - id: b
+        text: Use the tuple (0, 0) as the key and convert back to a Point when needed.
+        feedback: That works but throws away the Point type. Making Point frozen solves the real problem.
+      - id: c
+        text: "Use @dataclass(eq=False)."
+        feedback: Then Point(0, 0) == Point(0, 0) is False and lookups with a new, equal point fail.
+      - id: d
+        text: Add order=True.
+        feedback: Ordering adds < and >; it has nothing to do with hashing.
+
+  - id: m-tf-frozen-shallow
+    type: true-false
+    skill: recognition
+    prompt: "True or false: in a `@dataclass(frozen=True)` with a field `members: list[str]`, calling `team.members.append(\"Sam\")` raises FrozenInstanceError."
+    answer: false
+    explanation: >-
+      Frozen only blocks rebinding fields (team.members = [...]). append mutates the list object the field
+      refers to, which frozen does not protect. Use a tuple for an immutable collection.
+
+  - id: m-mcq-enum-lookup
+    type: mcq
+    skill: debugging
+    prompt: |
+      A CSV file contains the column value `PAID` (the member's name), and this line fails with
+      `ValueError: 'PAID' is not a valid Status`:
+
+      ```python
+      status = Status(row["status"])      # Status.PAID has the value "paid"
+      ```
+
+      How should you look the member up?
+    explanation: >-
+      Calling the Enum, Status(x), looks up by value; indexing it, Status[x], looks up by name. The file holds
+      names, so use Status[row["status"]] (which raises KeyError for unknown names).
+    options:
+      - id: a
+        text: 'Status[row["status"]], which looks up by name.'
+        correct: true
+        feedback: Square brackets find a member by its name.
+      - id: b
+        text: 'Status(row["status"].lower()), which turns the name into the value.'
+        feedback: That only works while every value happens to be the lower-case name. Look up by name directly.
+      - id: c
+        text: 'Compare the text with each member: if row["status"] == Status.PAID ...'
+        feedback: A member never equals a plain string, so that comparison is always False.
+      - id: d
+        text: Change the Enum to use auto() values.
+        feedback: The values would then be numbers, and Status("PAID") would still fail.
+
+  - id: m-code-money
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write a **frozen** dataclass `Money` with fields `amount: int` (in paise or cents) and
+      `currency: str`:
+
+      - `__post_init__` raises `ValueError` if amount is negative;
+      - `add(other)` returns a **new** Money with the amounts summed, and raises `ValueError` if the
+        currencies differ.
+
+      The program should print `Money(amount=650, currency='INR') Money(amount=500, currency='INR')`.
+    starterCode: |
+      from dataclasses import dataclass
+
+
+      # Write the Money dataclass here.
+
+
+      a = Money(500, "INR")
+      b = a.add(Money(150, "INR"))
+      print(b, a)
+    solution: |
+      from dataclasses import dataclass
+
+
+      @dataclass(frozen=True)
+      class Money:
+          amount: int
+          currency: str
+
+          def __post_init__(self):
+              if self.amount < 0:
+                  raise ValueError("amount cannot be negative")
+
+          def add(self, other):
+              if other.currency != self.currency:
+                  raise ValueError(f"cannot add {other.currency} to {self.currency}")
+              return Money(self.amount + other.amount, self.currency)
+
+
+      a = Money(500, "INR")
+      b = a.add(Money(150, "INR"))
+      print(b, a)
+    expectedOutput: |
+      Money(amount=650, currency='INR') Money(amount=500, currency='INR')
+    tests:
+      - name: Money is a frozen dataclass
+        code: |
+          import dataclasses
+          assert dataclasses.is_dataclass(Money), "Money should be a @dataclass."
+          m = Money(1, "USD")
+          try:
+              m.amount = 2
+          except dataclasses.FrozenInstanceError:
+              pass
+          else:
+              raise AssertionError("Assigning to a field should fail. Use @dataclass(frozen=True).")
+          assert len({Money(1, "USD"), Money(1, "USD")}) == 1, "Equal Money values should be hashable and equal."
+      - name: add returns a new object
+        code: |
+          x = Money(100, "EUR")
+          y = x.add(Money(25, "EUR"))
+          assert y == Money(125, "EUR"), f"Money(100, 'EUR').add(Money(25, 'EUR')) should be Money(125, 'EUR'), got {y!r}."
+          assert x == Money(100, "EUR"), "add() must not change the original."
+      - name: refuses mixed currencies
+        code: |
+          try:
+              Money(1, "INR").add(Money(1, "USD"))
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Adding INR to USD should raise ValueError.")
+      - name: rejects negative amounts
+        code: |
+          try:
+              Money(-5, "INR")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Money(-5, 'INR') should raise ValueError in __post_init__.")
+      - name: prints the result
+        code: |
+          assert output().strip() == "Money(amount=650, currency='INR') Money(amount=500, currency='INR')", f"Your program printed {output()!r}."
+    hints:
+      - "`@dataclass(frozen=True)` above the class; fields `amount: int` and `currency: str`."
+      - "`__post_init__(self)` checks `self.amount < 0` and raises ValueError."
+      - "add cannot change self (it is frozen): `return Money(self.amount + other.amount, self.currency)`."
+    feedback:
+      - when: { errorType: FrozenInstanceError }
+        message: A frozen object cannot be changed — add() should build and return a new Money instead of modifying self.
+      - when: { outputContains: "Money(amount=650, currency='INR') Money(amount=650" }
+        message: add() changed the original. Return a new Money instead.
+    explanation: >-
+      Freezing makes Money a value: it cannot change after creation, so the __post_init__ check holds
+      forever, and equal amounts are hashable and interchangeable. add() follows the frozen style by
+      returning a new object.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-sorted, m-mcq-unhashable, m-tf-frozen-shallow, m-mcq-enum-lookup, m-code-money]
+
+cheatsheet: |
+  ```python
+  from dataclasses import dataclass, field, replace, asdict
+  from enum import Enum, auto
+
+  class Status(Enum):
+      PENDING = "pending"
+      PAID = "paid"
+
+  @dataclass(order=True)                 # also: frozen=True, slots=True, kw_only=True
+  class Order:
+      number: int                        # required fields first
+      status: Status = Status.PENDING    # immutable default: fine
+      items: list[str] = field(default_factory=list)   # NEVER = []
+      total: float = field(init=False, default=0.0)
+
+      def __post_init__(self):           # runs after the generated __init__
+          if self.number <= 0:
+              raise ValueError("bad number")
+
+  replace(obj, status=Status.PAID)       # copy with changes (frozen-friendly)
+  asdict(obj)                            # -> dict, e.g. for JSON
+  Status("paid"), Status["PAID"]         # by value, by name
+  ```
+  - Unannotated names are not fields · eq without frozen → unhashable · frozen is shallow
+  - `Status.PAID == "paid"` is False — compare members

@@ -1,0 +1,608 @@
+id: python.concurrency
+concept: python.concurrency
+title: Concurrency, Parallelism and the GIL
+subtitle: Choose the right way to run work
+estimatedMinutes: 55
+reviewedOn: 2026-11-04
+summary: Learn why programs sometimes need to make progress on several tasks at once, how concurrency
+  differs from parallelism, and when Python threads, processes or asyncio are appropriate. Understand
+  the GIL, shared-state hazards and the limits of the browser-based Python runtime.
+objectives:
+- Distinguish concurrency (overlapping progress) from parallelism (simultaneous execution).
+- Classify work as I/O-bound or CPU-bound before selecting an execution model.
+- Explain the GIL in standard CPython and the optional free-threaded build introduced in Python 3.13.
+- Identify race conditions, critical sections and deadlocks in shared-state designs.
+- Choose between threads, processes and asyncio, including the cost and portability trade-offs.
+- Design worker code that returns local results instead of mutating shared state unnecessarily.
+sources:
+- title: Concurrent Execution — Python 3.14
+  url: https://docs.python.org/3.14/library/concurrency.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: threading — Thread-based parallelism
+  url: https://docs.python.org/3.14/library/threading.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: Python support for free threading
+  url: https://docs.python.org/3.14/howto/free-threading-python.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: concurrent.futures — Launching parallel tasks
+  url: https://docs.python.org/3.14/library/concurrent.futures.html
+  publisher: Python Software Foundation
+  version: '3.14'
+sections:
+- id: why-concurrency
+  title: Why a program may need to overlap work
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'Imagine a program that must download 30 reports. A simple version downloads report 1, waits
+      for it
+
+      to finish, then downloads report 2. If each request spends most of its time waiting for a remote
+
+      server, the CPU sits idle during much of the program.
+
+
+      **Concurrency** lets the program make progress on another task while one task is waiting. It does
+
+      not mean every task is literally executing at the same instant. It is useful when work has waiting
+
+      periods, independent steps, or a need to remain responsive.
+
+      '
+  - type: callout
+    variant: analogy
+    title: One cook, several dishes
+    body: 'A cook can start rice, then chop vegetables while the rice simmers. The tasks overlap in time,
+      but
+
+      the cook is not physically doing both actions at the exact same instant. That is concurrency. Two
+
+      cooks working at the same time would be parallel work.
+
+      '
+  - type: markdown
+    body: 'Concurrency is not automatically faster. Scheduling, communication, copying data and coordinating
+
+      shared state all have costs. For a tiny task, doing the work sequentially may be simpler and faster.
+
+      '
+- id: concurrency-vs-parallelism
+  title: Concurrency is not the same as parallelism
+  kind: concept
+  blocks:
+  - type: markdown
+    body: "- **Concurrency** means several tasks have overlapping lifetimes and the program can switch\
+      \ between\n  them so each can make progress.\n- **Parallelism** means two or more pieces of work\
+      \ are executing at the same instant, usually on\n  different CPU cores.\n\nA single CPU core can\
+      \ run concurrent tasks by switching between them. A multi-core machine can also\nrun tasks in parallel.\
+      \ Parallelism is one way to achieve concurrency, but concurrency does not\nrequire parallel execution.\n\
+      \nFirst classify the work:\n\n| Workload | What limits progress? | Typical example |\n|---|---|---|\n\
+      | **I/O-bound** | Waiting for network, disk or another service | Downloading reports |\n| **CPU-bound**\
+      \ | Calculations consume processor time | Resizing images in pure Python or searching a huge state\
+      \ space |\n\nA task can contain both kinds. Classify the part you are trying to speed up, not just\
+      \ the name of\nthe application.\n"
+  - type: item
+    ref: concurrency-predict-interleaving
+  - type: callout
+    variant: misconception
+    title: More workers do not guarantee more speed
+    body: 'Ten workers can be slower than two if the work is small, the machine has few resources, a remote
+
+      service throttles requests, or workers spend time waiting for a lock. Measure throughput, latency,
+
+      CPU and memory before increasing the worker count.
+
+      '
+- id: choose-execution-model
+  title: Choose threads, processes or asyncio
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'Python offers several models. They solve related but different problems:
+
+
+      | Model | What it runs | Often a good fit | Main trade-off |
+
+      |---|---|---|---|
+
+      | Threads (`threading`, `ThreadPoolExecutor`) | Multiple OS threads in one process | Blocking I/O
+      when a synchronous library is already in use | Shared memory needs coordination; GIL limits pure-Python
+      CPU parallelism in standard CPython |
+
+      | Processes (`multiprocessing`, `ProcessPoolExecutor`) | Separate processes with separate memory
+      | Independent CPU-heavy Python work | Startup, memory and data-transfer costs; values often need
+      to be serialised |
+
+      | Asyncio (`async` / `await`) | Cooperative tasks on an event loop | Many concurrent I/O operations
+      using async-compatible libraries | One blocking call can stall the event loop; async must be used
+      through the call chain |
+
+
+      A useful starting decision is:
+
+
+      1. If the task is mostly waiting and the library is synchronous, consider a bounded thread pool.
+
+      2. If the task is CPU-heavy pure Python and independent, benchmark a process pool.
+
+      3. If the task is I/O-heavy and the libraries are async-native, consider [asyncio](concept:python.asyncio).
+
+      4. If the task is small or tightly coupled, start sequentially and keep the design simple.
+
+
+      These are starting points, not laws. Native extensions may release the GIL, and some libraries
+
+      provide their own parallel execution.
+
+      '
+  - type: item
+    ref: concurrency-model-choice
+  - type: item
+    ref: concurrency-explain-workload
+- id: gil-and-free-threading
+  title: The Global Interpreter Lock (GIL)
+  kind: internals
+  blocks:
+  - type: markdown
+    body: "The **Global Interpreter Lock (GIL)** is a lock used by the standard GIL-enabled build of CPython.\n\
+      It ensures that only one thread at a time executes Python bytecode in that interpreter. This is\
+      \ an\nimplementation detail of CPython, not a universal rule for every Python implementation.\n\n\
+      That is why adding threads to a pure-Python CPU-bound loop usually does not make it run across\n\
+      multiple CPU cores in a standard CPython build. Threads can still help I/O-bound work: when a thread\n\
+      waits for certain blocking I/O operations, another thread can run.\n\nThe picture changed with **free-threaded\
+      \ CPython**:\n\n- Starting with Python 3.13, CPython offers an optional build that can run with\
+      \ the GIL disabled.\n- It is not the default build, and some extension modules may not yet support\
+      \ it or may re-enable\n  the GIL when imported.\n- Removing the GIL does not remove data races.\
+      \ Shared mutable state still needs a sound design and\n  synchronisation.\n\nAlways check the interpreter\
+      \ build and the compatibility of the libraries you depend on. Do not\nassume that every Python installation\
+      \ has the same threading behaviour.\n"
+  - type: code
+    language: python
+    status: illustrative
+    code: "import sys\nimport sysconfig\n\nsupports_free_threading = sysconfig.get_config_var(\"Py_GIL_DISABLED\"\
+      ) == 1\nprint(\"Free-threaded build:\", supports_free_threading)\nif hasattr(sys, \"_is_gil_enabled\"\
+      ):\n    print(\"GIL currently enabled:\", sys._is_gil_enabled())\n"
+    caption: This diagnostic is for a local CPython 3.13+ installation. The browser's WebAssembly build
+      does not provide the native threading environment needed for this lesson's thread examples.
+  - type: item
+    ref: concurrency-gil-true-false
+- id: shared-state-and-races
+  title: Shared state, race conditions and locks
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: 'Threads in one process share memory. That is convenient because they can read the same objects,
+      but
+
+      it also means two workers can interfere with one another.
+
+
+      A **race condition** occurs when the result depends on the timing or interleaving of operations.
+
+      A common example is a read-modify-write operation such as `balance += 1`. It looks like one line,
+
+      but conceptually it reads the old value, calculates a new value and stores it. Another worker can
+
+      interleave its own steps between those operations.
+
+      '
+  - type: code
+    runnable: true
+    code: 'balance = 0
+
+
+      # Simulate two workers reading before either writes.
+
+      worker_a_read = balance
+
+      worker_b_read = balance
+
+      worker_a_new = worker_a_read + 1
+
+      worker_b_new = worker_b_read + 1
+
+      balance = worker_a_new
+
+      balance = worker_b_new
+
+
+      print(balance)
+
+      '
+    expectedOutput: '1
+
+      '
+    caption: This is a deterministic simulation of a lost update, not a real thread race. Both simulated
+      workers read 0, so the second write overwrites the first. The correct final value should have been
+      2.
+  - type: markdown
+    body: 'A **critical section** is the part of a program that must not be interleaved with another operation
+
+      that changes the same shared invariant. A `threading.Lock` lets one thread enter that section at
+      a
+
+      time:
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "from threading import Lock, Thread\n\ncounter = 0\ncounter_lock = Lock()\n\ndef increment_many():\n\
+      \    global counter\n    for _ in range(10_000):\n        with counter_lock:\n            counter\
+      \ += 1\n\nworkers = [Thread(target=increment_many) for _ in range(4)]\nfor worker in workers:\n\
+      \    worker.start()\nfor worker in workers:\n    worker.join()\n\nprint(counter)\n"
+    caption: 'Run this on local CPython, not in the browser playground: the project''s Pyodide WebAssembly
+      runtime does not support operating-system threads. The lock protects the read-modify-write operation.'
+  - type: callout
+    variant: warning
+    title: The GIL is not your application's lock
+    body: 'Do not rely on the GIL to protect a multi-step business rule. A free-threaded build may run
+      without
+
+      it, and a future code change or native extension can alter interleaving. Protect shared invariants
+
+      explicitly, or avoid shared mutation entirely.
+
+      '
+  - type: item
+    ref: concurrency-predict-interleaving
+- id: worker-coordination
+  title: Coordinate workers without creating chaos
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: 'A lock is useful, but it is not the only design. Prefer reducing shared mutable state:
+
+
+      1. Give each worker its own input and local variables.
+
+      2. Let each worker return a result.
+
+      3. Combine the results in one place after the workers finish.
+
+
+      This pattern is often easier to test than having every worker update one shared dictionary. When
+
+      workers must exchange messages, a thread-safe queue is usually clearer than polling shared flags.
+
+      '
+  - type: code
+    runnable: true
+    code: "def merge_counts(partials):\n    merged = {}\n    for partial in partials:\n        for word,\
+      \ count in partial.items():\n            merged[word] = merged.get(word, 0) + count\n    return\
+      \ merged\n\nworker_results = [\n    {\"red\": 2, \"blue\": 1},\n    {\"red\": 3, \"green\": 4},\n\
+      ]\nprint(merge_counts(worker_results))\n"
+    expectedOutput: '{''red'': 5, ''blue'': 1, ''green'': 4}
+
+      '
+    caption: Each worker can build its own dictionary independently; the main thread merges completed
+      results.
+  - type: callout
+    variant: note
+    title: Deadlocks are coordination bugs
+    body: 'A **deadlock** occurs when tasks wait forever for resources held by one another. A common pattern
+
+      is worker A holding lock 1 while waiting for lock 2, while worker B holds lock 2 while waiting for
+
+      lock 1. Keep critical sections short, acquire multiple locks in a consistent order, and use timeouts
+
+      where appropriate.
+
+      '
+  - type: item
+    ref: concurrency-merge-local-results
+- id: executor-pools
+  title: Use executor pools for bounded work
+  kind: application
+  blocks:
+  - type: markdown
+    body: 'For many jobs, prefer a managed pool over creating an unlimited number of threads or processes.
+
+      `concurrent.futures` gives both thread and process pools a common interface. A `Future` represents
+
+      a result that may not be ready yet; calling `result()` waits for it and re-raises an exception from
+
+      the worker.
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "from concurrent.futures import ThreadPoolExecutor, as_completed\nimport time\n\ndef read_report(report_id):\n\
+      \    time.sleep(0.1)  # stand-in for a blocking network or file operation\n    return f\"report-{report_id}\
+      \ ready\"\n\nwith ThreadPoolExecutor(max_workers=4) as pool:\n    futures = [pool.submit(read_report,\
+      \ n) for n in range(1, 7)]\n    for future in as_completed(futures):\n        print(future.result())\n"
+    caption: Illustrative local example. Completion order can vary. The WebAssembly playground cannot
+      run operating-system thread pools, so this block is intentionally not marked runnable.
+  - type: code
+    language: python
+    status: illustrative
+    code: "from concurrent.futures import ProcessPoolExecutor\n\ndef square(number):\n    return number\
+      \ * number\n\nif __name__ == \"__main__\":\n    with ProcessPoolExecutor() as pool:\n        print(list(pool.map(square,\
+      \ [1, 2, 3, 4])))\n"
+    caption: Illustrative local example for CPU-bound independent work. Keep worker functions importable
+      at the top level and use the main guard, especially on platforms that start child processes with
+      spawn. The browser runtime does not support subprocesses or process pools.
+  - type: callout
+    variant: production
+    title: Bound concurrency and apply backpressure
+    body: 'A pool limits active workers, but submitting millions of jobs at once can still consume large
+
+      amounts of memory. Limit queued work, use timeouts, handle failures, and respect remote-service
+
+      rate limits. Measure the system before selecting `max_workers`.
+
+      '
+- id: mistakes-and-debugging
+  title: Common mistakes and debugging clues
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: "- **Using threads for pure-Python CPU work and expecting automatic speed-up:** benchmark a\
+      \ process\n  pool or a suitable native library instead.\n- **Sharing a mutable list or dictionary\
+      \ without a plan:** use worker-local results, a queue, or a\n  lock around the smallest critical\
+      \ section.\n- **Holding a lock while doing network I/O:** other workers wait unnecessarily; keep\
+      \ the locked\n  section short.\n- **Creating one thread per incoming request without a limit:**\
+      \ the process can exhaust memory or\n  overwhelm a downstream service.\n- **Forgetting to collect\
+      \ worker exceptions:** call `future.result()` or otherwise inspect every\n  future so failures are\
+      \ not silently lost.\n- **Assuming the GIL exists in every Python build:** check the interpreter\
+      \ and extension modules.\n- **Using a process pool for tiny tasks:** process startup and serialisation\
+      \ can cost more than the\n  calculation itself.\n\nTo debug concurrency problems, reproduce the\
+      \ smallest failing workload, record task identifiers and\ntimestamps, inspect worker exceptions,\
+      \ and use deterministic tests around shared invariants. A race\nmay disappear when logging changes\
+      \ the timing, so do not treat one successful run as proof.\n"
+  - type: item
+    ref: concurrency-debug-design
+  - type: item
+    ref: concurrency-model-choice
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: "- Concurrency overlaps progress; parallelism executes work simultaneously.\n- I/O-bound and\
+      \ CPU-bound workloads often need different execution models.\n- Threads share memory; processes\
+      \ isolate memory; asyncio schedules cooperative tasks.\n- The GIL limits pure-Python CPU parallelism\
+      \ in the standard CPython build, but optional free-threaded\n  builds exist from Python 3.13.\n\
+      - A lock protects a critical section; a queue or worker-local results can reduce shared-state risks.\n\
+      - Bound work, inspect failures and benchmark instead of assuming more workers are faster.\n"
+  - type: item
+    ref: concurrency-gil-true-false
+  - type: item
+    ref: concurrency-merge-local-results
+  - type: item
+    ref: concurrency-transfer-choice
+items:
+- id: concurrency-predict-interleaving
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: 'Two workers both read the current balance before either writes. What does this deliberately
+    interleaved program print?
+
+    '
+  code: 'balance = 0
+
+    a_read = balance
+
+    b_read = balance
+
+    a_new = a_read + 1
+
+    b_new = b_read + 1
+
+    balance = a_new
+
+    balance = b_new
+
+    print(balance)
+
+    '
+  answer: '1'
+  wrongAnswers:
+  - answer: '2'
+    feedback: Both workers read the old value 0. The second write overwrites the first; the update is
+      lost.
+  explanation: 'The two reads happen before either write. Both workers calculate 1, so the final write
+    stores 1. A real
+
+    shared counter needs a lock or a design that avoids concurrent mutation.
+
+    '
+- id: concurrency-model-choice
+  type: mcq
+  skill: design
+  difficulty: 2
+  prompt: 'A program already uses a synchronous HTTP client. It must fetch 40 independent URLs, and you
+    want to
+
+    overlap waiting without rewriting the client to use async APIs. Which is the most direct first option?
+
+    '
+  options:
+  - id: thread-pool
+    text: Use a bounded ThreadPoolExecutor.
+    correct: true
+    feedback: A thread pool can overlap blocking I/O while allowing the existing synchronous client to
+      remain in use. Bound the worker count and respect rate limits.
+  - id: process-pool
+    text: Use a ProcessPoolExecutor for every request.
+    correct: false
+    feedback: Processes are usually a poor first choice for I/O waits because they add startup and data-transfer
+      costs without solving the synchronous-call constraint more simply.
+  - id: one-loop
+    text: Put the synchronous call inside asyncio.gather without changing it.
+    correct: false
+    feedback: A blocking synchronous call still blocks the event-loop thread. Asyncio helps when the I/O
+      library is awaitable or blocking work is explicitly offloaded.
+  - id: more-recursion
+    text: Recursively call the HTTP client until all URLs finish.
+    correct: false
+    feedback: Recursion changes call structure, not the fact that each blocking request waits before the
+      next one begins.
+  explanation: A bounded thread pool is a practical bridge when the existing library blocks the calling
+    thread.
+- id: concurrency-gil-true-false
+  type: true-false
+  skill: recognition
+  prompt: In the standard GIL-enabled CPython build, two threads running pure Python CPU-bound bytecode
+    execute that bytecode simultaneously on two CPU cores.
+  answer: false
+  explanation: The GIL allows only one thread at a time to execute Python bytecode in that interpreter.
+    Optional free-threaded builds change this, but they are not the default and extension compatibility
+    matters.
+- id: concurrency-explain-workload
+  type: explain
+  skill: explanation
+  difficulty: 2
+  prompt: Explain the difference between an I/O-bound task and a CPU-bound task. Then recommend a first
+    execution model for each and state one trade-off.
+  rubric:
+  - Defines I/O-bound work as spending significant time waiting for external input or output.
+  - Defines CPU-bound work as spending most of its time performing calculations.
+  - Recommends threads or asyncio for appropriate I/O work and explains the library compatibility condition.
+  - Recommends a process pool or suitable native code for independent CPU-heavy pure-Python work, with
+    its overhead.
+  modelAnswer: 'Downloading files is I/O-bound because most time is spent waiting for remote servers.
+    A thread pool can
+
+    overlap blocking requests, while asyncio can handle many requests when the client library is async.
+
+    Computing millions of pure-Python values is CPU-bound; a process pool can use multiple cores, but
+    it
+
+    costs memory, startup time and data serialisation. I would benchmark before choosing either.
+
+    '
+  explanation: I/O-bound work spends much of its time waiting for a disk, network or database response;
+    threads can overlap blocking calls, while asyncio can coordinate many waits when the libraries support
+    async APIs. CPU-bound work spends time calculating; a process pool can use multiple cores but adds
+    startup, memory and data-transfer overhead.
+- id: concurrency-debug-design
+  type: explain
+  skill: debugging
+  difficulty: 3
+  prompt: A shared counter sometimes ends lower than expected after many worker updates. Describe a debugging
+    plan and two design changes that could prevent lost updates.
+  rubric:
+  - Reproduces the problem with a small, repeatable workload and records the expected invariant.
+  - Identifies the read-modify-write sequence as a possible race rather than blaming the GIL alone.
+  - Suggests a lock or another explicit synchronisation primitive around the critical section.
+  - Suggests avoiding shared mutation by returning worker-local results and merging them.
+  modelAnswer: 'First create a small test where each worker performs a known number of increments and
+    compare the final
+
+    count with the expected total. Inspect whether multiple workers read the same old value before writing.
+
+    Protect the update with a lock, or better, let each worker calculate a private count and combine the
+
+    counts after the workers finish. Run the test repeatedly and on the interpreter builds we support.
+
+    '
+  explanation: 'The read-modify-write sequence is not automatically atomic: workers can read the same
+    old counter value and overwrite one another. A lock can protect the critical section, while worker-local
+    results avoid shared mutation and can be merged after the work finishes.'
+- id: concurrency-merge-local-results
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: 'Each worker returns its own dictionary of word counts. Implement `merge_counts(partials)` so
+    that it
+
+    combines counts into a new dictionary. Do not modify any input dictionary. This is the merge step
+    of a
+
+    worker-local-results design; it does not itself start threads or processes.
+
+    '
+  starterCode: "def merge_counts(partials):\n    # TODO: combine each worker's counts into a new dictionary\n\
+    \    return {}\n"
+  solution: "def merge_counts(partials):\n    merged = {}\n    for partial in partials:\n        for word,\
+    \ count in partial.items():\n            merged[word] = merged.get(word, 0) + count\n    return merged\n"
+  tests:
+  - name: combines repeated words
+    code: 'assert merge_counts([{"red": 2}, {"red": 3, "blue": 1}]) == {"red": 5, "blue": 1}, "red should
+      total 5 and blue should total 1."
+
+      '
+  - name: empty input returns an empty dictionary
+    code: 'assert merge_counts([]) == {}, "an empty collection of worker results should produce an empty
+      dictionary."
+
+      '
+  - name: does not mutate worker results
+    code: 'original = {"green": 4}
+
+      merge_counts([original])
+
+      assert original == {"green": 4}, "merge_counts must not modify a worker''s result."
+
+      '
+  hints:
+  - Start with a new empty dictionary; do not use one of the input dictionaries as the result.
+  - For each key, add the worker's count to the current total, using zero when the key is new.
+  - Test an empty list and repeated keys before considering the task finished.
+  feedback:
+  - when:
+      codeContains: return {}
+    message: The function currently discards every worker result. Loop through each partial dictionary
+      and add its counts to the new result.
+  explanation: Each worker result is read but never changed. A new dictionary accumulates each word count,
+    so repeated words are combined and the original partial dictionaries remain untouched.
+- id: concurrency-transfer-choice
+  type: mcq
+  skill: transfer
+  difficulty: 3
+  prompt: 'You need to run independent, CPU-heavy pure-Python calculations on a standard GIL-enabled CPython
+
+    installation. Which option is the best first experiment?
+
+    '
+  options:
+  - id: processes
+    text: A bounded ProcessPoolExecutor, then benchmark it against sequential execution.
+    correct: true
+    feedback: Separate processes can execute Python code on multiple cores, but startup and serialisation
+      costs mean you must benchmark the real workload.
+  - id: threads
+    text: A ThreadPoolExecutor with one thread per input.
+    correct: false
+    feedback: The standard CPython GIL limits simultaneous execution of pure-Python bytecode, and an unbounded
+      number of threads adds overhead.
+  - id: asyncio
+    text: asyncio.gather around the CPU calculation.
+    correct: false
+    feedback: Asyncio switches tasks when they await. A CPU-bound function that does not yield blocks
+      the event loop and does not gain multiple cores.
+  - id: daemon
+    text: Mark each task as a daemon thread.
+    correct: false
+    feedback: Daemon status changes shutdown behaviour; it does not make CPU work parallel or faster.
+  explanation: A process pool is a reasonable first experiment for independent CPU-heavy pure-Python tasks
+    in standard CPython. Measure whether the work is large enough to repay the overhead.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - concurrency-predict-interleaving
+  - concurrency-gil-true-false
+  - concurrency-merge-local-results
+  - concurrency-transfer-choice
+  - concurrency-debug-design
+cheatsheet: '- **I/O-bound:** consider threads for blocking libraries or asyncio for async-native libraries.
+
+  - **CPU-bound pure Python:** benchmark a process pool on standard GIL-enabled CPython.
+
+  - **GIL:** standard CPython executes Python bytecode in one thread at a time; optional free-threaded
+  builds exist from Python 3.13.
+
+  - **Race condition:** timing/interleaving changes a result; protect shared invariants or avoid shared
+  mutation.
+
+  - **Lock:** keep the critical section short; do not hold locks while waiting on unrelated I/O.
+
+  - **Pool:** bound active workers and queued work; inspect every Future''s result.
+
+  '

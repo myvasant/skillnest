@@ -1,0 +1,246 @@
+id: tool-using-assistant
+title: Tool-Using Assistant — the Agent Loop from Scratch
+track: agentic
+level: intermediate
+estimatedHours: 9
+environment: local
+starterKit: projects/tool-using-assistant
+summary: >-
+  Build the agent loop yourself, with no framework: a tool registry with JSON-schema-like parameter
+  specs, argument validation, a safe calculator, a unit converter and a sandboxed file reader, errors
+  fed back to the model, a step budget and a transcript — all tested with a deterministic scripted model.
+concepts:
+  - agents.agent-loop
+  - agents.tool-design
+  - genai.tool-calling
+  - genai.structured-outputs
+  - security.input-handling
+  - python.exceptions
+  - python.pathlib
+  - python.dataclasses
+  - python.testing
+problem: |
+  Frameworks make agents look like magic: you hand over some functions and a model "uses tools".
+  Underneath there is a short loop that you can — and should — write yourself once. In this project
+  you build `tool_assistant.py`, an assistant that answers questions by calling three tools:
+
+  * `calculator` — arithmetic such as `(3 + 4) * 2`, evaluated **without** `eval`;
+  * `convert_units` — length, mass and temperature (`42 km -> mi`, `100 c -> f`);
+  * `read_file` — reads text files, but only inside one sandbox folder.
+
+  **Input:** a question and a model. **Output:** a `RunResult` with a status (`completed` or
+  `max_steps`), the answer, the number of steps and a transcript of every tool call, result and error.
+
+  The model is just an object with `complete(messages, tools) -> str`. It replies with one JSON object:
+  either a tool call `{"tool": "read_file", "arguments": {"path": "trip.txt"}}` or a final answer
+  `{"final": "..."}`. Model output is untrusted, so the hard parts are the edges: unknown tools,
+  arguments of the wrong type, replies that are not JSON, a path like `../secret.txt`, a model that
+  calls the same tool forever. Each must become an *observation* the model can react to, or a clean stop.
+
+  The tests use `ScriptedModel`, which replays a fixed list of replies, so every run is reproducible
+  and free. An optional `OllamaModel` adapter lets you try a free local model afterwards.
+
+  Example transcript (from `python solution/tool_assistant.py --demo`, thoughts omitted):
+
+  ```text
+  [step 1] tool_call: tool='read_file', arguments={'path': 'trip.txt'}
+  [step 1] tool_result: tool='read_file', content='Hike: 42 km over 3 days.\n'
+  [step 2] tool_call: tool='convert_units', arguments={'value': 42, 'from_unit': 'km', 'to_unit': 'mi'}
+  [step 2] tool_result: tool='convert_units', content='42 km = 26.09759007 mi'
+  [step 3] tool_call: tool='calculator', arguments={'expression': '26.09759 / 3'}
+  [step 3] tool_result: tool='calculator', content='8.699196667'
+  [step 4] final_answer: answer='The 42 km route is about 26.1 miles, roughly 8.7 miles per day over 3 days.'
+  status=completed steps=4 answer='The 42 km route is about 26.1 miles, roughly 8.7 miles per day over 3 days.'
+  ```
+
+  With a bad call the loop keeps going instead of crashing:
+
+  ```text
+  [step 1] tool_call: tool='read_file', arguments={'path': '../secret.txt'}
+  [step 1] tool_error: tool='read_file', error="access denied: '..' is not allowed in paths", kind='tool_error'
+  [step 2] final_answer: answer='I am not allowed to read files outside the notes folder.'
+  ```
+acceptanceCriteria:
+  - "`ToolRegistry.register` rejects invalid names, duplicates, blank descriptions and malformed parameter schemas with `RegistryError`; `specs()` returns JSON-serialisable `{name, description, parameters}` objects."
+  - "`validate_arguments` checks required names, JSON types (a boolean is not a number), `enum`, length and range limits, and unexpected arguments, returning messages a model can act on."
+  - "`ToolRegistry.execute` never raises: unknown tools, invalid arguments, `ToolError`s and unexpected exceptions become a `ToolOutcome` with `error_kind` `unknown_tool`, `invalid_arguments`, `tool_error` or `crash` — without tracebacks."
+  - "`safe_calculate` evaluates only numbers and arithmetic operators via `ast` (never `eval`) and rejects names, calls, attributes, huge exponents, huge results and division by zero."
+  - "`resolve_in_sandbox` blocks absolute paths, drive letters, UNC paths, `..` in either separator style and symlinks that escape; error messages never reveal the host path or the file contents."
+  - "`parse_action` accepts exactly one tool call or final answer object (optionally fenced) and raises `ModelOutputError` for every other shape."
+  - "`Agent.run` feeds tool results and `ERROR:` observations back to the model, reports invalid output, stops after `max_steps` model calls with status `max_steps`, and records a step-numbered transcript."
+  - "All 87 tests pass with `GW_TARGET=solution`; the code is typed, documented and ruff-clean."
+architecture: |
+  One module, `tool_assistant.py`, in layers that each depend only on the ones above them:
+
+  ```text
+   question ──► Agent.run ──► model.complete(messages, specs) ──► reply text
+                    ▲                                                │ parse_action
+                    │                              ┌─────────────────┴───────────────┐
+                    │                          ToolCall                  FinalAnswer / ModelOutputError
+                    │                              │                                 │
+                    │         ToolRegistry.execute: look up → validate_arguments     stop, or "ERROR:" back
+                    │                              → tool.func(**args) → ToolOutcome
+                    │                              │
+                    └── Message("tool", result or "ERROR: ...") ◄┘     (max_steps always ends the loop)
+  ```
+
+  * **Tools** ([tool design](concept:agents.tool-design)): `Tool(name, description, parameters, func)`.
+    The JSON-schema-like `parameters` is what the model sees; `func` is what you run. Factories such as
+    `make_file_reader_tool(sandbox)` bind configuration with a closure instead of global state.
+  * **Registry**: the single door to every tool. It validates definitions at registration and
+    arguments at call time, and converts every failure into a `ToolOutcome`.
+  * **Models**: a `Model` protocol with `complete(messages, tools) -> str`. `ScriptedModel` replays a
+    script and records what it was shown; `OllamaModel` (optional) calls a local model over HTTP.
+  * **Parsing** ([structured outputs](concept:genai.structured-outputs)): `parse_action` turns text into
+    `ToolCall | FinalAnswer` with strict shape checks.
+  * **Loop** ([the agent loop](concept:agents.agent-loop)): `Agent.run` owns the message list, the step
+    budget, observation truncation and the transcript (`TranscriptEvent(step, kind, data)`).
+setup: |
+  You need Python 3.11 or newer. The code uses only the standard library; `pytest` is installed for
+  the tests. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\tool-using-assistant
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or call
+  `.\.venv\Scripts\python.exe -m pytest` directly.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/tool-using-assistant
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/tool_assistant.py`. **Optional local model:** install [Ollama](https://ollama.com),
+  run `ollama pull llama3.2` (about 2 GB; 8 GB of RAM is comfortable, no GPU required), then
+  `python solution/tool_assistant.py --ollama llama3.2 --sandbox . "How many km is 26 miles?"`.
+  The tests never need it.
+milestones:
+  - id: registry
+    title: Tool registry and argument validation
+    description: |
+      Implement `Tool.spec`, `check_parameter_schema`, `validate_arguments` and the `ToolRegistry`
+      methods `register`, `names`, `get`, `specs` and `execute`. Validation supports `type`,
+      `required`, `additionalProperties: false`, `enum`, `minLength`/`maxLength` and
+      `minimum`/`maximum`, and treats `True` as a boolean, never a number.
+
+      The tests register a small `echo` tool, try bad names, duplicates and broken schemas, check a
+      dozen invalid argument sets for actionable messages, and confirm that `execute` turns unknown
+      tools, invalid arguments, `ToolError` and unexpected exceptions into `ToolOutcome`s.
+      Run `python -m pytest -k Milestone1`.
+  - id: calculator-and-units
+    title: A calculator without eval, and a unit converter
+    description: |
+      Implement `safe_calculate`: parse with `ast.parse(..., mode="eval")` and evaluate the tree
+      recursively, allowing only int/float constants and the operators in `BINARY_OPERATORS` and
+      `UNARY_OPERATORS`. Add limits on expression length, exponent size and result magnitude. Then
+      implement `convert_units` (length and mass through a base unit, temperature through kelvin) and
+      `make_unit_converter_tool`, using `make_calculator_tool` as your model.
+
+      The tests check arithmetic results, that `__import__('os')`, names, attributes, strings, booleans
+      and complex numbers are rejected, clear errors for `1 / 0` and `9 ** 9 ** 9`, conversions in
+      every dimension and mixed-dimension errors. Run `python -m pytest -k Milestone2`.
+  - id: sandbox
+    title: A file reader that cannot escape its sandbox
+    description: |
+      Implement `resolve_in_sandbox`, `read_sandboxed_file`, `make_file_reader_tool` and
+      `default_registry`. Use three layers of defence: reject absolute, drive and UNC paths; reject `..`
+      whichever separator is used; then resolve the path (following symlinks) and check it is still
+      inside the resolved sandbox. Refuse directories and binary files and truncate large files.
+
+      The tests try `../secret.txt`, `notes/../../secret.txt`, `..\secret.txt`, absolute paths on both
+      operating systems, `C:secret.txt`, a UNC path, a NUL byte and a symlink pointing outside (skipped
+      where symlinks are not allowed), and check that error messages leak neither the host path nor the
+      secret. Run `python -m pytest -k Milestone3`.
+  - id: parsing-and-loop
+    title: Parse replies and run the loop
+    description: |
+      Implement `ScriptedModel` (replay a script, record a copy of the messages each call) and
+      `parse_action` (exactly one of `tool` or `final`, optional `thought`, optional code fence), then
+      the happy path of `Agent.run`: system prompt and question, call the model, run tools, append
+      `tool` messages, stop on a final answer, and record `tool_call`, `tool_result` and
+      `final_answer` events.
+
+      The tests check ten malformed replies, a direct answer in one step, a two-tool run with the exact
+      message the model saw after each tool, and the transcript's kinds, step numbers and data.
+      Run `python -m pytest -k Milestone4`.
+  - id: errors-and-budget
+    title: Errors as observations, and a step budget
+    description: |
+      Complete `Agent.run`: failed tool calls become `tool_error` events and `ERROR: ...` tool messages,
+      invalid replies become `invalid_output` events and an `ERROR:` user message, observations are
+      truncated to `max_observation_chars`, and after `max_steps` model calls the run ends with status
+      `max_steps` and a `budget_exhausted` event.
+
+      The tests script a model that divides by zero and then recovers, calls an unknown tool and passes
+      a string where a number is required, tries to read outside the sandbox, replies in prose, and
+      loops forever — and check that the model is called at most `max_steps` times.
+      Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 87 pytest tests in `tests/test_tool_assistant.py`, one class per milestone
+  (`TestMilestone1Registry` … `TestMilestone5ErrorsAndBudget`). By default they import your
+  `starter/` code:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone3   # one milestone
+  python -m pytest -x -q           # stop at the first failure
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Everything is deterministic: the model is a `ScriptedModel`, files live in pytest's `tmp_path`, and
+  nothing touches the network (the Ollama adapter is only checked for refusing non-local URLs). One
+  symlink test is skipped on Windows unless Developer Mode allows symlinks. To test a new tool, script
+  the model's replies and assert on `result.transcript` and on `model.seen`, the messages the model
+  was shown.
+security:
+  - Model output is untrusted input. Every tool call is validated against its schema before anything runs, and unknown tools are refused.
+  - Never evaluate model-written code with eval or exec. The calculator walks an ast tree and allows only numbers and arithmetic operators, with limits on exponent and result size to prevent denial of service.
+  - Path traversal is blocked in layers - no absolute or drive paths, no '..' parts, and a containment check after resolving symlinks - because each check alone can be bypassed.
+  - Error messages sent to the model never contain tracebacks, absolute host paths or file contents from outside the sandbox.
+  - Tool results can carry indirect prompt injection (a file that says "ignore previous instructions"). Treat them as data, keep tools read-only and least-privilege, and cap how much output reaches the model.
+  - The step budget bounds cost and runaway loops. The optional Ollama adapter refuses non-localhost URLs so prompts and files never leave the machine.
+extensions:
+  - Add a list_files tool for the sandbox with a maximum number of entries, and make the scripted model use it before read_file.
+  - Support native tool calling - send the tool specs in Ollama's tools field and convert message.tool_calls into ToolCall objects - and compare reliability with the JSON protocol.
+  - Add a per-tool timeout and a per-run budget on total tool output characters, recorded in the transcript.
+  - Detect repeated identical tool calls and reply with a warning observation before the budget runs out.
+  - Write a rule-based fake model that answers simple arithmetic and conversion questions by itself, and use it for an interactive command-line demo.
+rubric:
+  - criterion: Agent loop correctness
+    needsWork: The loop crashes on bad model output or tool errors, or can run without a step limit.
+    meets: Results and errors are fed back as messages, invalid output is reported, and max_steps always ends the run with a clear status.
+    exceeds: The loop is small and readable, observations are truncated, and the transcript makes any run easy to replay and debug.
+  - criterion: Tool design and validation
+    needsWork: Tools accept unchecked arguments or have vague descriptions.
+    meets: Every tool has a precise description and schema; arguments are validated with actionable messages before execution.
+    exceeds: Errors guide the model to a correct retry, and new tools can be added without touching the loop.
+  - criterion: Safety of tools
+    needsWork: Uses eval, or the file reader can be tricked into reading outside the sandbox.
+    meets: The calculator is ast-based with limits, and every traversal test passes including absolute, drive and UNC paths.
+    exceeds: Defence in depth is explained in docstrings, errors never leak host details, and you added tests for further attacks.
+  - criterion: Testing and code quality
+    needsWork: Tests depend on a real model, the network or the real file system.
+    meets: All provided tests pass; code is typed, documented and ruff-clean.
+    exceeds: You added scripted-model tests for your own tools or extensions, asserting on both the transcript and what the model saw.

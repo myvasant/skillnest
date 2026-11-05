@@ -1,0 +1,320 @@
+id: cs.sorting
+concept: cs.sorting
+title: Sorting Algorithms and Python Sorting
+subtitle: Understand quadratic and n log n sorts, stability and the built-in sort
+estimatedMinutes: 50
+reviewedOn: 2026-11-04
+summary: >-
+  Compare selection, insertion and merge sort, reason about their time and space costs, understand stability,
+  and use Python's built-in stable Timsort with key functions rather than implementing a custom sort in
+  production without a specific reason.
+objectives:
+  - Explain why sorting is useful and how comparison-based sorting works.
+  - Trace selection sort and insertion sort on a small list.
+  - Explain the O(n squared) and O(n log n) growth trade-offs.
+  - Describe merge sort's divide-and-conquer approach and extra memory cost.
+  - Explain stability and why it matters when records share a sort key.
+  - Use `sorted()` and `list.sort()` with `key` and `reverse`, and distinguish their return behaviour.
+sources:
+  - title: Sorting Techniques
+    url: https://docs.python.org/3/howto/sorting.html
+    publisher: Python Software Foundation
+  - title: TimeComplexity — Python Wiki
+    url: https://wiki.python.org/moin/TimeComplexity
+    publisher: Python Wiki
+  - title: Timsort description in CPython
+    url: https://github.com/python/cpython/blob/main/Objects/listsort.txt
+    publisher: CPython developers
+sections:
+  - id: why-sorting
+    title: Why sorting matters
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          Sorting puts values into an agreed order. Once records are sorted, it becomes easier to find ranges,
+          display rankings, merge datasets, group duplicates and use binary search. Sorting is not just about
+          making output look tidy; it can change which algorithms become practical.
+
+          A **comparison sort** decides order by comparing pairs of values. Different algorithms make different
+          numbers of comparisons and moves, and they use different amounts of extra memory. There is no single
+          best algorithm for every input size and shape.
+      - type: item
+        ref: sorting-growth-check
+
+  - id: quadratic-sorts
+    title: Selection sort and insertion sort
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **Selection sort** repeatedly finds the smallest remaining value and swaps it into the next position.
+          It performs about n(n−1)/2 comparisons, so its time grows as O(n²). It uses little extra memory.
+
+          **Insertion sort** grows a sorted prefix. It takes the next value and shifts larger values right until
+          the new value fits. It is also O(n²) in the average and worst case, but can be efficient for small or
+          nearly sorted input because it does little work when values are already close to their final place.
+      - type: code
+        runnable: true
+        code: |
+          def insertion_sort(values):
+              result = values.copy()
+              for index in range(1, len(result)):
+                  current = result[index]
+                  position = index
+                  while position > 0 and result[position - 1] > current:
+                      result[position] = result[position - 1]
+                      position -= 1
+                  result[position] = current
+              return result
+
+          print(insertion_sort([5, 2, 4, 2, 1]))
+        expectedOutput: |
+          [1, 2, 2, 4, 5]
+        annotations:
+          - line: 3
+            text: The values before index are maintained as a sorted prefix.
+          - line: 6
+            text: Larger values shift one position right to make room for the current value.
+          - line: 8
+            text: The current value is placed at the first position where the prefix remains sorted.
+      - type: item
+        ref: sorting-insertion-predict
+
+  - id: divide-and-conquer
+    title: Merge sort and n log n growth
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          **Merge sort** uses divide and conquer:
+
+          1. Split the list into two smaller lists.
+          2. Sort each half recursively.
+          3. Merge the two sorted halves by repeatedly taking the smaller front value.
+
+          Each level of splitting processes a total of n values, and there are about log₂(n) levels, so the total
+          work is O(n log n). A typical array-based merge sort needs O(n) extra memory for the merged results.
+          The algorithm is stable when equal values are taken from the left half first.
+      - type: code
+        runnable: true
+        code: |
+          def merge(left, right):
+              result = []
+              i = j = 0
+              while i < len(left) and j < len(right):
+                  if left[i] <= right[j]:
+                      result.append(left[i])
+                      i += 1
+                  else:
+                      result.append(right[j])
+                      j += 1
+              result.extend(left[i:])
+              result.extend(right[j:])
+              return result
+
+          print(merge([1, 4, 7], [2, 3, 8]))
+        expectedOutput: |
+          [1, 2, 3, 4, 7, 8]
+        annotations:
+          - line: 5
+            text: Taking from the left when values are equal preserves the original order of equal values across the halves.
+          - line: 11
+            text: Once one side is empty, the remaining values on the other side are already sorted.
+      - type: callout
+        variant: note
+        title: Quicksort is a different trade-off
+        body: |
+          Quicksort partitions values around a pivot. It is often fast in practice and can be in-place, but a
+          consistently poor pivot can lead to O(n²) time. Randomised or carefully chosen pivots reduce the risk;
+          implementations differ in their guarantees and safeguards.
+
+  - id: stability-and-keys
+    title: Stability and sorting records by a key
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **stable sort** preserves the original relative order of items whose sort keys are equal. This matters
+          when records have a primary key and a secondary key. Python's built-in sort is stable, so you can sort
+          by the secondary key first and then by the primary key, or use a tuple key to express both at once.
+
+          `sorted(items, key=...)` returns a new list. `items.sort(key=...)` changes the list in place and returns
+          `None`. Both accept `reverse=True`. In production, use the built-in sort: it is highly optimised and
+          adaptive. Implement algorithms yourself when learning, when the built-in contract is insufficient, or
+          when you have a measured reason.
+      - type: code
+        runnable: true
+        code: |
+          students = [
+              {"name": "Mira", "team": "blue", "score": 90},
+              {"name": "Asha", "team": "red", "score": 90},
+              {"name": "Dev", "team": "blue", "score": 82},
+          ]
+
+          ranked = sorted(students, key=lambda student: (-student["score"], student["name"]))
+          print([(student["name"], student["score"]) for student in ranked])
+
+          original = [3, 1, 2]
+          returned = original.sort()
+          print(original, returned)
+        expectedOutput: |
+          [('Asha', 90), ('Mira', 90), ('Dev', 82)]
+          [1, 2, 3] None
+        annotations:
+          - line: 8
+            text: A tuple key sorts by descending score and then ascending name.
+          - line: 11
+            text: list.sort mutates the original list; its return value is None.
+      - type: item
+        ref: sorting-stability-predict
+
+  - id: choose-and-test
+    title: Choose, test and analyse a sorting approach
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          When choosing a sorting approach, ask:
+
+          - How many values are there, and how large can the input become?
+          - Is the input already partly sorted?
+          - Must equal-key records keep their original order?
+          - Is extra memory acceptable?
+          - Can the built-in `sorted()` or `list.sort()` already express the requirement?
+
+          Test duplicates, negative values, empty lists and already sorted or reverse-sorted input. State both
+          time and space complexity. Do not claim an algorithm is faster based only on one tiny example.
+      - type: item
+        ref: sorting-insertion-code
+      - type: item
+        ref: sorting-transfer
+
+  - id: summary
+    title: Summary and checklist
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Selection and insertion sort are O(n²); insertion sort can perform well on small or nearly sorted input.
+          - Merge sort is O(n log n) and stable, with O(n) extra memory in its common list implementation.
+          - Stability preserves the order of equal-key records.
+          - Python's built-in sort is stable and accepts `key` and `reverse`.
+          - `sorted()` returns a new list; `list.sort()` mutates and returns None.
+          - Use the built-in sort in applications unless there is a measured reason not to.
+      - type: item
+        ref: sorting-transfer
+items:
+  - id: sorting-growth-check
+    type: mcq
+    skill: explanation
+    difficulty: 1
+    prompt: Which algorithm is a typical O(n log n) stable comparison sort that needs O(n) extra memory for a list implementation?
+    options:
+      - id: a
+        text: Merge sort
+        correct: true
+        feedback: Correct. It splits the input, sorts the halves and merges them in linear work per level.
+      - id: b
+        text: Selection sort
+        correct: false
+        feedback: Selection sort uses O(n²) comparisons.
+      - id: c
+        text: Insertion sort
+        correct: false
+        feedback: Insertion sort is O(n²) in the average and worst case.
+    explanation: Merge sort has about log n levels, with O(n) work to merge across each level, and uses extra storage for the merged output.
+  - id: sorting-insertion-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      values = [4, 2, 3]
+      values.sort()
+      print(values)
+    answer: |
+      [2, 3, 4]
+    wrongAnswers:
+      - answer: |
+          None
+        feedback: sort() returns None, but the list itself is changed before it is printed.
+      - answer: |
+          [4, 2, 3]
+        feedback: list.sort sorts the list in place.
+    explanation: "`values.sort()` mutates values. The print statement then displays the sorted list."
+  - id: sorting-stability-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What order of names is printed? Python's sort is stable.
+    code: |
+      records = [("Mira", 90), ("Asha", 90), ("Dev", 82)]
+      records.sort(key=lambda record: record[1], reverse=True)
+      print([name for name, score in records])
+    answer: |
+      ['Mira', 'Asha', 'Dev']
+    wrongAnswers:
+      - answer: |
+          ['Asha', 'Mira', 'Dev']
+        feedback: The two records with score 90 keep their original relative order because the sort is stable.
+      - answer: |
+          ['Dev', 'Mira', 'Asha']
+        feedback: reverse=True orders the scores from high to low.
+    explanation: Equal keys retain their original relative order in a stable sort.
+  - id: sorting-insertion-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `insertion_sort(values)` so it returns a new sorted list and leaves the original list unchanged. Do not call `sorted()` or `.sort()`.
+    explanation: Maintain a sorted prefix and insert each next value into its correct position by shifting larger values to the right.
+    starterCode: |
+      def insertion_sort(values):
+          # Return a new sorted list.
+          pass
+    solution: |
+      def insertion_sort(values):
+          result = values.copy()
+          for index in range(1, len(result)):
+              current = result[index]
+              position = index
+              while position > 0 and result[position - 1] > current:
+                  result[position] = result[position - 1]
+                  position -= 1
+              result[position] = current
+          return result
+    tests:
+      - name: sorts unsorted values
+        code: assert insertion_sort([4, 2, 3]) == [2, 3, 4]
+      - name: preserves duplicates
+        code: assert insertion_sort([2, 1, 2, 1]) == [1, 1, 2, 2]
+      - name: handles empty input
+        code: assert insertion_sort([]) == []
+      - name: leaves the input unchanged
+        code: |
+          values = [3, 1, 2]
+          result = insertion_sort(values)
+          assert values == [3, 1, 2] and result == [1, 2, 3]
+    hints:
+      - Copy the input list before changing it.
+      - Treat everything before index as the sorted prefix.
+      - Shift larger values right, then put current in the gap.
+  - id: sorting-transfer
+    type: explain
+    skill: transfer
+    difficulty: 3
+    prompt: You must sort customer records by department and then by join date, while keeping the original order for records with equal department and date. Explain how Python's stable sort can help.
+    rubric:
+      - Identifies stability as preserving the relative order of equal keys.
+      - Suggests a tuple key or a stable multi-pass sort and explains the key order.
+    modelAnswer: Python's built-in sort is stable. I can use a tuple key such as `(department, join_date)` to express both fields in one sort. If I need a multi-pass approach, I sort by the secondary key first and then by the primary key; stability preserves the secondary order among records with equal primary keys. Records equal on both keys keep their original relative order.
+    explanation: Stability is a behavioural guarantee that allows predictable multi-key sorting without inventing a custom algorithm.
+masteryCheck:
+  passThreshold: 0.75
+  items: [sorting-growth-check, sorting-insertion-code, sorting-transfer]
+cheatsheet: |
+  - Selection/insertion sort: O(n²); merge sort: O(n log n), O(n) extra memory.
+  - Stable sorting preserves the relative order of equal-key items.
+  - `sorted(values, key=..., reverse=...)` returns a new list.
+  - `values.sort(key=..., reverse=...)` mutates and returns None.
+  - Prefer Python's built-in sort in application code.

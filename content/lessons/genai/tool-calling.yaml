@@ -1,0 +1,214 @@
+id: genai.tool-calling
+concept: genai.tool-calling
+title: Tool calling (function calling)
+subtitle: The model returns a request to call a function you described with a schema; your code runs it and sends
+  the result back — the basis of agents
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: The model returns a request to call a function you described with a schema; your code runs it and sends
+  the result back — the basis of agents.
+objectives:
+- Explain the role of tool calling (function calling) in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: Tool use with Claude
+  url: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+  publisher: Anthropic
+- title: Function calling
+  url: https://developers.openai.com/api/docs/guides/function-calling
+  publisher: OpenAI
+- title: Model Context Protocol
+  url: https://modelcontextprotocol.io/
+  publisher: Model Context Protocol project
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: The model returns a request to call a function you described with a schema; your code runs it and sends
+      the result back — the basis of agents. Tools let a model fetch live data and take actions instead of guessing,
+      which is the foundation of assistants and agents.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- You describe each tool with a name, a description and a JSON Schema for its arguments; the model may
+      reply with a tool call (name plus JSON arguments) instead of text.
+
+      - Your code, not the model, executes the tool and sends the result back as a tool-result message; the model
+      continues and may call more tools — the agent loop.
+
+      - Validate arguments before executing, treat them as untrusted input, and require human confirmation for destructive
+      or costly actions.
+
+      - Clear tool descriptions (when to use it, what it returns) matter as much as the prompt; return concise results
+      and helpful error messages, and cap the number of loop iterations.
+
+      - The Model Context Protocol (MCP) is an open standard for exposing tools and data sources to LLM applications.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- The model never runs code or calls your API itself; it only proposes a call that your application chooses
+      to execute.
+
+      - A schema does not guarantee sensible arguments; models can still pass wrong or invented values.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def dispatch_tool(name, arguments, tools):\n    if name not in tools: raise ValueError(\"tool is not\
+      \ allowed\")\n    return tools[name](**arguments)\n\ndef add(a,b): return a+b\n\nprint(dispatch_tool(\"add\"\
+      , {\"a\":2,\"b\":3}, {\"add\":add}))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: tool-calling-code
+  - type: item
+    ref: tool-calling-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - You describe each tool with a name, a description and a JSON Schema for its arguments; the model may reply
+      with a tool call (name plus JSON arguments) instead of text.
+
+      - Your code, not the model, executes the tool and sends the result back as a tool-result message; the model
+      continues and may call more tools — the agent loop.
+
+      - Validate arguments before executing, treat them as untrusted input, and require human confirmation for destructive
+      or costly actions.
+
+      - Clear tool descriptions (when to use it, what it returns) matter as much as the prompt; return concise results
+      and helpful error messages, and cap the number of loop iterations.
+
+      - The Model Context Protocol (MCP) is an open standard for exposing tools and data sources to LLM applications.
+
+
+      **Limitations**
+
+      - The model never runs code or calls your API itself; it only proposes a call that your application chooses
+      to execute.
+
+      - A schema does not guarantee sensible arguments; models can still pass wrong or invented values.'
+  - type: item
+    ref: tool-calling-mcq
+  - type: item
+    ref: tool-calling-tf
+  - type: item
+    ref: tool-calling-code
+items:
+- id: tool-calling-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of tool calling (function calling)?
+  explanation: You describe each tool with a name, a description and a JSON Schema for its arguments; the model
+    may reply with a tool call (name plus JSON arguments) instead of text.
+  options:
+  - id: a
+    text: You describe each tool with a name, a description and a JSON Schema for its arguments; the model may reply
+      with a tool call (name plus JSON arguments) instead of text.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: The model never runs code or calls your API itself; it only proposes a call that your application chooses
+      to execute.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: tool-calling-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: The model never runs code or calls your API itself; it only proposes a call that your application chooses
+    to execute.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: tool-calling-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding tool calling (function calling) to an application. Describe the design, one failure mode,
+    and how you would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: tool-calling-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for tool calling (function calling). The assertions include the normal
+    path and a meaningful edge case.
+  starterCode: "def dispatch_tool(name, arguments, tools):\n    raise NotImplementedError('Complete this function')\n\
+    \ndef add(a, b):\n    raise NotImplementedError('Complete this function')"
+  solution: "def dispatch_tool(name, arguments, tools):\n    if name not in tools: raise ValueError(\"tool is not\
+    \ allowed\")\n    return tools[name](**arguments)\n\ndef add(a,b): return a+b"
+  tests:
+  - name: Core behaviour
+    code: assert dispatch_tool("add", {"a":2,"b":3}, {"add":add}) == 5
+  - name: Edge case
+    code: 'try: dispatch_tool("delete_all", {}, {"add":add})
+
+      except ValueError: pass
+
+      else: raise AssertionError("unknown tool must be blocked")'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - tool-calling-mcq
+  - tool-calling-tf
+  - tool-calling-code
+cheatsheet: '**Key ideas**
+
+  - You describe each tool with a name, a description and a JSON Schema for its arguments; the model may reply with
+  a tool call (name plus JSON arguments) instead of text.
+
+  - Your code, not the model, executes the tool and sends the result back as a tool-result message; the model continues
+  and may call more tools — the agent loop.
+
+  - Validate arguments before executing, treat them as untrusted input, and require human confirmation for destructive
+  or costly actions.
+
+  - Clear tool descriptions (when to use it, what it returns) matter as much as the prompt; return concise results
+  and helpful error messages, and cap the number of loop iterations.
+
+  - The Model Context Protocol (MCP) is an open standard for exposing tools and data sources to LLM applications.
+
+
+  **Failure modes**
+
+  - The model never runs code or calls your API itself; it only proposes a call that your application chooses to
+  execute.
+
+  - A schema does not guarantee sensible arguments; models can still pass wrong or invented values.'

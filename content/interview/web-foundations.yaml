@@ -1,0 +1,428 @@
+category:
+  id: web
+  title: Networking, backend and tooling
+  summary: Git, Linux, HTTP, APIs and backend engineering.
+questions:
+  # ------------------------------------------------ foundations.programs-and-languages
+  - id: foundations.programs-and-languages.compiled-or-interpreted
+    level: junior
+    kind: conceptual
+    concepts: [foundations.programs-and-languages]
+    question: Is Python a compiled or an interpreted language?
+    answer: |
+      Strictly, neither: "compiled" and "interpreted" describe implementations, not languages. CPython, the
+      reference implementation, does both. It first compiles the whole source file into bytecode (a code
+      object) - which is why a SyntaxError anywhere stops the file before any line runs - and then its
+      interpreter loop executes that bytecode instruction by instruction. For imported modules the bytecode is
+      cached in `__pycache__/*.cpython-XY.pyc` so later imports skip compilation. Other implementations make
+      other choices: PyPy adds a just-in-time compiler that turns hot code into machine code at run time, and
+      CPython 3.13+ has an experimental, off-by-default JIT. What CPython normally does not do is produce
+      machine code ahead of time the way a C compiler does.
+    keyPoints:
+      - The distinction belongs to implementations, not to the language.
+      - CPython compiles source to bytecode, then interprets the bytecode in a virtual machine.
+      - Bytecode for imported modules is cached in __pycache__ .pyc files.
+      - Evidence - a SyntaxError on the last line prevents the first line from running.
+      - PyPy (and CPython's experimental JIT) compile hot code to machine code at run time.
+    followUps:
+      - What is in a .pyc file and when is it regenerated?
+      - Why can the same .py file run on Windows and Linux while a compiled C program cannot?
+    pitfalls:
+      - Saying Python reads and executes the text line by line with no compilation step.
+      - Claiming .pyc files contain machine code.
+
+  - id: foundations.programs-and-languages.syntax-vs-runtime
+    level: junior
+    kind: debugging
+    concepts: [foundations.programs-and-languages]
+    question: |
+      A script prints nothing at all and reports a SyntaxError on line 120. Another script prints three lines
+      and then fails with a NameError on line 4. Explain the difference in what happened.
+    answer: |
+      The first script never started running. CPython parses and compiles the entire file before executing
+      any of it; a SyntaxError means compilation failed, so there was no bytecode to execute and even line 1
+      did not run. (The real mistake is often just before the reported position, such as an unclosed bracket.)
+      The second script compiled successfully, because a misspelled name is valid grammar - the compiler does
+      not check that names exist. Execution then proceeded top to bottom, lines 1-3 ran and printed, and the
+      NameError was raised when line 4 executed and the name lookup failed at run time.
+    keyPoints:
+      - SyntaxError is raised during compilation of the whole file, so nothing executes.
+      - NameError, ZeroDivisionError and similar are raised during execution at a specific line.
+      - The compiler checks grammar, not whether names or values are valid.
+      - Output already printed before a runtime error stays printed.
+    followUps:
+      - Why can the line number in a SyntaxError be after the real mistake?
+      - Where in the traceback do you look first?
+    pitfalls:
+      - Assuming Python executes lines until it reaches the syntax error.
+
+  - id: foundations.programs-and-languages.bytecode-inspection
+    level: mid
+    kind: conceptual
+    concepts: [foundations.programs-and-languages]
+    question: What is Python bytecode, how can you inspect it, and should production code depend on it?
+    answer: |
+      Bytecode is the instruction set of CPython's virtual machine: `compile()` (or importing a module)
+      produces a code object containing bytecode, constants and names, and the interpreter loop executes it.
+      You can inspect it with the `dis` module, for example `dis.dis(func)` or
+      `[i.opname for i in dis.get_instructions(code)]`, which shows instructions such as LOAD_NAME, CALL and
+      RETURN_VALUE. It is useful for understanding performance and semantics (constant folding, how a loop is
+      compiled, specialisation via `adaptive=True` since 3.11). But the documentation states bytecode is a
+      CPython implementation detail with no compatibility guarantee between versions - instruction names and
+      even the .pyc magic number change - so production code should never depend on specific bytecode, and
+      .pyc files are tied to one Python version.
+    keyPoints:
+      - Bytecode is the instruction format of CPython's virtual machine, stored in code objects.
+      - The dis module disassembles code objects and functions.
+      - Bytecode changes between Python versions; .pyc files carry a version tag and magic number.
+      - Use it to understand behaviour, not as a stable API.
+    followUps:
+      - What does constant folding look like in dis output?
+      - What is the specialising adaptive interpreter (PEP 659)?
+    pitfalls:
+      - Treating bytecode as portable across Python versions or implementations.
+
+  # ------------------------------------------------------------ foundations.text-encoding
+  - id: foundations.text-encoding.unicode-vs-utf8
+    level: junior
+    kind: conceptual
+    concepts: [foundations.text-encoding]
+    question: What is the difference between Unicode and UTF-8, and why can len() of a string differ from the length of its bytes?
+    answer: |
+      Unicode is a catalogue that assigns every character a number, its code point (é is U+00E9, ₹ is U+20B9,
+      😀 is U+1F600). UTF-8 is one encoding - a rule for storing code points as bytes - that uses 1 byte for
+      ASCII (U+0000-U+007F), 2 bytes up to U+07FF, 3 bytes up to U+FFFF and 4 bytes beyond. Other encodings
+      (UTF-16, cp1252) store the same code points differently. In Python a `str` is a sequence of code points,
+      so `len("naïve")` is 5, while `len("naïve".encode("utf-8"))` is 6 because ï needs two bytes. The
+      distinction matters wherever limits are in bytes, such as Content-Length, buffer sizes or database
+      columns, and whenever data crosses a boundary (files, sockets, APIs), where bytes must be decoded with
+      the encoding they were written in.
+    keyPoints:
+      - Unicode maps characters to code points; it is not itself a byte format.
+      - UTF-8 encodes each code point as 1-4 bytes and is ASCII-compatible.
+      - Python str counts code points; bytes counts bytes.
+      - Encode at output boundaries, decode at input boundaries, work in str in between.
+    followUps:
+      - Why is len("😀") 1 in Python but "😀".length 2 in JavaScript?
+      - Why did UTF-8 win over UTF-16 on the web?
+    pitfalls:
+      - Saying Unicode and UTF-8 are the same thing.
+      - Assuming one character is always one byte.
+
+  - id: foundations.text-encoding.debug-decode-error
+    level: mid
+    kind: debugging
+    concepts: [foundations.text-encoding]
+    question: |
+      A nightly job that imports a supplier's CSV fails with
+      `UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 1824: invalid continuation byte`.
+      How do you diagnose and fix it?
+    answer: |
+      The message says the bytes are not valid UTF-8 at offset 1824, and 0xE9 is "é" in Latin-1/cp1252, so the
+      file was most likely produced in a legacy Windows encoding. I would inspect the raw bytes around that
+      offset (open in "rb" mode and print a slice), confirm the encoding with the supplier or their export
+      settings rather than guessing, then read with `encoding="cp1252"` (or whatever they confirm) and write
+      everything downstream as UTF-8. Long term, agree a contract (UTF-8, ideally without BOM, or use
+      utf-8-sig) and validate it on ingestion. I would not "fix" it with `errors="ignore"` or by switching to
+      latin-1 blindly: both make the error disappear while silently corrupting or dropping characters.
+    keyPoints:
+      - Read the error - codec, byte value and position.
+      - Inspect raw bytes; 0xE9/0xEB-style single bytes suggest Latin-1 or cp1252.
+      - Confirm the real encoding with the producer and decode with it; store as UTF-8.
+      - Avoid errors="ignore"/"replace" and blind latin-1, which hide data loss.
+      - Always pass encoding explicitly; platform defaults differ.
+    followUps:
+      - What would you see if the same file were decoded as Latin-1?
+      - How would you handle a file that starts with a BOM?
+    pitfalls:
+      - Silencing the error with errors="ignore".
+      - Relying on the machine's default encoding.
+
+  - id: foundations.text-encoding.normalisation
+    level: senior
+    kind: scenario
+    concepts: [foundations.text-encoding]
+    question: |
+      Users report they cannot log in although they type their username exactly as registered. Usernames
+      contain accented letters. What might be happening and how would you design username handling?
+    answer: |
+      Visually identical strings can be different code point sequences: "é" may be precomposed U+00E9 or "e"
+      plus U+0301 COMBINING ACUTE ACCENT, depending on the keyboard, operating system or copy-paste source. A
+      plain `==` comparison then fails. I would normalise on input and before comparison - NFC for display
+      names, and for identifiers such as usernames a stricter form, typically NFKC plus `casefold()` - and
+      store the normalised form (plus a unique index on it) so two accounts cannot differ only by
+      representation. Existing rows need a migration that normalises and detects collisions. For security,
+      also consider confusable characters (Cyrillic "а" versus Latin "a"); established profiles such as the
+      PRECIS framework (RFC 8264/8265) define rules for usernames.
+    keyPoints:
+      - Equivalent text can have different code points; normalisation forms make them equal.
+      - Normalise both on write and on comparison, and enforce uniqueness on the normalised value.
+      - NFC for general text; NFKC plus casefold for identifiers.
+      - Plan a migration for existing data and watch for confusables.
+    followUps:
+      - Why does len() differ between the two forms?
+      - What does casefold() do that lower() does not?
+    pitfalls:
+      - Comparing raw strings from different sources without normalising.
+      - Stripping all non-ASCII characters from names.
+
+  # ------------------------------------------------------------------- tooling.git-basics
+  - id: tooling.git-basics.staging-area
+    level: junior
+    kind: conceptual
+    concepts: [tooling.git-basics]
+    question: Explain the working tree, the staging area and HEAD. What do git add and git commit each do?
+    answer: |
+      The working tree is the files you edit. The staging area (the index, stored in .git/index) records exactly
+      what the next commit will contain. HEAD points to the current branch, which points to the latest commit.
+      `git add <file>` copies the file's current content into the staging area (Git stores it as a blob); it is
+      a snapshot of that moment, so if you edit the file again it shows as both staged and modified (`MM` in
+      `git status --short`) and the later edit is not included unless you add again. `git commit` turns the
+      staging area into a new commit whose parent is the previous HEAD commit, then moves the branch forward.
+      The staging area lets you build a commit deliberately - for example committing a bug fix while leaving
+      unrelated experiments uncommitted - and `git diff --staged` shows what you are about to record, while
+      plain `git diff` shows what is not staged.
+    keyPoints:
+      - Working tree = editable files; staging area/index = next commit; HEAD -> branch -> latest commit.
+      - git add stages the current content, not a live link to the file.
+      - git commit records only what is staged and advances the branch.
+      - git diff vs git diff --staged compare different pairs of areas.
+      - git commit -a stages modified tracked files but not untracked ones.
+    followUps:
+      - How do you unstage a file without losing the edit?
+      - What does MM mean in git status --short?
+    pitfalls:
+      - Saying git add saves the change to history.
+      - Believing commit -a includes new files.
+
+  - id: tooling.git-basics.snapshots-or-diffs
+    level: mid
+    kind: conceptual
+    concepts: [tooling.git-basics]
+    question: Does Git store diffs or snapshots? How does it keep repositories small?
+    answer: |
+      Conceptually Git stores snapshots. Every commit points to a tree object describing the whole project
+      (file names, modes and blob ids, with sub-trees for folders), plus its parent commit(s), author,
+      committer and message. Objects are content-addressed: each one's id is a hash (SHA-1 by default, SHA-256
+      in repositories created with that format) of its type, size and content. A file that did not change has
+      the same blob id, so a new commit simply references the existing blob; only changed blobs, the trees on
+      their paths and the commit are new. Diffs are computed on demand by comparing trees. For storage and
+      transfer, Git packs objects into packfiles using delta compression, but that is an optimisation below
+      the snapshot model. Content addressing also makes history tamper-evident: changing an old commit changes
+      its id and every descendant's id.
+    keyPoints:
+      - Commits reference full trees; diffs are computed when requested.
+      - Blob, tree and commit ids are hashes of their content.
+      - Unchanged files reuse existing blobs, so snapshots are cheap.
+      - Packfiles delta-compress on disk without changing the model.
+      - Parent ids in commits chain history and make tampering visible.
+    followUps:
+      - What does git cat-file -p HEAD show?
+      - Why does rebasing produce new commit ids?
+    pitfalls:
+      - Claiming each commit stores a full copy of every file.
+      - Claiming Git's model is a chain of patches.
+
+  - id: tooling.git-basics.missing-change
+    level: junior
+    kind: debugging
+    concepts: [tooling.git-basics]
+    question: |
+      You committed a fix, but the reviewer says one of your edits is missing from the commit, although it is
+      in the file on your machine. What happened and how do you avoid it?
+    answer: |
+      Most likely the file was edited after it was staged: `git add` captured the content at that moment and
+      `git commit` recorded only the staged version, leaving the later edit in the working tree. `git status`
+      would have shown the file under both "Changes to be committed" and "Changes not staged for commit" (MM
+      in short form). The fix is to `git add` the file again and make another commit (or amend the commit if
+      it has not been shared). To avoid it, run `git status` and `git diff --staged` right before committing
+      to check exactly what will be recorded. Another cause is a new file that was never added, for example
+      when relying on `git commit -a`, which skips untracked files.
+    keyPoints:
+      - Edits after git add are not staged.
+      - git status shows a file as both staged and modified in this situation.
+      - Review git diff --staged before committing.
+      - git commit -a ignores untracked files.
+    followUps:
+      - When is git commit --amend safe to use?
+    pitfalls:
+      - Assuming Git tracks files live once they have been added.
+
+  # ---------------------------------------------------------------- networking.http-basics
+  - id: networking.http-basics.anatomy
+    level: junior
+    kind: conceptual
+    concepts: [networking.http-basics]
+    question: Describe the parts of an HTTP request and an HTTP response, and how a receiver knows where a message ends.
+    answer: |
+      A request starts with a request line - method, request target and version, e.g. `GET /notes?limit=2
+      HTTP/1.1` - followed by header fields (`Name: value`, names case-insensitive; HTTP/1.1 requires `Host`),
+      an empty line, and an optional body. A response starts with a status line - version, three-digit status
+      code and an optional reason phrase, e.g. `HTTP/1.1 404 Not Found` - then headers, an empty line and the
+      body. In HTTP/1.1 every head line ends with CRLF and the head ends at the first empty line (CRLF CRLF).
+      The body length comes from `Content-Length` (in bytes) or from `Transfer-Encoding: chunked`, where each
+      chunk is prefixed by its size and a zero-size chunk ends the body; otherwise a response may be delimited
+      by closing the connection. The status class tells the client what to do: 2xx success, 3xx look
+      elsewhere, 4xx fix the request, 5xx the server failed.
+    keyPoints:
+      - Request line (method, target, version) vs status line (version, code, reason).
+      - Headers, then an empty line, then the optional body.
+      - CRLF line endings; the head ends at CRLF CRLF.
+      - Body length from Content-Length in bytes, or chunked transfer coding.
+      - Header names are case-insensitive; Host is mandatory in HTTP/1.1.
+    followUps:
+      - What happens if Content-Length is smaller than the real body?
+      - Why is the reason phrase not reliable for programs?
+    pitfalls:
+      - Counting characters instead of bytes for Content-Length.
+      - Treating header names as case-sensitive.
+
+  - id: networking.http-basics.versions
+    level: mid
+    kind: conceptual
+    concepts: [networking.http-basics]
+    question: What changes between HTTP/1.1, HTTP/2 and HTTP/3, and what stays the same?
+    answer: |
+      The semantics stay the same: methods, status codes, header fields and their meanings are defined once
+      in RFC 9110, so application code and API designs do not change. What changes is how messages travel.
+      HTTP/1.1 sends text messages over TCP, one request-response at a time per connection (keep-alive reuses
+      connections; browsers open several in parallel). HTTP/2 uses binary frames on one TCP connection,
+      multiplexing many concurrent streams and compressing headers with HPACK; the request and status lines
+      become pseudo-headers (`:method`, `:path`, `:scheme`, `:authority`, `:status`) and header names must be
+      lower case. Because it still runs on TCP, a lost packet stalls all streams (transport-level head-of-line
+      blocking). HTTP/3 runs over QUIC on UDP, which integrates TLS 1.3 and handles loss per stream, and uses
+      QPACK for header compression. In practice browsers use HTTP/2 and HTTP/3 only over TLS.
+    keyPoints:
+      - RFC 9110 semantics are shared by all versions.
+      - HTTP/1.1 is text over TCP; HTTP/2 is binary framing with multiplexed streams over TCP.
+      - HTTP/3 is binary framing over QUIC (UDP) with built-in TLS 1.3.
+      - HPACK/QPACK compress headers; pseudo-headers replace the start lines.
+      - HTTP/2 still suffers TCP head-of-line blocking; HTTP/3 avoids it.
+    followUps:
+      - Why does curl print "HTTP/2 200" without a reason phrase?
+      - When could HTTP/2 multiplexing be slower than several HTTP/1.1 connections?
+    pitfalls:
+      - Saying HTTP/2 changes status codes or requires API changes.
+      - Saying HTTP is always human-readable on the wire.
+
+  - id: networking.http-basics.parse-coding
+    level: mid
+    kind: coding
+    concepts: [networking.http-basics]
+    question: Write a function that parses raw HTTP/1.1 response bytes into a status code, a header dictionary and a body. What edge cases matter?
+    answer: |
+      ```python
+      def parse_response(raw: bytes):
+          head, _, body = raw.partition(b"\r\n\r\n")
+          lines = head.decode("iso-8859-1").split("\r\n")
+          status = int(lines[0].split(" ", 2)[1])
+          headers = {}
+          for line in lines[1:]:
+              name, _, value = line.partition(":")
+              headers[name.strip().lower()] = value.strip()
+          return status, headers, body
+      ```
+      Edge cases: split head and body at the first empty line only (bodies may contain blank lines); split the
+      status line into at most three parts because reason phrases contain spaces (or may be empty); split
+      header lines at the first colon only because dates, URLs and host:port values contain colons; normalise
+      header names to lower case; repeated headers such as Set-Cookie need a list rather than overwriting; a
+      real client must also honour Content-Length or chunked encoding instead of assuming the whole body has
+      arrived, and should cap header sizes. In production use a maintained library (http.client, httpx,
+      requests) rather than a hand-written parser.
+    keyPoints:
+      - partition at the first CRLF CRLF.
+      - Status line split with maxsplit=2; status converted to int.
+      - Header lines split at the first colon; names lower-cased; values stripped.
+      - Repeated headers, message length and size limits need handling in real code.
+      - Prefer a well-tested library in production.
+    followUps:
+      - How would you read the body from a socket that delivers data in pieces?
+    pitfalls:
+      - Using line.split(":") and crashing on Date headers.
+      - Assuming one recv() returns the whole message.
+
+  # ---------------------------------------------------------------- backend.web-frameworks
+  - id: backend.web-frameworks.request-journey
+    level: mid
+    kind: conceptual
+    concepts: [backend.web-frameworks]
+    question: What happens between an HTTP request arriving on a socket and your FastAPI handler running, and back?
+    answer: |
+      An ASGI server such as Uvicorn accepts the TCP connection (TLS is often terminated earlier by a proxy),
+      reads and parses the HTTP request, builds an ASGI `scope` (type, method, path, query string, headers)
+      and calls `await app(scope, receive, send)`. FastAPI's app is a Starlette application: the request first
+      passes through the middleware stack - Starlette's outermost ServerErrorMiddleware, then user middleware
+      (last added is outermost), and exception-handling middleware - and then the router, which tries routes
+      in declaration order to find one matching the method and path, returning 404 if no path matches and 405
+      if the path matches with a different method. FastAPI then resolves dependencies and extracts path,
+      query, header and body parameters, converting and validating them from the type hints with Pydantic
+      (422 on failure), and calls the handler (plain `def` handlers run in a thread pool). The return value is
+      validated against any response model, serialised to JSON with a status code, and the response passes
+      back out through the middleware, which may add headers, before the server writes the bytes with
+      `http.response.start` and `http.response.body` events.
+    keyPoints:
+      - The server owns sockets and HTTP parsing; the framework is the ASGI application.
+      - Middleware wraps the router like an onion, in both directions.
+      - Routing by method and path, first match wins; 404 versus 405.
+      - Parameter extraction, conversion and validation from type hints (422 on failure).
+      - Serialisation of the return value and error handling (HTTPException, generic 500).
+    followUps:
+      - Where would you add request logging with a correlation ID, and why there?
+      - Why does a slow synchronous call inside an async def handler hurt every other request?
+    pitfalls:
+      - Saying FastAPI itself listens on the port.
+      - Forgetting that path parameters arrive as strings until converted.
+
+  - id: backend.web-frameworks.wsgi-vs-asgi
+    level: mid
+    kind: conceptual
+    concepts: [backend.web-frameworks]
+    question: Compare WSGI and ASGI. When does choosing an ASGI framework actually help?
+    answer: |
+      Both are interfaces between Python web servers and applications. WSGI (PEP 3333) is synchronous: the
+      application is `app(environ, start_response)`, called once per request, returning an iterable of bytes,
+      and a worker thread or process is occupied for the whole request. It cannot naturally support
+      long-lived connections such as WebSockets. ASGI is its asynchronous successor: the application is a
+      coroutine `app(scope, receive, send)` that exchanges event dictionaries with the server, which supports
+      HTTP, WebSockets, streaming responses and lifespan (startup/shutdown) events. ASGI helps when requests
+      spend most of their time waiting on I/O - databases, other APIs, LLM calls, streaming - because one
+      event loop can interleave many waiting requests. It does not make CPU-bound work faster; that needs more
+      processes or background workers, and blocking calls inside async handlers stall the whole loop.
+      Examples: Flask is WSGI (served by Gunicorn), FastAPI and Starlette are ASGI (served by Uvicorn or
+      Hypercorn), and Django supports both.
+    keyPoints:
+      - WSGI = synchronous callable app(environ, start_response) returning bytes.
+      - ASGI = async app(scope, receive, send) with events; supports WebSockets and streaming.
+      - The benefit is concurrency for I/O-bound workloads, not CPU speed.
+      - Blocking code in async handlers blocks the event loop.
+    followUps:
+      - How would you run CPU-heavy work from a FastAPI endpoint?
+      - How do you stream LLM tokens to a client with ASGI?
+    pitfalls:
+      - Claiming async makes every endpoint faster.
+      - Confusing the interface (ASGI) with a server (Uvicorn) or a framework (FastAPI).
+
+  - id: backend.web-frameworks.route-design-debug
+    level: junior
+    kind: debugging
+    concepts: [backend.web-frameworks]
+    question: |
+      In a FastAPI app, `GET /users/me` returns `422` with an error saying `user_id` must be an integer. The
+      code declares `@app.get("/users/{user_id}")` with `user_id: int` above `@app.get("/users/me")`. Explain
+      and fix.
+    answer: |
+      Routes are matched in declaration order and the first matching path wins. `/users/{user_id}` matches
+      `/users/me` with `user_id = "me"`, so FastAPI tries to convert "me" to an int and returns a 422
+      validation error; the `/users/me` route is never reached. The fix is to declare the fixed path
+      `/users/me` before the parameterised `/users/{user_id}`, as the FastAPI documentation recommends. In
+      general, put specific routes before general ones and use typed parameters so that invalid values fail
+      clearly.
+    keyPoints:
+      - First matching route wins, in declaration order.
+      - A {param} segment matches any single segment, including "me".
+      - Type conversion of "me" to int fails with 422.
+      - Declare specific paths before parameterised ones.
+    followUps:
+      - What status would the client get if user_id were declared as str instead?
+    pitfalls:
+      - Blaming the client for sending an invalid request.

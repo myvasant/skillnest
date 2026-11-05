@@ -1,0 +1,586 @@
+id: dl
+order: 12
+title: Deep Learning and Transformers
+shortTitle: Deep Learning
+summary: >-
+  Neural networks from a single neuron to the Transformer: forward and backward passes, training loops,
+  regularisation, embeddings, attention, tokenisation, pretraining, fine-tuning, GPUs and inference.
+why: >-
+  Large language models are Transformers. Understanding how they compute, learn and run explains their
+  capabilities, failure modes, costs and the techniques used to adapt them.
+modules:
+  - id: networks
+    title: Neural networks
+    summary: Neurons, layers, activations, forward propagation and losses.
+  - id: training
+    title: Training
+    summary: Backpropagation, optimisers, training loops, regularisation and PyTorch.
+  - id: architectures
+    title: Architectures
+    summary: Embeddings, convolutional and recurrent networks.
+  - id: transformers
+    title: Transformers
+    summary: Attention, the Transformer block, tokenisation, positional information and pretraining.
+  - id: compute
+    title: Compute and inference
+    summary: GPUs, precision, memory and inference performance.
+concepts:
+  # ---------------------------------------------------------------- networks
+  - id: dl.neurons-layers
+    title: Neurons, weights and layers
+    module: networks
+    level: intermediate
+    priority: essential
+    summary: A neuron computes a weighted sum plus bias and applies an activation; stacking layers of neurons builds a network.
+    why: Every modern model, from image classifiers to LLMs, is built from these units; knowing their shapes and parameter counts lets you read, size and debug architectures.
+    requires: [math.matrices, ml.logistic-regression]
+    keyIdeas:
+      - A neuron computes `activation(w · x + b)`; a dense (fully connected) layer does this for many neurons at once as `activation(x @ W + b)`.
+      - A dense layer mapping `n_in` inputs to `n_out` outputs has `n_in * n_out + n_out` parameters (weights plus biases).
+      - Logistic regression is a one-neuron network with a sigmoid; deep networks stack layers so later layers build on features learned by earlier ones.
+      - Inputs are processed in batches — a tensor of shape `(batch, features)` — so one matrix multiplication handles the whole batch.
+      - Weights start random (for example Xavier/Glorot or He initialisation); identical initial weights would make every neuron learn the same thing.
+    misconceptions:
+      - Artificial neurons are only loosely inspired by biology; they are not models of brain cells.
+      - More layers and neurons do not automatically give better results; they need more data, compute and careful training.
+    interview: Count the parameters of a small multilayer perceptron and explain why random initialisation matters.
+    sources:
+      - title: "Dive into Deep Learning: Multilayer Perceptrons"
+        url: https://d2l.ai/chapter_multilayer-perceptrons/index.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: Deep Learning (free online book)
+        url: https://www.deeplearningbook.org/
+        publisher: Goodfellow, Bengio and Courville (MIT Press)
+  - id: dl.activation-functions
+    title: Activation functions
+    module: networks
+    level: intermediate
+    priority: essential
+    summary: Non-linear functions (ReLU, GELU, sigmoid, tanh, softmax) let networks represent more than straight lines; without them, layers collapse into one.
+    why: The choice of activation affects whether a deep network can learn at all (vanishing gradients) and what the output means (probabilities vs raw values).
+    requires: [dl.neurons-layers]
+    keyIdeas:
+      - Stacked linear layers are still one linear function (`W2 @ (W1 @ x)` equals `(W2 @ W1) @ x`), so non-linear activations are what give depth its power.
+      - ReLU `max(0, x)` is cheap and does not saturate for positive inputs; GELU and SiLU (Swish) are smooth variants common in Transformers.
+      - Sigmoid (0 to 1) and tanh (-1 to 1) saturate — for large inputs their gradients approach zero, which slows learning in deep stacks.
+      - Softmax turns a vector of logits into probabilities that sum to 1; it is used for multi-class outputs and inside attention.
+      - Match the output layer to the task — no activation for regression, sigmoid for binary or multi-label, softmax for single-label multi-class.
+    misconceptions:
+      - PyTorch's `nn.CrossEntropyLoss` expects raw logits; applying softmax first is a common bug that hurts training.
+      - ReLU units can "die" (output zero for every input) when learning rates are too high; Leaky ReLU and careful initialisation reduce this.
+    interview: Explain why non-linearity is needed and why sigmoid activations cause vanishing gradients in deep networks.
+    sources:
+      - title: "Dive into Deep Learning: Multilayer Perceptrons (activation functions)"
+        url: https://d2l.ai/chapter_multilayer-perceptrons/mlp.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: torch.nn — non-linear activations
+        url: https://docs.pytorch.org/docs/stable/nn.html
+        publisher: PyTorch Foundation
+  - id: dl.forward-propagation
+    title: Forward propagation
+    module: networks
+    level: intermediate
+    priority: essential
+    summary: Inputs flow through layers of matrix multiplications and activations to produce predictions.
+    why: Tracing the forward pass and its tensor shapes is how you understand what a model computes and how you find most bugs.
+    requires: [dl.activation-functions]
+    keyIdeas:
+      - Each layer computes `h = activation(h_prev @ W + b)`; the final layer outputs logits (classification) or values (regression).
+      - Track tensor shapes at every step; most bugs are shape mismatches or applying softmax or a sum over the wrong dimension.
+      - Broadcasting adds the bias vector to every row of the batch.
+      - Frameworks record each operation during the forward pass to build the computation graph used later for backpropagation.
+      - Inference is just the forward pass; in PyTorch call `model.eval()` and wrap it in `torch.no_grad()` or `torch.inference_mode()`.
+    misconceptions:
+      - Forgetting `model.eval()` leaves dropout and batch normalisation in training mode at inference, giving noisy, worse predictions.
+    interview: Walk through the tensor shapes of a forward pass through a two-layer network for a batch of inputs.
+    sources:
+      - title: "Forward Propagation, Backward Propagation, and Computational Graphs"
+        url: https://d2l.ai/chapter_multilayer-perceptrons/backprop.html
+        publisher: Dive into Deep Learning
+      - title: Build the Neural Network (PyTorch tutorial)
+        url: https://docs.pytorch.org/tutorials/beginner/basics/buildmodel_tutorial.html
+        publisher: PyTorch Foundation
+  - id: dl.loss-functions
+    title: Loss functions
+    module: networks
+    level: intermediate
+    priority: essential
+    summary: A loss scores how wrong predictions are — MSE for regression, cross-entropy for classification and next-token prediction.
+    why: The loss is the only signal the network learns from; choosing the wrong one, or applying it to the wrong outputs, trains the wrong behaviour.
+    requires: [dl.forward-propagation, math.information-theory]
+    keyIdeas:
+      - Mean squared error `mean((y - y_hat)**2)` suits regression; MAE or Huber loss are more robust to outliers.
+      - Cross-entropy is `-log(p_correct)` averaged over examples; it punishes confident wrong answers heavily, and minimising it is maximum-likelihood estimation.
+      - In PyTorch use `BCEWithLogitsLoss` for binary or multi-label tasks and `CrossEntropyLoss` for single-label multi-class tasks, both on raw logits.
+      - Language models minimise cross-entropy on the next token; perplexity is `exp(mean cross-entropy)`.
+      - The loss is what you optimise; metrics such as accuracy or F1 are what you report, and the two can disagree.
+    misconceptions:
+      - A lower loss does not always mean a better metric, especially for thresholded accuracy or imbalanced data.
+    interview: Explain why cross-entropy rather than MSE is used for classification and how it relates to likelihood and perplexity.
+    sources:
+      - title: torch.nn — loss functions
+        url: https://docs.pytorch.org/docs/stable/nn.html
+        publisher: PyTorch Foundation
+      - title: "Dive into Deep Learning: Softmax Regression (cross-entropy loss)"
+        url: https://d2l.ai/chapter_linear-classification/softmax-regression.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: "Deep Learning, chapter 6: Deep Feedforward Networks"
+        url: https://www.deeplearningbook.org/contents/mlp.html
+        publisher: Goodfellow, Bengio and Courville (MIT Press)
+  # ---------------------------------------------------------------- training
+  - id: dl.backpropagation
+    title: Backpropagation and automatic differentiation
+    module: training
+    level: advanced
+    priority: essential
+    summary: The chain rule applied backwards through the computation graph gives the gradient of the loss for every weight efficiently.
+    why: Every neural network is trained with gradients computed this way; understanding it explains vanishing gradients, memory use during training and many training bugs.
+    requires: [dl.loss-functions, math.partial-gradients]
+    keyIdeas:
+      - Backpropagation applies the chain rule from the loss back through each operation, reusing intermediate results so all gradients cost about as much as a couple of forward passes.
+      - Reverse-mode automatic differentiation computes exact gradients from the recorded graph — not numerical approximations — and is efficient for many parameters and one scalar loss.
+      - In PyTorch, `loss.backward()` fills each parameter's `.grad`; gradients accumulate, so call `optimizer.zero_grad()` every step.
+      - Vanishing and exploding gradients are tackled with good initialisation, ReLU-family activations, normalisation, residual connections and gradient clipping.
+      - Forward-pass activations are kept for the backward pass, which is why training needs far more memory than inference.
+    misconceptions:
+      - Backpropagation only computes gradients; the optimiser is what uses them to update the weights.
+      - Forgetting `zero_grad()` silently adds gradients from previous steps together.
+    interview: Compute gradients by hand for a tiny network and explain why reverse-mode differentiation suits neural networks.
+    sources:
+      - title: Automatic Differentiation with torch.autograd
+        url: https://docs.pytorch.org/tutorials/beginner/basics/autogradqs_tutorial.html
+        publisher: PyTorch Foundation
+      - title: "CS231n: Backpropagation, intuitions"
+        url: https://cs231n.github.io/optimization-2/
+        publisher: Stanford University
+      - title: "Forward Propagation, Backward Propagation, and Computational Graphs"
+        url: https://d2l.ai/chapter_multilayer-perceptrons/backprop.html
+        publisher: Dive into Deep Learning
+  - id: dl.optimizers
+    title: Optimisers and learning rates
+    module: training
+    level: advanced
+    priority: essential
+    summary: SGD, momentum and Adam update weights from gradients; learning-rate schedules and warm-up stabilise training.
+    why: The optimiser and learning rate decide whether training converges, diverges or crawls — they are the first things to check when training goes wrong.
+    requires: [dl.backpropagation, math.optimization]
+    keyIdeas:
+      - SGD updates `w = w - lr * grad` on each mini-batch; momentum keeps a running velocity that smooths and accelerates updates.
+      - Adam keeps running averages of gradients and squared gradients to give every parameter an adaptive step size; AdamW decouples weight decay and is the usual default for Transformers.
+      - The learning rate is the most important hyperparameter — too high and the loss spikes or becomes NaN, too low and training crawls.
+      - A short linear warm-up followed by cosine or linear decay is standard for Transformers; warm-up avoids unstable early steps.
+      - Gradient clipping (for example to a global norm of 1.0) prevents occasional huge updates from wrecking training.
+    misconceptions:
+      - Adam is not always better than SGD; well-tuned SGD with momentum still generalises very well for many vision models.
+      - Adding an L2 penalty to the loss with Adam is not the same as AdamW's decoupled weight decay.
+    tools: [PyTorch]
+    interview: Explain how Adam works, why warm-up helps, and how you would diagnose a learning rate that is too high.
+    sources:
+      - title: "Adam: A Method for Stochastic Optimization"
+        url: https://arxiv.org/abs/1412.6980
+        publisher: arXiv (Kingma and Ba)
+      - title: Decoupled Weight Decay Regularization (AdamW)
+        url: https://arxiv.org/abs/1711.05101
+        publisher: arXiv (Loshchilov and Hutter)
+      - title: torch.optim
+        url: https://docs.pytorch.org/docs/stable/optim.html
+        publisher: PyTorch Foundation
+  - id: dl.training-loop
+    title: The training loop
+    module: training
+    level: intermediate
+    priority: essential
+    summary: Mini-batches, epochs, validation, checkpoints and early stopping — and reading loss curves to diagnose problems.
+    why: Almost all deep-learning work happens in or around this loop; writing it correctly and reading its curves is the core practical skill.
+    requires: [dl.optimizers, ml.overfitting]
+    keyIdeas:
+      - Each step loads a mini-batch, runs the forward pass, computes the loss, calls `zero_grad()`, `backward()` and `optimizer.step()`; one epoch is one pass over the training data.
+      - Evaluate on validation data regularly in eval mode without gradients, and track training and validation loss side by side.
+      - Read the curves — both high and flat means underfitting or a learning rate that is too low; training falling while validation rises means overfitting; spikes or NaN suggest a too-high learning rate or bad data.
+      - Checkpoint model, optimiser, scheduler and step so training can resume; keep the best checkpoint by validation metric, and stop early when it stops improving.
+      - Sanity check first — a correct model and loop can overfit a single small batch to near-zero loss.
+    misconceptions:
+      - Saving only the model weights is not enough to resume training exactly; optimiser and scheduler state matter too.
+      - Falling training loss does not prove the model is learning something useful; judge by validation metrics.
+    tools: [PyTorch, TensorBoard]
+    interview: Write a minimal PyTorch training loop from memory and diagnose a loss curve you are shown.
+    production: Log metrics to an experiment tracker, checkpoint often on preemptible hardware, and record seeds and data versions.
+    sources:
+      - title: Optimizing Model Parameters (PyTorch tutorial)
+        url: https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html
+        publisher: PyTorch Foundation
+      - title: A Recipe for Training Neural Networks
+        url: https://karpathy.github.io/2019/04/25/recipe/
+        publisher: Andrej Karpathy
+      - title: Saving and Loading Models
+        url: https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html
+        publisher: PyTorch Foundation
+  - id: dl.regularization
+    title: Regularisation and normalisation
+    module: training
+    level: advanced
+    priority: essential
+    summary: Dropout, weight decay, data augmentation, batch and layer normalisation keep deep networks trainable and general.
+    why: Deep networks have enough capacity to memorise their training data and can be unstable to train; these techniques address both problems.
+    requires: [dl.training-loop]
+    keyIdeas:
+      - Dropout zeroes each activation with probability `p` during training and scales the rest by `1 / (1 - p)`; it is switched off in eval mode.
+      - Weight decay penalises large weights; data augmentation (crops, flips, noise) creates plausible new training examples.
+      - Batch normalisation normalises each feature across the batch and then rescales it with learned parameters; at inference it uses running averages collected during training.
+      - Layer normalisation normalises across the features of each example, independent of batch size, and is standard in Transformers — many recent LLMs use the simpler RMSNorm.
+      - Early stopping and more (or more varied) data are regularisers too.
+    misconceptions:
+      - Normalisation layers mainly stabilise and speed up training; any regularising effect (as with batch norm) is a side effect.
+      - Batch normalisation is unreliable with very small batches; layer or group normalisation is used instead.
+    interview: Compare batch and layer normalisation and explain how dropout behaves in training vs evaluation.
+    sources:
+      - title: "Dive into Deep Learning: Dropout"
+        url: https://d2l.ai/chapter_multilayer-perceptrons/dropout.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: "Dive into Deep Learning: Batch Normalization"
+        url: https://d2l.ai/chapter_convolutional-modern/batch-norm.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: Layer Normalization
+        url: https://arxiv.org/abs/1607.06450
+        publisher: arXiv (Ba, Kiros and Hinton)
+  - id: dl.pytorch
+    title: PyTorch
+    module: training
+    level: intermediate
+    priority: technology-specific
+    summary: Tensors, autograd, nn.Module, optimisers and DataLoaders — the most widely used deep learning framework.
+    why: Most research code, open models and fine-tuning tools are written in PyTorch, so reading and writing it is a baseline skill for ML engineers.
+    requires: [dl.training-loop, data.numpy]
+    keyIdeas:
+      - Tensors are n-dimensional arrays with a `dtype` and a `device` (`cpu`, `cuda`, `mps`); move models and data with `.to(device)`, and keep both on the same device.
+      - Autograd records operations on tensors with `requires_grad=True`; `loss.backward()` computes gradients into `.grad`.
+      - Models subclass `nn.Module`, create layers in `__init__` and define computation in `forward`; `model.parameters()` is what the optimiser updates.
+      - A `Dataset` implements `__len__` and `__getitem__`; a `DataLoader` batches, shuffles and loads data in parallel worker processes.
+      - Save and load `model.state_dict()` rather than pickling whole models; `torch.compile` can speed models up (version-dependent).
+    misconceptions:
+      - Call `model(x)`, not `model.forward(x)`; calling the module runs registered hooks as well.
+      - "`torch.load` on an untrusted file is unsafe; recent versions default to `weights_only=True`, but the safetensors format is the safer way to share weights."
+    tools: [PyTorch]
+    interview: Write a `Dataset`, an `nn.Module` and a training step, and explain `.to(device)`, `no_grad` and `zero_grad`.
+    sources:
+      - title: Learn the Basics (PyTorch tutorials)
+        url: https://docs.pytorch.org/tutorials/beginner/basics/intro.html
+        publisher: PyTorch Foundation
+      - title: PyTorch documentation
+        url: https://docs.pytorch.org/docs/stable/index.html
+        publisher: PyTorch Foundation
+      - title: Serialization semantics
+        url: https://docs.pytorch.org/docs/stable/notes/serialization.html
+        publisher: PyTorch Foundation
+  # ----------------------------------------------------------- architectures
+  - id: dl.embeddings
+    title: Embeddings
+    module: architectures
+    level: intermediate
+    priority: essential
+    summary: Learned dense vectors represent tokens, items or users so that similar things end up close together.
+    why: Embeddings are how networks consume discrete things like words and products, and they power semantic search, recommendations and RAG retrieval.
+    requires: [dl.neurons-layers, math.vectors]
+    keyIdeas:
+      - An embedding layer is a learned lookup table — row `i` of a `(num_items, dim)` matrix is the vector for item `i`, equivalent to multiplying a one-hot vector by a weight matrix.
+      - Training moves items that appear in similar contexts or lead to similar outcomes towards similar vectors (word2vec, recommender embeddings).
+      - Similarity is usually measured with cosine similarity or the dot product.
+      - Sentence and document embedding models (used for RAG) are trained with contrastive objectives so that related texts land close together.
+      - Individual embedding dimensions are learned axes that rarely mean anything human-readable.
+    misconceptions:
+      - Vectors from different embedding models, or different versions of one model, live in different spaces and cannot be compared or mixed.
+      - Close embeddings mean "used similarly in training data", not "equivalent" or "true" — antonyms often sit close together.
+    tools: [Sentence Transformers]
+    interview: Explain how an embedding layer works, cosine vs dot-product similarity, and how sentence embedding models are trained.
+    production: Store the model name and version with every vector; changing the embedding model means re-embedding the whole corpus.
+    sources:
+      - title: torch.nn.Embedding
+        url: https://docs.pytorch.org/docs/stable/generated/torch.nn.Embedding.html
+        publisher: PyTorch Foundation
+      - title: Efficient Estimation of Word Representations in Vector Space (word2vec)
+        url: https://arxiv.org/abs/1301.3781
+        publisher: arXiv (Mikolov et al.)
+      - title: Sentence Transformers documentation
+        url: https://sbert.net/
+        publisher: Sentence Transformers
+  - id: dl.cnns
+    title: Convolutional neural networks
+    module: architectures
+    level: advanced
+    priority: supporting
+    summary: Convolutions share small learned filters across an image, detecting local patterns that deeper layers combine.
+    why: CNNs remain efficient workhorses for images, video and audio, and they introduced ideas — weight sharing, residual connections — used everywhere in deep learning.
+    requires: [dl.training-loop]
+    keyIdeas:
+      - A convolution slides a small filter (for example 3x3) over the input and computes a dot product at each position; sharing the same weights everywhere uses far fewer parameters than a dense layer.
+      - Key settings are kernel size `k`, stride `s`, padding `p` and output channels; spatial output size is `floor((n + 2p - k) / s) + 1`.
+      - Pooling or strided convolutions downsample; deeper layers see larger receptive fields and detect more complex patterns.
+      - Residual (skip) connections, introduced by ResNet, made very deep networks trainable.
+      - For small image datasets, fine-tuning a pretrained CNN or Vision Transformer usually beats training from scratch.
+    misconceptions:
+      - CNNs are not only for images; 1-D convolutions work well on audio, sensor data and other sequences.
+    tools: [PyTorch, torchvision]
+    interview: Compute the output shape and parameter count of a convolutional layer and explain why weight sharing helps.
+    sources:
+      - title: "Dive into Deep Learning: Convolutional Neural Networks"
+        url: https://d2l.ai/chapter_convolutional-neural-networks/index.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: "CS231n: Convolutional Neural Networks"
+        url: https://cs231n.github.io/convolutional-networks/
+        publisher: Stanford University
+      - title: Deep Residual Learning for Image Recognition (ResNet)
+        url: https://arxiv.org/abs/1512.03385
+        publisher: arXiv (He et al.)
+  - id: dl.rnns
+    title: Recurrent networks and sequence modelling
+    module: architectures
+    level: advanced
+    priority: optional
+    summary: RNNs and LSTMs process sequences step by step with a hidden state; their limits motivated attention.
+    why: Understanding why recurrence struggles explains why attention and Transformers took over, and recurrent ideas are returning in newer long-sequence models.
+    requires: [dl.training-loop, dl.embeddings]
+    keyIdeas:
+      - An RNN updates a hidden state `h_t = tanh(W @ x_t + U @ h_prev + b)` one step at a time, reusing the same weights at every step.
+      - Backpropagation through time over long sequences suffers from vanishing or exploding gradients.
+      - LSTMs and GRUs add gates that decide what to keep, forget and output, preserving information over longer spans.
+      - Step-by-step processing prevents parallelism across time steps, and a fixed-size hidden state is an information bottleneck.
+      - Attention was first added to RNN encoder–decoders for translation; Transformers then dropped recurrence entirely, though state-space models revisit it for long sequences.
+    misconceptions:
+      - LSTMs reduce but do not eliminate the difficulty of learning very long-range dependencies.
+    interview: Explain why Transformers replaced RNNs for most language tasks.
+    sources:
+      - title: "Dive into Deep Learning: Recurrent Neural Networks"
+        url: https://d2l.ai/chapter_recurrent-neural-networks/index.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: Understanding LSTM Networks
+        url: https://colah.github.io/posts/2015-08-Understanding-LSTMs/
+        publisher: Christopher Olah
+      - title: Neural Machine Translation by Jointly Learning to Align and Translate
+        url: https://arxiv.org/abs/1409.0473
+        publisher: arXiv (Bahdanau, Cho and Bengio)
+  # ------------------------------------------------------------ transformers
+  - id: dl.tokenization
+    title: Tokenisation
+    module: transformers
+    level: intermediate
+    priority: essential
+    summary: Text is split into sub-word tokens (BPE, WordPiece, SentencePiece); token counts drive context limits, cost and some odd model behaviours.
+    why: Models never see characters or words, only token IDs; tokenisation explains context limits, API cost and surprising failures such as miscounting letters.
+    requires: [foundations.text-encoding, dl.embeddings]
+    extends: [genai.tokens-context]
+    keyIdeas:
+      - A tokenizer maps text to integer IDs from a fixed vocabulary (typically tens of thousands to a few hundred thousand entries); the model sees only those IDs.
+      - Byte-pair encoding (BPE) starts from characters or bytes and repeatedly merges the most frequent adjacent pair; byte-level BPE can encode any UTF-8 text with no unknown tokens.
+      - WordPiece (used by BERT) and Unigram (common in SentencePiece) are related sub-word schemes; SentencePiece treats spaces as ordinary symbols.
+      - English averages roughly 3–4 characters per token; many other languages and code need more tokens for the same content.
+      - Each model has its own tokenizer and special tokens (chat templates); always count and encode with the model's own tokenizer.
+    misconceptions:
+      - Tokens are not words, and the same text produces different token counts on different models.
+      - A model does not see individual letters inside a token, which is why spelling and letter-counting tasks trip it up.
+    tools: [Hugging Face Tokenizers, SentencePiece, tiktoken]
+    interview: Explain how BPE is trained and why tokenisation affects cost, multilingual fairness and some model failures.
+    sources:
+      - title: "LLM Course, chapter 6: The Tokenizers library"
+        url: https://huggingface.co/learn/llm-course/chapter6/1
+        publisher: Hugging Face
+      - title: Tokenizers documentation
+        url: https://huggingface.co/docs/tokenizers/index
+        publisher: Hugging Face
+      - title: Neural Machine Translation of Rare Words with Subword Units (BPE)
+        url: https://arxiv.org/abs/1508.07909
+        publisher: arXiv (Sennrich, Haddow and Birch)
+  - id: dl.attention
+    title: Attention
+    module: transformers
+    level: advanced
+    priority: essential
+    summary: Each token builds a query, compares it with every token's key, and takes a softmax-weighted average of their values — scaled dot-product attention.
+    why: Attention lets every token draw information directly from any other token, which is the core mechanism behind Transformers and LLMs.
+    requires: [dl.embeddings, dl.activation-functions]
+    keyIdeas:
+      - Each token vector is projected by learned matrices into a query `Q`, a key `K` and a value `V`.
+      - "`Attention(Q, K, V) = softmax(Q @ K.T / sqrt(d_k)) @ V` — scores compare each query with every key, softmax turns them into weights, and the output is a weighted average of the values."
+      - Dividing by `sqrt(d_k)` stops scores growing with the vector dimension and saturating the softmax.
+      - Causal (masked) attention in decoders sets scores for future positions to `-inf`, so each token attends only to itself and earlier tokens.
+      - Compute and the score matrix grow as `O(n^2)` in sequence length; FlashAttention computes the exact same result with far less memory traffic.
+    misconceptions:
+      - Attention weights are not reliable explanations of why a model produced an output.
+      - Self-attention has no built-in notion of word order; position has to be added separately.
+    interview: Implement scaled dot-product attention and explain the scaling factor, causal masking and quadratic cost.
+    sources:
+      - title: Attention Is All You Need
+        url: https://arxiv.org/abs/1706.03762
+        publisher: arXiv (Vaswani et al.)
+      - title: "Dive into Deep Learning: Attention Mechanisms and Transformers"
+        url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/index.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: torch.nn.functional.scaled_dot_product_attention
+        url: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html
+        publisher: PyTorch Foundation
+  - id: dl.transformer-architecture
+    title: The Transformer architecture
+    module: transformers
+    level: advanced
+    priority: essential
+    summary: Blocks of multi-head self-attention and feed-forward layers with residual connections and layer normalisation, in encoder, decoder or encoder–decoder form.
+    why: Transformers power LLMs, embedding models and many vision and audio models; reading a model card or paper requires knowing the block structure.
+    requires: [dl.attention, dl.regularization]
+    keyIdeas:
+      - A block combines multi-head self-attention with a position-wise feed-forward network (typically about 4x wider than the model dimension), each wrapped in a residual connection with layer normalisation.
+      - Multi-head attention runs several attention heads in parallel on lower-dimensional projections and concatenates their outputs, letting heads specialise in different relationships.
+      - Modern LLMs normalise before each sub-layer (pre-norm) for stable training; the original paper normalised after (post-norm).
+      - Encoder-only models (BERT) suit classification and embeddings; decoder-only models (GPT-style, causal attention) generate text; encoder–decoder models (T5, the original Transformer) map one sequence to another.
+      - During training all positions are processed in parallel, which is why Transformers scale so well on GPUs.
+    misconceptions:
+      - In typical configurations most parameters sit in the feed-forward layers, not in attention.
+      - '"Transformer" does not mean "LLM"; the architecture is also used for vision, speech, proteins and more.'
+    interview: Draw a Transformer block, explain encoder vs decoder variants, and say what residual connections do.
+    sources:
+      - title: Attention Is All You Need
+        url: https://arxiv.org/abs/1706.03762
+        publisher: arXiv (Vaswani et al.)
+      - title: "Dive into Deep Learning: The Transformer Architecture"
+        url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: "LLM Course: How do Transformers work?"
+        url: https://huggingface.co/learn/llm-course/chapter1/4
+        publisher: Hugging Face
+  - id: dl.positional-encoding
+    title: Positional information
+    module: transformers
+    level: advanced
+    priority: supporting
+    summary: Attention itself ignores order, so position is injected with absolute encodings or rotary embeddings (RoPE).
+    why: Word order changes meaning, and the way position is encoded determines how well a model handles long contexts.
+    requires: [dl.transformer-architecture]
+    keyIdeas:
+      - Without positional information, self-attention treats the input as a set — shuffling the tokens just shuffles the outputs.
+      - The original Transformer adds fixed sinusoidal encodings of different frequencies to token embeddings; BERT and GPT-2 learn one absolute position embedding per index.
+      - Rotary position embedding (RoPE) rotates query and key vectors by position-dependent angles so their dot product depends on relative distance; most current open LLMs use it.
+      - ALiBi instead adds a distance-based penalty directly to attention scores.
+      - Running beyond the trained context length needs techniques such as RoPE scaling (position interpolation, YaRN) and usually some further training.
+    misconceptions:
+      - A model does not automatically handle contexts longer than it was trained on; quality often degrades sharply past that length.
+    interview: Explain why Transformers need positional information and how RoPE encodes relative position.
+    sources:
+      - title: "RoFormer: Enhanced Transformer with Rotary Position Embedding"
+        url: https://arxiv.org/abs/2104.09864
+        publisher: arXiv (Su et al.)
+      - title: "Train Short, Test Long: Attention with Linear Biases (ALiBi)"
+        url: https://arxiv.org/abs/2108.12409
+        publisher: arXiv (Press, Smith and Lewis)
+      - title: Attention Is All You Need
+        url: https://arxiv.org/abs/1706.03762
+        publisher: arXiv (Vaswani et al.)
+  - id: dl.pretraining-finetuning
+    title: Pretraining, transfer learning and fine-tuning
+    module: transformers
+    level: advanced
+    priority: essential
+    summary: Models pretrained on huge corpora with self-supervised objectives are adapted with fine-tuning, instruction tuning, preference tuning and parameter-efficient methods such as LoRA.
+    why: Almost nobody trains large models from scratch; adapting pretrained models is how teams get strong results with modest data and compute.
+    requires: [dl.transformer-architecture]
+    keyIdeas:
+      - Pretraining is self-supervised learning on huge corpora — next-token prediction for decoders, masked-token prediction for BERT-style encoders — and is by far the most expensive stage.
+      - Transfer learning reuses pretrained weights for a new task with far less data, either fine-tuning all weights or freezing most and training a small head.
+      - Assistant models are post-trained with supervised fine-tuning (SFT) on instruction–response pairs, then preference tuning such as RLHF (reward model plus PPO) or DPO.
+      - LoRA freezes the base weights and learns a low-rank update `W + B @ A` with small rank `r`, cutting trainable parameters by orders of magnitude; QLoRA does this on a 4-bit quantised base.
+      - Aggressive fine-tuning can cause catastrophic forgetting of general abilities; low learning rates, mixing in general data and parameter-efficient methods reduce it.
+    misconceptions:
+      - Fine-tuning is not a reliable way to add new factual knowledge; it mainly changes behaviour, style and format, and retrieval is usually better for facts.
+    tools: [Hugging Face Transformers, PEFT]
+    interview: Explain how LoRA works and why it is efficient, and contrast SFT, RLHF and DPO.
+    sources:
+      - title: "LoRA: Low-Rank Adaptation of Large Language Models"
+        url: https://arxiv.org/abs/2106.09685
+        publisher: arXiv (Hu et al.)
+      - title: Training language models to follow instructions with human feedback (InstructGPT)
+        url: https://arxiv.org/abs/2203.02155
+        publisher: arXiv (Ouyang et al.)
+      - title: PEFT documentation
+        url: https://huggingface.co/docs/peft/index
+        publisher: Hugging Face
+  # ----------------------------------------------------------------- compute
+  - id: dl.gpu-fundamentals
+    title: GPUs and accelerated computing
+    module: compute
+    level: advanced
+    priority: supporting
+    summary: GPUs run thousands of arithmetic operations in parallel; memory capacity and bandwidth, precision (fp32, bf16, int8) and batching dominate performance.
+    why: Whether a model fits, how fast it trains and what it costs to run are decided by GPU memory, bandwidth and numeric precision.
+    requires: [dl.pytorch, foundations.how-computers-work]
+    keyIdeas:
+      - GPUs have thousands of simple cores plus matrix units (for example NVIDIA Tensor Cores) built for the dense matrix multiplications that dominate deep learning.
+      - Memory capacity (VRAM) limits model and batch size; memory bandwidth often limits speed, because many operations are memory-bound rather than compute-bound.
+      - Bytes per parameter are 4 for fp32, 2 for fp16/bf16, 1 for int8 and 0.5 for 4-bit; bf16 keeps fp32's exponent range, so it is preferred for training on hardware that supports it.
+      - Weights alone need `parameters x bytes per parameter` (a 7B model in bf16 is about 14 GB); mixed-precision training with Adam needs roughly 16 bytes per parameter before activations.
+      - CPU-to-GPU transfers are slow; keep data on the device, use pinned memory and batch work so the GPU stays busy.
+    misconceptions:
+      - More FLOPS does not always mean faster; LLM token generation is usually limited by memory bandwidth.
+      - CUDA is NVIDIA-specific; PyTorch also supports AMD GPUs (ROCm) and Apple silicon (MPS) with varying maturity.
+    tools: [PyTorch, nvidia-smi]
+    interview: Estimate the memory needed to serve and to fine-tune a model with a given number of parameters.
+    production: Monitor GPU utilisation and memory; fix out-of-memory errors with smaller batches, gradient accumulation, activation checkpointing or lower precision.
+    sources:
+      - title: Automatic Mixed Precision package (torch.amp)
+        url: https://docs.pytorch.org/docs/stable/amp.html
+        publisher: PyTorch Foundation
+      - title: CUDA C++ Programming Guide
+        url: https://docs.nvidia.com/cuda/cuda-c-programming-guide/
+        publisher: NVIDIA
+  - id: dl.inference-performance
+    title: Model inference performance
+    module: compute
+    level: advanced
+    priority: supporting
+    summary: Latency, throughput, batching, KV caches, quantisation and distillation determine what a model costs to run and on what hardware.
+    why: Serving cost and user-perceived speed, not training, dominate the lifetime cost of most deployed models.
+    requires: [dl.gpu-fundamentals, dl.transformer-architecture]
+    keyIdeas:
+      - Latency (time to first token, time per output token) differs from throughput (tokens per second across all users); larger batches raise throughput at some latency cost.
+      - LLM generation has two phases — prefill processes the whole prompt in parallel (compute-bound), decode generates one token at a time (memory-bandwidth-bound).
+      - The KV cache stores keys and values of earlier tokens so they are not recomputed; it grows with sequence length, batch size and layer count, and grouped-query attention shrinks it.
+      - Quantisation (int8, 4-bit formats such as GPTQ, AWQ or GGUF) reduces memory and speeds decoding at some quality cost; distillation trains a smaller student to imitate a larger teacher.
+      - Serving engines such as vLLM, SGLang and llama.cpp use continuous batching, paged KV-cache memory, prefix caching and speculative decoding to raise throughput.
+    misconceptions:
+      - Model size is not the only memory cost; with long contexts and many users the KV cache can exceed the size of the weights.
+    tools: [vLLM, llama.cpp]
+    interview: Explain the KV cache, prefill vs decode, and how quantisation trades quality for speed and memory.
+    production: Measure p50 and p95 latency and throughput under realistic concurrency and prompt lengths, not with single requests.
+    sources:
+      - title: vLLM documentation
+        url: https://docs.vllm.ai/en/latest/
+        publisher: vLLM project
+      - title: Efficient Memory Management for Large Language Model Serving with PagedAttention
+        url: https://arxiv.org/abs/2309.06180
+        publisher: arXiv (Kwon et al.)
+      - title: Quantization overview (Transformers documentation)
+        url: https://huggingface.co/docs/transformers/quantization/overview
+        publisher: Hugging Face
+  - id: dl.distributed-training
+    title: Distributed training
+    module: compute
+    level: advanced
+    priority: advanced
+    summary: Train models too large or too slow for one GPU by splitting data, layers or tensors across devices, with techniques such as data parallelism, FSDP and gradient accumulation.
+    why: Modern models and datasets exceed a single accelerator's memory and time budget; knowing the parallelism strategies explains training cost, failures and infrastructure choices.
+    requires: [dl.gpu-fundamentals, dl.training-loop]
+    keyIdeas:
+      - Data parallelism copies the model to every device, splits each batch, and averages gradients with an all-reduce after the backward pass.
+      - Sharded data parallelism (PyTorch FSDP, DeepSpeed ZeRO) splits parameters, gradients and optimiser state across devices so each holds only a slice.
+      - Tensor parallelism splits individual layers' matrix multiplications across devices; pipeline parallelism splits the stack of layers into stages fed with micro-batches.
+      - Gradient accumulation simulates a large batch on limited memory by summing gradients over several small batches before each optimiser step.
+      - Communication bandwidth between devices often limits scaling; checkpoints must be sharded and resumable because long jobs fail.
+    misconceptions:
+      - Doubling the number of GPUs rarely halves training time; communication and input pipelines add overhead.
+      - A larger effective batch size usually needs a retuned learning rate; it is not a free speed-up.
+    tools: [PyTorch, DeepSpeed]
+    interview: Compare data, tensor and pipeline parallelism and explain what FSDP shards and why.
+    production: Save sharded checkpoints frequently and test resumption; preemptible or failing nodes are normal at scale.
+    sources:
+      - title: PyTorch distributed overview
+        url: https://docs.pytorch.org/tutorials/beginner/dist_overview.html
+        publisher: PyTorch Foundation
+      - title: "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models"
+        url: https://arxiv.org/abs/1910.02054
+        publisher: arXiv (Rajbhandari et al.)

@@ -1,0 +1,563 @@
+id: networking
+order: 5
+title: Networking, HTTP and the Web
+shortTitle: Networking & HTTP
+summary: >-
+  How data crosses networks — addresses, DNS, TCP/UDP, TLS — and the HTTP request–response model that every
+  web application, API and LLM service is built on.
+why: >-
+  Backend services, data pipelines and AI applications are all networked programs. Debugging timeouts,
+  status codes, CORS errors or certificate failures requires knowing what happens on the wire.
+modules:
+  - id: fundamentals
+    title: Network fundamentals
+    summary: Layers, IP addressing, DNS, TCP, UDP and sockets.
+  - id: http
+    title: HTTP
+    summary: Requests, responses, methods, status codes, headers, cookies, caching and TLS.
+  - id: web-apis
+    title: Web APIs and infrastructure
+    summary: JSON APIs, REST, alternative API styles, proxies, load balancers and debugging tools.
+concepts:
+  # ---------------------------------------------------------- fundamentals
+  - id: networking.network-layers
+    title: Network layers (TCP/IP and OSI models)
+    module: fundamentals
+    level: beginner
+    priority: essential
+    summary: Networking is organised in layers — link, internet, transport, application — each relying on the one below and hiding its details.
+    requires: [foundations.internet-basics]
+    why: When a request fails, the layers tell you where to look; no Wi-Fi link, no route, a refused connection and a bad HTTP response are different problems with different fixes.
+    keyIdeas:
+      - The TCP/IP model has four layers, namely link (Ethernet, Wi-Fi), internet (IP), transport (TCP, UDP) and application (HTTP, DNS, SSH).
+      - The seven-layer OSI model adds session and presentation layers and is mostly used as vocabulary, as in "layer 4 load balancer" (transport) or "layer 7 proxy" (application).
+      - Each layer wraps the data from the layer above in its own header (encapsulation), so an HTTP message travels inside a TCP segment inside an IP packet inside an Ethernet frame.
+      - Each layer relies only on the service of the layer below; IP delivers packets on a best-effort basis and TCP builds reliable delivery on top of it.
+    misconceptions:
+      - Real protocols do not fit the OSI model neatly (TLS and QUIC straddle layers); treat it as a map, not a rulebook.
+    interview: Interviewers use layers to check that you can place protocols (IP, TCP, TLS, HTTP) and explain what L4 versus L7 load balancing means.
+    sources:
+      - title: "Computer Networks: A Systems Approach, 1.3 Architecture"
+        url: https://book.systemsapproach.org/foundation/architecture.html
+        publisher: Larry Peterson and Bruce Davie
+      - title: "RFC 1122: Requirements for Internet Hosts — Communication Layers"
+        url: https://www.rfc-editor.org/rfc/rfc1122
+        publisher: IETF
+  - id: networking.ip-addressing
+    title: IP addresses, ports and NAT
+    module: fundamentals
+    level: beginner
+    priority: essential
+    summary: IPv4 and IPv6 addresses identify hosts, ports identify programs on a host, and private networks reach the internet through NAT; localhost is your own machine.
+    requires: [networking.network-layers]
+    why: Configuring servers, containers, firewalls and cloud networks means reading addresses, ranges and ports correctly; many "cannot connect" bugs are address or port mistakes.
+    keyIdeas:
+      - An IPv4 address is 32 bits written as four decimal bytes (`192.168.1.10`); an IPv6 address is 128 bits written in hexadecimal groups (`2001:db8::1`).
+      - CIDR notation such as `10.0.0.0/24` means the first 24 bits identify the network, so the block holds 2⁸ = 256 addresses.
+      - The private IPv4 ranges (RFC 1918) are `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16`; they are not routed on the public internet.
+      - NAT lets many private devices share one public IPv4 address by rewriting addresses and ports, so unsolicited inbound connections cannot reach them without port forwarding.
+      - A port (0 to 65535) identifies a program on a host, e.g. 22 SSH, 53 DNS, 80 HTTP and 443 HTTPS; `127.0.0.1` and `::1` are loopback, and binding a server to `0.0.0.0` means all interfaces.
+    misconceptions:
+      - A server bound to `127.0.0.1` is reachable only from the same machine or container; bind to `0.0.0.0` to accept outside connections, a common Docker pitfall.
+      - An IP address does not reliably identify a person or a device; NAT, proxies, VPNs and DHCP share and reassign addresses.
+    interview: Expect to explain private ranges, CIDR blocks, NAT and the difference between binding to localhost and to all interfaces.
+    sources:
+      - title: "RFC 1918: Address Allocation for Private Internets"
+        url: https://www.rfc-editor.org/rfc/rfc1918
+        publisher: IETF
+      - title: An introduction to the ipaddress module
+        url: https://docs.python.org/3/howto/ipaddress.html
+        publisher: Python Software Foundation
+      - title: Service Name and Transport Protocol Port Number Registry
+        url: https://www.iana.org/assignments/service-names-port-numbers
+        publisher: IANA
+  - id: networking.dns
+    title: DNS
+    module: fundamentals
+    level: beginner
+    priority: essential
+    summary: The Domain Name System resolves names like example.com to IP addresses through a hierarchy of resolvers and cached records with TTLs.
+    requires: [networking.ip-addressing]
+    why: Every request starts with a name lookup, and DNS mistakes (wrong records, stale caches, expired domains) cause outages that look like the whole service is down.
+    keyIdeas:
+      - A recursive resolver (from your ISP, company or a public service) answers queries by walking the hierarchy from the root servers to the top-level domain servers (`.com`) to the domain's authoritative servers.
+      - Common record types are `A` (IPv4), `AAAA` (IPv6), `CNAME` (alias to another name), `MX` (mail), `TXT` (verification, SPF) and `NS` (delegation to name servers).
+      - Every record has a TTL in seconds, and resolvers, operating systems and applications cache answers until it expires.
+      - Query with `dig example.com A`, `nslookup` or `host`; `dig +trace example.com` shows the whole delegation chain.
+      - DNS traditionally uses UDP port 53, falling back to TCP for large responses; DNS over HTTPS and DNS over TLS encrypt queries.
+    misconceptions:
+      - DNS changes are not pushed out to the world; old answers simply stay cached until their TTL expires, which is what "propagation" really means.
+      - A `CNAME` cannot coexist with other records for the same name, so it cannot be used at the zone apex (`example.com`); providers offer ALIAS or flattening instead.
+    interview: "\"What happens when you type a URL\" questions expect the DNS resolution steps and where caching happens."
+    production: Lower TTLs before planned migrations, monitor domain and certificate expiry, and remember that many large outages have been DNS misconfigurations.
+    sources:
+      - title: "RFC 1034: Domain Names — Concepts and Facilities"
+        url: https://www.rfc-editor.org/rfc/rfc1034
+        publisher: IETF
+      - title: "RFC 1035: Domain Names — Implementation and Specification"
+        url: https://www.rfc-editor.org/rfc/rfc1035
+        publisher: IETF
+      - title: "Computer Networks: A Systems Approach, 9.3 Infrastructure Applications (DNS)"
+        url: https://book.systemsapproach.org/applications/infrastructure.html
+        publisher: Larry Peterson and Bruce Davie
+  - id: networking.tcp-udp
+    title: TCP and UDP
+    module: fundamentals
+    level: intermediate
+    priority: essential
+    summary: TCP provides reliable, ordered byte streams over a handshake-established connection; UDP sends independent datagrams with less overhead and no guarantees.
+    requires: [networking.ip-addressing]
+    why: Latency, timeouts, connection limits and "connection refused" errors all come from the transport layer, and choosing TCP or UDP shapes what an application must handle itself.
+    keyIdeas:
+      - TCP opens a connection with a three-way handshake (SYN, SYN-ACK, ACK), which costs one round trip before any data flows.
+      - TCP numbers and acknowledges bytes, retransmits lost segments and reorders them, and its flow and congestion control slow the sender when the receiver or network is overloaded.
+      - TCP is a byte stream, not a sequence of messages; one send can arrive as several reads, so application protocols need framing (length prefixes or delimiters).
+      - UDP sends independent datagrams with no handshake, ordering or retransmission; DNS, video calls, games and QUIC (the transport under HTTP/3) use it.
+      - A TCP connection is identified by source IP, source port, destination IP and destination port; "connection refused" means nothing is listening on that port, while a timeout often means a firewall silently dropped the packets.
+    misconceptions:
+      - Reliable does not mean guaranteed delivery; TCP delivers in order or reports failure, and the application must still handle broken connections.
+      - UDP is not automatically faster in practice; any reliability or ordering you need has to be rebuilt on top of it.
+    interview: Expect the three-way handshake, TCP versus UDP trade-offs and examples of protocols that use each.
+    sources:
+      - title: "RFC 9293: Transmission Control Protocol (TCP)"
+        url: https://www.rfc-editor.org/rfc/rfc9293
+        publisher: IETF
+      - title: "RFC 768: User Datagram Protocol"
+        url: https://www.rfc-editor.org/rfc/rfc768
+        publisher: IETF
+  - id: networking.sockets
+    title: Sockets in Python
+    module: fundamentals
+    level: intermediate
+    priority: supporting
+    summary: A socket is the program's endpoint of a network connection; writing a tiny client and server shows what higher-level libraries do for you.
+    requires: [networking.tcp-udp, python.exceptions]
+    why: Every HTTP library, database driver and message queue client is built on sockets, and knowing their behaviour explains partial reads, hangs and "address already in use" errors.
+    keyIdeas:
+      - A TCP server creates a socket, calls `bind((host, port))`, `listen()` and then `accept()`, which returns a new socket for each client connection.
+      - A client creates a socket and calls `connect((host, port))`; both sides then exchange data with `sendall()` and `recv()`.
+      - Sockets carry bytes, not text, so encode and decode explicitly (`"hi".encode("utf-8")`).
+      - "`recv(n)` may return fewer than n bytes, and an empty result (`b\"\"`) means the peer closed the connection, so loop until a complete message has arrived."
+      - "`socket.create_connection((host, port), timeout=5)` used in a `with` block sets a timeout and guarantees the socket is closed."
+    misconceptions:
+      - "`send()` may transmit only part of the data; use `sendall()` or check its return value."
+      - Without a timeout, a blocking socket call can wait forever.
+    sources:
+      - title: Socket Programming HOWTO
+        url: https://docs.python.org/3/howto/sockets.html
+        publisher: Python Software Foundation
+      - title: socket — Low-level networking interface
+        url: https://docs.python.org/3/library/socket.html
+        publisher: Python Software Foundation
+  # --------------------------------------------------------------------- http
+  - id: networking.http-basics
+    title: HTTP requests and responses
+    module: http
+    level: beginner
+    priority: essential
+    summary: An HTTP request has a method, path, headers and optional body; the response has a status code, headers and body — in HTTP/1.1 sent as plain text over a TCP connection.
+    requires: [networking.tcp-udp]
+    why: HTTP is the protocol of the web, of almost every API and of LLM services, so reading raw requests and responses is a core debugging skill.
+    keyIdeas:
+      - A request starts with a method, a target and a version (`GET /users/42 HTTP/1.1`), followed by headers such as `Host`, `Accept` and `Authorization`, and an optional body.
+      - A response starts with a status line (`HTTP/1.1 200 OK`), followed by headers such as `Content-Type`, `Content-Length` and `Cache-Control`, and the body.
+      - HTTP is stateless, so each request must carry everything the server needs; cookies and tokens add continuity across requests.
+      - HTTP/2 and HTTP/3 keep the same semantics (methods, status codes, headers) but use binary framing and multiplexing, and HTTP/3 runs over QUIC instead of TCP.
+      - "`curl -v https://example.com` prints the actual request and response headers."
+    misconceptions:
+      - HTTP is not always readable plain text; HTTP/2 and HTTP/3 are binary, and HTTPS encrypts every version on the wire.
+      - Header names are case-insensitive, so `content-type` and `Content-Type` are the same header.
+    interview: Expect to describe the parts of a request and a response and what changes between HTTP/1.1, HTTP/2 and HTTP/3.
+    sources:
+      - title: Overview of HTTP
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview
+        publisher: MDN Web Docs
+      - title: "RFC 9110: HTTP Semantics"
+        url: https://www.rfc-editor.org/rfc/rfc9110
+        publisher: IETF
+      - title: "RFC 9112: HTTP/1.1"
+        url: https://www.rfc-editor.org/rfc/rfc9112
+        publisher: IETF
+  - id: networking.urls
+    title: URLs and query strings
+    module: http
+    level: beginner
+    priority: essential
+    summary: Scheme, host, port, path, query and fragment — and why special characters must be percent-encoded.
+    requires: [networking.http-basics]
+    why: Building URLs by string concatenation causes broken requests and injection bugs, and misreading them causes requests to go to the wrong host or path.
+    keyIdeas:
+      - "`https://api.example.com:8443/v1/items?limit=10&sort=name#top` has a scheme, host, port, path, query and fragment."
+      - The port defaults by scheme (80 for http, 443 for https), and the fragment after `#` is never sent to the server.
+      - Reserved characters such as `?`, `&`, `=`, `#` and `/`, and spaces, must be percent-encoded inside a component; a space becomes `%20` (or `+` in form-encoded query strings).
+      - Build and parse URLs with libraries such as `urllib.parse.urlencode`, `quote` and `urlsplit`, or the `params=` argument of HTTP clients, not with string concatenation.
+      - Relative references such as `../img.png` or `/login` are resolved against a base URL, which is how links inside a page work.
+    misconceptions:
+      - Query strings are not private; they appear in server logs, browser history and Referer headers, so never put passwords or tokens in them.
+      - Encoding a value twice (`%2520`) is as broken as not encoding it at all.
+    sources:
+      - title: "RFC 3986: Uniform Resource Identifier (URI): Generic Syntax"
+        url: https://www.rfc-editor.org/rfc/rfc3986
+        publisher: IETF
+      - title: URL Standard
+        url: https://url.spec.whatwg.org/
+        publisher: WHATWG
+      - title: urllib.parse — Parse URLs into components
+        url: https://docs.python.org/3/library/urllib.parse.html
+        publisher: Python Software Foundation
+  - id: networking.http-semantics
+    title: HTTP methods, status codes and caching
+    module: http
+    level: intermediate
+    priority: essential
+    summary: Safe and idempotent methods, the meaning of 2xx/3xx/4xx/5xx codes, redirects, conditional requests and cache-control headers.
+    requires: [networking.http-basics]
+    why: Clients, proxies, caches and monitoring all act on these meanings; getting them wrong causes duplicate actions on retry, stale data and misleading dashboards.
+    keyIdeas:
+      - Safe methods (`GET`, `HEAD`, `OPTIONS`) must not change state; idempotent methods (the safe ones plus `PUT` and `DELETE`) have the same effect when repeated, so they can be retried, while `POST` and `PATCH` are not guaranteed idempotent.
+      - 2xx means success (200, 201 Created, 204 No Content), 3xx redirection (301 and 308 permanent, 302 and 307 temporary, 304 Not Modified), 4xx a client error (400, 401, 403, 404, 409, 422, 429) and 5xx a server error (500, 502, 503, 504).
+      - 401 means the request lacks valid authentication; 403 means the server knows who you are but you are not allowed.
+      - "`Cache-Control` directives (`max-age`, `no-cache`, `no-store`, `private`) control caching, and validators (`ETag` with `If-None-Match`, or `Last-Modified` with `If-Modified-Since`) let a cache revalidate and receive a cheap 304."
+      - 307 and 308 redirects keep the method and body, whereas clients historically turn a POST into a GET after 301 or 302.
+    misconceptions:
+      - "`no-cache` does not mean \"do not cache\"; it means \"revalidate before reuse\". Use `no-store` to forbid storing."
+      - Returning 200 with an error message in the body breaks clients, caches, retries and monitoring that rely on status codes.
+    interview: Interviewers ask about idempotency and why it matters for retries, 401 versus 403, and how ETags and Cache-Control work.
+    sources:
+      - title: "RFC 9110: HTTP Semantics"
+        url: https://www.rfc-editor.org/rfc/rfc9110
+        publisher: IETF
+      - title: "RFC 9111: HTTP Caching"
+        url: https://www.rfc-editor.org/rfc/rfc9111
+        publisher: IETF
+      - title: HTTP caching
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching
+        publisher: MDN Web Docs
+  - id: networking.cookies-sessions
+    title: Cookies and sessions
+    module: http
+    level: intermediate
+    priority: essential
+    summary: HTTP is stateless; cookies let servers recognise returning clients, and attributes like HttpOnly, Secure and SameSite control their safety.
+    requires: [networking.http-basics]
+    why: Logins, shopping carts and preferences depend on cookies, and misconfigured cookies are a direct route to session hijacking and CSRF.
+    keyIdeas:
+      - The server sends `Set-Cookie` with a name and value, and the browser stores it and returns it in a `Cookie` header on later requests that match its domain and path.
+      - Server-side sessions keep data on the server under a long, random session ID stored in the cookie; signed or encrypted cookies and tokens keep the data on the client instead.
+      - "`HttpOnly` hides a cookie from JavaScript (limiting theft via XSS), `Secure` sends it only over HTTPS, and `SameSite=Lax|Strict|None` limits cross-site sending (a CSRF defence); `SameSite=None` requires `Secure`."
+      - "`Domain`, `Path`, `Max-Age` and `Expires` set scope and lifetime; without `Max-Age` or `Expires` a cookie lasts only for the browser session."
+      - Issue a new session ID at login and invalidate it at logout to prevent session fixation.
+    misconceptions:
+      - Cookies are not encrypted or tamper-proof by default; never store secrets in them or trust their contents without a server-side check or signature.
+      - Browser defaults for `SameSite` differ, so set it explicitly rather than relying on them.
+    interview: Expect to explain how a session cookie works and what HttpOnly, Secure and SameSite each protect against.
+    production: Set `HttpOnly`, `Secure` and `SameSite` on session cookies, keep sessions short-lived, and store server-side sessions in a shared store when running several instances.
+    sources:
+      - title: Using HTTP cookies
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies
+        publisher: MDN Web Docs
+      - title: "RFC 6265: HTTP State Management Mechanism"
+        url: https://www.rfc-editor.org/rfc/rfc6265
+        publisher: IETF
+      - title: Session Management Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+        publisher: OWASP
+  - id: networking.tls
+    title: HTTPS and TLS
+    module: http
+    level: intermediate
+    priority: essential
+    summary: TLS encrypts and authenticates connections using certificates signed by trusted authorities; HTTPS is HTTP over TLS.
+    requires: [networking.http-basics, security.cryptography-basics]
+    why: Every production API and website must use HTTPS, and certificate errors are among the most common deployment failures.
+    keyIdeas:
+      - TLS provides confidentiality (encryption), integrity (tamper detection) and authentication of the server; HTTPS is HTTP inside TLS, by default on port 443.
+      - In the handshake client and server agree on parameters and derive shared session keys using an ephemeral key exchange; a full TLS 1.3 handshake takes one round trip.
+      - The server presents a certificate that binds its domain name to a public key, signed (usually through intermediate certificates) by a certificate authority the client already trusts.
+      - The client must check the chain of signatures, the validity dates and that the hostname matches; SNI tells the server which certificate to present.
+      - Allow only TLS 1.2 and 1.3; ACME services such as Let's Encrypt issue free certificates automatically, and maximum certificate lifetimes are shrinking, so automate renewal and check current CA/Browser Forum rules.
+    misconceptions:
+      - HTTPS does not make a site trustworthy, and it does not hide which server you connect to (IP addresses, and often the hostname via SNI or DNS, are visible).
+      - Turning off certificate verification (`verify=False`) to fix an error removes the authentication that makes TLS safe; fix the trust store or certificate instead.
+    interview: Interviewers ask what happens during a TLS handshake, how certificate chains are verified and what a man-in-the-middle attack needs.
+    production: Monitor certificate expiry, automate renewal, and if TLS is terminated at a load balancer make sure the internal hop is trusted or re-encrypted.
+    sources:
+      - title: "RFC 8446: The Transport Layer Security (TLS) Protocol Version 1.3"
+        url: https://www.rfc-editor.org/rfc/rfc8446
+        publisher: IETF
+      - title: ssl — TLS/SSL wrapper for socket objects
+        url: https://docs.python.org/3/library/ssl.html
+        publisher: Python Software Foundation
+      - title: How It Works
+        url: https://letsencrypt.org/how-it-works/
+        publisher: Let's Encrypt
+  - id: networking.cors
+    title: Same-origin policy and CORS
+    module: http
+    level: intermediate
+    priority: supporting
+    summary: Browsers block scripts from reading responses from other origins unless the server opts in with CORS headers; servers and non-browser clients are unaffected.
+    requires: [networking.http-semantics, networking.urls, networking.web-browser]
+    why: A frontend on one origin calling an API on another fails with CORS errors until the API is configured correctly, and misconfiguring it can expose users' data.
+    keyIdeas:
+      - An origin is scheme plus host plus port, so `https://app.example.com`, `https://api.example.com` and `http://app.example.com` are three different origins.
+      - Browsers send many cross-origin requests but stop scripts from reading the response unless it carries `Access-Control-Allow-Origin` with the page's origin (or `*`).
+      - 'Requests that are not "simple" (e.g. `PUT`, `DELETE`, `Content-Type: application/json` or custom headers) first trigger an `OPTIONS` preflight that the server must answer with the allowed methods and headers.'
+      - 'Requests with cookies need `credentials: "include"` in the browser and `Access-Control-Allow-Credentials: true` plus an explicit origin (not `*`) from the server.'
+      - CORS is configured on the server, usually in framework middleware, and enforced by the browser.
+    misconceptions:
+      - CORS does not protect your server; curl, scripts and other servers ignore it, so authentication and authorisation are still required.
+      - A CORS error in the console often hides another failure, such as a 500 response without CORS headers; check the Network tab.
+      - Reflecting any origin while allowing credentials lets any website read your users' data.
+    interview: Expect to explain what an origin is, when a preflight happens and why CORS is not a security control for the server.
+    sources:
+      - title: Cross-Origin Resource Sharing (CORS)
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS
+        publisher: MDN Web Docs
+      - title: Same-origin policy
+        url: https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Same-origin_policy
+        publisher: MDN Web Docs
+      - title: "Fetch Standard: CORS protocol"
+        url: https://fetch.spec.whatwg.org/#http-cors-protocol
+        publisher: WHATWG
+  - id: networking.web-browser
+    title: How browsers load a page
+    module: http
+    level: beginner
+    priority: supporting
+    summary: From URL to pixels — DNS, connection, HTML, CSS, JavaScript and the DOM — enough to understand the frontend your APIs serve.
+    requires: [networking.http-basics, networking.dns]
+    why: Backend and AI engineers ship APIs and demos that browsers consume; knowing how a page loads explains slow pages, CORS errors and what frontend developers need from an API.
+    keyIdeas:
+      - Entering a URL triggers a DNS lookup, a TCP (or QUIC) connection, a TLS handshake, an HTTP request and finally an HTML response.
+      - The browser parses HTML into the DOM and CSS into the CSSOM, combines them into a render tree, then calculates layout and paints pixels.
+      - Scripts without `defer` or `async` block HTML parsing and CSS blocks rendering, while images and fonts load in parallel.
+      - JavaScript can change the DOM and call APIs with `fetch()`; single-page applications build most of the page this way from JSON responses.
+      - Developer tools (Network, Console, Elements, Performance) show every request, its timing and any errors.
+    misconceptions:
+      - A page is not a single request; a typical page makes dozens of requests for scripts, styles, images, fonts and API data.
+      - View Source shows the HTML as downloaded, not the current DOM after JavaScript has changed it; use the Elements panel for that.
+    interview: "\"What happens when you type a URL and press Enter?\" is a classic open-ended interview question that tests this whole stage."
+    sources:
+      - title: "How browsers work"
+        url: https://developer.mozilla.org/en-US/docs/Web/Performance/Guides/How_browsers_work
+        publisher: MDN Web Docs
+      - title: Critical rendering path
+        url: https://developer.mozilla.org/en-US/docs/Web/Performance/Guides/Critical_rendering_path
+        publisher: MDN Web Docs
+  # ----------------------------------------------------------------- web-apis
+  - id: networking.json-apis
+    title: JSON APIs and serialisation
+    module: web-apis
+    level: beginner
+    priority: essential
+    summary: APIs exchange structured data as JSON with Content-Type headers; serialisation, validation and error bodies define the contract.
+    requires: [networking.http-basics, python.csv-json]
+    why: JSON over HTTP is the default contract between frontends, backends, third-party services and LLM APIs, and most integration bugs are mismatches in that contract.
+    keyIdeas:
+      - JSON has objects, arrays, strings, numbers, booleans and `null`; keys must be double-quoted strings, and there are no comments, dates or trailing commas.
+      - "Send `Content-Type: application/json` with JSON bodies, and `Accept: application/json` to ask for JSON back."
+      - Serialisation turns objects into JSON text (`json.dumps`) and deserialisation parses it (`json.loads`); dates, decimals and bytes need agreed conventions such as ISO 8601 strings.
+      - Validate incoming data at the boundary against a schema (JSON Schema, Pydantic) and reject invalid input with 400 or 422 and a structured error body.
+      - A consistent error format such as RFC 9457 Problem Details (`application/problem+json` with `type`, `title`, `status` and `detail`) makes errors machine-readable.
+    misconceptions:
+      - JSON numbers have no agreed precision; JavaScript loses integer precision above 2⁵³, so send large IDs as strings.
+      - Parsing JSON successfully does not mean the data is valid; still check types, ranges and required fields.
+    interview: Interviewers ask how you would design request and error bodies and validate input for a JSON API.
+    sources:
+      - title: "RFC 8259: The JavaScript Object Notation (JSON) Data Interchange Format"
+        url: https://www.rfc-editor.org/rfc/rfc8259
+        publisher: IETF
+      - title: json — JSON encoder and decoder
+        url: https://docs.python.org/3/library/json.html
+        publisher: Python Software Foundation
+      - title: "RFC 9457: Problem Details for HTTP APIs"
+        url: https://www.rfc-editor.org/rfc/rfc9457
+        publisher: IETF
+  - id: networking.http-clients
+    title: Calling APIs from Python
+    module: web-apis
+    level: intermediate
+    priority: essential
+    summary: Use urllib, requests or httpx with explicit timeouts, status checks, retries with backoff and careful handling of credentials.
+    requires: [networking.json-apis, python.exceptions, networking.http-semantics]
+    tools: [requests, httpx]
+    why: Data pipelines, backends and LLM applications constantly call other services, and missing timeouts or naive retries are a leading cause of hangs and cascading failures.
+    keyIdeas:
+      - "`urllib.request` ships with Python, `requests` is the most widely used synchronous client, and `httpx` offers a similar API plus async support and optional HTTP/2."
+      - Always pass a timeout, e.g. `requests.get(url, timeout=(3.05, 10))` for connect and read; without one, requests can wait indefinitely.
+      - Check the status explicitly; `response.raise_for_status()` raises for 4xx and 5xx responses.
+      - Retry only transient failures (connection errors, 429, 502, 503, 504) on idempotent requests, with capped exponential backoff plus jitter, and honour `Retry-After`.
+      - Reuse a `requests.Session` or `httpx.Client` for connection pooling, and load credentials from environment variables or a secrets store, never from source code or URLs.
+    misconceptions:
+      - "`requests` does not raise an exception for a 404 or 500 response unless you call `raise_for_status()`."
+      - Retrying a `POST` can duplicate the action (for example a double payment) unless the API supports idempotency keys.
+    interview: Expect to explain how you would make an API call robust, covering timeouts, retries, backoff and error handling.
+    production: Set connect and read timeouts, cap retries and total time, log request IDs, and add circuit breakers or fallbacks for unreliable dependencies.
+    sources:
+      - title: "Requests: Advanced Usage (timeouts)"
+        url: https://requests.readthedocs.io/en/latest/user/advanced/#timeouts
+        publisher: Requests project
+      - title: HTTPX
+        url: https://www.python-httpx.org/
+        publisher: Encode
+      - title: Timeouts, retries and backoff with jitter
+        url: https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter
+        publisher: Amazon Builders' Library
+  - id: networking.rest
+    title: REST API design principles
+    module: web-apis
+    level: intermediate
+    priority: essential
+    summary: Model resources with nouns, use HTTP methods and status codes for their meaning, and design pagination, filtering and versioning deliberately.
+    requires: [networking.http-semantics, networking.json-apis]
+    why: A predictable API is easier to use, document, cache and evolve; inconsistent APIs push complexity and bugs onto every client.
+    keyIdeas:
+      - Resources are nouns identified by URLs (`/users/42/orders`), and HTTP methods are the verbs; `GET` reads, `POST` creates, `PUT` replaces, `PATCH` partially updates and `DELETE` removes.
+      - Use status codes for their meaning, such as 201 with a `Location` header after creation, 204 for success with no body, 404 for missing resources, 409 for conflicts and 422 for validation errors.
+      - Paginate collections (cursor-based pagination stays stable while items are inserted; offset pagination is simpler) and filter and sort with query parameters.
+      - Version deliberately (e.g. `/v1/` in the path or a header) and evolve compatibly; adding optional fields is safe, while removing or renaming fields breaks clients.
+      - Fielding's REST constraints include client-server, statelessness, cacheability and a uniform interface; most real "REST" APIs are pragmatic resource-oriented JSON over HTTP.
+    misconceptions:
+      - "`POST /createUser` is RPC style, not REST; the method already expresses the action."
+      - "`PUT` is not a generic update; it replaces the whole resource, while `PATCH` changes part of it."
+    interview: Expect to design endpoints for a small domain, choosing URLs, methods, status codes, pagination and a versioning strategy.
+    sources:
+      - title: "Architectural Styles and the Design of Network-based Software Architectures, Chapter 5: REST"
+        url: https://ics.uci.edu/~fielding/pubs/dissertation/rest_arch_style.htm
+        publisher: Roy T. Fielding (UC Irvine)
+      - title: API Improvement Proposals (AIP)
+        url: https://google.aip.dev/
+        publisher: Google
+      - title: Microsoft REST API Guidelines
+        url: https://github.com/microsoft/api-guidelines
+        publisher: Microsoft
+  - id: networking.api-styles
+    title: GraphQL, gRPC, WebSockets and server-sent events
+    module: web-apis
+    level: intermediate
+    priority: supporting
+    summary: Alternatives to REST for flexible queries, efficient service-to-service calls, bidirectional real-time messages and one-way streaming (used by LLM APIs).
+    requires: [networking.rest]
+    why: REST is not the best fit for every interaction; streaming LLM tokens, live dashboards, chat and high-volume internal calls each suit a different style.
+    keyIdeas:
+      - GraphQL clients send one query naming exactly the fields they need against a typed schema; it is flexible for frontends but caching, rate limiting and N+1 database queries need extra care.
+      - gRPC defines services in Protocol Buffers, generates typed clients and servers, and runs over HTTP/2 with binary messages and streaming; it is popular between internal services.
+      - WebSockets upgrade an HTTP connection to a persistent, two-way message channel for chat, collaboration and live updates.
+      - "Server-sent events keep one HTTP response open with `Content-Type: text/event-stream` and push `data:` lines from server to client; many LLM APIs stream tokens this way."
+      - Choose by need, e.g. REST for public resource APIs, gRPC for internal low-latency calls, WebSockets for two-way real time and SSE for simple server push.
+    misconceptions:
+      - GraphQL is not a database query language; resolvers still fetch data from your services and databases.
+      - Streaming connections still need timeouts, reconnection and back-pressure handling.
+    interview: Interviewers ask when you would choose each style, and how you would stream LLM output to a browser.
+    sources:
+      - title: Introduction to GraphQL
+        url: https://graphql.org/learn/
+        publisher: GraphQL Foundation
+      - title: Introduction to gRPC
+        url: https://grpc.io/docs/what-is-grpc/introduction/
+        publisher: gRPC Authors
+      - title: Using server-sent events
+        url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+        publisher: MDN Web Docs
+      - title: "RFC 6455: The WebSocket Protocol"
+        url: https://www.rfc-editor.org/rfc/rfc6455
+        publisher: IETF
+  - id: networking.proxies-load-balancers
+    title: Proxies, load balancers, gateways and CDNs
+    module: web-apis
+    level: intermediate
+    priority: essential
+    summary: Intermediaries forward, distribute, cache, authenticate and rate-limit traffic between clients and servers.
+    requires: [networking.http-semantics, networking.dns, networking.tls]
+    why: In production a request almost never goes straight to your code, and the intermediaries in between explain 502 and 504 errors, wrong client IPs and stale content.
+    keyIdeas:
+      - A forward proxy acts for clients (e.g. a corporate egress proxy set with `HTTPS_PROXY`); a reverse proxy such as NGINX, Caddy or Envoy sits in front of servers and handles TLS, routing, compression and caching.
+      - Load balancers spread traffic across instances (round robin, least connections, hashing) and stop sending to instances that fail health checks.
+      - Layer 4 load balancers forward TCP or UDP connections; layer 7 load balancers understand HTTP and can route by host, path or header.
+      - API gateways add authentication, rate limiting and request transformation; CDNs cache content at edge locations close to users.
+      - Behind a proxy your app sees the proxy's IP; the client address arrives in `X-Forwarded-For` or `Forwarded`, which you should trust only from known proxies.
+    misconceptions:
+      - A 502 or 504 usually comes from the proxy and means the upstream application failed or was too slow, not that the proxy itself is broken.
+      - Sticky sessions are a workaround rather than a scaling strategy; stateless servers with a shared session store scale more simply.
+    interview: Expect to explain L4 versus L7 load balancing, health checks and how a request passes through a CDN and reverse proxy to your app.
+    production: Align timeouts across client, proxy and application, and make health checks reflect real readiness rather than just "process is running".
+    sources:
+      - title: Proxy servers and tunneling
+        url: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Proxy_servers_and_tunneling
+        publisher: MDN Web Docs
+      - title: Using nginx as HTTP load balancer
+        url: https://nginx.org/en/docs/http/load_balancing.html
+        publisher: NGINX
+      - title: "RFC 7239: Forwarded HTTP Extension"
+        url: https://www.rfc-editor.org/rfc/rfc7239
+        publisher: IETF
+  - id: networking.debugging-network
+    title: Debugging network problems
+    module: web-apis
+    level: intermediate
+    priority: essential
+    summary: Use curl, browser developer tools, ping, nslookup and logs to tell DNS, connection, TLS, timeout and application errors apart.
+    requires: [networking.http-semantics, foundations.troubleshooting, networking.dns, networking.tls]
+    tools: [curl, dig, openssl, browser developer tools]
+    why: '"The API is down" can mean a DNS, routing, firewall, TLS or application problem; checking layer by layer finds the real cause quickly.'
+    keyIdeas:
+      - Work up the layers, checking name resolution (`dig`, `nslookup`), reachability (`ping`, `traceroute` or `tracert`), the port (`nc -vz host 443`, or `Test-NetConnection` on Windows), TLS (`openssl s_client -connect host:443`) and then HTTP (`curl -v`).
+      - Errors point to layers; "could not resolve host" is DNS, "connection refused" means nothing is listening, a timeout suggests a firewall, routing or overloaded server, certificate errors are TLS, and 4xx or 5xx come from the application or a proxy.
+      - "`curl -v` shows headers and redirects, `-w \"%{http_code} %{time_total}\\n\"` prints status and timing, and the browser's Network tab shows the same for pages."
+      - Test from where the code runs; a container, VPN or proxy can resolve and route differently from your laptop.
+      - Correlate client errors with server and proxy logs using timestamps and request IDs.
+    misconceptions:
+      - A failing `ping` does not prove a host is down; many networks block ICMP while TCP works fine.
+      - Networking bugs that "work on my machine" are often environment differences such as proxies, `/etc/hosts` overrides or `localhost` meaning the container itself.
+    interview: Debugging interviews ask how you would diagnose "the API is slow or unreachable" step by step.
+    sources:
+      - title: curl man page
+        url: https://curl.se/docs/manpage.html
+        publisher: curl project
+      - title: Everything curl
+        url: https://everything.curl.dev/
+        publisher: Daniel Stenberg
+      - title: Network features reference (Chrome DevTools)
+        url: https://developer.chrome.com/docs/devtools/network/reference
+        publisher: Google Chrome Developers
+  - id: networking.http-versions
+    title: HTTP/1.1, HTTP/2 and HTTP/3
+    module: http
+    level: intermediate
+    priority: supporting
+    summary: The same HTTP semantics travel over different wire formats — text-based HTTP/1.1, multiplexed binary HTTP/2, and HTTP/3 over QUIC.
+    why: Connection reuse, multiplexing and head-of-line blocking explain real latency differences and some proxy and streaming behaviour.
+    requires: [networking.http-semantics, networking.tls]
+    keyIdeas:
+      - HTTP/1.1 handles one request at a time per connection; keep-alive reuses connections and browsers open several in parallel.
+      - HTTP/2 multiplexes many streams over one TCP connection using binary frames and header compression (HPACK).
+      - HTTP/3 runs over QUIC, which is built on UDP, integrates TLS 1.3 and avoids TCP-level head-of-line blocking.
+      - Methods, status codes and headers mean the same in every version; RFC 9110 defines the shared semantics.
+    misconceptions:
+      - HTTP/2 does not change your API design; it changes how the bytes are carried.
+    sources:
+      - title: "RFC 9113: HTTP/2"
+        url: https://www.rfc-editor.org/rfc/rfc9113
+        publisher: IETF
+      - title: "RFC 9114: HTTP/3"
+        url: https://www.rfc-editor.org/rfc/rfc9114
+        publisher: IETF
+  - id: networking.firewalls
+    title: Firewalls and security groups
+    module: fundamentals
+    level: intermediate
+    priority: optional
+    summary: Firewalls allow or block traffic by address, port and protocol; cloud security groups apply the same idea to virtual machines and services.
+    why: A "connection refused" or a silent timeout is often a firewall rule; least-privilege network rules are also a basic defence.
+    requires: [networking.tcp-udp]
+    keyIdeas:
+      - Rules match source and destination address, port and protocol and either allow or deny; rule order and the default policy matter.
+      - Stateful firewalls automatically allow reply traffic for connections that were permitted.
+      - A blocked port often shows up as a timeout (packets silently dropped) rather than an immediate refusal.
+    misconceptions:
+      - A firewall does not protect a service from attacks on the port it allows; the service itself must still be secure.
+    sources:
+      - title: "NIST SP 800-41 Rev. 1: Guidelines on Firewalls and Firewall Policy"
+        url: https://csrc.nist.gov/pubs/sp/800/41/r1/final
+        publisher: NIST

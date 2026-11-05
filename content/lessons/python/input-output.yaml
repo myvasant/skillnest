@@ -1,0 +1,1006 @@
+id: python.input-output
+concept: python.input-output
+title: Input and Output
+subtitle: Talking to the user with input(), print() and f-strings
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  Make programs interactive. input() reads a line the user types — always as a string — print()
+  controls exactly how output looks with sep= and end=, and f-strings build readable messages with
+  embedded expressions and format specifiers such as :.2f, :>8 and :,.
+objectives:
+  - Read a line of text with input() and explain why the result is always a str.
+  - Convert input with int() or float() before calculating, and tidy text input with strip().
+  - Control print() output with the sep= and end= options.
+  - Build messages with f-strings containing expressions and format specifiers (:.2f, :>8, :<8, :^8, :,).
+  - Write small interactive programs that read input, process it and report results.
+sources:
+  - title: "The Python Tutorial: Input and Output"
+    url: https://docs.python.org/3/tutorial/inputoutput.html
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: input()"
+    url: https://docs.python.org/3/library/functions.html#input
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: print()"
+    url: https://docs.python.org/3/library/functions.html#print
+    publisher: Python Software Foundation
+  - title: Format Specification Mini-Language
+    url: https://docs.python.org/3/library/string.html#format-specification-mini-language
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Formatted string literals"
+    url: https://docs.python.org/3/reference/lexical_analysis.html#formatted-string-literals
+    publisher: Python Software Foundation
+  - title: "PEP 701: Syntactic formalization of f-strings"
+    url: https://peps.python.org/pep-0701/
+    publisher: Python Software Foundation
+  - title: "PEP 750: Template Strings"
+    url: https://peps.python.org/pep-0750/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why programs need input
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Every program so far has produced the same output every time, because every value was typed
+          into the code. To greet a different person you had to edit the program:
+      - type: code
+        runnable: true
+        code: |
+          name = "Ada"
+          print("Nice to meet you, " + name + "!")
+        expectedOutput: |
+          Nice to meet you, Ada!
+      - type: markdown
+        body: |
+          `input()` lets the **user** provide the value while the program runs. It shows a message
+          (the *prompt*), waits for a line of text, and returns that text:
+      - type: code
+        runnable: true
+        code: |
+          name = input("What is your name? ")
+          print("Nice to meet you, " + name + "!")
+        stdin: |
+          Ada
+        expectedOutput: |
+          What is your name? Nice to meet you, Ada!
+        caption: Change the text in the Input box and run it again — no code changes needed.
+      - type: callout
+        variant: note
+        title: How input() behaves on this page
+        body: |
+          In a terminal, Python prints the prompt and waits; you type `Ada`, your typing appears on the
+          screen, and pressing Enter moves to the next line. Here in the browser, each `input()` call
+          reads the next line of the **Input** box ([standard input](glossary:standard-input)) instead.
+          The prompt is printed, but what you "typed" is not echoed — so the next output appears right
+          after the prompt on the same line, exactly as if the input had been piped into Python. If the
+          Input box runs out of lines, `input()` raises `EOFError`.
+
+  - id: mental-model
+    title: "Mental model: a line of text in, text out"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Picture your program connected to the outside world by two pipes:
+
+          - An **input pipe** holding lines of text waiting to be read. Each call to `input()` takes
+            **the next whole line** off the front of the queue (without its Enter key) and hands it
+            to you as a string. Lines are used up in order; nothing is read until you ask.
+          - An **output pipe**. Each `print()` turns its values into text and pushes that text, plus a
+            line ending, onto the pipe. The prompt you pass to `input()` goes onto the same output pipe.
+
+          **Only text travels through the pipes.** That single fact explains most of this lesson:
+          `input()` gives you a `str` even when the user typed digits, so you convert it; and `print()`
+          converts everything to `str` on the way out, which is why it can print numbers while `+`
+          cannot join them to text.
+
+          This picture is simplified — programs also have a third pipe for error messages, and files and
+          networks can carry raw bytes — but it stays accurate for everything in this lesson.
+
+  - id: input-returns-str
+    title: input() always returns a string
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `input()` reads **characters**. Whatever the user types — `Ada`, `21`, `3.5`, `yes` — comes back
+          as a `str`, with the Enter key's newline removed. Python cannot know whether `21` was meant as
+          a number, a house number, or a password, so it never guesses.
+      - type: code
+        runnable: true
+        code: |
+          answer = input("Pick a number: ")
+          print(type(answer))
+          print(repr(answer))
+          print(answer * 2)
+          print(int(answer) * 2)
+        stdin: |
+          21
+        expectedOutput: |
+          Pick a number: <class 'str'>
+          '21'
+          2121
+          42
+        annotations:
+          - line: 3
+            text: repr() shows the quotes - it really is text.
+          - line: 4
+            text: String times 2 repeats the text.
+          - line: 5
+            text: Only after int() does * mean multiplication.
+      - type: item
+        ref: mcq-input-concat
+      - type: item
+        ref: explain-input-str
+
+  - id: converting-input
+    title: Converting and cleaning input
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          To calculate with input, convert it straight away, using what you learned in
+          [type conversion](concept:python.type-conversion). Read nested calls **from the inside out**:
+          `input()` runs first and returns a string; `int()` then converts that string.
+      - type: code
+        runnable: true
+        code: |
+          age = int(input("How old are you? "))
+          print("Next year you will be", age + 1)
+        stdin: |
+          36
+        expectedOutput: |
+          How old are you? Next year you will be 37
+        annotations:
+          - line: 1
+            text: input() returns "36"; int("36") returns 36; age is bound to the int.
+      - type: code
+        runnable: true
+        code: |
+          price = float(input("Price: "))
+          quantity = int(input("Quantity: "))
+          print("Total:", price * quantity)
+        stdin: |
+          2.5
+          4
+        expectedOutput: |
+          Price: Quantity: Total: 10.0
+        caption: Two input() calls read two lines of the Input box, in order. Use float() when decimals are allowed.
+      - type: markdown
+        body: |
+          Users make typing mistakes. `int()` and `float()` already ignore spaces around a number, but
+          for text you should usually clean it yourself: `name = input("Name: ").strip()`. If the user
+          types something that is not a number, the conversion raises `ValueError` — handling that
+          gracefully needs `try`/`except`, which you will learn with
+          [exceptions](concept:python.exceptions).
+      - type: code
+        runnable: true
+        code: |
+          age = int(input("Age: "))
+        stdin: |
+          thirty
+        expectedOutput: |
+          Age:
+        expectError: ValueError
+        caption: "ValueError: invalid literal for int() with base 10: 'thirty'. The prompt was printed, then the conversion failed."
+      - type: visualization
+        component: python-tracer
+        title: Text in, numbers out
+        caption: >-
+          The Input box holds "Grace" and "85". Notice that age_text refers to the string '85' (with
+          quotes) and age to the integer 85 — two different objects.
+        props:
+          code: |
+            name = input("Name: ")
+            age_text = input("Age: ")
+            age = int(age_text)
+            print(name, "will be", age + 1)
+          stdin: |
+            Grace
+            85
+
+  - id: print-options
+    title: Controlling print() with sep and end
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `print()` takes any number of values and turns each one into text with `str()` (that is why
+          `print("Age:", 36)` works while `"Age: " + 36` does not). Two optional
+          **keyword arguments** — settings written as `name=value` inside the parentheses — control
+          the glue:
+
+          - `sep=` — the text placed **between** values (default: one space `" "`).
+          - `end=` — the text placed **after the last** value (default: a newline `"\n"`).
+      - type: code
+        runnable: true
+        code: |
+          print("2026", "10", "22", sep="-")
+          print("a", "b", "c", sep="")
+          print("Loading", end="")
+          print("...", end="")
+          print("done")
+          print("x", "y", sep=", ", end="!\n")
+        expectedOutput: |
+          2026-10-22
+          abc
+          Loading...done
+          x, y!
+        annotations:
+          - line: 3
+            text: end="" means no newline, so the next print continues on the same line.
+          - line: 6
+            text: If you replace end, include "\n" yourself when you still want a line break.
+      - type: callout
+        variant: misconception
+        title: print() gives nothing back
+        body: |
+          `print()` only *displays* text. Its result is `None`, a special value meaning "nothing". So
+          `result = print("Hello")` prints Hello and then binds `result` to `None`. To keep a value for
+          later, store it in a variable; print it separately.
+      - type: code
+        runnable: true
+        code: |
+          result = print("Hello")
+          print(result)
+        expectedOutput: |
+          Hello
+          None
+      - type: item
+        ref: predict-sep-end
+
+  - id: f-strings
+    title: f-strings — values inside text
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Building messages with `+` and `str()` is clumsy. An [f-string](glossary:f-string) — a string
+          with the letter `f` before the opening quote — lets you write the message as it should look,
+          with **expressions in curly braces**. When the line runs, Python evaluates each expression and
+          inserts its text form.
+      - type: code
+        runnable: true
+        code: |
+          name = "Ada"
+          age = 36
+          print(name + " is " + str(age) + " years old.")
+          print(f"{name} is {age} years old.")
+          print(f"Next year: {age + 1}")
+          print(f"Shout: {name.upper()}!")
+          print(f"Initial: {name[0]}")
+        expectedOutput: |
+          Ada is 36 years old.
+          Ada is 36 years old.
+          Next year: 37
+          Shout: ADA!
+          Initial: A
+        annotations:
+          - line: 3
+            text: The old way - every number needs str() and every gap needs a +.
+          - line: 4
+            text: The f-string converts age for you.
+          - line: 5
+            text: Any expression works inside the braces, including arithmetic, method calls and indexing.
+      - type: markdown
+        body: |
+          Forget the `f` and the braces are printed literally — a very common bug, because there is no
+          error message. To print a real brace inside an f-string, double it: `{{` or `}}`.
+      - type: code
+        runnable: true
+        code: |
+          age = 36
+          print("I am {age}")
+          print(f"I am {age}")
+          print(f"Use {{double braces}} for literal braces")
+        expectedOutput: |
+          I am {age}
+          I am 36
+          Use {double braces} for literal braces
+
+  - id: format-specs
+    title: Format specifiers
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          After the expression you can add a colon and a [format specifier](glossary:format-specifier)
+          that controls how the value looks: `{value:spec}`.
+
+          | Spec | Meaning | Example | Result |
+          |---|---|---|---|
+          | `.2f` | fixed-point, 2 decimal places | `f"{3.14159:.2f}"` | `3.14` |
+          | `,` | thousands separators | `f"{1234567:,}"` | `1,234,567` |
+          | `,.2f` | both together | `f"{1234.5:,.2f}"` | `1,234.50` |
+          | `>8` | right-align in a field 8 characters wide | `f"[{'hi':>8}]"` | `[      hi]` |
+          | `<8` | left-align | `f"[{'hi':<8}]"` | `[hi      ]` |
+          | `^8` | centre | `f"[{'hi':^8}]"` | `[   hi   ]` |
+          | `03d` | integer, zero-padded to 3 digits | `f"{7:03d}"` | `007` |
+          | `.1%` | percentage, 1 decimal place | `f"{0.256:.1%}"` | `25.6%` |
+
+          The parts combine in a fixed order — alignment, width, separator, precision, type — so
+          `>10,.2f` means "right-aligned, 10 wide, with commas, 2 decimals". By default text is
+          left-aligned and numbers are right-aligned.
+      - type: code
+        runnable: true
+        code: |
+          item = "Notebook"
+          price = 45.5
+          qty = 3
+          total = price * qty
+          print(f"{'Item':<10}|{'Qty':>5}|{'Total':>10}")
+          print(f"{item:<10}|{qty:>5}|{total:>10.2f}")
+          print(f"Yearly: {total * 52:,.2f}")
+        expectedOutput: |
+          Item      |  Qty|     Total
+          Notebook  |    3|    136.50
+          Yearly: 7,098.00
+        annotations:
+          - line: 5
+            text: Literal strings inside the braces use the other quote type.
+          - line: 6
+            text: Matching widths line the columns up like a table.
+      - type: callout
+        variant: warning
+        title: Formatting changes the display, not the value
+        body: |
+          `f"{total:.2f}"` produces **text** rounded to 2 decimals; `total` itself is unchanged. The
+          rounding uses the exact binary value of the float, so `f"{2.675:.2f}"` gives `2.67` (2.675 is
+          stored as 2.67499999…), as you saw in [numbers](concept:python.numbers).
+      - type: item
+        ref: predict-format
+
+  - id: interactive-program
+    title: "Worked example: an interactive tip calculator"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Most small programs follow the same three steps — **input → process → output**:
+
+          1. **Input:** ask for each value and convert it to the right type immediately.
+          2. **Process:** calculate with numbers, storing results in well-named variables.
+          3. **Output:** format the results for humans with f-strings.
+
+          Step through the program below. The Input box contains `1200`, `10` and `4`.
+      - type: visualization
+        component: python-tracer
+        title: Input, process, output
+        caption: Watch each input() call return a string, and the conversions turn it into a float and two ints before any arithmetic happens.
+        props:
+          code: |
+            bill = float(input("Bill amount: "))
+            percent = int(input("Tip percent: "))
+            people = int(input("People: "))
+            tip = bill * percent / 100
+            total = bill + tip
+            each = total / people
+            print()
+            print(f"Tip:       {tip:>8.2f}")
+            print(f"Total:     {total:>8.2f}")
+            print(f"Each pays: {each:>8.2f}")
+          stdin: |
+            1200
+            10
+            4
+      - type: code
+        runnable: true
+        code: |
+          bill = float(input("Bill amount: "))
+          percent = int(input("Tip percent: "))
+          people = int(input("People: "))
+
+          tip = bill * percent / 100
+          total = bill + tip
+          each = total / people
+
+          print()
+          print(f"Tip:       {tip:>8.2f}")
+          print(f"Total:     {total:>8.2f}")
+          print(f"Each pays: {each:>8.2f}")
+        stdin: |
+          1200
+          10
+          4
+        expectedOutput: |
+          Bill amount: Tip percent: People:
+          Tip:         120.00
+          Total:      1320.00
+          Each pays:   330.00
+        caption: >-
+          The three prompts appear together because input is not echoed here; the empty print() starts
+          the results on a fresh line. Try other values in the Input box.
+        annotations:
+          - line: 1
+            text: A bill can have paise or cents, so float.
+          - line: 10
+            text: ">8.2f right-aligns every amount in 8 characters, so the decimal points line up."
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Standard streams.** Every program starts with three text streams: standard input
+          (`sys.stdin`), standard output (`sys.stdout`) and standard error (`sys.stderr`). `input()`
+          writes the prompt to standard output, reads one line from standard input and removes the
+          trailing newline; at the end of the stream it raises `EOFError` (in a terminal:
+          `EOFError: EOF when reading a line`). Echoing your keystrokes is done by the **terminal**, not
+          by Python — which is why piped input (and this page) shows no echo. `print()` writes to
+          `sys.stdout` unless you pass `file=sys.stderr`, and `flush=True` forces the text out
+          immediately instead of waiting in a buffer.
+
+          **What an f-string really does.** Each replacement field `{value:spec}` calls
+          `format(value, spec)`, which asks the value's own type how to format itself. That is why the
+          available specifiers depend on the type: `.2f` makes sense for numbers but not for strings,
+          so `f"{text:.2f}"` on unconverted input raises `ValueError: Unknown format code 'f' for object
+          of type 'str'`. Two extras help with debugging: `{x=}` prints the expression and its value,
+          and `{x!r}` uses `repr()` instead of `str()`.
+      - type: code
+        runnable: true
+        code: |
+          price = 3.14159
+          print(format(price, ".2f"))
+          print(f"{price:.2f}" == format(price, ".2f"))
+          print(f"{price=}")
+          print(f"{price!r} {'text'!r}")
+          print("%s costs %.2f" % ("tea", price))
+          print("{} costs {:.2f}".format("tea", price))
+        expectedOutput: |
+          3.14
+          True
+          price=3.14159
+          3.14159 'text'
+          tea costs 3.14
+          tea costs 3.14
+        annotations:
+          - line: 6
+            text: The oldest style, %-formatting, still appears in older code and in logging.
+          - line: 7
+            text: str.format() uses the same specifier mini-language as f-strings.
+      - type: markdown
+        body: |
+          **Version notes.** f-strings arrived in Python 3.6 ([PEP 498](https://peps.python.org/pep-0498/)).
+          Since Python 3.12 ([PEP 701](https://peps.python.org/pep-0701/)) the expression inside the
+          braces may reuse the same quote character as the f-string and may contain backslashes — code
+          like `f"{"nested"}"` fails on older versions. Python 3.14 adds **template strings**
+          ([PEP 750](https://peps.python.org/pep-0750/)): a `t` prefix produces a `Template` object that
+          keeps the fixed text and the inserted values separate instead of joining them into a `str`.
+          Libraries can then escape the values safely (for example in HTML or SQL) before combining
+          them — something a plain f-string cannot do, because it has already produced the final text.
+      - type: code
+        runnable: true
+        code: |
+          name = "Ada"
+          template = t"Hello {name}"
+          print(type(template))
+          print(template.strings, template.values)
+        expectedOutput: |
+          <class 'string.templatelib.Template'>
+          ('Hello ', '') ('Ada',)
+        caption: Python 3.14+ only. The parentheses show tuples - fixed parts and values stored separately.
+
+  - id: mistakes
+    title: Common mistakes and how to fix them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `75` printed instead of `12` | Adding two input strings joins them | `int(input())` for each value |
+          | `TypeError: can only concatenate str (not "int") to str` | `input() + 1` | Convert first: `int(input()) + 1` |
+          | `TypeError: can't multiply sequence by non-int of type 'str'` | Multiplying two input strings | Convert both values |
+          | `ValueError: invalid literal for int() with base 10: '3.5'` | `int()` on input with decimals | Use `float()` |
+          | `ValueError: Unknown format code 'f' for object of type 'str'` | `f"{text:.2f}"` on unconverted input | Convert with `float()` before formatting |
+          | Braces printed literally: `I am {age}` | Missing `f` prefix | `f"I am {age}"` |
+          | `EOFError` | More `input()` calls than lines of input | Add a line to the Input box for every `input()` |
+          | Unexpected spaces or case in comparisons | User typed `" Yes"` | `answer = input().strip().lower()` |
+      - type: code
+        runnable: true
+        code: |
+          price = input("Price: ")
+          print(f"Price: {price:.2f}")
+        stdin: |
+          19.99
+        expectedOutput: |
+          Price:
+        expectError: ValueError
+        caption: "The value is the string '19.99', and .2f only works on numbers. Fix: price = float(input(\"Price: \"))."
+      - type: code
+        runnable: true
+        code: |
+          name = input("Name: ")
+          city = input("City: ")
+        stdin: |
+          Ada
+        expectedOutput: |
+          Name: City:
+        expectError: EOFError
+        caption: Two input() calls but only one line of input. The second call finds nothing to read.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises read from the Input box. The checks run your program again with **different
+          input**, so the program must calculate its output from what it reads. Prompts are allowed; the
+          checks look at the end of your output.
+      - type: item
+        ref: code-greeting
+      - type: item
+        ref: debug-sum
+      - type: item
+        ref: code-progress-bar
+      - type: item
+        ref: parsons-fstring
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `input(prompt)` prints the prompt and returns the next line of input **as a str**, without
+            the newline.
+          - Convert immediately: `int(input())`, `float(input())`; clean text with `.strip()`.
+          - `print(a, b, sep=" ", end="\n")` — `sep` goes between values, `end` after the last one;
+            `print()` returns `None`.
+          - f-strings: `f"{name} is {age + 1}"` evaluate expressions inside braces.
+          - Format specifiers after a colon: `.2f` decimals, `,` thousands, `>8` / `<8` / `^8` alignment,
+            `03d` zero padding, `.1%` percentages.
+          - Pattern: input → convert → process → format output.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "A user enters two numbers and your program prints `23` instead of `5`. Why?" — `input()`
+          returns strings and `+` concatenates them. Explain converting at the boundary, validating
+          (`ValueError` on bad input), and formatting output with f-strings such as `f"{total:,.2f}"`.
+
+items:
+  - id: mcq-input-concat
+    type: mcq
+    skill: prediction
+    prompt: |
+      A program runs `x = input("Number: ")` and the user types `7`. What does `print(x + x)` show next?
+    explanation: >-
+      input() always returns a string, so x is "7". For strings, + joins them: "7" + "7" is "77".
+    options:
+      - id: a
+        text: "`77`"
+        correct: true
+        feedback: Right. x is the text "7", and + concatenates text.
+      - id: b
+        text: "`14`"
+        feedback: 'That would need x = int(input("Number: ")). Without int(), x is the string "7".'
+      - id: c
+        text: "A TypeError"
+        feedback: Joining two strings is allowed. A TypeError would happen with x + 7 (string plus int).
+      - id: d
+        text: "`7 7`"
+        feedback: + adds no space between strings. print(x, x) would print 7 7.
+
+  - id: explain-input-str
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain why `input()` always returns a string, even when the user types only digits, and what
+      your program must do about it.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says input() reads characters typed by the user (or from a stream) as text.
+      - Explains that Python cannot know the intended type - "007", "3.0", "1e3" or "42" could mean different things.
+      - Says the program must convert explicitly with int() or float() before doing arithmetic.
+      - Mentions that conversion can fail with ValueError when the text is not a valid number.
+    modelAnswer: |
+      input() reads a line of characters from the user, so the natural result is text. Python cannot
+      tell what those characters are supposed to mean: "007" might be a code that must keep its zeros,
+      "3.0" could be an int or a float, and "42" might be a name. So it returns a str and leaves the
+      decision to the programmer, who must convert explicitly with int() or float() before calculating.
+      Because users can type anything, that conversion can raise a ValueError, which a robust program
+      should handle.
+
+  - id: predict-sep-end
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? (Pay attention to where the line breaks are.)
+    code: |
+      print("A", "B", sep="*", end="|")
+      print("C", end="")
+      print("D", "E", sep="")
+    answer: "A*B|CDE"
+    explanation: >-
+      The first print puts * between A and B and ends with | instead of a newline. The second prints C
+      with nothing after it. The third prints D and E with an empty separator and the default newline.
+      All of it lands on one line.
+    wrongAnswers:
+      - answer: |
+          A*B|
+          CDE
+        feedback: end="|" REPLACES the newline, so the next print continues on the same line.
+      - answer: "A * B|CDE"
+        feedback: sep is used exactly as given. "*" has no spaces around it, so none are printed.
+      - answer: "A*B|CD E"
+        feedback: sep="" means nothing at all goes between D and E.
+
+  - id: predict-format
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Three lines.)
+    code: |
+      cost = 1250.5
+      print(f"[{cost:.2f}]")
+      print(f"[{cost:,.1f}]")
+      print(f"[{cost:>10,.2f}]")
+    answer: |
+      [1250.50]
+      [1,250.5]
+      [  1,250.50]
+    explanation: >-
+      .2f always shows exactly two decimals, adding a zero: 1250.50. ,.1f adds a thousands separator
+      and one decimal: 1,250.5. >10,.2f formats 1,250.50 (8 characters) and right-aligns it in a field
+      10 wide, so two spaces are added on the left.
+    wrongAnswers:
+      - answer: |
+          [1250.5]
+          [1,250.5]
+          [  1,250.50]
+        feedback: .2f pads with zeros to exactly two decimal places, so 1250.5 becomes 1250.50.
+      - answer: |
+          [1250.50]
+          [1,250.5]
+          [1,250.50  ]
+        feedback: 'The ">" means right-align, so the padding goes on the LEFT. "<" would pad on the right.'
+
+  - id: code-greeting
+    type: code
+    skill: implementation
+    stdin: |
+      grace hopper
+      1906
+    prompt: |
+      Write a program that reads **two lines** of input: a name, then a birth year. Print:
+
+      ```text
+      Hello, Grace Hopper! In 2026 you would be 120.
+      ```
+
+      - Tidy the name with `strip()` and `title()` (users type carelessly).
+      - Convert the year with `int()` and calculate the age as `2026 - year`.
+      - Build the message with an f-string.
+
+      Use the prompts `"Name: "` and `"Birth year: "` if you like — the checks look only at the end of
+      your output, and they also try other names and years.
+    starterCode: |
+      # Read the name and the year, then print the greeting.
+
+    solution: |
+      name = input("Name: ").strip().title()
+      year = int(input("Birth year: "))
+      age = 2026 - year
+      print(f"Hello, {name}! In 2026 you would be {age}.")
+    expectedOutput: |
+      Name: Birth year: Hello, Grace Hopper! In 2026 you would be 120.
+    tests:
+      - name: Greets Grace Hopper
+        code: |
+          assert output().rstrip().endswith("Hello, Grace Hopper! In 2026 you would be 120."), (
+              f"The last thing printed should be 'Hello, Grace Hopper! In 2026 you would be 120.' Your output was {output()!r}."
+          )
+      - name: Works for other input
+        code: |
+          other = run_program("  ada LOVELACE \n1815\n")
+          assert other.rstrip().endswith("Hello, Ada Lovelace! In 2026 you would be 211."), (
+              f"With input 'ada LOVELACE' and 1815 the greeting should end 'Hello, Ada Lovelace! In 2026 you would be 211.' but your program printed {other!r}."
+          )
+      - name: Uses an f-string
+        code: |
+          assert uses("JoinedStr"), "Build the message with an f-string: f\"Hello, {name}! ...\""
+    hints:
+      - Call input() twice - the first call returns the name line, the second the year line.
+      - "Clean the name in one go: input(\"Name: \").strip().title()"
+      - "year must be an int before 2026 - year works: year = int(input(\"Birth year: \"))"
+    feedback:
+      - when: { errorMessageContains: "unsupported operand type(s) for -" }
+        message: The year is still a string. Wrap the second input() in int(...) before subtracting.
+      - when: { outputContains: "grace hopper" }
+        message: The name is not capitalised yet. Use .title() (after .strip()) on the name.
+      - when: { outputContains: "{name}" }
+        message: The braces were printed literally - put the letter f before the opening quote.
+    explanation: >-
+      Each input() reads one line. The name is cleaned by chaining strip() and title(); the year is
+      converted to an int so it can be subtracted. The f-string inserts both values. Because everything
+      is computed from the input, the program greets anyone correctly.
+
+  - id: debug-sum
+    type: debug
+    skill: debugging
+    stdin: |
+      7
+      5
+    prompt: |
+      This program should add the two numbers the user enters. With the input `7` and `5` it prints
+      `Sum: 75` instead of `Sum: 12`. Fix it.
+    starterCode: |
+      a = input("First number: ")
+      b = input("Second number: ")
+      print("Sum:", a + b)
+    solution: |
+      a = int(input("First number: "))
+      b = int(input("Second number: "))
+      print("Sum:", a + b)
+    expectedOutput: |
+      First number: Second number: Sum: 12
+    tests:
+      - name: Adds 7 and 5
+        code: |
+          assert output().rstrip().endswith("Sum: 12"), f"With input 7 and 5 the output should end with 'Sum: 12'. Yours was {output()!r}."
+      - name: Works for other numbers
+        code: |
+          other = run_program("10\n-3\n")
+          assert other.rstrip().endswith("Sum: 7"), f"With input 10 and -3 the output should end with 'Sum: 7', but it was {other!r}."
+    hints:
+      - What type does input() return? What does + do with two values of that type?
+      - Convert each input with int(...) as you read it.
+    feedback:
+      - when: { outputContains: "Sum: 75" }
+        message: >-
+          "7" + "5" joins two strings into "75". Convert each input with int() so + adds numbers.
+    explanation: >-
+      input() returns strings, and + on strings concatenates. Converting each value with int() as soon
+      as it is read makes a and b numbers, so + adds them.
+
+  - id: code-progress-bar
+    type: code
+    skill: transfer
+    difficulty: 2
+    stdin: |
+      40
+    prompt: |
+      Read a percentage (a whole number from 0 to 100) with `input()` and draw a progress bar 20
+      characters wide inside square brackets: one `#` for every 5 percent, padded with spaces to 20
+      characters, followed by the percentage. For input `40`:
+
+      ```text
+      [########            ] 40%
+      ```
+
+      The checks also try 0, 55 and 100.
+    starterCode: |
+      percent = input("Percent: ")
+
+    solution: |
+      percent = int(input("Percent: "))
+      filled = percent // 5
+      bar = "#" * filled
+      print(f"[{bar:<20}] {percent}%")
+    expectedOutput: |
+      Percent: [########            ] 40%
+    tests:
+      - name: Draws the bar for 40
+        code: |
+          assert output().rstrip().endswith("[########            ] 40%"), f"For 40 the output should end with '[########            ] 40%'. Yours was {output()!r}."
+      - name: Works for 0, 55 and 100
+        code: |
+          for value, bar in [("0", "[                    ] 0%"), ("55", "[###########         ] 55%"), ("100", "[####################] 100%")]:
+              out = run_program(value + "\n")
+              assert out.rstrip().endswith(bar), f"For input {value} the output should end with {bar!r}, but it was {out!r}."
+    hints:
+      - The input is text. Convert it with int() before doing arithmetic.
+      - "The number of # characters is percent // 5, and \"#\" * filled repeats the character."
+      - "Pad to 20 characters with a format specifier, f\"[{bar:<20}]\", or by adding \" \" * (20 - filled)."
+    feedback:
+      - when: { errorMessageContains: "can't multiply sequence" }
+        message: percent is still a string. Convert it with int(...) before using it in arithmetic.
+      - when: { errorMessageContains: "unsupported operand type(s) for //" }
+        message: percent is still a string, so // cannot divide it. Convert it with int(...).
+    explanation: >-
+      int() turns the input into a number; percent // 5 gives how many # to draw (8 for 40); string
+      repetition draws them; and :<20 pads the bar with spaces to a fixed width so the closing bracket
+      always lines up. This combines input conversion, arithmetic, string repetition and f-string
+      alignment.
+
+  - id: parsons-fstring
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program prints `Lin scored 87.6%`. Two lines are distractors.
+    solution: |
+      name = "Lin"
+      score = 0.8761
+      percent = score * 100
+      message = f"{name} scored {percent:.1f}%"
+      print(message)
+    distractors:
+      - message = "{name} scored {percent:.1f}%"
+      - percent = score * "100"
+    expectedOutput: |
+      Lin scored 87.6%
+    explanation: >-
+      The variables must exist before the f-string uses them, and the f prefix is what makes Python fill
+      in the braces. Without it the braces are printed literally; multiplying by the string "100" is a
+      TypeError.
+
+  # ----- Mastery check (not used in the sections above) -----
+  - id: m-mcq-float-input
+    type: mcq
+    skill: prediction
+    prompt: |
+      A program runs `count = int(input("How many? "))` and the user types `4.0`. What happens?
+    explanation: >-
+      input() returns the string "4.0". int() only accepts text that looks like a whole number, so it
+      raises ValueError: invalid literal for int() with base 10: '4.0'. Use float() if decimals are
+      allowed, or int(float(...)) if you deliberately want to truncate.
+    options:
+      - id: a
+        text: count is 4
+        feedback: int() does not parse decimal text. int(4.0) (a float) would be 4, but int("4.0") (a string) fails.
+      - id: b
+        text: count is 4.0
+        feedback: int() never returns a float. And here it does not return at all.
+      - id: c
+        text: "ValueError: invalid literal for int() with base 10: '4.0'"
+        correct: true
+        feedback: Correct. The text "4.0" is not a valid whole number.
+      - id: d
+        text: count is the string "4.0"
+        feedback: int() either returns an int or raises an error - it never hands back the original string.
+
+  - id: m-predict-fstring
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Two lines.)
+    code: |
+      city = "Pune"
+      temp = 31.456
+      print(f"[{city:>6}]{temp:.1f}|{temp * 2:.0f}")
+      print("{city}", f"{city.lower()}", sep=" - ", end=".\n")
+    answer: |
+      [  Pune]31.5|63
+      {city} - pune.
+    explanation: >-
+      :>6 right-aligns the 4-letter word in 6 characters (two spaces on the left). :.1f rounds 31.456 to
+      31.5, and temp * 2 = 62.912 shown with no decimals is 63. On line 4 the first string has no f, so
+      {city} is printed literally; sep puts " - " between the values and end replaces the newline with
+      ".\n".
+    wrongAnswers:
+      - answer: |
+          [Pune  ]31.5|63
+          {city} - pune.
+        feedback: 'The ">" right-aligns, so the padding goes on the left, giving [  Pune].'
+      - answer: |
+          [  Pune]31.5|63
+          Pune - pune.
+        feedback: The first string on line 4 has no f prefix, so its braces are printed as they are.
+      - answer: |
+          [  Pune]31.4|62
+          {city} - pune.
+        feedback: Format specifiers round to the nearest value; they do not truncate. 31.456 -> 31.5 and 62.912 -> 63.
+
+  - id: m-tf-print-returns
+    type: true-false
+    skill: recognition
+    prompt: "True or false: after `result = print(5)`, the name `result` refers to the integer 5."
+    answer: false
+    explanation: >-
+      print() displays 5 but returns None. So result refers to None. To keep a value, assign the value
+      itself and print it separately.
+
+  - id: m-code-split
+    type: code
+    skill: implementation
+    difficulty: 2
+    stdin: |
+      1000
+      3
+    prompt: |
+      Read a bill amount (it may contain decimals) and then the number of people. Print how much each
+      person pays, with **exactly two decimal places**:
+
+      ```text
+      Each person pays 333.33
+      ```
+
+      The checks also try other amounts.
+    starterCode: |
+      # Read the bill and the number of people.
+
+    solution: |
+      bill = float(input("Bill: "))
+      people = int(input("People: "))
+      each = bill / people
+      print(f"Each person pays {each:.2f}")
+    expectedOutput: |
+      Bill: People: Each person pays 333.33
+    tests:
+      - name: Splits 1000 between 3
+        code: |
+          assert output().rstrip().endswith("Each person pays 333.33"), f"The output should end with 'Each person pays 333.33'. Yours was {output()!r}."
+      - name: Works for other bills
+        code: |
+          for given, expected in [("250\n4\n", "Each person pays 62.50"), ("99.9\n1\n", "Each person pays 99.90")]:
+              out = run_program(given)
+              assert out.rstrip().endswith(expected), f"With input {given!r} the output should end with {expected!r}, but it was {out!r}."
+    hints:
+      - The bill can have decimals, so convert it with float(); the number of people with int().
+      - "Format with two decimals using :.2f inside the f-string braces."
+    feedback:
+      - when: { outputContains: "333.333" }
+        message: Too many decimals. Add the format specifier :.2f, e.g. f"{each:.2f}".
+      - when: { errorType: TypeError }
+        message: One of the values is still a string. Convert both inputs before dividing.
+    explanation: >-
+      float() accepts amounts such as 99.9, int() reads the number of people, and :.2f formats the
+      share with exactly two decimals - 62.5 is shown as 62.50.
+
+  - id: m-debug-format
+    type: debug
+    skill: debugging
+    difficulty: 2
+    stdin: |
+      19.5
+      2
+    prompt: |
+      This program should print `Total: 39.00` for a price of `19.5` and a quantity of `2`, but it
+      crashes. Fix it so it works for any price and quantity.
+    starterCode: |
+      price = input("Price: ")
+      qty = input("Quantity: ")
+      total = price * qty
+      print(f"Total: {total:.2f}")
+    solution: |
+      price = float(input("Price: "))
+      qty = int(input("Quantity: "))
+      total = price * qty
+      print(f"Total: {total:.2f}")
+    expectedOutput: |
+      Price: Quantity: Total: 39.00
+    tests:
+      - name: Prints Total - 39.00
+        code: |
+          assert output().rstrip().endswith("Total: 39.00"), f"The output should end with 'Total: 39.00'. Yours was {output()!r}."
+      - name: Works for other values
+        code: |
+          out = run_program("2.25\n4\n")
+          assert out.rstrip().endswith("Total: 9.00"), f"With price 2.25 and quantity 4 the output should end with 'Total: 9.00', but it was {out!r}."
+    hints:
+      - "Read the error: can't multiply sequence by non-int of type 'str'. Which values are strings?"
+      - The price can have decimals (float); the quantity is a whole number (int).
+    feedback:
+      - when: { errorMessageContains: "Unknown format code 'f'" }
+        message: >-
+          total is a string (the price text repeated), so .2f cannot format it. Convert the price with
+          float() as well.
+      - when: { errorType: TypeError }
+        message: Both inputs are still strings. Convert the price with float() and the quantity with int().
+    explanation: >-
+      Both inputs are strings, and Python cannot multiply a string by a string. Converting the price
+      with float() and the quantity with int() makes total the number 39.0, which :.2f displays as 39.00.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-mcq-float-input, m-predict-fstring, m-tf-print-returns, m-code-split, m-debug-format]
+
+cheatsheet: |
+  ```python
+  name = input("Name: ").strip()       # always a str, newline removed
+  age = int(input("Age: "))            # convert before arithmetic
+  price = float(input("Price: "))
+  print("a", "b", sep="-", end="!\n")  # a-b!
+  print(f"{name} is {age + 1}")        # expressions in braces
+  f"{3.14159:.2f}"   # '3.14'          f"{1234567:,}"  # '1,234,567'
+  f"[{'hi':>6}]"     # '[    hi]'      f"[{'hi':<6}]"  # '[hi    ]'
+  f"{7:03d}"         # '007'           f"{0.256:.1%}"  # '25.6%'
+  f"{x=}"            # 'x=5'  (debugging)
+  ```
+  - Missing `f` → braces printed literally · `{{ }}` → literal braces
+  - `print()` returns `None` · Pattern: input → convert → process → format

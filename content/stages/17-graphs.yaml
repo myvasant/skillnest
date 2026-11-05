@@ -1,0 +1,337 @@
+id: graphs
+order: 17
+title: Graph Databases and Knowledge Systems
+shortTitle: Graphs & Knowledge
+summary: >-
+  Property-graph modelling, Cypher queries, Neo4j and local alternatives, knowledge graphs, graph
+  algorithms and graph-based retrieval (GraphRAG).
+why: >-
+  Some questions are about relationships — who knows whom, what depends on what, how facts connect. Graphs
+  answer them naturally and can give RAG systems structured, multi-hop knowledge.
+modules:
+  - id: graph-data
+    title: Graph data and queries
+    summary: The property graph model, modelling, Cypher and graph databases.
+  - id: knowledge
+    title: Knowledge graphs and GraphRAG
+    summary: Knowledge representation, construction, algorithms and graph-based retrieval.
+concepts:
+  - id: graphs.property-graph-model
+    title: The property graph model
+    module: graph-data
+    level: intermediate
+    priority: essential
+    summary: Nodes with labels, relationships with types and direction, and key–value properties on both.
+    requires: [cs.graphs, databases.relational-model]
+    why: >-
+      Many domains — social networks, supply chains, software dependencies, fraud rings — are about
+      connections. The property graph model stores relationships as first-class data, so you query them
+      directly instead of reconstructing them through joins.
+    keyIdeas:
+      - "Nodes represent entities and can carry zero or more labels (e.g. `:Person`, `:Employee`)."
+      - "Relationships connect exactly two nodes and always have one type (e.g. `:WORKS_AT`) and a direction; queries can still traverse them either way."
+      - "Both nodes and relationships hold key-value properties (e.g. `since: 2021`)."
+      - Most property-graph databases are schema-optional; constraints and indexes are added explicitly rather than required up front.
+      - The ISO GQL standard (ISO/IEC 39075:2024) defines a property-graph data model and query language, and SQL/PGQ adds property-graph queries to SQL.
+    misconceptions:
+      - Graph databases are not only for social networks; any domain whose questions follow relationships can benefit.
+      - Stored direction does not restrict traversal; you can match a relationship in either direction.
+    interview: Expect to model a small domain as nodes, relationships and properties and to justify each choice.
+    sources:
+      - title: Graph database concepts
+        url: https://neo4j.com/docs/getting-started/graph-database/
+        publisher: Neo4j
+      - title: GQL conformance (Cypher manual appendix)
+        url: https://neo4j.com/docs/cypher-manual/current/appendix/gql-conformance/
+        publisher: Neo4j
+  - id: graphs.relational-vs-graph
+    title: Relational vs graph modelling
+    module: graph-data
+    level: intermediate
+    priority: essential
+    summary: Graphs shine when queries traverse many variable-length relationships; relational databases remain better for most tabular, aggregate-heavy workloads.
+    requires: [graphs.property-graph-model, databases.sql-joins]
+    why: >-
+      Choosing a graph database for a tabular workload — or forcing deeply connected queries into SQL —
+      causes pain. Knowing where each model shines lets you choose deliberately, or combine them.
+    keyIdeas:
+      - Relational databases connect rows at query time through foreign-key joins; graph databases store relationships directly, so traversals follow links from node to node (index-free adjacency in native graph engines).
+      - Graphs excel at variable-depth and path questions — friends of friends, shortest routes, dependency chains — where the number of hops is not fixed in advance.
+      - "SQL can traverse too, using recursive common table expressions (`WITH RECURSIVE`), which is often enough at moderate depth and data size."
+      - Relational systems remain stronger for large aggregations, reporting and strict schemas with mature tooling.
+      - Hybrids are common — keep the system of record relational and project a graph, or use an extension such as Apache AGE or SQL/PGQ for relationship-heavy queries.
+    misconceptions:
+      - A graph database is not automatically faster; for simple lookups and aggregations it is often slower.
+      - Having many-to-many join tables does not by itself mean you need a graph database.
+    interview: Interviewers ask when you would choose a graph database over PostgreSQL and how you would write the same query in SQL.
+    sources:
+      - title: Transition from relational to graph database
+        url: https://neo4j.com/docs/getting-started/appendix/graphdb-concepts/graphdb-vs-rdbms/
+        publisher: Neo4j
+      - title: WITH queries (common table expressions, including WITH RECURSIVE)
+        url: https://www.postgresql.org/docs/current/queries-with.html
+        publisher: PostgreSQL Global Development Group
+  - id: graphs.cypher
+    title: Cypher query language
+    module: graph-data
+    level: intermediate
+    priority: technology-specific
+    summary: Declarative ASCII-art patterns — MATCH, WHERE, RETURN, CREATE, MERGE — query and update property graphs; GQL is the ISO standard it influenced.
+    requires: [graphs.property-graph-model]
+    tools: [Neo4j]
+    why: >-
+      Cypher lets you describe the shape of the connections you are looking for as a visual pattern, which
+      makes graph queries far shorter and clearer than the equivalent chain of SQL joins.
+    keyIdeas:
+      - "Patterns are ASCII art, e.g. `(p:Person {name: 'Ada'})-[:KNOWS]->(friend)`; `MATCH` finds patterns, `WHERE` filters, `RETURN` projects, and `ORDER BY` / `LIMIT` shape results."
+      - "`CREATE` always adds new data; `MERGE` matches the whole pattern or creates all of it — use it on a uniquely constrained key to avoid duplicates."
+      - "`SET` and `REMOVE` change properties and labels; `DELETE` removes nodes and relationships, and `DETACH DELETE` also removes a node's relationships."
+      - "Use parameters (`$name`) instead of string concatenation; they prevent Cypher injection and let the database reuse query plans."
+      - Cypher has an open specification (openCypher) and strongly influenced ISO GQL; Neo4j's current Cypher 25 is aligning with GQL, so check your server version for supported syntax.
+    misconceptions:
+      - "`MERGE` on a long pattern can duplicate the parts that already exist; merge nodes on their keys first, then merge the relationship."
+      - "`MATCH` returns no row when part of the pattern is missing; use `OPTIONAL MATCH` for outer-join behaviour."
+    interview: Expect to write a query such as "friends of friends who are not already friends" and explain how `MERGE` behaves.
+    sources:
+      - title: Cypher manual introduction
+        url: https://neo4j.com/docs/cypher-manual/current/introduction/
+        publisher: Neo4j
+        version: "Cypher 25"
+      - title: MERGE clause
+        url: https://neo4j.com/docs/cypher-manual/current/clauses/merge/
+        publisher: Neo4j
+        version: "Cypher 25"
+      - title: openCypher
+        url: https://opencypher.org/
+        publisher: openCypher project
+  - id: graphs.traversal-queries
+    title: Paths and traversals
+    module: graph-data
+    level: intermediate
+    priority: essential
+    summary: Variable-length patterns, shortest paths and neighbourhood queries — and how to keep them bounded and fast.
+    requires: [graphs.cypher, cs.shortest-paths]
+    why: >-
+      The value of a graph lies in following connections, but unbounded traversals explode combinatorially.
+      You need to express paths precisely and keep them bounded to stay fast.
+    keyIdeas:
+      - "Variable-length patterns such as `(a)-[:KNOWS*1..3]->(b)` match 1 to 3 hops; current Cypher also supports quantified path patterns such as `((:Station)-[:LINK]->(:Station)){1,5}`."
+      - "Shortest paths use `SHORTEST 1` / `ALL SHORTEST` in current Cypher (older code uses `shortestPath()` / `allShortestPaths()`) and count hops; weighted shortest paths need algorithms such as Dijkstra, for example from a graph-algorithms library."
+      - Always bound the depth and start from a selective anchor found through an index (e.g. one user by ID) rather than scanning all nodes.
+      - The number of paths grows roughly as average degree to the power of depth, and a few very high-degree supernodes can make a 3-hop query touch millions of paths.
+      - Use `EXPLAIN` and `PROFILE` to see the query plan and the rows and database hits at each step.
+    misconceptions:
+      - Unbounded variable-length patterns are not just slower; on real graphs they can run effectively forever.
+      - Shortest by hop count is not shortest by distance or cost; weights need a weighted algorithm.
+    interview: Interviewers ask how to find connections within N hops efficiently and what makes such queries slow.
+    sources:
+      - title: Variable-length patterns
+        url: https://neo4j.com/docs/cypher-manual/current/patterns/variable-length-paths/
+        publisher: Neo4j
+        version: "Cypher 25"
+      - title: Shortest paths
+        url: https://neo4j.com/docs/cypher-manual/current/patterns/shortest-paths/
+        publisher: Neo4j
+        version: "Cypher 25"
+  - id: graphs.graph-modeling
+    title: Graph data modelling
+    module: graph-data
+    level: intermediate
+    priority: essential
+    summary: Decide what becomes a node, relationship or property based on the questions you will ask; avoid supernodes and model time explicitly.
+    requires: [graphs.cypher, graphs.relational-vs-graph]
+    why: >-
+      The same data can be modelled many ways, and a model that ignores your real queries leads to slow
+      traversals, supernodes and awkward code. Good graph modelling starts from the questions.
+    keyIdeas:
+      - List the questions first, then sketch nodes (things), relationships (verbs between things) and properties (attributes) that answer them directly.
+      - Make something a node when you need to connect to it, query it on its own or attach relationships to it (e.g. an `Address` shared by many customers); otherwise keep it a property.
+      - "Prefer specific relationship types (`:PURCHASED`, `:REVIEWED`) over a generic `:RELATED_TO` with a type property, because types are cheap to filter on during traversal."
+      - Model events and changing facts explicitly (e.g. an `:Employment` node with start and end dates) when facts change over time or need their own relationships.
+      - Watch for supernodes (e.g. a `Country` node everyone links to) and split them or store the value as a property; add uniqueness constraints on natural keys and indexes on lookup properties.
+    misconceptions:
+      - Copying a relational schema table-for-table misses the point; join tables usually become relationships.
+    interview: Expect to model a domain (e-commerce, an org chart) and defend your node, relationship and property decisions.
+    sources:
+      - title: Data modeling
+        url: https://neo4j.com/docs/getting-started/data-modeling/
+        publisher: Neo4j
+      - title: Indexes
+        url: https://neo4j.com/docs/cypher-manual/current/indexes/
+        publisher: Neo4j
+        version: "Cypher 25"
+  - id: graphs.neo4j
+    title: Neo4j and local graph options
+    module: graph-data
+    level: intermediate
+    priority: technology-specific
+    summary: Run Neo4j Community locally or in Docker, use the Python driver and indexes; NetworkX and PostgreSQL's Apache AGE extension are other free options.
+    requires: [graphs.cypher]
+    tools: [Neo4j, NetworkX, Apache AGE]
+    why: >-
+      Hands-on practice needs a graph database you can run on a laptop. Neo4j is the most widely used
+      property-graph database, and free tools such as NetworkX and Apache AGE cover lighter or
+      PostgreSQL-based needs.
+    keyIdeas:
+      - "Neo4j Community Edition is free and open source (GPLv3); run it with the official `neo4j` Docker image (browser UI on port 7474, Bolt protocol on 7687) and set the initial password with `NEO4J_AUTH`."
+      - "Python: `pip install neo4j`, create one `GraphDatabase.driver(uri, auth=...)` per application, call `verify_connectivity()`, and run queries with `driver.execute_query(query, name=..., database_=...)`, passing values as parameters."
+      - Create uniqueness constraints and indexes before bulk loading; recent Neo4j versions also offer vector indexes for embeddings.
+      - NetworkX is an in-memory Python library for graph analysis — ideal for learning and algorithms, but not a database; Apache AGE adds Cypher queries to PostgreSQL through its `cypher()` function.
+      - Neo4j now uses calendar version numbers (e.g. 2026.x), and Community lacks some Enterprise features such as clustering; check the current edition comparison.
+    misconceptions:
+      - Creating a new driver for every query is wasteful; drivers manage connection pools and should be reused and closed at shutdown.
+    production: Back up regularly, size heap and page-cache memory deliberately, and always use parameterised queries from application code.
+    sources:
+      - title: Neo4j Python Driver manual
+        url: https://neo4j.com/docs/python-manual/current/
+        publisher: Neo4j
+        version: "6"
+      - title: Docker (Operations Manual)
+        url: https://neo4j.com/docs/operations-manual/current/docker/
+        publisher: Neo4j
+      - title: Apache AGE
+        url: https://age.apache.org/
+        publisher: Apache Software Foundation
+  - id: graphs.knowledge-graphs
+    title: Knowledge graphs
+    module: knowledge
+    level: intermediate
+    priority: essential
+    summary: Entities and typed relations with a schema or ontology; RDF/SPARQL and property graphs are two ways to represent them.
+    requires: [graphs.property-graph-model]
+    why: >-
+      Organisations need machine-readable knowledge — which products contain which components, which drugs
+      interact — with explicit meaning and sources. Knowledge graphs provide it, and give LLM applications facts
+      they can traverse and cite.
+    keyIdeas:
+      - A knowledge graph stores entities (nodes) and typed relations (edges) under a schema or ontology that defines entity types, relation types and constraints.
+      - RDF expresses knowledge as subject-predicate-object triples named by IRIs, with schemas in RDFS or OWL and queries in SPARQL (matching triple patterns); it is a W3C standards family built for data exchange and linked data.
+      - Property graphs (Neo4j, GQL) put properties directly on nodes and relationships and are queried with Cypher or GQL; they are popular for application development.
+      - Classic RDF needs verbose reification to make statements about a statement; RDF 1.2 (a W3C Candidate Recommendation in 2026) adds triple terms for this, while property graphs use relationship properties.
+      - Public examples include Wikidata (queryable with SPARQL); enterprise knowledge graphs combine curated data with extracted facts.
+    misconceptions:
+      - A knowledge graph is not just any graph database; its value comes from consistent identities, types and meaning.
+    interview: Interviewers ask how RDF and property graphs differ and when you would pick each.
+    sources:
+      - title: RDF 1.1 Concepts and Abstract Syntax
+        url: https://www.w3.org/TR/rdf11-concepts/
+        publisher: W3C
+        version: "1.1"
+      - title: SPARQL 1.1 Query Language
+        url: https://www.w3.org/TR/sparql11-query/
+        publisher: W3C
+        version: "1.1"
+      - title: Knowledge Graphs (Hogan et al.)
+        url: https://arxiv.org/abs/2003.02320
+        publisher: arXiv
+  - id: graphs.kg-construction
+    title: Building knowledge graphs
+    module: knowledge
+    level: advanced
+    priority: supporting
+    summary: Extract entities and relations (rule-based or with LLM structured outputs), resolve duplicates, and keep provenance for every fact.
+    requires: [graphs.knowledge-graphs, genai.structured-outputs]
+    why: >-
+      Most knowledge lives in unstructured text. Turning it into a reliable graph means extracting entities and
+      relations, merging duplicates and tracking where every fact came from — otherwise the graph fills with
+      noise nobody can audit.
+    keyIdeas:
+      - "Pipeline: chunk documents, extract entities and relations, normalise and resolve duplicates, validate against the schema, load with provenance, then review samples."
+      - Extraction can be rule-based, use NER and relation-extraction models, or prompt an LLM with a fixed schema of allowed entity and relation types and structured output to limit free-form noise.
+      - Entity resolution decides when "IBM", "I.B.M." and "International Business Machines" are one node — using normalisation, identifiers, embeddings or LLM comparison — and is where most quality is won or lost.
+      - Store provenance for every node and edge (source document, chunk, extraction method or model, timestamp, confidence); W3C PROV-O is a standard vocabulary for this.
+      - LLM extraction is costly at corpus scale and non-deterministic, so measure precision and recall against hand-labelled samples.
+    misconceptions:
+      - More extracted triples do not make a better graph; unvalidated extractions add duplicates and false facts.
+    interview: Expect to explain how you would extract and deduplicate entities from documents and measure extraction quality.
+    production: Make extraction incremental and versioned (re-run only for changed documents, record the extractor and prompt version) so the graph can be rebuilt and audited.
+    sources:
+      - title: GraphRAG indexing overview
+        url: https://microsoft.github.io/graphrag/index/overview/
+        publisher: Microsoft
+      - title: "PROV-O: The PROV Ontology"
+        url: https://www.w3.org/TR/prov-o/
+        publisher: W3C
+  - id: graphs.graph-algorithms
+    title: Graph algorithms
+    module: knowledge
+    level: advanced
+    priority: supporting
+    summary: Centrality (degree, PageRank), community detection and similarity reveal structure in connected data.
+    requires: [graphs.traversal-queries]
+    tools: [NetworkX, Neo4j Graph Data Science]
+    why: >-
+      Some questions concern the structure of the whole network — who is most influential, which groups form,
+      which items are similar. Graph algorithms answer them and supply features for search, recommendations
+      and GraphRAG.
+    keyIdeas:
+      - "Centrality: degree (number of connections), betweenness (how often a node lies on shortest paths) and PageRank (importance from being linked by important nodes, computed iteratively with a damping factor, typically 0.85)."
+      - Community detection groups densely connected nodes; Louvain and Leiden optimise modularity (Leiden guarantees well-connected communities), and label propagation is fast and simple.
+      - Similarity measures such as Jaccard over shared neighbours support recommendations and entity resolution; pathfinding (Dijkstra, A*) handles weighted routes.
+      - Use NetworkX for small and medium graphs in Python, and Neo4j Graph Data Science or similar engines for larger ones; results are often written back as node properties.
+      - Many algorithms are randomised or parameter-sensitive, so check that results are stable across runs.
+    misconceptions:
+      - High degree is not the same as importance; PageRank and betweenness capture different notions of centrality.
+    interview: Interviewers ask you to explain PageRank intuitively and to pick an algorithm for a question about influence, communities or similarity.
+    sources:
+      - title: NetworkX algorithms reference
+        url: https://networkx.org/documentation/stable/reference/algorithms/index.html
+        publisher: NetworkX
+        version: "3.7"
+      - title: "From Louvain to Leiden: guaranteeing well-connected communities"
+        url: https://arxiv.org/abs/1810.08473
+        publisher: arXiv
+      - title: Neo4j Graph Data Science documentation
+        url: https://neo4j.com/docs/graph-data-science/current/
+        publisher: Neo4j
+  - id: graphs.graphrag
+    title: Graph-based retrieval (GraphRAG)
+    module: knowledge
+    level: advanced
+    priority: advanced
+    summary: Use graph structure for retrieval — entity neighbourhoods, multi-hop paths or community summaries — combined with text retrieval to answer connected questions.
+    requires: [graphs.kg-construction, graphs.graph-algorithms, rag.context-assembly, rag.evaluation]
+    why: >-
+      Plain vector RAG struggles with questions that connect facts across documents ("how are X and Y
+      related?") or summarise a whole corpus ("what are the main themes?"). Graph-based retrieval uses
+      relationships and community structure to answer them.
+    keyIdeas:
+      - Local, entity-centred retrieval links the question to entities, expands their graph neighbourhood (relations and connected chunks) and sends those facts plus source text to the LLM.
+      - Multi-hop retrieval follows paths between entities to answer chained questions; text-to-Cypher lets an LLM write graph queries, which must run read-only and be validated.
+      - Microsoft's GraphRAG extracts an entity graph with an LLM, clusters it hierarchically with Leiden, pre-generates community summaries and answers global questions by map-reducing over them; it also offers local, DRIFT and basic (vector) search.
+      - Indexing calls an LLM over the whole corpus, so it costs far more and takes longer than embedding-only RAG, and updates and prompt tuning cost more too.
+      - Combine graph retrieval with ordinary text retrieval and evaluate against a strong vector or hybrid baseline on your own questions; gains are largest for relationship and sensemaking queries.
+    misconceptions:
+      - GraphRAG is not one algorithm; the term covers approaches from simple neighbourhood expansion to Microsoft's community-summary method.
+      - A graph does not fix poor extraction; wrong or duplicated entities produce confidently wrong multi-hop answers.
+    interview: Interviewers ask when GraphRAG beats vector RAG, what it costs, and how you would evaluate it.
+    production: Estimate indexing cost on a sample before processing a full corpus, and plan how the graph and summaries are refreshed when documents change.
+    sources:
+      - title: "From Local to Global: A Graph RAG Approach to Query-Focused Summarization"
+        url: https://arxiv.org/abs/2404.16130
+        publisher: arXiv
+      - title: GraphRAG documentation
+        url: https://microsoft.github.io/graphrag/
+        publisher: Microsoft
+      - title: GraphRAG query engine overview
+        url: https://microsoft.github.io/graphrag/query/overview/
+        publisher: Microsoft
+  - id: graphs.text-to-cypher
+    title: Text-to-Cypher (LLM-generated graph queries)
+    module: knowledge
+    level: advanced
+    priority: optional
+    summary: Let an LLM translate questions into Cypher queries over a known schema — safely, with read-only execution, validation and result checks.
+    why: It makes graph data queryable in natural language, but generated queries can be wrong, slow or destructive if run unchecked.
+    requires: [graphs.cypher, genai.structured-outputs]
+    keyIdeas:
+      - Give the model the graph schema (labels, relationship types, properties) and a few example question–query pairs.
+      - Execute generated queries with a read-only database role, timeouts and result limits.
+      - Validate before running (parse the query, reject write clauses such as CREATE, MERGE, DELETE and SET) and evaluate on a labelled question set.
+    misconceptions:
+      - A query that runs without errors is not necessarily correct; check results against expected answers.
+    interview: How would you let users ask natural-language questions over a graph database without risking data loss?
+    sources:
+      - title: Cypher Manual
+        url: https://neo4j.com/docs/cypher-manual/current/
+        publisher: Neo4j

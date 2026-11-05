@@ -1,0 +1,215 @@
+id: networking.ip-addressing
+concept: networking.ip-addressing
+title: IP Addresses, Ports, CIDR and NAT
+subtitle: How a client identifies a network service
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: IP addresses identify network interfaces, ports identify transport endpoints, and CIDR describes address
+  ranges. Learn IPv4/IPv6, private addressing, NAT, loopback and safe server binding.
+objectives:
+- Distinguish domain names, IP addresses, ports and transport protocols.
+- Explain IPv4, IPv6 and CIDR prefix notation.
+- Identify RFC 1918 private IPv4 ranges.
+- Explain NAT, loopback and wildcard server binding.
+- Use Python ipaddress to inspect a network range.
+sources:
+- title: 'RFC 1918: Address Allocation for Private Internets'
+  url: https://www.rfc-editor.org/rfc/rfc1918
+  publisher: IETF
+- title: 'RFC 4632: Classless Inter-domain Routing'
+  url: https://www.rfc-editor.org/rfc/rfc4632
+  publisher: IETF
+- title: Python ipaddress documentation
+  url: https://docs.python.org/3/library/ipaddress.html
+  publisher: Python Software Foundation
+- title: 'RFC 8200: Internet Protocol, Version 6 (IPv6) Specification'
+  url: https://www.rfc-editor.org/rfc/rfc8200
+  publisher: IETF
+sections:
+- id: why
+  title: Addresses and endpoints
+  kind: why
+  blocks:
+  - type: markdown
+    body: An **IP address** identifies a network interface for packet routing. A **port** identifies a transport
+      endpoint on that host. A **domain name** is a human-friendly name that DNS can resolve to one or more addresses.
+      These are related but different pieces of information.
+  - type: callout
+    variant: analogy
+    title: Building and apartment
+    body: Think of an IP address as a building address and a port as the apartment or service inside it. A domain
+      name is a memorable label that helps you find the address.
+- id: ipv4-ipv6
+  title: IPv4, IPv6 and CIDR
+  kind: concept
+  blocks:
+  - type: markdown
+    body: IPv4 addresses are 32 bits, commonly written as four decimal octets such as `192.168.1.10`. IPv6 addresses
+      are 128 bits, written in hexadecimal groups such as `2001:db8::10`. The `::` notation compresses one or more
+      consecutive zero groups.
+  - type: markdown
+    body: '**CIDR** notation such as `192.168.1.0/24` says that the first 24 bits identify the network. The remaining
+      8 bits give 256 possible address values. The Python `ipaddress` module parses addresses and networks without
+      requiring third-party packages.'
+  - type: code
+    language: python
+    runnable: true
+    code: 'import ipaddress
+
+
+      network = ipaddress.ip_network("192.168.1.0/24")
+
+      print(network.network_address)
+
+      print(network.broadcast_address)
+
+      print(network.num_addresses)
+
+      print(ipaddress.ip_address("2001:db8::10").version)'
+    expectedOutput: '192.168.1.0
+
+      192.168.1.255
+
+      256
+
+      6'
+    caption: The documentation prefix 2001:db8::/32 is reserved for examples; this code performs local parsing only.
+  - type: item
+    ref: cidr-code
+- id: private-nat
+  title: Private addresses, NAT and localhost
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'RFC 1918 defines three private IPv4 ranges: `10.0.0.0/8`, `172.16.0.0/12` and `192.168.0.0/16`. These
+      addresses are used inside private networks and are not globally routed on the public internet. **NAT (Network
+      Address Translation)** lets a network gateway translate private addresses and often ports so many devices
+      can share a public IPv4 address.'
+  - type: markdown
+    body: '`127.0.0.1` is IPv4 loopback and `::1` is IPv6 loopback: both refer to the local machine from the process’s
+      network namespace. A server bound to `127.0.0.1` is not reachable from another device. `0.0.0.0` is a wildcard
+      bind address meaning all local IPv4 interfaces; it is not a destination address to give a client.'
+  - type: item
+    ref: ip-private-mcq
+  - type: item
+    ref: bind-address-explain
+- id: ports
+  title: Ports and connection endpoints
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'TCP and UDP port numbers range from 0 through 65535. Common conventions include 22 for SSH, 53 for DNS,
+      80 for HTTP and 443 for HTTPS. A port number alone is not globally unique: a service endpoint includes an
+      address and transport protocol as well.'
+  - type: markdown
+    body: When debugging a service, verify the host address, listening port, transport protocol, bind interface
+      and firewall rules. “Connection refused” and “timeout” are different symptoms; do not change application code
+      until you know which layer failed.
+  - type: item
+    ref: port-tf
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- IP addresses support routing; ports identify transport endpoints.
+
+      - IPv4 has 32 bits; IPv6 has 128 bits.
+
+      - CIDR prefix length determines the network and host portions.
+
+      - RFC 1918 private ranges are 10/8, 172.16/12 and 192.168/16.
+
+      - Loopback is local-only; wildcard bind addresses listen on all matching interfaces.'
+  - type: item
+    ref: ip-private-mcq
+  - type: item
+    ref: port-tf
+  - type: item
+    ref: cidr-code
+items:
+- id: ip-private-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Which IPv4 address is in an RFC 1918 private range?
+  explanation: RFC 1918 reserves 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 for private internets.
+  options:
+  - id: a
+    text: 8.8.8.8
+    feedback: This is a public address.
+  - id: b
+    text: 172.20.4.5
+    correct: true
+    feedback: Correct. 172.16.0.0 through 172.31.255.255 is private.
+  - id: c
+    text: 172.40.4.5
+    feedback: 172.40.0.0/16 is outside the private 172.16/12 block.
+  - id: d
+    text: 192.0.2.10
+    feedback: This belongs to a documentation range, not RFC 1918 private space.
+- id: port-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: A TCP port identifies a service endpoint on a host; it does not identify a person or a physical computer
+    globally.
+  answer: true
+  explanation: A connection endpoint combines an address and port. Ports are local to a transport protocol and host
+    address.
+- id: bind-address-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: A FastAPI service works when called from the same machine but cannot be reached from another device on
+    the LAN. The server is bound to 127.0.0.1. Explain the cause and the safer diagnostic steps before changing
+    the bind address.
+  rubric:
+  - Explain that 127.0.0.1 is loopback and accepts connections only from the same network namespace.
+  - Explain that binding to 0.0.0.0 listens on all IPv4 interfaces, which may expose the service beyond the intended
+    LAN.
+  - Recommend checking firewall rules, intended interface, port and authentication before exposing the service.
+  modelAnswer: 127.0.0.1 is the loopback interface, so another device cannot connect to that listener. Binding to
+    0.0.0.0 listens on all IPv4 interfaces, but that can expose a development server on public or untrusted networks.
+    First confirm the intended network, firewall policy, port and access controls; then bind only as broadly as
+    needed.
+  explanation: A strong answer separates what the protocol guarantees from what remains the application or operator
+    responsibility, then proposes a diagnostic based on observable evidence.
+- id: cidr-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Use Python’s `ipaddress` module to implement `network_summary(cidr)`. Return a tuple containing the network
+    address, broadcast address and number of addresses in the subnet.
+  starterCode: "import ipaddress\n\ndef network_summary(cidr: str) -> tuple[str, str, int]:\n    # Parse the network\
+    \ and return its summary.\n    pass\n\nprint(network_summary(\"192.168.1.0/24\"))"
+  solution: "import ipaddress\n\ndef network_summary(cidr: str) -> tuple[str, str, int]:\n    network = ipaddress.ip_network(cidr,\
+    \ strict=False)\n    return (str(network.network_address), str(network.broadcast_address), network.num_addresses)\n\
+    \nprint(network_summary(\"192.168.1.0/24\"))"
+  expectedOutput: ('192.168.1.0', '192.168.1.255', 256)
+  tests:
+  - name: Summarises IPv4 subnet
+    code: 'assert network_summary("192.168.1.0/24") == ("192.168.1.0", "192.168.1.255", 256)
+
+      assert network_summary("10.0.0.0/30") == ("10.0.0.0", "10.0.0.3", 4)'
+  - name: Accepts host address when strict is false
+    code: assert network_summary("192.168.1.12/24")[0] == "192.168.1.0"
+  hints:
+  - Create a network with `ipaddress.ip_network(cidr, strict=False)`.
+  - Read `.network_address`, `.broadcast_address` and `.num_addresses`.
+  - Convert address objects to strings before returning.
+  feedback:
+  - when:
+      errorType: ValueError
+    message: Check the CIDR format, such as 192.168.1.0/24. `ip_network` rejects invalid address or prefix lengths.
+  explanation: CIDR represents a network prefix and host bits. For an IPv4 /24, eight bits remain for addresses,
+    giving 2^8 = 256 total addresses. This count includes network and broadcast addresses in conventional IPv4 subnets.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - ip-private-mcq
+  - port-tf
+  - cidr-code
+cheatsheet: 'IP address = network interface address; port = transport service endpoint. IPv4 = 32 bits; IPv6 = 128
+  bits. CIDR /24 leaves 8 host bits (256 total addresses). RFC 1918 private ranges: 10/8, 172.16/12, 192.168/16.
+  127.0.0.1 is local loopback; 0.0.0.0 is wildcard bind, not a client destination.'

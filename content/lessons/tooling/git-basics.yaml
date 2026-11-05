@@ -1,0 +1,1272 @@
+id: tooling.git-basics
+concept: tooling.git-basics
+title: "Git Basics: init, add, commit, status, log, diff"
+subtitle: The working tree, the staging area and snapshots
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Learn the handful of Git commands you will use every day and, more importantly, the model behind them: a
+  working tree you edit, a staging area that holds exactly what the next commit will contain, and a
+  repository of snapshot commits. Then build a tiny content-addressed snapshot store in Python to see why
+  commits are snapshots and why identical content is stored only once.
+objectives:
+  - Describe the working tree, the staging area (index) and the repository, and what add and commit move between them.
+  - Create a repository and record commits with init, status, add, commit and log.
+  - Read git status and git diff output, including files that are both staged and modified.
+  - Write clear commit messages that describe one logical change.
+  - Explain why a commit is a snapshot and how content addressing makes unchanged files free to store.
+  - Implement a simplified content-addressed object store and status check in Python.
+sources:
+  - title: "Pro Git, 1.3 What is Git? (snapshots and the three states)"
+    url: https://git-scm.com/book/en/v2/Getting-Started-What-is-Git%3F
+    publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - title: "Pro Git, 2.2 Recording Changes to the Repository"
+    url: https://git-scm.com/book/en/v2/Git-Basics-Recording-Changes-to-the-Repository
+    publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - title: "Pro Git, 2.3 Viewing the Commit History"
+    url: https://git-scm.com/book/en/v2/Git-Basics-Viewing-the-Commit-History
+    publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - title: "Pro Git, 5.2 Contributing to a Project (commit guidelines)"
+    url: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project
+    publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - title: "Pro Git, 10.2 Git Objects"
+    url: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+    publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - title: git-status documentation
+    url: https://git-scm.com/docs/git-status
+    publisher: Git project
+  - title: git-diff documentation
+    url: https://git-scm.com/docs/git-diff
+    publisher: Git project
+  - title: hashlib — Secure hashes and message digests
+    url: https://docs.python.org/3/library/hashlib.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why Git, and why these commands
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Without version control, a project's history tends to look like this:
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          notes.py
+          notes_old.py
+          notes_backup_tuesday.py
+          notes_final.py
+          notes_final_v2_REALLY_final.py
+        caption: Which file is current? What changed between them, and why? Nobody knows.
+      - type: markdown
+        body: |
+          With Git, there is one `notes.py`, and the history is a list of recorded snapshots, each with an
+          author, a time and a message explaining the change:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git log --oneline
+          e49713c (HEAD -> main) Add TODO about deleting notes
+          f4649a3 Strip whitespace and add count_notes
+          581416a Add note storage
+        caption: Real output from the session in this lesson. Your commit ids will differ.
+      - type: markdown
+        body: |
+          You can see exactly what each commit changed, compare any two versions, and go back to any of them.
+          This lesson covers the six commands that do the everyday work — `init`, `status`, `add`, `commit`,
+          `log` and `diff` — and the model that makes them predictable. The one surprise for most beginners
+          is the **staging area**: Git commits only what you staged, which protects you from committing
+          half-finished edits or a file of secrets by accident — once you understand it.
+
+          Git runs in your terminal, not in this browser, so Git sessions are shown as illustrative
+          transcripts recorded with Git 2.51. Install Git from [git-scm.com](https://git-scm.com/downloads)
+          and type along locally; the commands are identical in bash, zsh and PowerShell. The executable
+          part of the lesson is a Python model of Git's storage.
+
+  - id: three-areas
+    title: "The three areas: working tree, staging area, repository"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Git keeps your project in three places:
+
+          | Area | What it is | Where it lives |
+          |---|---|---|
+          | **[Working tree](glossary:working-tree)** | The normal files you edit in your editor | Your project folder |
+          | **[Staging area](glossary:staging-area)** (also called the *index*) | Exactly what the **next commit** will contain | `.git/index` |
+          | **[Repository](glossary:git-repository)** | The permanent history of commits | `.git/objects` and `.git/refs` |
+
+          [HEAD](glossary:git-head) points at your current branch (here `main`), and the branch points at the
+          latest commit. Two commands move content to the right:
+
+          - `git add <file>` copies the file's **current content** from the working tree into the staging area.
+          - `git commit` turns the staging area into a new [commit](glossary:git-commit) and moves the branch to it.
+
+          Step through what happens to one file:
+      - type: visualization
+        component: step-diagram
+        title: A change moving from working tree to commit
+        caption: Click through the steps. The payload shows what git status --short would print.
+        props:
+          width: 760
+          height: 290
+          nodes:
+            - { id: you, label: You (editor), x: 100, y: 220, shape: actor }
+            - { id: wt, label: Working tree, x: 100, y: 80 }
+            - { id: stage, label: Staging area, x: 380, y: 80 }
+            - { id: repo, label: Repository, x: 650, y: 80, shape: store }
+            - { id: head, label: HEAD -> main, x: 650, y: 220, shape: pill }
+          edges:
+            - { id: e-edit, from: you, to: wt, label: edit }
+            - { id: e-add, from: wt, to: stage, label: git add }
+            - { id: e-commit, from: stage, to: repo, label: git commit }
+            - { id: e-head, from: head, to: repo, label: latest commit }
+          steps:
+            - title: Clean state
+              body: >-
+                After a commit, all three areas hold the same version of notes.py. `git status` says
+                "nothing to commit, working tree clean".
+              active: [wt, stage, repo, head, e-head]
+              payload: (no output)
+            - title: Edit the file
+              body: >-
+                You change notes.py in your editor. Only the working tree changed; the staging area and the
+                last commit still hold the old version. Git calls this "Changes not staged for commit".
+              active: [you, wt, e-edit]
+              payload: " M notes.py"
+            - title: Stage it with git add
+              body: >-
+                `git add notes.py` copies the file's content as it is right now into the staging area. The M
+                moves to the first column, meaning "staged".
+              active: [wt, stage, e-add]
+              payload: "M  notes.py"
+            - title: Edit it again
+              body: >-
+                You make one more edit. The staging area still holds the version from the moment you ran
+                git add, so the file is now staged and modified at the same time.
+              active: [you, wt, stage, e-edit]
+              payload: "MM notes.py"
+            - title: Commit
+              body: >-
+                `git commit -m "..."` records the staging area as a new snapshot whose parent is the previous
+                commit, and moves main (and so HEAD) to it. The second edit is not included, because it was
+                never staged.
+              active: [stage, repo, head, e-commit, e-head]
+              payload: |
+                [main f4649a3] Strip whitespace and add count_notes
+                 1 file changed, 5 insertions(+), 1 deletion(-)
+            - title: What is left
+              body: >-
+                The unstaged edit is still in your working tree. Stage and commit it later, or throw it away
+                with git restore.
+              active: [wt]
+              payload: " M notes.py"
+      - type: callout
+        variant: analogy
+        title: Packing a parcel
+        body: |
+          The working tree is your room, the staging area is the open parcel box, and a commit seals the box
+          and labels it. `git add` puts a copy of an item in the box *as it is now*; changing the item in your
+          room afterwards does not change the copy in the box.
+      - type: item
+        ref: three-areas-mcq
+
+  - id: first-repo
+    title: Your first repository
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **One-time setup.** Tell Git who you are (this is written into every commit) and which name to give
+          the first branch. Without `init.defaultBranch`, current Git versions call it `master` and print a
+          hint; `main` is the common choice today, and the Git project plans to make it the default in Git
+          3.0.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git --version
+          git version 2.51.0
+          $ git config --global user.name "Ada Lovelace"
+          $ git config --global user.email "ada@example.com"
+          $ git config --global init.defaultBranch main
+        caption: Use your own name and email. --global stores them in your user's Git configuration file.
+      - type: markdown
+        body: |
+          **Create the repository.** `git init` creates the hidden `.git` folder that holds the staging area
+          and the history. Run `git status` constantly while you learn — it tells you what Git thinks.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ mkdir notes-app
+          $ cd notes-app
+          $ git init
+          Initialized empty Git repository in /home/ada/notes-app/.git/
+          $ git status
+          On branch main
+
+          No commits yet
+
+          nothing to commit (create/copy files and use "git add" to track)
+      - type: markdown
+        body: |
+          **Add a file.** Create `notes.py` in your editor (any content). Git sees it but does not track it
+          yet: it is an [untracked file](glossary:untracked-file).
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git status
+          On branch main
+
+          No commits yet
+
+          Untracked files:
+            (use "git add <file>..." to include in what will be committed)
+                  notes.py
+
+          nothing added to commit but untracked files present (use "git add" to track)
+      - type: markdown
+        body: |
+          **Stage and commit.** `git add` stages the file; `git commit -m "message"` records the snapshot.
+          Read the hints in Git's output — they usually tell you the next command.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git add notes.py
+          $ git status
+          On branch main
+
+          No commits yet
+
+          Changes to be committed:
+            (use "git rm --cached <file>..." to unstage)
+                  new file:   notes.py
+
+          $ git commit -m "Add note storage"
+          [main (root-commit) 581416a] Add note storage
+           1 file changed, 5 insertions(+)
+           create mode 100644 notes.py
+          $ git log --oneline
+          581416a (HEAD -> main) Add note storage
+        caption: >-
+          "root-commit" means it has no parent. 581416a is the start of the commit's 40-character id; yours
+          will differ because the id depends on the author, time and content.
+        annotations:
+          - line: 12
+            text: The commit line shows branch, short id and message.
+          - line: 16
+            text: "--oneline shows one commit per line; (HEAD -> main) marks where you are."
+
+  - id: status-and-diff
+    title: Seeing changes with status and diff
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Now edit `notes.py` (strip whitespace from notes and add a `count_notes` function). `git status`
+          reports the file as modified but not staged, and `git diff` shows exactly what changed **between the
+          staging area and the working tree**:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git status
+          On branch main
+          Changes not staged for commit:
+            (use "git add <file>..." to update what will be committed)
+            (use "git restore <file>..." to discard changes in working directory)
+                  modified:   notes.py
+
+          no changes added to commit (use "git add" and/or "git commit -a")
+          $ git diff
+          diff --git a/notes.py b/notes.py
+          index 150f05e..494577d 100644
+          --- a/notes.py
+          +++ b/notes.py
+          @@ -2,4 +2,8 @@ notes = []
+
+
+           def add_note(text):
+          -    notes.append(text)
+          +    notes.append(text.strip())
+          +
+          +
+          +def count_notes():
+          +    return len(notes)
+        annotations:
+          - line: 11
+            text: 150f05e and 494577d identify the old and new file contents (blob ids).
+          - line: 14
+            text: "Hunk header: old lines 2-5 (4 lines) became new lines 2-9 (8 lines). Text after @@ is nearby context."
+          - line: 18
+            text: "- marks a removed line, + an added line, a leading space an unchanged context line."
+      - type: markdown
+        body: |
+          After `git add`, plain `git diff` prints **nothing** — the working tree and the staging area agree
+          again. To see what the next commit will contain, compare the staging area with the last commit
+          using `git diff --staged` (`--cached` is a synonym):
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git add notes.py
+          $ git diff
+          $ git diff --staged
+          diff --git a/notes.py b/notes.py
+          index 150f05e..494577d 100644
+          --- a/notes.py
+          +++ b/notes.py
+          @@ -2,4 +2,8 @@ notes = []
+          ...
+        caption: The staged diff is the same change as before, now waiting in the staging area.
+      - type: markdown
+        body: |
+          Now the classic surprise. Edit `notes.py` once more (add a `# TODO` comment) **without** running
+          `git add` again:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git status
+          On branch main
+          Changes to be committed:
+            (use "git restore --staged <file>..." to unstage)
+                  modified:   notes.py
+
+          Changes not staged for commit:
+            (use "git add <file>..." to update what will be committed)
+            (use "git restore <file>..." to discard changes in working directory)
+                  modified:   notes.py
+
+          $ git status --short
+          MM notes.py
+          $ git commit -m "Strip whitespace and add count_notes"
+          [main f4649a3] Strip whitespace and add count_notes
+           1 file changed, 5 insertions(+), 1 deletion(-)
+          $ git status --short
+           M notes.py
+        caption: The commit took the staged version. The TODO edit is still only in the working tree.
+      - type: markdown
+        body: |
+          `git status --short` prints two columns: the **left** column compares the staging area with the last
+          commit (staged changes), the **right** column compares the working tree with the staging area
+          (unstaged changes).
+
+          | Short status | Meaning |
+          |---|---|
+          | `?? file` | Untracked — Git has never been told about it |
+          | `A  file` | New file, staged |
+          | `M  file` | Modified and staged |
+          | ` M file` | Modified, not staged |
+          | `MM file` | Staged, then modified again |
+          | `D  file` / ` D file` | Deleted (staged / not staged) |
+      - type: item
+        ref: edit-after-add
+      - type: item
+        ref: diff-staged
+
+  - id: commits-and-messages
+    title: Commits, history and good messages
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `git log` shows the history, newest first. Each commit has a full 40-character id, an author, a
+          date and a message:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git log -1 f4649a3
+          commit f4649a3451de7a1fc309fab8a96e10b5e1412fe5
+          Author: Ada Lovelace <ada@example.com>
+          Date:   Thu Oct 22 21:41:33 2026 +0530
+
+              Strip whitespace and add count_notes
+          $ git log --oneline --graph
+          * e49713c (HEAD -> main) Add TODO about deleting notes
+          * f4649a3 Strip whitespace and add count_notes
+          * 581416a Add note storage
+        caption: "-1 limits the output to one commit (here the one whose id starts f4649a3); --graph draws the branch structure, a straight line for now."
+      - type: markdown
+        body: |
+          **Writing a commit message.** Future readers (including you) use messages to find when and *why*
+          something changed. Common conventions, as in Pro Git's commit guidelines:
+
+          - A short **subject line** (about 50 characters) in the imperative mood, as if completing "If applied,
+            this commit will ...": *Fix rounding in invoice totals*, not *fixed stuff*.
+          - A blank line, then a **body** wrapped at about 72 characters explaining **why** the change was
+            needed and anything surprising. The diff already shows *what* changed.
+          - **One logical change per commit.** A refactor and a bug fix go in separate commits, so each can be
+            understood, reviewed and undone on its own.
+
+          `git commit` without `-m` opens your configured editor so you can write a subject and a body.
+
+          | Weak message | Better message |
+          |---|---|
+          | `update` | `Strip whitespace before storing notes` |
+          | `fixed bug` | `Fix crash when a note is empty` |
+          | `changes to notes.py and README and tests` | Split into three commits, each with its own subject |
+      - type: callout
+        variant: warning
+        title: git commit -a skips new files
+        body: |
+          `git commit -a -m "..."` stages every **modified tracked** file and commits in one step. It does
+          **not** include untracked files: a brand-new file still needs `git add` first.
+
+          ```text
+          $ git status --short
+           M notes.py
+          ?? README.md
+          $ git commit -a -m "Add TODO about deleting notes"
+          [main e49713c] Add TODO about deleting notes
+           1 file changed, 2 insertions(+)
+          $ git status --short
+          ?? README.md
+          ```
+      - type: item
+        ref: message-mcq
+
+  - id: snapshot-model
+    title: "Why commits are snapshots: a model in Python"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A common belief is that Git stores a list of *diffs*. It does not: **each commit records a snapshot
+          of the whole project**, and Git computes diffs when you ask for them. That sounds wasteful — until
+          you see how the snapshots are stored.
+
+          Git uses [content-addressable storage](glossary:content-addressable-storage): every piece of data is
+          saved under a key computed from the data itself, a **hash**. A hash function such as SHA-1 turns any
+          bytes into a fixed-length fingerprint; the same bytes always give the same fingerprint, and
+          different bytes (in practice) give different ones. So identical content is automatically stored
+          only once.
+
+          The code below is a **simplified model** of Git's object store, not Git itself. A dictionary plays
+          the role of `.git/objects`.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          objects = {}
+
+          def store(data: bytes) -> str:
+              """Save data under the SHA-1 of its content and return that key."""
+              key = hashlib.sha1(data).hexdigest()
+              objects[key] = data
+              return key
+
+          first = store(b"notes = []\n")
+          second = store(b"notes = []\n")
+          third = store(b"notes = ['milk']\n")
+          print(first == second, first == third)
+          print(len(objects))
+          print(len(first))
+        expectedOutput: |
+          True False
+          2
+          40
+        annotations:
+          - line: 7
+            text: The key is computed from the content - that is what "content-addressed" means.
+          - line: 8
+            text: Storing the same content again writes the same key, so nothing new is added.
+          - line: 16
+            text: A SHA-1 hex digest is 40 characters, like a full Git commit id.
+      - type: visualization
+        component: python-tracer
+        title: Identical content, one entry
+        caption: Watch objects on the third pass - the key already exists, so the dictionary does not grow.
+        props:
+          code: |
+            import hashlib
+            objects = {}
+            for text in ["print(1)", "print(2)", "print(1)"]:
+                key = hashlib.sha1(text.encode()).hexdigest()[:7]
+                objects[key] = text
+            print(len(objects))
+      - type: markdown
+        body: |
+          Now model a commit the way Git structures it. A [blob](glossary:git-blob) stores one file's content;
+          a **tree** lists file names with their blob ids; a **commit** stores the tree id, the parent commit
+          id and the message. All three go into the same store.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          objects = {}
+
+          def store(data: bytes) -> str:
+              key = hashlib.sha1(data).hexdigest()
+              objects[key] = data
+              return key
+
+          def commit(files: dict[str, str], parent: str | None, message: str) -> str:
+              tree_lines = []
+              for name in sorted(files):
+                  blob_id = store(files[name].encode("utf-8"))
+                  tree_lines.append(f"{blob_id} {name}")
+              tree_id = store("\n".join(tree_lines).encode("utf-8"))
+              commit_text = f"tree {tree_id}\nparent {parent}\n\n{message}"
+              return store(commit_text.encode("utf-8"))
+
+          v1 = {"notes.py": "notes = []\n", "README.md": "# Notes\n"}
+          c1 = commit(v1, None, "Add note storage")
+          print(len(objects))
+
+          v2 = {"notes.py": "notes = ['milk']\n", "README.md": "# Notes\n"}
+          c2 = commit(v2, c1, "Add first note")
+          print(len(objects))
+
+          c3 = commit(v2, c2, "Record the same files again")
+          print(len(objects), c3 != c2)
+        expectedOutput: |
+          4
+          7
+          8 True
+        annotations:
+          - line: 13
+            text: One blob per file content.
+          - line: 15
+            text: The tree records which content each file name has.
+          - line: 16
+            text: The commit points at its tree and its parent; changing either changes the commit id.
+          - line: 21
+            text: "2 blobs + 1 tree + 1 commit = 4 objects."
+          - line: 25
+            text: Only notes.py changed - 1 new blob, a new tree and a new commit (7). README.md's blob is reused.
+          - line: 28
+            text: Same files again - the blobs and tree already exist; only the commit is new (8).
+      - type: markdown
+        body: |
+          This is why snapshots are cheap: **an unchanged file costs nothing in a new commit**, because its
+          blob already exists and the new tree simply points at it. And because a commit's id is a hash that
+          includes its parent's id, changing any old commit would change every id after it — history is
+          tamper-evident.
+
+          The model even matches Git's real blob ids if you hash the same thing Git hashes: the header
+          `blob <size>` and a zero byte, then the content.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          content = b"hello\n"
+          header = f"blob {len(content)}\x00".encode()
+          print(hashlib.sha1(header + content).hexdigest())
+        expectedOutput: |
+          ce013625030ba8dba906f756967f9e9ca394464a
+        caption: The same id that echo hello | git hash-object --stdin prints in a real terminal.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ echo hello | git hash-object --stdin
+          ce013625030ba8dba906f756967f9e9ca394464a
+        caption: Run this locally to confirm. Git object ids depend only on content, so everyone gets this id.
+      - type: item
+        ref: predict-dedupe
+      - type: item
+        ref: explain-snapshots
+
+  - id: under-the-hood
+    title: Inside the .git folder
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Everything Git knows lives in `.git`. The important parts:
+
+          | Path | Contents |
+          |---|---|
+          | `.git/objects/` | Blobs, trees and commits (zlib-compressed), filed under the first two hex digits of their id |
+          | `.git/refs/heads/main` | The id of the latest commit on `main` |
+          | `.git/HEAD` | Which branch is checked out: `ref: refs/heads/main` |
+          | `.git/index` | The staging area, a binary file listing paths, blob ids and file metadata |
+          | `.git/config` | Settings for this repository |
+
+          Low-level "plumbing" commands show the real objects. In the session from this lesson:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ cat .git/HEAD
+          ref: refs/heads/main
+          $ git cat-file -t HEAD
+          commit
+          $ git cat-file -p HEAD
+          tree c9684bc9ea8bb3bfc39dec7fa20a07a2a7da0034
+          parent f4649a3451de7a1fc309fab8a96e10b5e1412fe5
+          author Ada Lovelace <ada@example.com> 1792685496 +0530
+          committer Ada Lovelace <ada@example.com> 1792685496 +0530
+
+          Add TODO about deleting notes
+          $ git cat-file -p "HEAD^{tree}"
+          100644 blob bb9a34c2d01e1c075a3a98a05a0c094bd169a47c    notes.py
+          $ git hash-object notes.py
+          bb9a34c2d01e1c075a3a98a05a0c094bd169a47c
+          $ git count-objects
+          9 objects, 0 kilobytes
+        caption: >-
+          A real commit object - almost exactly what our Python model stored. Three commits produced 9 objects:
+          3 blobs, 3 trees and 3 commits.
+      - type: markdown
+        body: |
+          **Snapshots in the model, deltas on disk.** To save space, `git gc` and network transfers pack
+          objects into *packfiles*, where similar objects are stored as deltas against each other. That is a
+          storage optimisation; every commit still *means* a full snapshot, and Git reconstructs it exactly.
+
+          **Hash algorithms.** Repositories use SHA-1 by default. Git also supports SHA-256 repositories
+          (`git init --object-format=sha256`), and the Git project's list of planned breaking changes says
+          new repositories will default to SHA-256 in Git 3.0. Check your Git version's documentation; the
+          content-addressing idea is the same either way.
+
+          **Where the model is simplified.** Real tree entries also store file modes (`100644`, executable
+          bits) and nested trees for folders; commit objects store author, committer and timestamps; and the
+          staging area is a separate index file rather than a Python dict.
+
+  - id: mistakes
+    title: Common mistakes and error messages
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Cause | Fix |
+          |---|---|---|
+          | `fatal: not a git repository (or any of the parent directories): .git` | You are not inside a repository folder | `cd` into the project, or run `git init` if it is new |
+          | `fatal: pathspec 'note.py' did not match any files` | Typo in the file name, or wrong folder | Check with `git status` or `ls`; use tab completion |
+          | `nothing added to commit but untracked files present` | New files were never staged | `git add <file>` first |
+          | A commit is missing your latest edit | You edited after `git add` (status showed `MM`) | `git add` again, then commit; check `git diff --staged` before committing |
+          | You staged a file by mistake | `git add .` picked up more than intended | `git restore --staged <file>` (Git's status hint says so) |
+          | A text editor (often Vim) opened and you are stuck | `git commit` without `-m` opens an editor for the message | Write the message, then in Vim press Esc and type `:wq` Enter; or configure `core.editor` |
+          | Secrets, virtual environments or build output were committed | `git add .` without a `.gitignore` | See [.gitignore and repository hygiene](concept:tooling.gitignore-hygiene); a committed secret must be rotated |
+      - type: markdown
+        body: |
+          If Git cannot work out your identity, the first commit fails with a message like this (on some
+          systems Git guesses a name and email from your account instead and prints a warning):
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ git commit -m "Add note storage"
+          Author identity unknown
+
+          *** Please tell me who you are.
+
+          Run
+
+            git config --global user.email "you@example.com"
+            git config --global user.name "Your Name"
+
+          to set your account's default identity.
+          Omit --global to set the identity only in this repository.
+
+          fatal: unable to auto-detect email address (got 'ada@laptop.(none)')
+        caption: Follow the instructions in the message, then commit again.
+      - type: callout
+        variant: tip
+        title: The status habit
+        body: |
+          Run `git status` before and after every `add` and `commit` while you are learning. Most mistakes in
+          this table are visible in its output before they happen.
+
+  - id: practice
+    title: Practice with the snapshot model
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises build parts of the simplified Git model in Python. They check your functions with
+          several inputs, so compute results from the data.
+      - type: item
+        ref: implement-store
+      - type: item
+        ref: implement-status
+      - type: item
+        ref: debug-commit-id
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Working tree** (your files) → `git add` → **staging area** (the next commit) → `git commit` →
+            **repository** (history). HEAD points at the current branch, which points at the latest commit.
+          - `git status` shows untracked, modified and staged files; `git status --short` uses two columns
+            (left = staged, right = unstaged).
+          - `git diff` = working tree vs staging area; `git diff --staged` = staging area vs last commit.
+          - `git add` stages content **as it is at that moment**; edit again and you must add again.
+          - `git commit -a` stages modified tracked files, but never untracked ones.
+          - Commit messages: short imperative subject, blank line, body explaining why; one logical change.
+          - Commits are **snapshots**. Content addressing (ids = hashes of content) means unchanged files are
+            stored once and history is tamper-evident.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "What is the staging area for?" and "Does Git store diffs or snapshots?". Explain the three
+          areas with an example of a file that is both staged and modified, and describe blobs, trees and
+          commits as content-addressed objects. See
+          [the interview question](interview:tooling.git-basics.staging-area).
+
+items:
+  - id: three-areas-mcq
+    type: mcq
+    skill: recognition
+    prompt: |
+      You edited `app.py` and ran `git add app.py`. You have **not** committed. Where does the new version of
+      `app.py` exist now?
+    explanation: >-
+      git add copies the current content into the staging area; the working tree still has it too. Nothing
+      enters the history until git commit.
+    options:
+      - id: a
+        text: Only in the working tree.
+        feedback: git add copied the content into the staging area as well - that is what staging means.
+      - id: b
+        text: In the working tree and the staging area, but not yet in any commit.
+        correct: true
+        feedback: Right. git status lists it under "Changes to be committed" until you commit.
+      - id: c
+        text: In the repository history, because git add saves it permanently.
+        feedback: Only git commit records history. A staged change can still be unstaged with git restore --staged.
+      - id: d
+        text: On GitHub.
+        feedback: Git works locally. Nothing reaches a remote host until you push, which is a separate step.
+
+  - id: edit-after-add
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      You run `git add report.py`, then fix one more typo in `report.py`, then run
+      `git commit -m "Fix report totals"`. A reviewer says the typo is still there. Why?
+    explanation: >-
+      git add stages a snapshot of the file's content at that moment. The typo fix happened afterwards, so it
+      was only in the working tree, and git commit records only the staging area.
+    options:
+      - id: a
+        text: git commit only records what was staged, and the typo fix was made after git add.
+        correct: true
+        feedback: Correct. git status would have shown the file as MM. Add it again and commit.
+      - id: b
+        text: Git only saves one change per file per commit.
+        feedback: A commit can contain any number of changes to a file - whatever was staged.
+      - id: c
+        text: git add tracks the file, so all later edits are committed automatically.
+        feedback: Staging copies content, not a live link. Later edits need another git add.
+      - id: d
+        text: The commit failed silently.
+        feedback: The commit succeeded; it just recorded the staged version.
+
+  - id: diff-staged
+    type: mcq
+    skill: recognition
+    prompt: Which command shows exactly the changes that the **next** `git commit` will record?
+    explanation: >-
+      git diff --staged (or --cached) compares the staging area with the last commit, which is precisely what
+      git commit will record. Plain git diff shows changes that are not staged yet.
+    options:
+      - id: a
+        text: git diff
+        feedback: Plain git diff compares the working tree with the staging area - the changes that will NOT be committed yet.
+      - id: b
+        text: git diff --staged
+        correct: true
+        feedback: Right. Make it a habit before every commit.
+      - id: c
+        text: git log
+        feedback: git log lists commits that already exist.
+      - id: d
+        text: git status --short
+        feedback: Status lists which files changed, but not the lines.
+
+  - id: message-mcq
+    type: mcq
+    skill: design
+    prompt: |
+      You changed `invoice.py` so that totals are rounded to two decimal places, because customers saw
+      amounts like 10.000000001. Which commit message is best?
+    explanation: >-
+      A good subject is short, specific and imperative; the body explains why. "Round invoice totals to 2
+      decimal places" plus a body about the floating-point artefacts tells a future reader both what and why.
+    options:
+      - id: a
+        text: "fixed it"
+        feedback: Says nothing about what was fixed or why. Searching history for this later is hopeless.
+      - id: b
+        text: "Round invoice totals to 2 decimal places (subject), then a body: Customers saw totals like 10.000000001 caused by float arithmetic."
+        correct: true
+        feedback: Specific imperative subject, and the body records the reason.
+      - id: c
+        text: "Changed line 42 of invoice.py from total to round(total, 2)"
+        feedback: The diff already shows which line changed. The message should explain the intent and reason.
+      - id: d
+        text: "Update invoice.py, README, tests and refactor helpers"
+        feedback: This describes several unrelated changes. Split them into separate commits with their own messages.
+
+  - id: predict-dedupe
+    type: predict-output
+    skill: prediction
+    prompt: Using the content-addressed store from above, what does this print?
+    code: |
+      import hashlib
+
+      objects = {}
+
+      def store(data):
+          key = hashlib.sha1(data).hexdigest()
+          objects[key] = data
+          return key
+
+      a = store(b"print('hi')\n")
+      b = store(b"print('hi')\n")
+      c = store(b"print('bye')\n")
+      print(len(objects), a == b, a == c)
+    answer: "2 True False"
+    explanation: >-
+      The key is the hash of the content. a and b store identical bytes, so they get the same key and the
+      second store overwrites the entry with identical data. c is different content, so it gets a new key.
+    wrongAnswers:
+      - answer: "3 False False"
+        feedback: >-
+          Each call does not create a new entry - the key depends only on the content, so identical bytes
+          always map to the same key.
+      - answer: "3 True False"
+        feedback: >-
+          If a == b then both calls used the same dictionary key, so there can only be one entry for them.
+
+  - id: explain-snapshots
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      A teammate says: "Git stores each commit as a diff from the previous one, which is why it is small."
+      Explain what Git actually stores and why it is still space-efficient.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says each commit records a snapshot of the whole project (via a tree), and diffs are computed on demand.
+      - Explains content addressing - objects are stored under the hash of their content.
+      - Explains that unchanged files reuse existing blobs, so only changed content adds new objects.
+      - Mentions that packfiles delta-compress objects on disk as a storage optimisation, without changing the snapshot model.
+    modelAnswer: |
+      Conceptually each commit is a snapshot: it points to a tree that lists every file and the blob holding
+      its content, plus the parent commit and the message. git diff and git log -p compute differences when
+      asked. Snapshots stay cheap because objects are content-addressed - stored under the hash of their
+      content - so a file that did not change has the same blob id and is simply referenced again; only the
+      changed files' blobs, the new trees and the commit itself are new. On disk, Git also packs objects into
+      packfiles where similar objects are delta-compressed, but that is a storage detail; every commit still
+      represents the complete project state.
+
+  - id: implement-store
+    type: code
+    skill: implementation
+    prompt: |
+      Complete `store(data)` for a simplified Git object store:
+
+      - compute `key` as the SHA-1 **hex digest** of `data` (use `hashlib.sha1`),
+      - save `data` in the `objects` dictionary under that key,
+      - return the key.
+
+      Storing the same content twice must not create a second entry.
+    starterCode: |
+      import hashlib
+
+      objects = {}
+
+      def store(data: bytes) -> str:
+          # Compute the key from the content, save the data, return the key.
+          pass
+
+      a = store(b"hello\n")
+      b = store(b"hello\n")
+      c = store(b"bye\n")
+      print(a == b, a == c, len(objects))
+    solution: |
+      import hashlib
+
+      objects = {}
+
+      def store(data: bytes) -> str:
+          key = hashlib.sha1(data).hexdigest()
+          objects[key] = data
+          return key
+
+      a = store(b"hello\n")
+      b = store(b"hello\n")
+      c = store(b"bye\n")
+      print(a == b, a == c, len(objects))
+    expectedOutput: |
+      True False 2
+    tests:
+      - name: returns the SHA-1 hex digest of the content
+        code: |
+          import hashlib
+          key = store(b"notes = []\n")
+          expected = hashlib.sha1(b"notes = []\n").hexdigest()
+          assert key == expected, f"store(b'notes = []\\n') should return {expected!r} (hashlib.sha1(data).hexdigest()), but returned {key!r}."
+      - name: saves the data under its key
+        code: |
+          key = store(b"some content")
+          assert objects.get(key) == b"some content", "After store(data), objects[key] should be the data you stored."
+      - name: identical content is stored once
+        code: |
+          before = len(objects)
+          k1 = store(b"same bytes")
+          k2 = store(b"same bytes")
+          assert k1 == k2, "Storing identical content must return the same key."
+          assert len(objects) == before + 1, "Storing identical content twice must add only one entry."
+      - name: different content gets a different key
+        code: |
+          assert store(b"version 1") != store(b"version 2"), "Different content must produce different keys."
+      - name: prints the demo line
+        code: |
+          assert output_lines() == ["True False 2"], f"The demo should print 'True False 2', but printed {output()!r}."
+    hints:
+      - "`hashlib.sha1(data)` creates a hash object; `.hexdigest()` turns it into a 40-character string."
+      - "Then `objects[key] = data` and `return key`."
+    feedback:
+      - when: { outputContains: "True True 0" }
+        message: store still returns None for every call. Compute the key, save the data and return the key.
+      - when: { errorType: TypeError, errorMessageContains: "Strings must be encoded" }
+        message: hashlib works on bytes. The data is already bytes - hash data itself, not str(data).
+    explanation: >-
+      The key is derived from the content, so identical content always maps to the same entry. That single
+      idea is what lets Git store unchanged files only once.
+
+  - id: implement-status
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Model `git status` for unstaged changes. `staged` maps each staged file name to the **blob id** of its
+      staged content; `working` maps each file in the working tree to its **current text**. Complete
+      `status(staged, working)` so it returns a dictionary with three **sorted** lists:
+
+      - `"modified"`: files in both, whose current content has a different blob id,
+      - `"untracked"`: files in the working tree that are not staged,
+      - `"deleted"`: staged files that no longer exist in the working tree.
+
+      Use the provided `blob_id(text)` to hash current content. (This models one comparison Git makes - the
+      working tree against the index.)
+    starterCode: |
+      import hashlib
+
+      def blob_id(text: str) -> str:
+          return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+      def status(staged: dict[str, str], working: dict[str, str]) -> dict[str, list[str]]:
+          result = {"modified": [], "untracked": [], "deleted": []}
+          # Fill in the three lists.
+          return result
+
+      staged = {"a.py": blob_id("x = 1\n"), "b.py": blob_id("y = 2\n"), "c.py": blob_id("z\n")}
+      working = {"a.py": "x = 1\n", "b.py": "y = 3\n", "d.py": "new\n"}
+      print(status(staged, working))
+    solution: |
+      import hashlib
+
+      def blob_id(text: str) -> str:
+          return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+      def status(staged: dict[str, str], working: dict[str, str]) -> dict[str, list[str]]:
+          result = {"modified": [], "untracked": [], "deleted": []}
+          for name in sorted(working):
+              if name not in staged:
+                  result["untracked"].append(name)
+              elif blob_id(working[name]) != staged[name]:
+                  result["modified"].append(name)
+          for name in sorted(staged):
+              if name not in working:
+                  result["deleted"].append(name)
+          return result
+
+      staged = {"a.py": blob_id("x = 1\n"), "b.py": blob_id("y = 2\n"), "c.py": blob_id("z\n")}
+      working = {"a.py": "x = 1\n", "b.py": "y = 3\n", "d.py": "new\n"}
+      print(status(staged, working))
+    expectedOutput: |
+      {'modified': ['b.py'], 'untracked': ['d.py'], 'deleted': ['c.py']}
+    tests:
+      - name: one file of each kind
+        code: |
+          s = {"a.py": blob_id("x = 1\n"), "b.py": blob_id("y = 2\n"), "c.py": blob_id("z\n")}
+          w = {"a.py": "x = 1\n", "b.py": "y = 3\n", "d.py": "new\n"}
+          got = status(s, w)
+          assert got == {"modified": ["b.py"], "untracked": ["d.py"], "deleted": ["c.py"]}, f"Expected b.py modified, d.py untracked, c.py deleted; got {got!r}."
+      - name: a clean tree reports nothing
+        code: |
+          s = {"main.py": blob_id("print(1)\n")}
+          got = status(s, {"main.py": "print(1)\n"})
+          assert got == {"modified": [], "untracked": [], "deleted": []}, f"Unchanged files must not be reported; got {got!r}."
+      - name: lists are sorted and complete
+        code: |
+          s = {"z.py": blob_id("1"), "m.py": blob_id("2"), "q.py": blob_id("3")}
+          w = {"z.py": "changed", "m.py": "also changed", "q.py": "3", "b.txt": "new", "a.txt": "new"}
+          got = status(s, w)
+          assert got == {"modified": ["m.py", "z.py"], "untracked": ["a.txt", "b.txt"], "deleted": []}, f"Expected sorted lists; got {got!r}."
+      - name: compares content by blob id
+        code: |
+          s = {"same.txt": blob_id("hello")}
+          got = status(s, {"same.txt": "hello"})
+          assert got["modified"] == [], "A file whose content hashes to the staged blob id is not modified - compare blob_id(working[name]) with staged[name]."
+    hints:
+      - Loop over the working tree. A name missing from staged is untracked; otherwise compare blob_id(text) with the staged id.
+      - Then loop over staged to find names missing from the working tree.
+      - "`sorted(working)` gives the names in order, so appending as you go keeps each list sorted."
+    feedback:
+      - when: { outputContains: "'modified': ['a.py'" }
+        message: a.py has identical content. Compare blob_id(working[name]) with staged[name] - not the text with the id.
+    explanation: >-
+      Git decides whether a file changed by comparing content hashes, not by reading timestamps alone (it uses
+      file metadata as a shortcut, then hashes). Untracked means "not in the index"; deleted means "in the
+      index but gone from the working tree".
+
+  - id: debug-commit-id
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      In this model, a commit id should change whenever the commit's tree, parent or message changes. Two
+      different commits both named "Fix typo" got the **same** id, so the second overwrote the first in the
+      object store. Fix `commit_id` so the id covers the tree id, the parent id and the message.
+    starterCode: |
+      import hashlib
+
+      def commit_id(tree_id: str, parent: str | None, message: str) -> str:
+          text = f"message {message}"
+          return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+      first = commit_id("tree-one", None, "Fix typo")
+      second = commit_id("tree-two", first, "Fix typo")
+      print(first == second)
+    solution: |
+      import hashlib
+
+      def commit_id(tree_id: str, parent: str | None, message: str) -> str:
+          text = f"tree {tree_id}\nparent {parent}\n\n{message}"
+          return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+      first = commit_id("tree-one", None, "Fix typo")
+      second = commit_id("tree-two", first, "Fix typo")
+      print(first == second)
+    expectedOutput: |
+      False
+    tests:
+      - name: different trees give different ids
+        code: |
+          assert commit_id("t1", None, "Fix typo") != commit_id("t2", None, "Fix typo"), "Two commits with different trees must have different ids - include tree_id in the hashed text."
+      - name: different parents give different ids
+        code: |
+          assert commit_id("t1", "p1", "Fix typo") != commit_id("t1", "p2", "Fix typo"), "The same snapshot on top of a different parent is a different commit - include parent in the hashed text."
+      - name: different messages give different ids
+        code: |
+          assert commit_id("t1", "p1", "A") != commit_id("t1", "p1", "B"), "The message must still be part of the id."
+      - name: ids are deterministic SHA-1 hex digests
+        code: |
+          one = commit_id("t1", "p1", "Same")
+          assert one == commit_id("t1", "p1", "Same"), "The same inputs must always produce the same id."
+          assert len(one) == 40 and all(ch in "0123456789abcdef" for ch in one), "Return hashlib.sha1(...).hexdigest()."
+    hints:
+      - Which of the three parameters actually appear in `text`?
+      - "Build the text from all three, for example with lines `tree ...`, `parent ...` and the message."
+    feedback:
+      - when: { outputEquals: "True\n" }
+        message: The ids still collide. The hashed text must include tree_id and parent, not just the message.
+    explanation: >-
+      A content-addressed id is only as good as the content it hashes. Including the tree makes the id change
+      when files change; including the parent chains commits together so rewriting history changes every
+      later id - exactly how Git commit ids behave.
+
+  # ----- Mastery check (new items) -----
+  - id: m-commit-a
+    type: mcq
+    skill: recognition
+    prompt: |
+      You edited the tracked file `app.py` and created a new file `tests.py`. Neither is staged. You run
+      `git commit -a -m "Add tests"`. What does the commit contain?
+    explanation: >-
+      -a stages modifications to files Git already tracks. tests.py is untracked, so it is left out, and the
+      message "Add tests" is now misleading.
+    options:
+      - id: a
+        text: Both the app.py changes and tests.py.
+        feedback: -a never stages untracked files. tests.py needs git add first.
+      - id: b
+        text: Only the app.py changes; tests.py stays untracked.
+        correct: true
+        feedback: Right. git status afterwards still shows "?? tests.py".
+      - id: c
+        text: Nothing, because nothing was staged.
+        feedback: -a stages modified tracked files automatically, so app.py is committed.
+      - id: d
+        text: Only tests.py, because it matches the message.
+        feedback: Git does not read your message to decide what to commit.
+
+  - id: m-status-read
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      ```text
+      $ git status --short
+      MM notes.py
+      ?? README.md
+      ```
+      What will `git commit -m "Update notes"` (without -a) record?
+    explanation: >-
+      The left column is staged changes, the right column unstaged ones. The commit records the staging area:
+      the staged version of notes.py. The later unstaged edits to notes.py and the untracked README.md stay
+      out.
+    options:
+      - id: a
+        text: The staged version of notes.py only.
+        correct: true
+        feedback: Correct. Run git add notes.py first if you want the latest edits included.
+      - id: b
+        text: The latest version of notes.py and README.md.
+        feedback: Neither the unstaged edits (right-hand M) nor the untracked README.md (??) is staged.
+      - id: c
+        text: The latest version of notes.py, but not README.md.
+        feedback: The right-hand M means notes.py has edits after it was staged; those are not committed.
+      - id: d
+        text: Nothing, because notes.py has unstaged changes.
+        feedback: Git commits whatever is staged, even if the working tree has more changes.
+
+  - id: m-predict-objects
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: In the content-addressed model, how many objects are stored?
+    code: |
+      import hashlib
+
+      objects = {}
+
+      def store(data):
+          key = hashlib.sha1(data).hexdigest()
+          objects[key] = data
+          return key
+
+      store(b"MIT License\n")        # LICENSE
+      store(b"MIT License\n")        # docs/LICENSE, an identical copy
+      store(b"print('hi')\n")        # app.py
+      store(b"MIT License\n")        # LICENSE after renaming it to LICENSE.txt
+      print(len(objects))
+    answer: "2"
+    explanation: >-
+      Blobs are keyed by content only - file names live in trees. The three LICENSE contents are identical,
+      so they share one key; app.py is the second object.
+    wrongAnswers:
+      - answer: "4"
+        feedback: Each call computes the key from the content. Identical content gives the same key, so no new entry is added.
+      - answer: "3"
+        feedback: Renaming does not change the content, and blobs do not include file names, so the renamed file reuses the existing blob.
+
+  - id: m-tf-snapshots
+    type: true-false
+    skill: explanation
+    prompt: |
+      True or false: because every commit is a full snapshot, committing a one-line change in a 1,000-file
+      project stores 1,000 new copies of files.
+    answer: false
+    explanation: >-
+      Only the changed file gets a new blob (plus new tree objects along its path and the commit). The other
+      999 files have unchanged content, so the new tree points at their existing blobs.
+
+  - id: m-log
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Model `git log`. `commits` maps a commit id to a dictionary with its `"parent"` id (or `None` for the
+      first commit) and its `"message"`. Write `log(commits, head)` that returns the list of messages starting
+      at `head` and following parents back to the first commit (newest first). The program then prints them.
+    starterCode: |
+      commits = {
+          "c3": {"parent": "c2", "message": "Add count_notes"},
+          "c2": {"parent": "c1", "message": "Strip whitespace"},
+          "c1": {"parent": None, "message": "Add note storage"},
+      }
+
+      def log(commits, head):
+          messages = []
+          # Follow the parent links from head.
+          return messages
+
+      for message in log(commits, "c3"):
+          print(message)
+    solution: |
+      commits = {
+          "c3": {"parent": "c2", "message": "Add count_notes"},
+          "c2": {"parent": "c1", "message": "Strip whitespace"},
+          "c1": {"parent": None, "message": "Add note storage"},
+      }
+
+      def log(commits, head):
+          messages = []
+          current = head
+          while current is not None:
+              messages.append(commits[current]["message"])
+              current = commits[current]["parent"]
+          return messages
+
+      for message in log(commits, "c3"):
+          print(message)
+    expectedOutput: |
+      Add count_notes
+      Strip whitespace
+      Add note storage
+    tests:
+      - name: walks the whole history from c3
+        code: |
+          got = log(commits, "c3")
+          assert got == ["Add count_notes", "Strip whitespace", "Add note storage"], f"log(commits, 'c3') returned {got!r}."
+      - name: starts from any commit
+        code: |
+          got = log(commits, "c2")
+          assert got == ["Strip whitespace", "Add note storage"], f"log(commits, 'c2') should start at c2; got {got!r}."
+          assert log(commits, "c1") == ["Add note storage"], "A first commit has only its own message."
+      - name: works on a different history
+        code: |
+          other = {"x9": {"parent": "x4", "message": "B"}, "x4": {"parent": None, "message": "A"}, "zz": {"parent": "x9", "message": "C"}}
+          got = log(other, "zz")
+          assert got == ["C", "B", "A"], f"Follow the parent ids in the dictionary you are given; got {got!r}."
+    hints:
+      - Keep a variable for the current commit id, starting at head.
+      - "Loop while it is not None: append that commit's message, then move to its parent."
+    feedback:
+      - when: { errorType: KeyError }
+        message: You looked up an id that is not in commits. Stop when the parent is None instead of looking it up.
+    explanation: >-
+      History is a chain of parent pointers. git log starts at HEAD's commit and follows parents until a commit
+      has none - which is why each commit only needs to store its parent's id.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-commit-a, m-status-read, m-predict-objects, m-tf-snapshots, m-log]
+
+cheatsheet: |
+  ```bash
+  git init                         # create .git in the current folder
+  git status            /  -s      # what changed? (short: left=staged, right=unstaged, ??=untracked)
+  git add <file>                   # stage the file's CURRENT content
+  git diff                         # working tree vs staging area (unstaged)
+  git diff --staged                # staging area vs last commit (what will be committed)
+  git commit -m "Imperative subject"   # record the staging area as a snapshot
+  git commit -a -m "..."           # also stages modified TRACKED files (not untracked ones)
+  git log --oneline --graph        # history, newest first
+  git restore --staged <file>      # unstage
+  ```
+  - Working tree → (add) → staging area → (commit) → repository; HEAD → branch → latest commit
+  - Commits are snapshots; objects (blob, tree, commit) are stored under the hash of their content

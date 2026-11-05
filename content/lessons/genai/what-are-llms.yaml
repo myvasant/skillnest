@@ -1,0 +1,1262 @@
+id: genai.what-are-llms
+concept: genai.what-are-llms
+title: What Large Language Models Are
+subtitle: Next-token prediction, from a toy counter to a Transformer
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  An LLM is a model trained to predict the next token of text, and it writes by repeating that prediction.
+  You will build a toy bigram language model in pure Python, use it to generate text, and use it to see
+  where real LLMs get their power (scale, Transformers, instruction tuning) and their limits (no memory
+  between calls, a knowledge cutoff, confident errors).
+objectives:
+  - Explain next-token prediction and how repeating it generates text.
+  - Implement a toy bigram language model that turns counts into probabilities and generates text greedily or with a seeded random generator.
+  - Explain what a model's parameters are, and why scale and Transformers predict far better than counting.
+  - Distinguish pretraining from instruction tuning, and say what each contributes to an assistant.
+  - Predict the practical limits of an LLM — statelessness, knowledge cutoff, fluent but false output — and design around them.
+sources:
+  - title: "LLM Course, chapter 1: Transformer models"
+    url: https://huggingface.co/learn/llm-course/chapter1/1
+    publisher: Hugging Face
+  - title: "Speech and Language Processing (3rd ed. draft), chapter 3: N-gram Language Models"
+    url: https://web.stanford.edu/~jurafsky/slp3/
+    publisher: Jurafsky and Martin (Stanford)
+  - title: Language Models are Few-Shot Learners (GPT-3)
+    url: https://arxiv.org/abs/2005.14165
+    publisher: arXiv (Brown et al.)
+  - title: Training language models to follow instructions with human feedback (InstructGPT)
+    url: https://arxiv.org/abs/2203.02155
+    publisher: arXiv (Ouyang et al.)
+  - title: Attention Is All You Need
+    url: https://arxiv.org/abs/1706.03762
+    publisher: arXiv (Vaswani et al.)
+sections:
+  - id: why
+    title: Why "predict the next word" is such a big idea
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Your phone keyboard suggests the next word as you type. How would you build that?
+
+          One idea is to write **rules**: after "good", suggest "morning"; after "thank", suggest "you".
+          That breaks immediately — language has millions of patterns, and no one can write them all down.
+
+          In the [machine learning](concept:ml.what-is-ml) lesson you met the alternative: **learn the
+          pattern from examples**. Here is the whole idea in four lines. Collect every word that followed
+          "good" in some text:
+      - type: code
+        runnable: true
+        code: |
+          text = "good morning . good night . good morning everyone"
+          words = text.split()
+          followers = [words[i + 1] for i in range(len(words) - 1) if words[i] == "good"]
+          print(followers)
+        expectedOutput: |
+          ['morning', 'night', 'morning']
+        caption: '"morning" followed "good" 2 times out of 3, so a model learned from this text would say P(morning | good) = 2/3.'
+      - type: markdown
+        body: |
+          No rule was written; the suggestion comes from data. A
+          [large language model](glossary:large-language-model) (LLM) is this same idea — predict what
+          comes next — pushed to an extreme: trained on a large fraction of the public text ever written,
+          with a neural network that looks at thousands of previous words instead of one.
+
+          Understanding that an LLM is a *next-token predictor* explains almost everything about it: why
+          it can write, translate and summarise; why it sometimes states false things with total
+          confidence; and why your application, not the model, has to supply memory, fresh facts and
+          checks.
+
+  - id: next-token
+    title: Next-token prediction
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **language model** is a model that, given some text, assigns a probability to every possible
+          next piece of text. Those pieces are called **tokens**. Real LLMs use sub-word tokens (`"un"`,
+          `"believ"`, `"able"`), which you will build in [tokens and context windows](concept:genai.tokens-context);
+          in this lesson a token is simply a word or punctuation mark.
+
+          **[Next-token prediction](glossary:next-token-prediction)** means: given tokens
+          *t₁ … tₙ*, produce the probability distribution *P(tₙ₊₁ | t₁ … tₙ)* over the whole vocabulary.
+
+          A model that can do that can **generate** text by looping:
+
+          1. Feed in the text so far (the *context*).
+          2. Get a probability for every possible next token.
+          3. Pick one token — the most likely one (*greedy*), or a random one weighted by probability
+             (*sampling*, covered in depth in [decoding and sampling](concept:genai.sampling)).
+          4. Append it to the text and go back to step 1, until a stop token or a length limit.
+
+          Generating one token at a time, each conditioned on everything before it, is called
+          **autoregressive** generation. An LLM writing a 500-token answer runs this loop 500 times.
+      - type: visualization
+        component: step-diagram
+        title: The generation loop
+        caption: Every LLM — from the toy below to the largest production model — generates text with this loop. Only the "Model" box differs.
+        props:
+          width: 720
+          height: 260
+          nodes:
+            - { id: ctx, label: Context so far, x: 100, y: 110, shape: store }
+            - { id: model, label: Model, x: 290, y: 110, shape: pill }
+            - { id: dist, label: Next-token probabilities, x: 470, y: 110 }
+            - { id: pick, label: Pick one token, x: 640, y: 110 }
+            - { id: out, label: Append to the text, x: 380, y: 220 }
+          edges:
+            - { id: e-read, from: ctx, to: model, label: read }
+            - { id: e-score, from: model, to: dist, label: compute }
+            - { id: e-pick, from: dist, to: pick, label: greedy or sample }
+            - { id: e-append, from: pick, to: out, label: append }
+            - { id: e-repeat, from: out, to: ctx, label: repeat }
+          steps:
+            - title: Start from the prompt
+              body: The context is the prompt, split into tokens. Here the toy model from this lesson starts with two words.
+              active: [ctx]
+              payload: '["the", "cat"]'
+            - title: The model reads the context
+              body: A toy bigram model looks only at the last token. A real LLM processes every token in its context window with a Transformer.
+              active: [ctx, e-read, model]
+            - title: It outputs a probability for every token
+              body: In our training text "cat" was followed by "sat" once and "ate" once, so each gets probability 0.5. A real model scores its whole vocabulary — tens of thousands of tokens or more.
+              active: [model, e-score, dist]
+              payload: "sat  0.50\nate  0.50\n(every other token  0.00)"
+            - title: Pick one
+              body: Greedy decoding takes the most likely token; sampling draws one at random according to the probabilities. Either way, exactly one token is chosen.
+              active: [dist, e-pick, pick]
+              payload: "picked: sat"
+            - title: Append and repeat
+              body: The chosen token becomes part of the context and the loop runs again with "the cat sat".
+              active: [pick, e-append, out, e-repeat, ctx]
+              payload: '["the", "cat", "sat"]'
+            - title: Stop
+              body: The loop ends when the model produces a special end-of-text token or the application's maximum output length is reached.
+              active: [pick, out]
+
+  - id: bigram-model
+    title: Build a toy language model
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The simplest real language model is a **bigram model** ([bigram model](glossary:bigram-model)):
+          it predicts the next word from **only the previous word**, using counts from a training text
+          (the *corpus*). This is a genuine, decades-old technique — but it is a **toy** compared with an
+          LLM, and we will be precise about the differences.
+
+          **Step 1 — count which word follows which.** `zip(tokens, tokens[1:])` pairs every token with
+          the one after it. A `Counter` per word keeps the counts.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter, defaultdict
+
+          corpus = """
+          the cat sat on the mat .
+          the dog sat on the rug .
+          the cat ate the fish .
+          """
+          tokens = corpus.split()
+
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          print(len(tokens), "tokens")
+          print(counts["the"])
+          print(counts["sat"])
+        expectedOutput: |
+          20 tokens
+          Counter({'cat': 2, 'mat': 1, 'dog': 1, 'rug': 1, 'fish': 1})
+          Counter({'on': 2})
+        annotations:
+          - line: 10
+            text: "`defaultdict(Counter)` creates an empty Counter the first time a word is used as a key."
+          - line: 11
+            text: "Pairs: ('the', 'cat'), ('cat', 'sat'), ('sat', 'on') … every adjacent pair once."
+          - line: 12
+            text: '"Training" is just counting here. A real LLM is trained by gradient descent instead (see the deep dive).'
+      - type: visualization
+        component: python-tracer
+        title: Watch the counts table grow
+        caption: The same counting idea with plain dictionaries on four tokens. Each pass of the loop handles one adjacent pair.
+        props:
+          code: |
+            tokens = ["a", "b", "a", "c"]
+            counts = {}
+            for current, nxt in zip(tokens, tokens[1:]):
+                if current not in counts:
+                    counts[current] = {}
+                counts[current][nxt] = counts[current].get(nxt, 0) + 1
+            print(counts)
+      - type: markdown
+        body: |
+          **Step 2 — turn counts into probabilities.** Divide each count by the total for that word. The
+          probabilities for each word add up to 1: that is the model's *distribution* over the next token.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter
+
+          counts = {"the": Counter({"cat": 2, "mat": 1, "dog": 1, "rug": 1, "fish": 1})}
+
+          def next_word_probs(counts, word):
+              followers = counts.get(word)
+              if not followers:
+                  return {}
+              total = sum(followers.values())
+              return {w: c / total for w, c in followers.items()}
+
+          for w, p in next_word_probs(counts, "the").items():
+              print(f"P({w} | the) = {p:.3f}")
+        expectedOutput: |
+          P(cat | the) = 0.333
+          P(mat | the) = 0.167
+          P(dog | the) = 0.167
+          P(rug | the) = 0.167
+          P(fish | the) = 0.167
+      - type: markdown
+        body: |
+          **Step 3 — generate greedily.** Start from a word and repeatedly append the most likely
+          follower. `Counter.most_common(1)` returns the top `(word, count)` pair; when counts tie it
+          keeps the word that was counted first, so the result is deterministic.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter, defaultdict
+
+          tokens = "the cat sat on the mat . the dog sat on the rug . the cat ate the fish .".split()
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          def generate_greedy(counts, start, max_words):
+              words = [start]
+              for _ in range(max_words - 1):
+                  followers = counts.get(words[-1])
+                  if not followers:
+                      break
+                  best, _count = followers.most_common(1)[0]
+                  words.append(best)
+              return " ".join(words)
+
+          print(generate_greedy(counts, "the", 12))
+        expectedOutput: |
+          the cat sat on the cat sat on the cat sat on
+        annotations:
+          - line: 10
+            text: "`counts.get` (not `counts[...]`) so looking up an unknown word does not silently add it to the defaultdict."
+          - line: 12
+            text: A word that never had a follower ends generation — our toy's version of a stop token.
+          - line: 13
+            text: Greedy decoding — always take the single most likely next word.
+      - type: markdown
+        body: |
+          Notice the **loop**: "the" → "cat" → "sat" → "on" → "the" → … Because the model sees only one
+          word of context, every time it reaches "the" it is in exactly the same state and makes exactly
+          the same choice. Real LLMs can also fall into repetitive loops under greedy decoding, for a
+          related reason — the most likely continuation of a repeated phrase is often another repeat.
+
+          **Step 4 — sample instead.** Draw the next word at random, weighted by probability. Using
+          `random.Random(seed)` makes the "random" choices reproducible, so this example always prints
+          the same three lines.
+      - type: code
+        runnable: true
+        code: |
+          import random
+          from collections import Counter, defaultdict
+
+          tokens = "the cat sat on the mat . the dog sat on the rug . the cat ate the fish .".split()
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          def generate_sampled(counts, start, max_words, rng):
+              words = [start]
+              for _ in range(max_words - 1):
+                  followers = counts.get(words[-1])
+                  if not followers:
+                      break
+                  options = list(followers)
+                  weights = list(followers.values())
+                  words.append(rng.choices(options, weights=weights)[0])
+              return " ".join(words)
+
+          rng = random.Random(0)
+          for _ in range(3):
+              print(generate_sampled(counts, "the", 8, rng))
+        expectedOutput: |
+          the fish . the cat ate the rug
+          the cat sat on the dog sat on
+          the dog sat on the rug . the
+        annotations:
+          - line: 17
+            text: "`rng.choices` picks from `options`, with each option's chance proportional to its weight (its count)."
+          - line: 20
+            text: A fixed seed makes the run repeatable. Change 0 to another number and you get different sentences.
+      - type: markdown
+        body: |
+          Sampling gives variety — and something important: **"the cat ate the rug" never appears in the
+          training text.** The model combined pieces it had seen into a new, fluent-looking sentence. That
+          is both the creative power of language models and, as you will see below, the root of
+          confident errors.
+      - type: item
+        ref: predict-greedy
+
+  - id: mental-model
+    title: "Mental model: autocomplete with a probability for everything"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Picture an LLM as **an autocomplete engine that, for any text, outputs a probability for every
+          possible next token**, learned from an enormous amount of text. Everything it "knows" is
+          stored implicitly in the numbers that produce those probabilities.
+
+          This model stays accurate as you learn more:
+
+          - It explains why the model **always produces something** — there is always a most likely next
+            token, even for a question it has no information about.
+          - It explains why output can be **fluent but false** — probabilities reflect what text tends to
+            look like, not what is true.
+          - It explains why the same prompt can give **different answers** — sampling.
+
+          **What the toy simplifies.** A bigram model looks at one previous word and stores a table of
+          counts. A real LLM looks at its whole context window (thousands to hundreds of thousands of
+          tokens, depending on the model), uses sub-word tokens, and computes probabilities with a
+          neural network instead of a lookup table. The loop around it — predict, pick, append — is
+          exactly the same.
+      - type: callout
+        variant: misconception
+        title: An LLM is not a database of facts
+        body: |
+          LLMs do not look answers up. When a model answers "Paris" to "the capital of France is", it is
+          because that continuation got a high probability, not because it retrieved a stored record.
+          Often the most probable continuation is also true — but nothing in the mechanism guarantees it.
+
+  - id: scale
+    title: Why scale and Transformers predict far better
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A bigram model is nearly useless for real writing because one word of context is not enough:
+          after "the", it cannot tell whether we are talking about cats or capital cities.
+
+          The obvious fix — count longer contexts (three words, ten words) — runs into **sparsity**:
+          most long contexts appear only once, or never, so there is nothing useful to count.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter
+
+          tokens = "the cat sat on the mat . the dog sat on the rug . the cat ate the fish .".split()
+          for n in (1, 2, 3, 4):
+              contexts = Counter(tuple(tokens[i:i + n]) for i in range(len(tokens) - n))
+              once = sum(1 for c in contexts.values() if c == 1)
+              print(f"{n}-word contexts: {len(contexts)} distinct, {once} seen only once")
+        expectedOutput: |
+          1-word contexts: 10 distinct, 5 seen only once
+          2-word contexts: 14 distinct, 10 seen only once
+          3-word contexts: 16 distinct, 15 seen only once
+          4-word contexts: 16 distinct, 16 seen only once
+        caption: With 4 words of context, every context in this corpus is unique — counting can only memorise, not generalise. Real corpora behave the same way at larger sizes.
+      - type: markdown
+        body: |
+          Modern LLMs get around sparsity with three ingredients:
+
+          1. **A neural network instead of a table.** Each token becomes a vector of numbers (an
+             [embedding](concept:dl.embeddings)); similar words get similar vectors, so what the model
+             learns about "cat" transfers to "kitten". Predictions are *computed* from the context, so
+             the model can handle contexts it has never seen.
+          2. **The Transformer architecture.** Its [attention](concept:dl.attention) mechanism lets every
+             position draw information from every earlier token in the context, and it trains
+             efficiently on GPUs because all positions are processed in parallel
+             ([Vaswani et al., 2017](https://arxiv.org/abs/1706.03762)). Most current LLMs are
+             decoder-only Transformers — see [the Transformer architecture](concept:dl.transformer-architecture).
+          3. **Scale.** Many more parameters, trained on vastly more text with vastly more compute. GPT-3
+             had 175 billion parameters ([Brown et al., 2020](https://arxiv.org/abs/2005.14165)), and
+             that paper showed that larger models could do new tasks from just a few examples in the
+             prompt.
+
+          **What are parameters?** In our toy, the parameters are the numbers in the probability table.
+          In an LLM, the **[parameters](glossary:model-parameters)** (also called *weights*) are the
+          numbers inside the neural network — billions of them — that training adjusts so the network's
+          predicted probabilities match real text better. After training they are fixed; using the model
+          does not change them.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter, defaultdict
+
+          tokens = "the cat sat on the mat . the dog sat on the rug . the cat ate the fish .".split()
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          vocab = sorted(set(tokens))
+          print(len(vocab), "words in the vocabulary")
+          print(len(vocab) ** 2, "possible (word, next word) probabilities")
+          print(sum(len(f) for f in counts.values()), "of them are non-zero")
+        expectedOutput: |
+          10 words in the vocabulary
+          100 possible (word, next word) probabilities
+          15 of them are non-zero
+        caption: "The toy's parameter table grows with the square of the vocabulary and is mostly zeros. A neural network instead shares a fixed (if huge) set of weights across all contexts."
+      - type: item
+        ref: mcq-parameters
+
+  - id: training-stages
+    title: Pretraining and instruction tuning
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An assistant such as a chat model is built in (at least) two stages:
+
+          | Stage | Data | What the model learns |
+          |---|---|---|
+          | **Pretraining** | Huge amounts of general text (web pages, books, code…) | Next-token prediction. Produces a *base model* with broad language skill and world knowledge up to a training cutoff. It *continues documents*; it does not specifically try to help. |
+          | **Post-training** — [instruction tuning](glossary:instruction-tuning), then preference tuning | Curated examples of instructions with good responses, then human (or AI) preferences between responses | To follow instructions, answer in a helpful format, refuse some requests. InstructGPT ([Ouyang et al., 2022](https://arxiv.org/abs/2203.02155)) combined supervised fine-tuning with reinforcement learning from human feedback (RLHF). |
+
+          Instruction tuning does not replace next-token prediction — the model is still predicting
+          tokens. It changes **which continuations are likely**. A base model given "What is rain?" might
+          continue with more quiz questions, because that is what follows questions in many documents. An
+          instruction-tuned model has been trained on examples where a question is followed by an answer.
+
+          Here is that shift in miniature. Our bigram "base model" is trained on a list of questions; we
+          then continue training (add counts) on question–answer examples and look at what follows `?`:
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter, defaultdict
+
+          def train(text):
+              tokens = text.split()
+              counts = defaultdict(Counter)
+              for current, nxt in zip(tokens, tokens[1:]):
+                  counts[current][nxt] += 1
+              return counts
+
+          def next_word_probs(counts, word):
+              followers = counts[word]
+              total = sum(followers.values())
+              return {w: round(c / total, 2) for w, c in followers.items()}
+
+          base_text = "Q: what is rain ? Q: what is snow ? Q: what is fog ?"
+          chat_text = "Q: what is rain ? A: water falling from clouds . Q: what is fog ? A: a cloud near the ground ."
+
+          base = train(base_text)
+          tuned = train(base_text + " " + " ".join([chat_text] * 3))
+          print("base model, after '?':", next_word_probs(base, "?"))
+          print("tuned model, after '?':", next_word_probs(tuned, "?"))
+        expectedOutput: |
+          base model, after '?': {'Q:': 1.0}
+          tuned model, after '?': {'Q:': 0.33, 'A:': 0.67}
+        caption: "Toy illustration only: real post-training updates billions of neural-network weights with gradient descent, on many thousands of carefully written examples, followed by preference optimisation."
+      - type: callout
+        variant: note
+        title: Details vary by model and are often unpublished
+        body: |
+          The broad recipe — pretrain, then supervised instruction tuning, then preference or
+          reinforcement-learning stages — is well established. The exact data, stages and their order
+          differ between model families and are often not disclosed. [LLM architecture in
+          practice](concept:genai.llm-architecture) goes further.
+      - type: item
+        ref: mcq-base-vs-instruct
+
+  - id: limits
+    title: What follows from "it predicts the next token"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Four practical limits follow directly from the mechanism. Each one changes how you build
+          software with LLMs.
+
+          **1. No memory between calls.** A model call is a function of its input: the same weights, the
+          text you send, and the sampling settings. Nothing is stored between calls. Chat "memory" is the
+          *application* resending the earlier messages every time.
+      - type: code
+        runnable: true
+        code: |
+          def fake_llm(messages):
+              """A stand-in for a model call. Like a real model, it can only use what is in `messages`."""
+              for m in messages:
+                  if m["role"] == "user" and m["content"].startswith("My name is "):
+                      name = m["content"].removeprefix("My name is ").rstrip(".")
+                      return f"Your name is {name}."
+              return "I don't know your name."
+
+          # Call 1 told the model the name. Call 2 is a NEW request containing only the question:
+          print(fake_llm([{"role": "user", "content": "What is my name?"}]))
+
+          # The app keeps the history and resends all of it:
+          history = [
+              {"role": "user", "content": "My name is Asha."},
+              {"role": "assistant", "content": "Nice to meet you, Asha!"},
+              {"role": "user", "content": "What is my name?"},
+          ]
+          print(fake_llm(history))
+        expectedOutput: |
+          I don't know your name.
+          Your name is Asha.
+        caption: "`fake_llm` is a hand-written stand-in, not a language model; it exists to show that the reply can only depend on the messages sent in that call."
+      - type: markdown
+        body: |
+          Because history is resent each turn, long conversations cost more and eventually exceed the
+          [context window](concept:genai.tokens-context) — the application must trim or summarise.
+
+          **2. A knowledge cutoff.** The model only "knows" patterns from its training data, which was
+          collected up to some date — its [knowledge cutoff](glossary:knowledge-cutoff). It has no
+          built-in access to the internet, to your private documents or to today's date. Current or
+          private facts must be put into the prompt ([retrieval](concept:rag.why-rag)) or fetched with
+          [tools](concept:genai.tool-calling).
+
+          **3. Fluent, confident errors.** The mechanism produces likely-looking text whether or not it
+          is true. Watch the toy model do it with two perfectly true training sentences:
+      - type: code
+        runnable: true
+        code: |
+          import random
+          from collections import Counter, defaultdict
+
+          facts = "paris is the capital of france . rome is the capital of italy ."
+          tokens = facts.split()
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          rng = random.Random(1)
+          for _ in range(3):
+              words = ["paris"]
+              while words[-1] != ".":
+                  followers = counts[words[-1]]
+                  words.append(rng.choices(list(followers), weights=list(followers.values()))[0])
+              print(" ".join(words))
+        expectedOutput: |
+          paris is the capital of france .
+          paris is the capital of italy .
+          paris is the capital of france .
+        caption: After "of", the model has seen "france" once and "italy" once, so both look equally likely. The false sentence is just as fluent as the true one.
+      - type: markdown
+        body: |
+          Real LLMs use far more context, so they rarely make *this* mistake — but the failure has the
+          same shape: when the training data does not pin down the answer, the model still produces the
+          most plausible-sounding continuation. Invented citations, URLs and library functions are
+          examples. This is the subject of [hallucinations and limitations](concept:genai.hallucinations).
+
+          **4. Broad but uneven abilities.** The same model may write excellent code and then miscount
+          the letters in a word or fail at multi-digit arithmetic. Abilities depend on the task, the
+          prompt and the model, so they must be **tested for your task** rather than assumed.
+      - type: callout
+        variant: warning
+        title: '"I checked" is just more text'
+        body: |
+          If a model without tools says "I searched the web" or "I verified this", those words are a
+          generated continuation, not a report of something it did. Only an actual tool call executed by
+          your code fetches or checks anything.
+      - type: item
+        ref: tf-memory
+      - type: item
+        ref: explain-confident-errors
+
+  - id: under-the-hood
+    title: Under the hood of a real LLM
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **The forward pass.** For each step of generation a real LLM:
+
+          1. converts the context into token IDs (integers),
+          2. looks up an embedding vector for each ID,
+          3. runs the vectors through a stack of Transformer blocks (attention + feed-forward layers),
+          4. turns the final vector at the last position into one score per vocabulary entry — the
+             **logits** — and
+          5. applies softmax to turn logits into probabilities ([decoding and sampling](concept:genai.sampling)).
+
+          **Training objective.** Pretraining minimises the **cross-entropy loss**: the average of
+          −log P(actual next token) over the training text. Lower loss means the model gave the real next
+          tokens higher probability. Counting bigrams is exactly the probability table that minimises this
+          loss for a one-word-context model; an LLM minimises the same loss by gradient descent over its
+          weights, because no table could cover long contexts. You can compute the loss of our toy on its
+          own training text:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          from collections import Counter, defaultdict
+
+          tokens = "the cat sat on the mat . the dog sat on the rug . the cat ate the fish .".split()
+          counts = defaultdict(Counter)
+          for current, nxt in zip(tokens, tokens[1:]):
+              counts[current][nxt] += 1
+
+          pairs = list(zip(tokens, tokens[1:]))
+          total_log_prob = 0.0
+          for current, nxt in pairs:
+              p = counts[current][nxt] / sum(counts[current].values())
+              total_log_prob += math.log(p)
+
+          avg_loss = -total_log_prob / len(pairs)
+          print(f"average loss: {avg_loss:.3f} nats per token")
+          print(f"perplexity:   {math.exp(avg_loss):.2f}")
+        expectedOutput: |
+          average loss: 0.566 nats per token
+          perplexity:   1.76
+        caption: Perplexity = exp(loss) — roughly "how many equally likely choices the model is torn between" at each step. Measured on its own training text, the toy looks great; measured on new text it would be terrible, because unseen pairs get probability 0.
+      - type: markdown
+        body: |
+          **What a request to a hosted model looks like.** Chat APIs are HTTP endpoints that take the
+          whole conversation every time. The shape below is provider-neutral; real field names and
+          options differ between providers (some put the system prompt in a separate field), so always
+          check the provider's current API reference — see [calling LLM APIs](concept:genai.llm-apis).
+      - type: code
+        language: json
+        status: illustrative
+        code: |
+          {
+            "model": "example-model-name",
+            "messages": [
+              {"role": "system", "content": "You are a helpful assistant."},
+              {"role": "user", "content": "My name is Asha."},
+              {"role": "assistant", "content": "Nice to meet you, Asha!"},
+              {"role": "user", "content": "What is my name?"}
+            ],
+            "max_tokens": 100
+          }
+        caption: Illustrative request body (not executed — it needs a network call to a real provider). The earlier turns are included because the API keeps no memory of them.
+      - type: code
+        status: pseudocode
+        code: |
+          tokens = tokenizer.encode(prompt)
+          while len(new_tokens) < max_tokens:
+              logits = model(tokens)              # one forward pass over the whole context
+              probs = softmax(logits / temperature)
+              next_id = sample(probs)             # or argmax for greedy decoding
+              if next_id == END_OF_TEXT:
+                  break
+              tokens.append(next_id)
+          print(tokenizer.decode(tokens))
+        caption: "Pseudocode for real generation. Production servers add caching of earlier computations (the KV cache) so each step does not recompute the whole context."
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | The chatbot "forgot" what the user said earlier | Each API call is stateless and the history was not resent (or was trimmed) | Send the relevant history with every request; summarise or trim it to fit the context window. |
+          | A confident answer cites a paper, URL or function that does not exist | Generation produces plausible text; nothing checks facts | Supply sources (RAG), ask for citations to *those* sources, and verify in code (links resolve, quotes appear in the source). |
+          | It knows nothing about last month's release | Knowledge cutoff | Put current documents in the prompt or give the model a search tool. |
+          | The same prompt gives different answers | Sampling | Lower the temperature for consistency; evaluate over several runs. |
+          | It claims it "looked something up" | Generated text, not an action | Only trust actions your code actually executed and logged. |
+
+          In the toy model, the classic Python error is looking up a word the model has never seen:
+      - type: code
+        runnable: true
+        code: |
+          counts = {"the": {"cat": 2, "dog": 1}, "cat": {"sat": 1}}
+          print(counts["unicorn"])
+        expectError: KeyError
+        caption: "A plain dict raises KeyError: 'unicorn'. Use counts.get(word) and handle the \"no known continuation\" case explicitly."
+      - type: markdown
+        body: |
+          Interestingly, this is a place where the toy is *more honest* than a real LLM: it fails loudly
+          on something it has never seen. A neural model always returns a probability distribution, so
+          it never says "unknown word" — it produces its best guess, fluently.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build the pieces of the toy model yourself. The checks run your functions on other texts too,
+          so they must really count rather than return fixed answers.
+      - type: item
+        ref: code-train-bigrams
+      - type: item
+        ref: code-next-probs
+      - type: item
+        ref: debug-greedy-stuck
+      - type: item
+        ref: parsons-generate
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A language model gives a probability for every possible **next token**; generation repeats
+            predict → pick → append.
+          - A bigram model learns those probabilities by counting word pairs. It is a toy: one word of
+            context, a sparse table, no generalisation.
+          - LLMs use neural networks (Transformers) with billions of learned **parameters** and long
+            contexts, trained on huge corpora — the same objective at vastly larger scale.
+          - **Pretraining** gives broad skill and knowledge up to a cutoff; **instruction and preference
+            tuning** shift the probabilities toward helpful, instruction-following answers.
+          - Limits follow from the mechanism: no memory between calls, a knowledge cutoff, fluent but
+            possibly false output, uneven abilities. Your application supplies history, sources, tools and
+            checks.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How does an LLM generate text, and where do its limitations come from?" — Describe
+          next-token prediction and the autoregressive loop, pretraining vs instruction tuning, then tie
+          each limitation (hallucination, cutoff, statelessness, non-determinism) back to the mechanism
+          and say how you design around it (RAG, tools, resending history, evaluation).
+
+items:
+  - id: predict-greedy
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: A greedy bigram generator is trained on one sentence. What does it print?
+    code: |
+      from collections import Counter
+
+      tokens = "the cat saw the dog saw the cat".split()
+      counts = {}
+      for a, b in zip(tokens, tokens[1:]):
+          counts.setdefault(a, Counter())[b] += 1
+
+      words = ["the"]
+      for _ in range(6):
+          followers = counts.get(words[-1])
+          if not followers:
+              break
+          words.append(followers.most_common(1)[0][0])
+      print(" ".join(words))
+    answer: "the cat saw the cat saw the"
+    explanation: >-
+      After "the", "cat" was seen twice and "dog" once, so greedy picks "cat"; after "cat" comes "saw";
+      after "saw" comes "the" (twice). The model is back at "the" in the same state, so it repeats. The
+      loop runs 6 times, adding 6 words to the starting "the".
+    wrongAnswers:
+      - answer: "the cat saw the dog saw the cat"
+        feedback: >-
+          That is the training sentence. The model does not replay its training text — it only knows,
+          for each word, which words followed it. Greedy always takes "cat" after "the", never "dog".
+      - answer: "the cat"
+        feedback: >-
+          Generation only stops early when a word has no followers. "cat" was followed by "saw", so the
+          loop continues.
+      - answer: "the cat saw the cat saw the cat"
+        feedback: The loop runs 6 times, so 6 words are added to "the" — 7 words in total. Count them again.
+
+  - id: mcq-parameters
+    type: mcq
+    skill: recognition
+    prompt: In an LLM, what are the model's **parameters**?
+    explanation: >-
+      Parameters (weights) are the learned numbers inside the neural network. Training adjusts them so the
+      predicted next-token probabilities match the training text; at use time they stay fixed. Decoding
+      settings such as temperature are chosen per request and are not learned.
+    options:
+      - id: a
+        text: The billions of numbers inside the neural network that training adjusts to make next-token predictions more accurate
+        correct: true
+        feedback: Right. In the toy they are the probability table; in an LLM they are network weights shared across all contexts.
+      - id: b
+        text: The settings you pass with each request, such as temperature and maximum length
+        feedback: Those are decoding settings (sometimes loosely called "parameters" in API docs). They are chosen per call, not learned during training.
+      - id: c
+        text: A database of facts and documents the model searches when answering
+        feedback: An LLM does not search a database. Knowledge is stored only implicitly, as patterns encoded in its weights.
+      - id: d
+        text: The words in the prompt
+        feedback: The prompt is the input (the context). Parameters are fixed parts of the model itself.
+
+  - id: mcq-base-vs-instruct
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      You give a **base** (pretrained-only) model the text `What is the capital of France?` It continues:
+      `What is the capital of Germany? What is the capital of Spain?` What is the best explanation?
+    explanation: >-
+      A base model continues documents. In its training text, a question is often followed by more
+      questions (quizzes, lists, forums), so that continuation is likely. Instruction tuning trains on
+      question-then-answer examples, which makes an answer the likely continuation.
+    options:
+      - id: a
+        text: The model is broken; a working model always answers questions.
+        feedback: It is working as trained. Predicting a plausible continuation of a document is exactly what pretraining teaches.
+      - id: b
+        text: It continues text the way its training documents do; instruction tuning is what makes "answer the question" the likely continuation.
+        correct: true
+        feedback: Yes. Post-training shifts the probabilities toward helpful, instruction-following responses.
+      - id: c
+        text: It does not know the answer because it has no internet access.
+        feedback: The capital of France is almost certainly in its training data. The issue is what kind of continuation is likely, not missing knowledge.
+      - id: d
+        text: The temperature was set too high.
+        feedback: Temperature changes how random each pick is, but a list of further questions is the most likely continuation for a base model even with greedy decoding.
+
+  - id: tf-memory
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a chat-model API remembers what you sent in your previous request, so you only need to send the newest message."
+    answer: false
+    explanation: >-
+      Model calls are stateless: the output depends only on the weights, the input sent in that call and
+      the sampling settings. Chat applications resend the conversation history (or a summary) each turn.
+      Some providers offer optional server-side conversation features, but those are the application
+      layer storing and resending context for you — the model itself still has no memory.
+
+  - id: explain-confident-errors
+    type: explain
+    skill: explanation
+    prompt: >-
+      Using what you know about next-token prediction, explain why an LLM can state something false
+      fluently and confidently — and give one way an application can reduce the risk.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says the model generates the most probable continuation, not a looked-up or verified fact.
+      - Explains that probabilities reflect patterns in training text, so a false statement can be just as fluent and likely as a true one.
+      - Mentions a cause such as missing or ambiguous information, the knowledge cutoff, or sampling.
+      - Gives a mitigation, such as supplying sources (RAG), using tools for facts, or verifying outputs in code.
+    modelAnswer: |
+      An LLM produces text by repeatedly choosing a likely next token. Nothing in that loop checks truth:
+      the probabilities reflect what text usually looks like in the training data. When the data does
+      not pin down the answer — the fact is rare, after the knowledge cutoff, or the question is
+      ambiguous — the model still produces the most plausible-sounding continuation, and it sounds just
+      as fluent as a correct one (like the toy model writing "paris is the capital of italy"). To reduce
+      the risk, put trusted sources in the prompt and ask the model to answer only from them with
+      citations, use tools for facts and calculations, and verify what you can in code.
+
+  - id: code-train-bigrams
+    type: code
+    skill: implementation
+    prompt: |
+      Write `train_bigrams(tokens)`. It takes a list of tokens and returns a **dict** mapping each token to
+      a `Counter` of the tokens that came directly after it.
+
+      For `["a", "b", "a", "c", "a", "b"]` the result should be equivalent to
+      `{"a": Counter({"b": 2, "c": 1}), "b": Counter({"a": 1}), "c": Counter({"a": 1})}`.
+    starterCode: |
+      from collections import Counter
+
+      def train_bigrams(tokens):
+          counts = {}
+          # For each adjacent pair (current, nxt), add 1 to counts[current][nxt].
+          return counts
+
+      print(train_bigrams("a b a c a b".split()))
+    solution: |
+      from collections import Counter
+
+      def train_bigrams(tokens):
+          counts = {}
+          for current, nxt in zip(tokens, tokens[1:]):
+              if current not in counts:
+                  counts[current] = Counter()
+              counts[current][nxt] += 1
+          return counts
+
+      print(train_bigrams("a b a c a b".split()))
+    tests:
+      - name: counts the example correctly
+        code: |
+          result = train_bigrams("a b a c a b".split())
+          plain = {k: dict(v) for k, v in result.items()}
+          expected = {"a": {"b": 2, "c": 1}, "b": {"a": 1}, "c": {"a": 1}}
+          assert plain == expected, f"For 'a b a c a b' expected {expected}, but got {plain}."
+      - name: values are Counters
+        code: |
+          from collections import Counter
+          result = train_bigrams("a b a c a b".split())
+          assert all(isinstance(v, Counter) for v in result.values()), "Each value should be a Counter of next tokens."
+      - name: works on a different text
+        code: |
+          result = train_bigrams("the cat sat on the mat".split())
+          plain = {k: dict(v) for k, v in result.items()}
+          expected = {"the": {"cat": 1, "mat": 1}, "cat": {"sat": 1}, "sat": {"on": 1}, "on": {"the": 1}}
+          assert plain == expected, f"For 'the cat sat on the mat' expected {expected}, but got {plain}. Count every adjacent pair."
+      - name: a single token has no pairs
+        code: |
+          result = train_bigrams(["hello"])
+          assert len(result) == 0, f"One token has no (current, next) pairs, so the result should be empty, not {dict(result)}."
+    hints:
+      - "`zip(tokens, tokens[1:])` gives every adjacent pair: (tokens[0], tokens[1]), (tokens[1], tokens[2]), …"
+      - The first time you see a word as `current`, create `counts[current] = Counter()` before adding to it.
+      - "Alternative: `counts = defaultdict(Counter)` from `collections` creates the Counter automatically."
+    feedback:
+      - when: { outputEquals: "{}\n" }
+        message: Your function returns an empty dict. Loop over adjacent pairs with zip(tokens, tokens[1:]) and count each one.
+      - when: { errorType: KeyError }
+        message: >-
+          The first time a word appears, counts[current] does not exist yet. Create a Counter for it
+          first, or use defaultdict(Counter).
+    explanation: >-
+      Training a bigram model is counting: for every adjacent pair, increment the count of `nxt` under
+      `current`. The last token only appears as a follower, so it gets no entry unless it also appears
+      earlier.
+
+  - id: code-next-probs
+    type: code
+    skill: implementation
+    prompt: |
+      Write `next_word_probs(counts, word)`. Given a dict of Counters (like the one `train_bigrams`
+      returns), return a dict mapping each follower of `word` to its probability (its count divided by
+      the total count for `word`). If `word` was never seen, return an empty dict `{}` — do not crash.
+    starterCode: |
+      from collections import Counter
+
+      counts = {
+          "good": Counter({"morning": 3, "night": 1}),
+          "morning": Counter({"everyone": 2}),
+      }
+
+      def next_word_probs(counts, word):
+          # Return {next_word: probability}; return {} if word was never seen.
+          pass
+
+      print(next_word_probs(counts, "good"))
+      print(next_word_probs(counts, "hello"))
+    solution: |
+      from collections import Counter
+
+      counts = {
+          "good": Counter({"morning": 3, "night": 1}),
+          "morning": Counter({"everyone": 2}),
+      }
+
+      def next_word_probs(counts, word):
+          followers = counts.get(word)
+          if not followers:
+              return {}
+          total = sum(followers.values())
+          return {w: c / total for w, c in followers.items()}
+
+      print(next_word_probs(counts, "good"))
+      print(next_word_probs(counts, "hello"))
+    expectedOutput: |
+      {'morning': 0.75, 'night': 0.25}
+      {}
+    tests:
+      - name: probabilities for "good"
+        code: |
+          import math
+          probs = next_word_probs(counts, "good")
+          assert isinstance(probs, dict), f"Return a dict, not {probs!r}."
+          assert set(probs) == {"morning", "night"}, f"Expected keys morning and night, got {sorted(probs)}."
+          assert math.isclose(probs["morning"], 0.75) and math.isclose(probs["night"], 0.25), f"Expected morning 0.75 and night 0.25, got {probs}."
+      - name: unseen word returns {}
+        code: |
+          result = next_word_probs(counts, "hello")
+          assert result == {}, f"For a word that was never seen, return {{}}, not {result!r}."
+      - name: works for other counts and sums to 1
+        code: |
+          import math
+          from collections import Counter
+          other = {"x": Counter({"a": 1, "b": 1, "c": 2})}
+          probs = next_word_probs(other, "x")
+          assert math.isclose(probs.get("c", 0), 0.5) and math.isclose(probs.get("a", 0), 0.25), f"For counts a=1, b=1, c=2 expected a 0.25, b 0.25, c 0.5, got {probs}."
+          assert math.isclose(sum(probs.values()), 1.0), "The probabilities for one word must add up to 1."
+    hints:
+      - "`counts.get(word)` returns None instead of raising KeyError when the word is missing."
+      - The total is `sum(followers.values())`.
+      - "A dict comprehension builds the result: `{w: c / total for w, c in followers.items()}`."
+    feedback:
+      - when: { errorType: KeyError }
+        message: counts[word] raises KeyError for an unseen word. Use counts.get(word) and return {} when it is None.
+      - when: { outputContains: "None" }
+        message: Your function returns None. Make sure every path ends with a return statement.
+    explanation: >-
+      Dividing each count by the word's total turns counts into a probability distribution that sums to
+      1. Handling the unseen-word case explicitly is what a real system has to do too — though a neural
+      LLM never hits it, because it always outputs some distribution.
+
+  - id: debug-greedy-stuck
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This greedy generator should print `i like green tea .` but prints `i like like like like like`.
+      Find and fix the bug.
+    starterCode: |
+      from collections import Counter
+
+      counts = {
+          "i": Counter({"like": 3, "am": 1}),
+          "like": Counter({"green": 2, "tea": 1}),
+          "green": Counter({"tea": 2}),
+          "tea": Counter({".": 3}),
+      }
+
+      def generate_greedy(counts, start, max_words):
+          words = [start]
+          current = start
+          for _ in range(max_words - 1):
+              followers = counts.get(current)
+              if not followers:
+                  break
+              best = followers.most_common(1)[0][0]
+              words.append(best)
+          return " ".join(words)
+
+      print(generate_greedy(counts, "i", 6))
+    solution: |
+      from collections import Counter
+
+      counts = {
+          "i": Counter({"like": 3, "am": 1}),
+          "like": Counter({"green": 2, "tea": 1}),
+          "green": Counter({"tea": 2}),
+          "tea": Counter({".": 3}),
+      }
+
+      def generate_greedy(counts, start, max_words):
+          words = [start]
+          current = start
+          for _ in range(max_words - 1):
+              followers = counts.get(current)
+              if not followers:
+                  break
+              best = followers.most_common(1)[0][0]
+              words.append(best)
+              current = best
+          return " ".join(words)
+
+      print(generate_greedy(counts, "i", 6))
+    expectedOutput: |
+      i like green tea .
+    tests:
+      - name: prints the sentence
+        code: |
+          assert output().strip() == "i like green tea .", f"Expected 'i like green tea .' but your program printed {output()!r}."
+      - name: respects max_words
+        code: |
+          result = generate_greedy(counts, "i", 2)
+          assert result == "i like", f"generate_greedy(counts, 'i', 2) should return 'i like' (2 words), got {result!r}."
+      - name: works with other counts
+        code: |
+          from collections import Counter
+          other = {"a": Counter({"b": 1}), "b": Counter({"c": 1})}
+          result = generate_greedy(other, "a", 10)
+          assert result == "a b c", f"With a->b->c the result should be 'a b c' (stopping at a word with no followers), got {result!r}."
+    hints:
+      - "Which variable decides what to look up on each pass of the loop? Does it ever change?"
+      - After appending `best`, the next prediction should be based on `best`.
+    feedback:
+      - when: { outputContains: "like like" }
+        message: The model keeps predicting from the start word. Update current after appending the chosen word.
+    explanation: >-
+      The loop always looked up `current`, which stayed "i", so it appended "like" forever. Generation is
+      autoregressive: each chosen token becomes the context for the next prediction, so `current` must be
+      updated (or use `words[-1]` directly).
+
+  - id: parsons-generate
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a greedy generator that starts at "hi" and keeps appending the most frequent
+      follower until it reaches a word with no followers. It should print `hi there friend`. Two lines
+      are distractors.
+    solution: |
+      counts = {"hi": {"there": 2, "you": 1}, "there": {"friend": 1}}
+      words = ["hi"]
+      while words[-1] in counts:
+          followers = counts[words[-1]]
+          best = max(followers, key=followers.get)
+          words.append(best)
+      print(" ".join(words))
+    distractors:
+      - "    best = min(followers, key=followers.get)"
+      - "words = \"hi\""
+    expectedOutput: |
+      hi there friend
+    explanation: >-
+      Start with a list holding the first word; while the last word has known followers, pick the one
+      with the highest count (`max` with `key=followers.get`) and append it. `min` would pick the least
+      likely word, and a string instead of a list has no `append`.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-probs
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      from collections import Counter
+
+      tokens = "a dog and a cat and a dog".split()
+      follow = Counter(b for a, b in zip(tokens, tokens[1:]) if a == "a")
+      total = sum(follow.values())
+      for word, count in sorted(follow.items()):
+          print(word, round(count / total, 2))
+    answer: |
+      cat 0.33
+      dog 0.67
+    explanation: >-
+      "a" is followed by "dog", "cat" and "dog": dog 2 times, cat once, out of 3. Sorting puts "cat"
+      first. 1/3 rounds to 0.33 and 2/3 to 0.67.
+    wrongAnswers:
+      - answer: |
+          dog 0.67
+          cat 0.33
+        feedback: "`sorted(follow.items())` sorts by word alphabetically, so cat comes before dog."
+      - answer: |
+          cat 0.25
+          dog 0.5
+        feedback: The total counts only the words that follow "a" (3 of them), not every pair in the text.
+
+  - id: m-cutoff-scenario
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A team asks an LLM assistant (no tools, no retrieval) for the configuration options of a library
+      version released last month. It instantly lists five convincing option names. What should they
+      conclude?
+    explanation: >-
+      The release is very likely after the model's knowledge cutoff, and a language model produces
+      plausible text whether or not it has the information. The option names may be invented; check the
+      official documentation, or put the documentation into the prompt.
+    options:
+      - id: a
+        text: The options are probably right, because the model answered confidently and without hesitation.
+        feedback: Fluency and confidence are not evidence. The model sounds equally sure when it is guessing.
+      - id: b
+        text: The options may be invented — the release is probably after the knowledge cutoff — so verify them against the official docs or supply the docs in the prompt.
+        correct: true
+        feedback: Correct. Ground the answer in current sources rather than trusting generated text.
+      - id: c
+        text: The model must have searched the web, so the options reflect the latest release.
+        feedback: Without tools the model cannot search anything. Text claiming it did is just generated text.
+      - id: d
+        text: Re-run it with temperature 0; the greedy answer will be the correct one.
+        feedback: Lower temperature makes answers more consistent, not more truthful. The most likely guess can still be wrong.
+
+  - id: m-trigram
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Extend the idea to **two words of context**. Write `train_trigrams(tokens)` returning a dict whose
+      keys are tuples of two consecutive tokens `(w1, w2)` and whose values are `Counter`s of the token
+      that came next.
+
+      For `"i like tea and i like cake".split()`, `train_trigrams(...)[("i", "like")]` should equal
+      `Counter({"tea": 1, "cake": 1})`.
+    starterCode: |
+      from collections import Counter
+
+      def train_trigrams(tokens):
+          counts = {}
+          # Key: a tuple of the two previous tokens. Value: a Counter of the next token.
+          return counts
+
+      model = train_trigrams("i like tea and i like cake".split())
+      print(model[("i", "like")])
+    solution: |
+      from collections import Counter
+
+      def train_trigrams(tokens):
+          counts = {}
+          for a, b, c in zip(tokens, tokens[1:], tokens[2:]):
+              key = (a, b)
+              if key not in counts:
+                  counts[key] = Counter()
+              counts[key][c] += 1
+          return counts
+
+      model = train_trigrams("i like tea and i like cake".split())
+      print(model[("i", "like")])
+    expectedOutput: |
+      Counter({'tea': 1, 'cake': 1})
+    tests:
+      - name: the example context
+        code: |
+          model = train_trigrams("i like tea and i like cake".split())
+          assert ("i", "like") in model, f"Expected the key ('i', 'like'); your keys are {sorted(model)}."
+          assert dict(model[("i", "like")]) == {"tea": 1, "cake": 1}, f"After ('i', 'like') expected tea 1 and cake 1, got {dict(model[('i', 'like')])}."
+      - name: keys are 2-tuples
+        code: |
+          model = train_trigrams("i like tea and i like cake".split())
+          assert all(isinstance(k, tuple) and len(k) == 2 for k in model), "Every key should be a tuple of two tokens, like ('i', 'like')."
+      - name: works on another text
+        code: |
+          model = train_trigrams("a b c a b d a b c".split())
+          plain = {k: dict(v) for k, v in model.items()}
+          expected = {("a", "b"): {"c": 2, "d": 1}, ("b", "c"): {"a": 1}, ("c", "a"): {"b": 1}, ("b", "d"): {"a": 1}, ("d", "a"): {"b": 1}}
+          assert plain == expected, f"For 'a b c a b d a b c' expected {expected}, got {plain}."
+      - name: two tokens give no trigrams
+        code: |
+          model = train_trigrams(["x", "y"])
+          assert len(model) == 0, "With only two tokens there is no 'next' token, so the result should be empty."
+    hints:
+      - "`zip(tokens, tokens[1:], tokens[2:])` yields every run of three consecutive tokens."
+      - The key is `(a, b)` — a tuple, which can be a dict key because it is hashable.
+    feedback:
+      - when: { errorType: KeyError }
+        message: Either the result is missing the ('i', 'like') key, or you add to counts[key] before creating its Counter.
+    explanation: >-
+      Two words of context is a trigram model. It distinguishes more situations than a bigram model, but
+      the table gets sparser — exactly the problem neural networks solve by generalising across similar
+      contexts.
+
+  - id: m-tf-lookup
+    type: true-false
+    skill: recognition
+    prompt: "True or false: when an LLM answers a factual question, it retrieves the answer from a database of facts stored in its parameters."
+    answer: false
+    explanation: >-
+      There is no fact database. The parameters encode statistical patterns that produce next-token
+      probabilities; a correct answer is a likely continuation, and so can be a wrong one. Retrieval
+      happens only if your application adds it (RAG or tools).
+
+  - id: m-design-memory
+    type: mcq
+    skill: design
+    prompt: |
+      You build a support chatbot on a stateless chat API. Users complain it forgets what they said two
+      messages ago. Which change fixes the cause?
+    explanation: >-
+      The model only sees what each request contains. Storing the conversation in your application and
+      sending the relevant history (trimmed or summarised to fit the context window) with every request
+      gives the model what it needs.
+    options:
+      - id: a
+        text: Store the conversation in your app and send the relevant history (trimmed or summarised to fit) with every request.
+        correct: true
+        feedback: Right — "memory" in chat products is the application resending context.
+      - id: b
+        text: Fine-tune the model after every conversation so it learns what each user said.
+        feedback: Fine-tuning is slow, expensive and not designed to store facts per user. Context is the right place for conversation state.
+      - id: c
+        text: Raise the temperature so the model explores more of what it remembers.
+        feedback: The model has nothing to remember between calls; temperature only changes how tokens are picked.
+      - id: d
+        text: Add "Always remember the whole conversation" to the system prompt.
+        feedback: An instruction cannot give the model information it was never sent.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-probs, m-cutoff-scenario, m-trigram, m-tf-lookup, m-design-memory]
+
+cheatsheet: |
+  ```python
+  # Toy bigram language model (one word of context)
+  counts = defaultdict(Counter)
+  for current, nxt in zip(tokens, tokens[1:]):
+      counts[current][nxt] += 1                  # "training" = counting
+  total = sum(counts[w].values())
+  probs = {n: c / total for n, c in counts[w].items()}   # P(next | w)
+  best = counts[w].most_common(1)[0][0]          # greedy pick
+  rng = random.Random(0)                         # seeded sampling
+  rng.choices(list(probs), weights=list(probs.values()))[0]
+  ```
+  - LLM = Transformer predicting the next token; generation = predict → pick → append, repeated.
+  - Parameters = learned weights (billions); decoding settings (temperature…) are not parameters.
+  - Pretraining → base model that continues text; instruction + preference tuning → assistant.
+  - Limits: stateless calls (resend history), knowledge cutoff, fluent-but-false output, uneven skills.

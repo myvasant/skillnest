@@ -1,0 +1,452 @@
+id: foundations.operating-systems
+concept: foundations.operating-systems
+title: Operating Systems and Processes
+subtitle: How your computer shares its resources between running programs
+estimatedMinutes: 45
+reviewedOn: 2026-11-04
+summary: >-
+  Understand what an operating system does, why a running program is a process, how the OS shares CPU time,
+  and why processes are isolated from one another. Learn the useful distinction between a program on disk
+  and a process in memory, then model a simple process scheduler in Python.
+objectives:
+  - Explain the jobs an operating system performs between applications and hardware.
+  - Distinguish a program, a process and a process identifier (PID).
+  - Describe process states and why a process can wait without using the CPU.
+  - Explain CPU scheduling, memory isolation and why one application usually cannot freely read another process's memory.
+  - Interpret a simple process listing and identify what it can and cannot tell you.
+sources:
+  - title: "Operating Systems: Three Easy Pieces — Introduction"
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/intro.pdf
+    publisher: Remzi and Andrea Arpaci-Dusseau
+  - title: "Operating Systems: Three Easy Pieces — CPU Virtualization"
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/cpu-intro.pdf
+    publisher: Remzi and Andrea Arpaci-Dusseau
+  - title: "Operating Systems: Three Easy Pieces — Memory Virtualization"
+    url: https://pages.cs.wisc.edu/~remzi/OSTEP/vm-intro.pdf
+    publisher: Remzi and Andrea Arpaci-Dusseau
+  - title: Python os — Miscellaneous operating system interfaces
+    url: https://docs.python.org/3/library/os.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why an operating system exists
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A computer may run a browser, music player, editor and Python program at the same time. They all
+          need the CPU, RAM, storage, screen, keyboard and network. If every application controlled the
+          hardware directly, applications would interfere with one another and each device would need its
+          own hardware-specific code.
+
+          The **operating system (OS)** is the software layer that coordinates this shared machine. Windows,
+          macOS and Linux are operating systems. They provide common services to applications and decide
+          how limited resources are shared.
+      - type: callout
+        variant: analogy
+        title: The OS is a resource coordinator
+        body: |
+          Imagine several people sharing one workshop. A coordinator schedules access to the tools, keeps
+          each person's materials separate, and decides who may enter locked rooms. The OS does similar
+          work for CPU time, memory and devices. The analogy is useful, but a real OS uses hardware support,
+          data structures and carefully designed policies rather than a human coordinator.
+      - type: markdown
+        body: |
+          The main responsibilities include:
+
+          - **Running programs:** loading an executable and creating a process.
+          - **Scheduling:** sharing CPU time among runnable work.
+          - **Memory management:** giving processes address spaces and protecting them from accidental access to one another.
+          - **Files and devices:** providing controlled ways to read files, display output and use hardware.
+          - **Security:** checking identities and permissions before allowing protected actions.
+
+          You do not need to memorise every OS subsystem now. The important point is that applications use
+          OS services instead of managing the hardware alone.
+
+  - id: program-vs-process
+    title: A program is not the same as a process
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **program** is a set of instructions stored as a file, such as `python.exe`, `code.exe` or
+          `report.py`. A **process** is a running instance of a program, together with its current state:
+          memory, open files, resources and execution context.
+
+          Think about opening the same text editor twice. The editor's application files do not become two
+          different programs. The OS may create two processes, or the editor may use one main process with
+          several helper processes. The exact design depends on the application.
+      - type: visualization
+        component: step-diagram
+        title: From program file to running process
+        caption: Starting a program asks the OS to create a process with its own execution state.
+        props:
+          nodes:
+            - { id: file, label: Program file, x: 12, y: 30, detail: Instructions stored on disk. }
+            - { id: os, label: Operating system, x: 50, y: 30, detail: Creates and manages the process. }
+            - { id: process, label: Process, x: 88, y: 30, detail: A running instance with memory and resources. }
+          edges:
+            - { id: start, from: file, to: os, label: start request }
+            - { id: create, from: os, to: process, label: create }
+          steps:
+            - title: The program exists on storage
+              body: The file contains instructions, but no instructions are currently being carried out by this file alone.
+              active: [file]
+            - title: The OS starts it
+              body: The OS checks the request, creates a process and prepares the resources needed to run it.
+              active: [file, os, start]
+            - title: The process runs
+              body: The process has a process identifier, memory and execution state. It may use the CPU or wait for an event.
+              active: [os, process, create]
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          Linux / macOS:  ps -o pid,stat,comm
+          PowerShell:     Get-Process | Select-Object Id, ProcessName
+        caption: These commands display process information on the named operating systems. They are illustrative transcripts, not commands executed in this browser lesson.
+      - type: callout
+        variant: note
+        title: What is a PID?
+        body: |
+          A **process identifier (PID)** is a number the OS uses to identify a process while it exists.
+          PIDs can be reused after a process exits, so a PID is not a permanent identity for an application.
+      - type: item
+        ref: program-process-check
+
+  - id: process-states
+    title: A process can run, wait or be ready
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A process is not continuously using the CPU. A simplified teaching model has these states:
+
+          - **Ready:** able to run, waiting for CPU time.
+          - **Running:** currently executing on a CPU core.
+          - **Blocked / waiting:** unable to continue until something happens, such as a file read or network response.
+          - **Terminated:** finished or stopped; the OS can reclaim its resources.
+
+          Real operating systems have more detailed states and platform-specific terminology. This model is
+          enough to understand why an application can be open but not currently executing instructions.
+      - type: visualization
+        component: step-diagram
+        title: A simplified process lifecycle
+        caption: A process moves between ready, running and waiting as the OS schedules it and I/O completes.
+        props:
+          nodes:
+            - { id: ready, label: Ready, x: 18, y: 20, detail: Waiting for CPU time. }
+            - { id: running, label: Running, x: 50, y: 20, detail: Currently using a CPU core. }
+            - { id: waiting, label: Waiting, x: 82, y: 20, detail: Waiting for I/O or another event. }
+            - { id: ended, label: Terminated, x: 50, y: 82, detail: Execution has ended. }
+          edges:
+            - { id: schedule, from: ready, to: running, label: scheduled }
+            - { id: preempt, from: running, to: ready, label: time slice ends }
+            - { id: io, from: running, to: waiting, label: requests I/O }
+            - { id: complete, from: waiting, to: ready, label: event completes }
+            - { id: finish, from: running, to: ended, label: exits }
+          steps:
+            - title: Ready
+              body: The process can run but another process currently has the CPU.
+              active: [ready]
+            - title: Scheduled
+              body: The OS gives the process a turn on a CPU core.
+              active: [ready, running, schedule]
+            - title: Waiting for I/O
+              body: A disk or network operation is not complete, so another ready process can use the CPU.
+              active: [running, waiting, io]
+            - title: I/O completes
+              body: The process becomes ready again; it does not necessarily run immediately.
+              active: [waiting, ready, complete]
+      - type: markdown
+        body: |
+          **Scheduling** is the OS decision about which ready process gets CPU time. On a multi-core CPU,
+          more than one process can execute at the same instant, but each individual core can execute only
+          one instruction stream at a time. Fast switching between runnable processes creates the impression
+          of simultaneous progress even on a single core.
+      - type: item
+        ref: process-wait-prediction
+
+  - id: memory-isolation
+    title: Process memory and isolation
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Each process normally sees its own **virtual address space**: the addresses its instructions use
+          for memory. The OS and memory-management hardware translate those virtual addresses to physical
+          memory and enforce access rules.
+
+          This gives processes isolation. A bug in one ordinary application should not let it freely read or
+          overwrite another application's memory. Isolation is not absolute security: the OS kernel, bugs,
+          shared-memory features and explicitly granted permissions create important exceptions.
+      - type: callout
+        variant: misconception
+        title: Closing a window is not the same as deleting a program
+        body: |
+          Closing an application's final window may cause its process to exit, but the program files remain
+          on storage. Some applications keep background processes running after a window closes. Check the
+          process list rather than assuming every window maps one-to-one to a process.
+      - type: markdown
+        body: |
+          **Processes and threads:** a process is a resource and protection boundary; a thread is a path of
+          execution within a process. Threads in one process usually share its memory, while separate
+          processes normally have separate address spaces. Concurrency and threads are covered later, so for
+          now remember that a process can contain more than one thread.
+      - type: item
+        ref: explain-isolation
+
+  - id: practice
+    title: Model a tiny round-robin scheduler
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          A **scheduler** is an OS component that chooses which ready task runs next. This small Python model
+          demonstrates round-robin scheduling: each task receives one turn, then moves to the back of the
+          queue if it still has work. It is a teaching simulation, not the algorithm used by every OS.
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          ready = deque([("editor", 2), ("browser", 1), ("python", 2)])
+          finished = []
+
+          while ready:
+              name, remaining_turns = ready.popleft()
+              remaining_turns -= 1
+              print("running:", name)
+              if remaining_turns:
+                  ready.append((name, remaining_turns))
+              else:
+                  finished.append(name)
+
+          print("finished:", ", ".join(finished))
+        expectedOutput: |
+          running: editor
+          running: browser
+          running: python
+          running: editor
+          running: python
+          finished: browser, editor, python
+        annotations:
+          - line: 3
+            text: Each tuple stores a task name and how many turns it still needs.
+          - line: 7
+            text: The leftmost ready task receives one simulated CPU turn.
+          - line: 10
+            text: A task with remaining work goes to the back of the queue.
+      - type: item
+        ref: scheduler-exercise
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **program** is stored instructions; a **process** is a running instance.
+          - The OS schedules CPU time, manages memory and mediates access to files and devices.
+          - A process can be ready, running or waiting; waiting does not mean the process has crashed.
+          - Process isolation helps stop ordinary applications from directly changing one another's memory.
+          - A PID identifies a process during its lifetime, but may later be reused.
+
+          Before moving on, explain why a Python program can be open but spend most of its time waiting for
+          a network response rather than using the CPU.
+      - type: item
+        ref: mastery-process
+      - type: item
+        ref: mastery-scheduler
+      - type: item
+        ref: mastery-explain
+
+items:
+  - id: program-process-check
+    type: mcq
+    skill: explanation
+    difficulty: 1
+    prompt: Which statement best distinguishes a program from a process?
+    options:
+      - id: a
+        text: A program is stored instructions; a process is a running instance with execution state.
+        correct: true
+        feedback: Correct. The process is what the OS manages while the program's instructions are being run.
+      - id: b
+        text: A program always uses RAM, while a process always uses storage.
+        correct: false
+        feedback: This reverses the useful distinction and treats memory as the identity of the object.
+      - id: c
+        text: A program is a CPU, while a process is an operating system.
+        correct: false
+        feedback: These are different layers of a computer system.
+    explanation: A program is a stored set of instructions; a process is an executing instance with resources and state.
+  - id: process-wait-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this small model print after one task is moved from running back to ready?
+    code: |
+      ready = ["editor", "browser"]
+      current = ready.pop(0)
+      ready.append(current)
+      print(current)
+      print(ready)
+    answer: |
+      editor
+      ['browser', 'editor']
+    wrongAnswers:
+      - answer: |
+          browser
+          ['editor', 'browser']
+        feedback: "`pop(0)` removes the first item. The removed task is then appended to the end."
+    explanation: The first ready task is selected, removed from the front and appended at the back after its turn.
+  - id: explain-isolation
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A bug in a photo editor corrupts its own memory. Why should a separate music player usually continue working, and what is one limitation of this protection?
+    rubric:
+      - Explains that separate processes normally have separate virtual address spaces enforced by the OS and hardware.
+      - Names a limitation such as kernel vulnerabilities, shared memory or an OS failure.
+    modelAnswer: "Separate processes normally have isolated virtual address spaces, so an ordinary memory write in the editor cannot directly overwrite the music player's memory. This is not an absolute guarantee: a kernel vulnerability or intentionally shared memory can cross that boundary."
+    explanation: Process isolation limits accidental interference, but it is one layer of protection rather than a proof that software is secure.
+  - id: scheduler-exercise
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Write a function `run_turns(tasks)` that accepts a list of `(name, turns)` pairs and returns the order in which tasks receive a turn using round-robin scheduling. A task with turns left goes to the end of the queue.
+    explanation: >-
+      A round-robin scheduler gives the first ready task one turn, then places it at the back of the queue if it still has work. A deque makes removing from the front efficient. This exercise uses functions, loops, tuples and queues; learners who have not studied those Python topics should return to it after the Python foundations lessons.
+    starterCode: |
+      def run_turns(tasks):
+          # Return the task names in execution order.
+          pass
+    solution: |
+      from collections import deque
+
+      def run_turns(tasks):
+          ready = deque(tasks)
+          order = []
+          while ready:
+              name, turns = ready.popleft()
+              order.append(name)
+              turns -= 1
+              if turns > 0:
+                  ready.append((name, turns))
+          return order
+    tests:
+      - name: single task
+        code: assert run_turns([("a", 2)]) == ["a", "a"]
+      - name: interleaves tasks
+        code: assert run_turns([("a", 2), ("b", 1)]) == ["a", "b", "a"]
+      - name: empty queue
+        code: assert run_turns([]) == []
+    hints:
+      - Use collections.deque so removing from the front is efficient.
+      - Decrease the remaining turn count after selecting a task.
+      - Append a task again only when its remaining count is greater than zero.
+    feedback:
+      - when:
+          codeContains: pop(0)
+        message: A list can work for a tiny example, but deque is the intended queue structure here.
+  - id: process-lifecycle-order
+    type: debug
+    skill: debugging
+    difficulty: 1
+    prompt: |
+      Put these four statements in the order a program is started and then finishes. This exercise uses only
+      simple print statements; it does not require loops or functions.
+
+      Expected output:
+
+      ```text
+      The program file is stored on disk
+      The OS creates a process
+      The scheduler gives the process CPU time
+      The process finishes and exits
+      ```
+    starterCode: |
+      print("The process finishes and exits")
+      print("The scheduler gives the process CPU time")
+      print("The program file is stored on disk")
+      print("The OS creates a process")
+    solution: |
+      print("The program file is stored on disk")
+      print("The OS creates a process")
+      print("The scheduler gives the process CPU time")
+      print("The process finishes and exits")
+    expectedOutput: |
+      The program file is stored on disk
+      The OS creates a process
+      The scheduler gives the process CPU time
+      The process finishes and exits
+    tests:
+      - name: follows the process lifecycle
+        code: |
+          expected = [
+              "The program file is stored on disk",
+              "The OS creates a process",
+              "The scheduler gives the process CPU time",
+              "The process finishes and exits",
+          ]
+          assert output_lines() == expected, f"Expected the lifecycle in order, got {output_lines()!r}."
+    hints:
+      - The program file exists before a process can be created from it.
+      - The scheduler can give CPU time only after the OS has created the process.
+      - The process exits after it has finished running.
+    explanation: |
+      The OS starts with a program stored on disk, creates a process to run it, schedules that process on a
+      CPU core, and eventually records its exit. The statements are deliberately out of order in the starter.
+  - id: mastery-process
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: A process is waiting for data from a remote server. Which statement is most accurate?
+    options:
+      - id: a
+        text: It may be blocked while another ready process uses the CPU.
+        correct: true
+        feedback: Correct. Waiting for I/O usually means it is not currently runnable.
+      - id: b
+        text: It must be terminated because it is not using the CPU.
+        correct: false
+        feedback: A process can wait and later become ready again.
+      - id: c
+        text: It has been deleted from storage.
+        correct: false
+        feedback: Process state and program files on storage are different things.
+    explanation: Waiting processes can become ready when the awaited event completes.
+  - id: mastery-scheduler
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What is the execution order?
+    code: |
+      queue = [("api", 2), ("worker", 1)]
+      order = []
+      while queue:
+          name, turns = queue.pop(0)
+          order.append(name)
+          if turns > 1:
+              queue.append((name, turns - 1))
+      print(order)
+    answer: "['api', 'worker', 'api']"
+    explanation: The API task returns to the end after its first turn; the worker finishes after one turn.
+  - id: mastery-explain
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A process has low CPU usage while waiting for a database query. Explain what this suggests and name one measurement that would help investigate.
+    rubric:
+      - Identifies that the process may be waiting for I/O or a remote service rather than performing CPU work.
+      - Suggests measuring query duration, request latency or time spent waiting.
+    modelAnswer: The process may be blocked waiting for the database or network. I would measure query and request durations, and if possible separate connection time from server execution time.
+    explanation: Low CPU use during a long wait points toward I/O or remote latency, but measurement is needed to locate the delay.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-process, mastery-scheduler, mastery-explain, process-lifecycle-order]
+cheatsheet: |
+  Program = stored instructions. Process = running instance. PID = temporary process identifier.
+  Ready = can run; running = on a CPU; blocked = waiting; terminated = finished.
+  The OS schedules CPU time, manages memory and mediates hardware access.

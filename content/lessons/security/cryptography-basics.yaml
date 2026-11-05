@@ -1,0 +1,1349 @@
+id: security.cryptography-basics
+concept: security.cryptography-basics
+title: Cryptography Basics
+subtitle: Hashes, MACs, password storage, randomness and encryption
+estimatedMinutes: 60
+reviewedOn: 2026-10-23
+summary: >-
+  Choose the right cryptographic tool for the job: encoding is not encryption, hashes give integrity, HMACs
+  prove a message came from a key holder, passwords need salted slow hashing, tokens need the `secrets`
+  module, and encryption (symmetric, public-key, and the two combined in TLS) protects confidentiality. You
+  will use Python's `hashlib`, `hmac` and `secrets`, build PBKDF2 from HMAC to see how password hashing
+  works, and learn why real systems use well-reviewed libraries instead of home-made crypto.
+objectives:
+  - Distinguish encoding, hashing, MACs and encryption, and choose the right one for a requirement.
+  - Explain the properties of a cryptographic hash and use SHA-256 to check integrity.
+  - Store and verify passwords with a unique salt and a slow password-hashing function, comparing in constant time.
+  - Sign and verify messages with HMAC, and generate tokens with the secrets module instead of random.
+  - Explain symmetric vs public-key encryption, why encryption needs authentication, and how TLS combines them.
+sources:
+  - title: Password Storage Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+    publisher: OWASP Cheat Sheet Series
+  - title: Cryptographic Storage Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+    publisher: OWASP Cheat Sheet Series
+  - title: hashlib — Secure hashes and message digests
+    url: https://docs.python.org/3/library/hashlib.html
+    publisher: Python Software Foundation
+  - title: hmac — Keyed-Hashing for Message Authentication
+    url: https://docs.python.org/3/library/hmac.html
+    publisher: Python Software Foundation
+  - title: secrets — Generate secure random numbers for managing secrets
+    url: https://docs.python.org/3/library/secrets.html
+    publisher: Python Software Foundation
+  - title: "RFC 8018: PKCS #5 Password-Based Cryptography Specification Version 2.1 (PBKDF2)"
+    url: https://www.rfc-editor.org/rfc/rfc8018
+    publisher: IETF
+  - title: "RFC 7914: The scrypt Password-Based Key Derivation Function (includes PBKDF2-HMAC-SHA256 test vectors)"
+    url: https://www.rfc-editor.org/rfc/rfc7914
+    publisher: IETF
+  - title: "RFC 2104: HMAC: Keyed-Hashing for Message Authentication"
+    url: https://www.rfc-editor.org/rfc/rfc2104
+    publisher: IETF
+  - title: "RFC 8446: The Transport Layer Security (TLS) Protocol Version 1.3"
+    url: https://www.rfc-editor.org/rfc/rfc8446
+    publisher: IETF
+  - title: Authenticated encryption (AESGCM) — pyca/cryptography
+    url: https://cryptography.io/en/latest/hazmat/primitives/aead/
+    publisher: Python Cryptographic Authority
+  - title: argon2-cffi API reference
+    url: https://argon2-cffi.readthedocs.io/en/stable/api.html
+    publisher: argon2-cffi project
+  - title: Pyodide - WebAssembly constraints (hashlib without OpenSSL)
+    url: https://pyodide.org/en/stable/usage/wasm-constraints.html
+    publisher: Pyodide project
+sections:
+  - id: why
+    title: Why choosing the right primitive matters
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Imagine your user database leaks — it happens to large companies every year. What the attacker
+          can do next depends entirely on how you stored the passwords. Here are three common choices for
+          the same password:
+      - type: code
+        runnable: true
+        code: |
+          import base64, hashlib
+
+          password = "sunshine1"
+          stored_base64 = base64.b64encode(password.encode()).decode()
+          stored_sha256 = hashlib.sha256(password.encode()).hexdigest()
+
+          print(stored_base64)
+          print(base64.b64decode(stored_base64).decode())   # anyone can reverse it
+
+          # A fast, unsalted hash falls to a list of common passwords.
+          common = ["123456", "password", "qwerty", "sunshine1", "iloveyou"]
+          lookup = {hashlib.sha256(p.encode()).hexdigest(): p for p in common}
+          print(lookup.get(stored_sha256))
+        expectedOutput: |
+          c3Vuc2hpbmUx
+          sunshine1
+          sunshine1
+        annotations:
+          - line: 8
+            text: Base64 looks scrambled but is just a different alphabet. Decoding needs no key.
+          - line: 12
+            text: The attacker hashes guesses and looks them up. Real lists contain billions of leaked passwords.
+      - type: markdown
+        body: |
+          Both "protections" fail, for different reasons. Base64 is an **encoding**, not encryption. SHA-256
+          is a real cryptographic hash, but it is the **wrong kind** for passwords: it is designed to be fast,
+          so guessing is fast. The fix — a salted, deliberately slow password hash — is one line in a good
+          library, *if you know to use it*.
+
+          Cryptography is full of choices like this: the algorithm can be perfect and the system still broken
+          because the wrong primitive was used, or a home-made one. This lesson gives you the map.
+
+  - id: three-tools
+    title: Encoding, hashing and encryption are different tools
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Tool | Purpose | Key? | Reversible? | Python |
+          |---|---|---|---|---|
+          | **Encoding** ([Base64](glossary:base64), UTF-8, hex) | Represent data in another format | No | Yes, by anyone | `base64`, `str.encode` |
+          | **[Cryptographic hash](glossary:cryptographic-hash)** (SHA-256) | Fingerprint for integrity | No | No (one-way) | `hashlib` |
+          | **MAC** ([HMAC](glossary:hmac)) | Prove a message came from a key holder, unchanged | Shared secret | No | `hmac` |
+          | **Password hash** (Argon2id, scrypt, PBKDF2) | Store passwords so guesses are expensive | No (but a salt) | No | `hashlib.scrypt`, `argon2-cffi` |
+          | **[Encryption](glossary:encryption)** (AES-GCM) | Keep data secret | Yes | Yes, with the key | `cryptography` package |
+          | **[Digital signature](glossary:digital-signature)** (Ed25519, ECDSA) | Prove who produced data, to anyone | Key pair | No | `cryptography` package |
+
+          Encoding exists so bytes can travel through text-only channels such as email, URLs or JSON. It
+          hides nothing:
+      - type: code
+        runnable: true
+        code: |
+          import base64
+
+          data = "Ada:secret-pass".encode()
+          encoded = base64.b64encode(data)
+          print(encoded)
+          print(base64.b64decode(encoded))
+        expectedOutput: |
+          b'QWRhOnNlY3JldC1wYXNz'
+          b'Ada:secret-pass'
+        caption: HTTP Basic authentication sends exactly this kind of Base64 string, which is why it is only acceptable over HTTPS.
+      - type: item
+        ref: encoding-hash-encrypt
+      - type: item
+        ref: predict-base64
+
+  - id: hashes
+    title: Cryptographic hashes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A cryptographic hash function turns input of any size into a fixed-size **digest** (SHA-256: 256
+          bits, shown as 64 hex characters). Its guarantees:
+
+          - **Deterministic** — the same input always gives the same digest (so printing digests is fine).
+          - **Fixed length** — a 5-byte and a 22,000-byte input both give 256 bits.
+          - **One-way (preimage resistance)** — given a digest, you cannot compute an input that produces it;
+            you can only guess inputs and check.
+          - **Collision resistance** — nobody can find two different inputs with the same digest.
+          - **Avalanche effect** — changing one character changes about half the output bits.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          for message in [b"hello", b"hello", b"hellp", b"a much longer message " * 1000]:
+              digest = hashlib.sha256(message).hexdigest()
+              print(len(message), digest[:16], len(digest))
+        expectedOutput: |
+          5 2cf24dba5fb0a30e 64
+          5 2cf24dba5fb0a30e 64
+          5 fdd7585e08c4e2af 64
+          22000 f338053ea93ec744 64
+        annotations:
+          - line: 4
+            text: "`hexdigest()` returns hex text; `digest()` returns the raw 32 bytes."
+          - line: 5
+            text: Only the first 16 hex characters are printed to keep lines short.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          a = hashlib.sha256(b"transfer 100 to Ada").digest()
+          b = hashlib.sha256(b"transfer 900 to Ada").digest()
+          diff_bits = sum(bin(x ^ y).count("1") for x, y in zip(a, b))
+          print(len(a) * 8, "bits in each digest")
+          print(diff_bits, "bits differ")
+        expectedOutput: |
+          256 bits in each digest
+          136 bits differ
+        caption: One character changed; 136 of 256 bits flipped - close to the half you expect from a good hash.
+        annotations:
+          - line: 5
+            text: "`x ^ y` sets a bit wherever the two bytes differ; counting the 1s counts differing bits."
+      - type: markdown
+        body: |
+          **Using a hash for integrity.** A vendor publishes the SHA-256 of a download; you hash what you
+          received and compare.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          original = b"pretend these are the bytes of installer.exe"
+          published = hashlib.sha256(original).hexdigest()     # shown on the vendor's website
+
+          received_ok = original
+          received_bad = original.replace(b"exe", b"exf")      # one byte changed in transit
+          print(hashlib.sha256(received_ok).hexdigest() == published)
+          print(hashlib.sha256(received_bad).hexdigest() == published)
+        expectedOutput: |
+          True
+          False
+      - type: callout
+        variant: warning
+        title: A hash proves "unchanged", not "from the right person"
+        body: |
+          Anyone can compute a SHA-256. If an attacker controls the server, they replace the file **and** the
+          published digest. Proving *who* produced something needs a key: an HMAC (shared secret) or a
+          digital signature (public key) — both later in this lesson.
+      - type: item
+        ref: predict-digest-length
+      - type: callout
+        variant: deep-dive
+        title: Which hash functions are still safe?
+        depth: deep
+        body: |
+          SHA-256, SHA-384/512 (the SHA-2 family), SHA-3 and BLAKE2 are fine for integrity. **MD5** and
+          **SHA-1** are broken for collision resistance: practical MD5 collisions have been known since 2004,
+          and a SHA-1 collision was publicly demonstrated in 2017 (the "SHAttered" attack). Do not use them for
+          anything security-related. Also note Python's built-in `hash()` is **not** a cryptographic hash: it
+          is designed for fast dictionary lookups, and for strings it is randomised per process, so it is not
+          even stable between runs.
+
+  - id: passwords
+    title: Storing passwords
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          You never need to recover a user's password — only to check that a login attempt matches. So store a
+          one-way value, never the password and never anything reversible. But a *plain* hash has two
+          weaknesses. First, identical passwords give identical hashes, and one precomputed table cracks
+          everyone who used a common password:
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          leaked = {
+              "ana": hashlib.sha256(b"letmein").hexdigest(),
+              "ben": hashlib.sha256(b"letmein").hexdigest(),
+              "chi": hashlib.sha256(b"x9#Lr!q2v").hexdigest(),
+          }
+          print(leaked["ana"] == leaked["ben"])      # same password -> same hash
+
+          guesses = ["123456", "password", "letmein", "dragon"]
+          table = {hashlib.sha256(g.encode()).hexdigest(): g for g in guesses}
+          for user, digest in leaked.items():
+              print(user, "->", table.get(digest, "not cracked"))
+        expectedOutput: |
+          True
+          ana -> letmein
+          ben -> letmein
+          chi -> not cracked
+      - type: markdown
+        body: |
+          **Fix 1 — a [salt](glossary:salt).** Generate a unique random value per password, hash it together
+          with the password, and store it next to the hash. The salt is not secret; its job is to make every
+          hash unique, so precomputed tables are useless and each user must be attacked separately.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+
+          def salted_sha256(password, salt):
+              return hashlib.sha256(salt + password.encode()).hexdigest()[:16]
+
+          # Fixed demo salts so the output is repeatable.
+          # Real salts come from secrets.token_bytes(16) - new and random for every password.
+          print(salted_sha256("letmein", b"salt-for-ana-001"))
+          print(salted_sha256("letmein", b"salt-for-ben-002"))
+        expectedOutput: |
+          1fe959ed9aa234d6
+          25dea771640c024a
+        caption: Same password, different salts, unrelated hashes.
+      - type: markdown
+        body: |
+          **Fix 2 — make every guess slow.** A single GPU computes on the order of billions of SHA-256 hashes
+          per second, so even salted SHA-256 lets an attacker try a whole dictionary against each user. A
+          [password hashing function](glossary:password-hashing) repeats work on purpose (and the best ones
+          also need lots of memory, which GPUs have little of per core). OWASP's current recommendations are,
+          in order of preference:
+
+          | Function | OWASP minimum setting |
+          |---|---|
+          | Argon2id | 19 MiB memory, 2 iterations, parallelism 1 |
+          | scrypt | N = 2¹⁷ (128 MiB), r = 8, p = 1 |
+          | bcrypt (legacy) | work factor 10 or more; 72-byte password limit |
+          | PBKDF2-HMAC-SHA256 (when FIPS-140 compliance is required) | 600,000 iterations |
+
+          To see what "slow on purpose" means, here is **PBKDF2** written out from Python's `hmac` module. It
+          feeds an HMAC's output back into the next HMAC, `iterations` times, and XORs the results together.
+      - type: code
+        runnable: true
+        code: |
+          import hmac
+
+          def pbkdf2_sha256(password: bytes, salt: bytes, iterations: int, length: int = 32) -> bytes:
+              """PBKDF2-HMAC-SHA256 (RFC 8018), written out to show how it works."""
+              result = b""
+              block = 1
+              while len(result) < length:
+                  u = hmac.digest(password, salt + block.to_bytes(4, "big"), "sha256")
+                  acc = int.from_bytes(u, "big")
+                  for _ in range(iterations - 1):
+                      u = hmac.digest(password, u, "sha256")     # each round feeds the next
+                      acc ^= int.from_bytes(u, "big")
+                  result += acc.to_bytes(32, "big")
+                  block += 1
+              return result[:length]
+
+          # Official test vector from RFC 7914, section 11 (P="passwd", S="salt", c=1):
+          print(pbkdf2_sha256(b"passwd", b"salt", 1, 64).hex()[:32])
+          print(pbkdf2_sha256(b"correct horse", b"demo-salt-16byte", 600_000).hex()[:32])
+        expectedOutput: |
+          55ac046e56e3089fec1691c22544b605
+          68e0493261a5fca78ee6df28da89d794
+        caption: The second line takes noticeably longer - 600,000 HMACs. That cost is paid once per login by you, but once per guess by an attacker.
+        annotations:
+          - line: 12
+            text: "`acc` keeps the XOR of every round's output, stored as one big integer."
+          - line: 18
+            text: Matches the RFC's published value 55ac046e…, so this is a correct implementation.
+      - type: callout
+        variant: warning
+        title: Why we wrote PBKDF2 by hand here - and why you should not
+        body: |
+          The in-browser Python (Pyodide) is built without OpenSSL, so `hashlib.pbkdf2_hmac` and
+          `hashlib.scrypt` do not exist in this runtime. On a normal Python install they do, and
+          `hashlib.pbkdf2_hmac("sha256", b"correct horse", b"demo-salt-16byte", 600_000).hex()[:32]` prints
+          the same `68e0493261a5fca78ee6df28da89d794`. The hand-written version is for understanding only:
+          real code must use a maintained library. Even a *correct* home-made implementation hurts you — this
+          pure-Python loop is much slower than the attacker's optimised GPU code, so in the time you can afford
+          per login you get fewer iterations than the attacker can test.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import hashlib, secrets
+
+          salt = secrets.token_bytes(16)                    # new random salt per password
+
+          # PBKDF2-HMAC-SHA256 with OWASP's recommended 600,000 iterations
+          key = hashlib.pbkdf2_hmac("sha256", b"correct horse", salt, 600_000)
+
+          # scrypt with OWASP's first recommended setting (about 128 MiB of memory).
+          # Without maxmem, OpenSSL's default 32 MiB limit raises
+          # ValueError: [digital envelope routines] memory limit exceeded
+          key = hashlib.scrypt(b"correct horse", salt=salt, n=2**17, r=8, p=1,
+                               maxmem=256 * 1024 * 1024, dklen=32)
+
+          # Best choice where available: Argon2id via the argon2-cffi package
+          # (pip install argon2-cffi). It creates and stores the salt for you.
+          from argon2 import PasswordHasher
+          from argon2.exceptions import VerifyMismatchError
+
+          ph = PasswordHasher()
+          stored = ph.hash("correct horse")         # a string starting '$argon2id$v=19$...'
+          try:
+              ph.verify(stored, "correct horse")    # returns True or raises
+              if ph.check_needs_rehash(stored):     # parameters changed since it was stored?
+                  stored = ph.hash("correct horse")
+          except VerifyMismatchError:
+              print("wrong password")
+        caption: Illustrative - run on your own machine (needs CPython with OpenSSL, plus argon2-cffi for the last part). Not available in the browser runtime.
+      - type: markdown
+        body: |
+          **Putting it together.** Store the algorithm, its parameters, the salt and the hash in one string, so
+          you can verify old passwords and raise the cost later. Verification recomputes with the *stored*
+          parameters and compares in constant time (explained in the next section).
+      - type: code
+        runnable: true
+        code: |
+          import hmac
+
+          def pbkdf2_sha256(password, salt, iterations, length=32):
+              result, block = b"", 1
+              while len(result) < length:
+                  u = hmac.digest(password, salt + block.to_bytes(4, "big"), "sha256")
+                  acc = int.from_bytes(u, "big")
+                  for _ in range(iterations - 1):
+                      u = hmac.digest(password, u, "sha256")
+                      acc ^= int.from_bytes(u, "big")
+                  result += acc.to_bytes(32, "big")
+                  block += 1
+              return result[:length]
+
+          ITERATIONS = 20_000   # demo only; OWASP recommends 600,000 for PBKDF2-HMAC-SHA256
+
+          def hash_password(password, salt):
+              digest = pbkdf2_sha256(password.encode(), salt, ITERATIONS)
+              return f"pbkdf2_sha256${ITERATIONS}${salt.hex()}${digest.hex()}"
+
+          def verify_password(password, stored):
+              _algorithm, iterations, salt_hex, digest_hex = stored.split("$")
+              candidate = pbkdf2_sha256(password.encode(), bytes.fromhex(salt_hex), int(iterations))
+              return hmac.compare_digest(candidate.hex(), digest_hex)
+
+          stored = hash_password("correct horse", b"demo-salt-16byte")   # real code: secrets.token_bytes(16)
+          print(stored[:60] + "...")
+          print(verify_password("correct horse", stored))
+          print(verify_password("Correct horse", stored))
+        expectedOutput: |
+          pbkdf2_sha256$20000$64656d6f2d73616c742d313662797465$d2a173b...
+          True
+          False
+        annotations:
+          - line: 19
+            text: "Format: algorithm $ iterations $ salt $ hash - everything needed to verify later."
+          - line: 23
+            text: Use the iterations stored with the hash, so old hashes keep working after you raise ITERATIONS.
+      - type: markdown
+        body: |
+          How much does the slowness buy? Rough arithmetic (order-of-magnitude figures, not a benchmark):
+      - type: code
+        runnable: true
+        code: |
+          fast_hash_cost = 1              # one SHA-256 per guess
+          pbkdf2_cost = 600_000 * 2       # PBKDF2-HMAC: about 2 SHA-256 computations per iteration
+          guesses_per_second = 10_000_000_000   # order of magnitude for one GPU on plain SHA-256
+          print(f"{guesses_per_second / fast_hash_cost:,.0f} guesses/s against plain SHA-256")
+          print(f"{guesses_per_second / pbkdf2_cost:,.0f} guesses/s against PBKDF2 (600k iterations)")
+        expectedOutput: |
+          10,000,000,000 guesses/s against plain SHA-256
+          8,333 guesses/s against PBKDF2 (600k iterations)
+      - type: item
+        ref: tf-sha256-passwords
+      - type: item
+        ref: explain-salt
+
+  - id: macs
+    title: Message authentication with HMAC
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An [HMAC](glossary:hmac) combines a hash with a **secret key**. Only someone with the key can produce
+          the right tag for a message, and any change to the message changes the tag. Typical uses: signed
+          cookies, webhook signatures (a payment provider signs each notification it sends you), and
+          tamper-proof links.
+      - type: code
+        runnable: true
+        code: |
+          import hashlib, hmac
+
+          key = b"server-side-secret-key"      # demo key; real keys come from a secret store
+          message = b'{"order": 42, "amount": 100}'
+
+          tag = hmac.new(key, message, hashlib.sha256).hexdigest()
+          print(tag[:16])
+
+          tampered = b'{"order": 42, "amount": 900}'
+          print(hmac.compare_digest(tag, hmac.new(key, message, hashlib.sha256).hexdigest()))
+          print(hmac.compare_digest(tag, hmac.new(key, tampered, hashlib.sha256).hexdigest()))
+          print(hmac.compare_digest(tag, hmac.new(b"guessed-key", message, hashlib.sha256).hexdigest()))
+        expectedOutput: |
+          f15b74f10947beff
+          True
+          False
+          False
+        annotations:
+          - line: 6
+            text: "`hmac.new(key, message, digestmod)` - the digest algorithm argument is required."
+          - line: 11
+            text: Changing the message changes the tag, so tampering is detected.
+          - line: 12
+            text: Without the right key nobody can produce a valid tag.
+      - type: markdown
+        body: |
+          **Why `compare_digest` instead of `==`?** A simple comparison stops at the first character that
+          differs. Step through this naive version and count the loop iterations for each guess:
+      - type: visualization
+        component: python-tracer
+        title: An early-exit comparison leaks how much was right
+        caption: The first guess shares two leading characters with the secret and loops longer before returning False. Measuring that extra time, byte by byte, can reveal a secret tag.
+        props:
+          code: |
+            def naive_equal(a, b):
+                if len(a) != len(b):
+                    return False
+                for x, y in zip(a, b):
+                    if x != y:
+                        return False
+                return True
+
+            print(naive_equal("7f3a9c", "7f0000"))
+            print(naive_equal("7f3a9c", "000000"))
+      - type: markdown
+        body: |
+          This is a [timing attack](glossary:constant-time-comparison). `hmac.compare_digest(a, b)` (also
+          available as `secrets.compare_digest`) is designed to avoid content-based early exits, so its time
+          does not reveal *where* the values differ. Use it whenever you compare a secret value — MAC tags,
+          API tokens, password hashes — with something an attacker supplied. Both arguments must be the same
+          type: `bytes`, or `str` containing only ASCII.
+      - type: item
+        ref: mcq-compare-digest
+
+  - id: randomness
+    title: "Secure randomness: secrets, not random"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Tokens, session IDs, password-reset links, salts and keys must be **unpredictable**. Python's
+          `random` module is designed for simulations and games: it is reproducible from its seed, and its
+          generator (the Mersenne Twister) can be reconstructed from enough observed outputs, after which every
+          future "random" value is known.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          def weak_token():
+              return "".join(random.choice("abcdef0123456789") for _ in range(12))
+
+          random.seed(2024)
+          first = weak_token()
+          random.seed(2024)              # an attacker who learns or guesses the seed...
+          print(first == weak_token())   # ...reproduces the "random" token exactly
+        expectedOutput: |
+          True
+      - type: markdown
+        body: |
+          The [secrets module](glossary:csprng) draws from the operating system's cryptographically secure
+          generator. Its output is different every run — so this example prints only lengths:
+      - type: code
+        runnable: true
+        code: |
+          import secrets
+
+          print(len(secrets.token_bytes(16)))     # 16 random bytes, e.g. for a salt
+          print(len(secrets.token_hex(16)))       # 16 bytes as 32 hex characters
+          print(len(secrets.token_urlsafe(32)))   # 32 bytes as URL-safe Base64 text
+          tokens = {secrets.token_urlsafe(32) for _ in range(1000)}
+          print(len(tokens), "distinct tokens out of 1000")
+        expectedOutput: |
+          16
+          32
+          43
+          1000 distinct tokens out of 1000
+        annotations:
+          - line: 5
+            text: "32 bytes = 256 bits of randomness; the Python docs call this sufficient for typical uses (as of 2015)."
+      - type: callout
+        variant: tip
+        title: Rule of thumb
+        body: |
+          If the value protects anything — a login, a reset link, an API key, a salt — use `secrets`
+          (`token_urlsafe(32)` for tokens, `token_bytes(16)` for salts). Use `random` only when predictability
+          does not matter, and seed it when you *want* reproducibility (simulations, tests).
+
+  - id: encryption
+    title: "Encryption: symmetric, public-key and TLS"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Encryption](glossary:encryption) keeps data **confidential**: ciphertext is useless without the key.
+          There are two families.
+
+          **[Symmetric encryption](glossary:symmetric-encryption)** uses one shared key to encrypt and
+          decrypt. It is fast and used for almost all bulk data. The modern choices are AES-GCM and
+          ChaCha20-Poly1305. The hard part is getting the same key to both sides safely.
+
+          **[Public-key cryptography](glossary:public-key-cryptography)** uses a key pair: a public key you can
+          give to anyone and a private key you never share. It solves the key-distribution problem in two
+          ways: **key exchange** (two parties agree on a fresh shared secret over an open network, for example
+          with elliptic-curve Diffie–Hellman) and **[digital signatures](glossary:digital-signature)** (sign
+          with the private key; anyone verifies with the public key, for example Ed25519 or ECDSA). It is
+          much slower, so it is used to set up symmetric keys, not to encrypt bulk data.
+
+          To feel why details matter, here is a **toy** cipher that XORs data with a secret keystream. It is
+          not real cryptography, but it shows a property real systems must defend against:
+      - type: code
+        runnable: true
+        code: |
+          def toy_xor_cipher(data: bytes, keystream: bytes) -> bytes:
+              """TOY ONLY - never use. Shows malleability, not how AES works."""
+              return bytes(d ^ k for d, k in zip(data, keystream))
+
+          keystream = bytes([7, 201, 33, 90, 18, 250, 61, 140, 9, 77, 160, 2, 95, 44, 230, 118])
+          ciphertext = toy_xor_cipher(b"PAY ADA 100 RUPE", keystream)
+          print(ciphertext.hex())
+          print(toy_xor_cipher(ciphertext, keystream))      # the same key reverses it
+
+          # An attacker who never sees the key flips "1" into "9" in transit:
+          forged = bytearray(ciphertext)
+          forged[8] ^= ord("1") ^ ord("9")
+          print(toy_xor_cipher(bytes(forged), keystream))
+        expectedOutput: |
+          5788787a53be7cac387d90220d79b633
+          b'PAY ADA 100 RUPE'
+          b'PAY ADA 900 RUPE'
+        annotations:
+          - line: 12
+            text: The attacker only needs to guess the plaintext format, not the key.
+      - type: markdown
+        body: |
+          The message stayed secret, yet the attacker changed it from 100 to 900. **Encryption alone does
+          not give integrity.** That is why modern systems use
+          [authenticated encryption](glossary:authenticated-encryption) (AEAD) such as AES-GCM: it adds a tag,
+          like an HMAC, and decryption fails if a single bit was changed. AES-GCM also needs a
+          [nonce](glossary:nonce) that must never repeat with the same key — reusing one breaks both secrecy
+          and integrity.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # pip install cryptography   (the pyca/cryptography package)
+          import os
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+          key = AESGCM.generate_key(bit_length=256)   # keep in a KMS or secret manager, not in code
+          aesgcm = AESGCM(key)
+          nonce = os.urandom(12)                      # 96-bit nonce; NEVER reuse one with the same key
+          ciphertext = aesgcm.encrypt(nonce, b"a secret message", b"order-42")   # last arg: associated data
+          print(aesgcm.decrypt(nonce, ciphertext, b"order-42"))   # b'a secret message'
+          # Any change to ciphertext, nonce or associated data -> cryptography.exceptions.InvalidTag
+        caption: Illustrative - needs the third-party `cryptography` package, which the browser runtime does not include. Run it locally in a virtual environment.
+      - type: markdown
+        body: |
+          **TLS (HTTPS) combines everything.** Public-key cryptography authenticates the server and agrees on
+          keys; symmetric AEAD encrypts the traffic; hashes and MACs tie the handshake together. Step through
+          a simplified TLS 1.3 handshake (details such as session resumption are left out):
+      - type: visualization
+        component: step-diagram
+        title: A TLS 1.3 handshake, conceptually
+        caption: Simplified from RFC 8446. Public-key operations happen once per connection; all data afterwards uses fast symmetric keys.
+        props:
+          width: 760
+          height: 300
+          nodes:
+            - { id: client, label: Browser (client), x: 120, y: 90, shape: actor }
+            - { id: server, label: Server, x: 640, y: 90 }
+            - { id: roots, label: Trusted root CAs, x: 120, y: 240, shape: store }
+            - { id: cert, label: Server certificate + private key, x: 640, y: 240, shape: store }
+          edges:
+            - { id: e-hs, from: client, to: server, label: "handshake, then encrypted data" }
+            - { id: e-cert, from: cert, to: server, label: loads }
+            - { id: e-roots, from: client, to: roots, label: checks chain against }
+          steps:
+            - title: ClientHello
+              body: The client lists the TLS versions and cipher suites it supports, names the site it wants (SNI), and sends its half of an ephemeral key exchange - a fresh public key just for this connection.
+              active: [client, e-hs, server]
+              payload: "ClientHello: versions=[TLS 1.3], ciphers=[AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256],\n             server_name=shop.example, key_share=<client ephemeral public key>"
+            - title: ServerHello and a shared secret
+              body: The server picks the parameters and sends its own ephemeral public key. Each side combines its private half with the other's public half and gets the same shared secret, which nobody watching the network can compute. Everything after this is encrypted.
+              active: [server, e-hs, client]
+            - title: Certificate and proof of the private key
+              body: The server sends its certificate (binding the name shop.example to a public key) and signs the handshake so far with the matching private key. Only the real owner of the certificate can produce that signature.
+              active: [server, cert, e-cert, e-hs]
+            - title: The client checks the certificate
+              body: The client verifies the chain of signatures up to a root authority it already trusts, that the name matches and that the certificate is in date - then checks the server's signature. Skipping this check (verify=False) removes the protection against impersonation.
+              active: [client, roots, e-roots]
+            - title: Finished
+              body: Both sides send a MAC over the whole handshake transcript, so any tampering with the earlier messages is detected.
+              active: [client, server, e-hs]
+            - title: Encrypted application data
+              body: From now on HTTP requests and responses travel inside symmetric authenticated encryption (AES-GCM or ChaCha20-Poly1305) with keys derived from the shared secret.
+              active: [client, server, e-hs]
+              payload: "GET /account HTTP/1.1  ->  encrypted + authenticated records"
+      - type: markdown
+        body: |
+          You will study certificates and the handshake properly in [HTTPS and TLS](concept:networking.tls).
+      - type: callout
+        variant: warning
+        title: Do not roll your own crypto
+        body: |
+          The toy XOR cipher, the naive comparison and "SHA-256 of secret + message" all *look* reasonable and
+          are all broken. Real cryptographic failures mostly come from using primitives wrongly — reused
+          nonces, missing authentication, home-made protocols, hard-coded keys — not from someone breaking
+          AES. Use high-level, well-reviewed libraries (`hashlib`/`hmac`/`secrets` in the standard library,
+          pyca/`cryptography`, libsodium bindings, `argon2-cffi`), prefer their simplest recipe, and keep keys
+          in a secret manager or KMS.
+      - type: item
+        ref: mcq-tls
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How HMAC is built (RFC 2104).** `HMAC(K, m) = H((K ⊕ opad) ‖ H((K ⊕ ipad) ‖ m))` — the key is mixed
+          with two fixed padding constants and the hash is applied twice. The obvious alternative,
+          `sha256(secret + message)`, is vulnerable to **length extension**: SHA-256 processes data in
+          blocks and its output is its final internal state, so someone who knows the tag for `message` can
+          compute a valid tag for `message + padding + extra` without knowing the secret. HMAC's outer hash
+          prevents this. (SHA-3 and BLAKE2 are not vulnerable to length extension, but HMAC is still the
+          standard, interoperable choice.)
+
+          **Why PBKDF2 is no longer the first choice.** PBKDF2 only costs *time*. Attackers run it massively
+          in parallel on GPUs and specialised hardware where each core needs very little memory. scrypt and
+          Argon2 are **memory-hard**: each guess needs a large block of memory, which is much more expensive to
+          provide for thousands of parallel guesses. PBKDF2 remains acceptable (and is required where FIPS-140
+          compliance applies) with a high iteration count.
+
+          **Peppers.** Some systems also mix in a *pepper*: a secret shared by all hashes and stored outside
+          the database (for example in a vault or HSM), so a stolen database alone is not enough to start
+          cracking. It is an extra layer, not a replacement for salting and slow hashing.
+
+          **Constant time in practice.** `hmac.compare_digest` avoids short-circuiting on content, but if the
+          two values have different lengths its timing can reveal the lengths (not the contents). Compare
+          values of a fixed, public length — such as hex digests — and you are fine.
+
+          **Where Python gets its randomness.** `secrets` uses `random.SystemRandom`, which reads from the
+          operating system (`os.urandom`): the kernel's CSPRNG on Linux and macOS, `BCryptGenRandom` on
+          Windows, and the browser's `crypto.getRandomValues` under Pyodide.
+
+  - id: mistakes
+    title: Common mistakes and how to fix them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom / smell | Why it is wrong | Fix |
+          |---|---|---|
+          | Passwords "encrypted" with Base64 | Encoding is reversible by anyone | Salted password hash (Argon2id, scrypt, bcrypt, PBKDF2) |
+          | `hashlib.sha256(password)` or MD5 for passwords | Fast and (usually) unsalted - cheap to guess | A slow password-hashing function with a unique salt |
+          | `if tag == expected:` for MACs or tokens | Early exit can leak timing information | `hmac.compare_digest(tag, expected)` |
+          | `random.randint` / `random.choice` for tokens | Predictable from the seed or past outputs | `secrets.token_urlsafe(32)` |
+          | `sha256(secret + message)` as a signature | Length-extension attacks | `hmac.new(secret, message, hashlib.sha256)` |
+          | Encryption without a tag, or a reused nonce | Ciphertext can be modified; nonce reuse breaks AES-GCM | AEAD (AES-GCM, ChaCha20-Poly1305) with a fresh nonce |
+          | Keys in source code or Git history | Anyone with the repository has the key | Secret manager or KMS; rotate any key that leaked |
+          | `verify=False` to "fix" a certificate error | Removes server authentication from TLS | Fix the certificate or trust store |
+
+          Two errors you will meet in Python itself. Hash functions work on **bytes**, not text:
+      - type: code
+        runnable: true
+        code: |
+          import hashlib
+          hashlib.sha256("password")
+        expectError: TypeError
+        caption: "TypeError: Strings must be encoded before hashing - use \"password\".encode() (UTF-8 by default)."
+      - type: code
+        runnable: true
+        code: |
+          import hmac
+          hmac.new(b"key", b"message")
+        expectError: TypeError
+        caption: "TypeError: Missing required argument 'digestmod'. - since Python 3.8 you must name the hash, e.g. hmac.new(key, msg, hashlib.sha256)."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises use only the standard library. Real projects would use a library such as
+          `argon2-cffi` for passwords, but the patterns — salt, stored parameters, constant-time comparison,
+          HMAC verification, `secrets` for tokens — are exactly the same.
+      - type: item
+        ref: password-store
+      - type: item
+        ref: debug-webhook
+      - type: item
+        ref: reset-token
+      - type: item
+        ref: parsons-hmac
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Encoding** (Base64) changes representation and hides nothing. **Hashing** is one-way and gives
+            integrity. **Encryption** is reversible with a key and gives confidentiality.
+          - **SHA-256**: deterministic, fixed-length, one-way, collision-resistant. Not MD5 or SHA-1.
+          - **Passwords**: unique random salt + slow, ideally memory-hard function (Argon2id, scrypt; PBKDF2
+            with 600,000 iterations where FIPS is required). Store parameters with the hash.
+          - **HMAC** proves a message came from a key holder unchanged; compare tags with
+            `hmac.compare_digest`.
+          - **Tokens, salts and keys** come from `secrets`, never `random`.
+          - **Symmetric** encryption (AES-GCM) is fast; **public-key** cryptography does key exchange and
+            signatures; **TLS** combines them. Encryption needs authentication (AEAD).
+          - **Don't roll your own**: use reviewed libraries and keep keys out of code.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How should an application store passwords, and why is SHA-256 the wrong choice?" — SHA-256 is fast,
+          so attackers can test billions of guesses per second; plain hashes also let one table crack every
+          user with a common password. Use a unique random salt per password and a slow, memory-hard function
+          (Argon2id, or scrypt/bcrypt; PBKDF2 where FIPS requires it), store the parameters with the hash,
+          compare in constant time, and rehash with stronger parameters on login over time.
+
+items:
+  - id: encoding-hash-encrypt
+    type: mcq
+    skill: recognition
+    prompt: Which of these can **anyone** turn back into the original data, without any key?
+    explanation: >-
+      Base64 is an encoding: a public, keyless way to write bytes as text, so decoding needs nothing secret.
+      A hash cannot be reversed at all (only guessed), and ciphertext or MAC tags need the key.
+    options:
+      - id: a
+        text: A Base64 string such as `c2VjcmV0`
+        correct: true
+        feedback: Right. Base64 is reversible by design and uses no key - it provides no secrecy.
+      - id: b
+        text: A SHA-256 digest
+        feedback: A hash is one-way. You can only guess inputs and compare, which is why weak passwords are still at risk.
+      - id: c
+        text: AES-GCM ciphertext
+        feedback: Decrypting needs the key. Without it the ciphertext reveals nothing but its length.
+      - id: d
+        text: An HMAC tag
+        feedback: A MAC tag is not a reversible container for the message at all; it is a keyed fingerprint used to check integrity.
+
+  - id: predict-base64
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import base64
+      print(base64.b64decode("c2VjcmV0").decode())
+    answer: "secret"
+    explanation: >-
+      `b64decode` reverses Base64 without any key and returns bytes; `.decode()` turns those UTF-8 bytes into
+      the string "secret". Anyone who sees a Base64 "password" can do the same.
+    wrongAnswers:
+      - answer: "c2VjcmV0"
+        feedback: "`b64decode` does reverse the encoding - the output is the original text, not the Base64 string."
+      - answer: "b'secret'"
+        feedback: "`.decode()` turns the bytes into a str, so print shows secret without the b'' prefix."
+
+  - id: predict-digest-length
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import hashlib
+      print(len(hashlib.sha256(b"a").hexdigest()), len(hashlib.sha256(b"a" * 10_000).hexdigest()))
+    answer: "64 64"
+    explanation: >-
+      SHA-256 always produces 256 bits = 32 bytes, shown by `hexdigest()` as 64 hex characters, whatever the
+      input size.
+    wrongAnswers:
+      - answer: "32 32"
+        feedback: 32 is the number of bytes (`digest()`); `hexdigest()` uses two hex characters per byte, so 64.
+      - answer: "1 10000"
+        feedback: A hash does not preserve length - every SHA-256 digest is the same size.
+      - answer: "64 640000"
+        feedback: The digest length does not grow with the input. That fixed size is one of the defining properties.
+
+  - id: tf-sha256-passwords
+    type: true-false
+    skill: explanation
+    prompt: "True or false: SHA-256 is a secure hash function, so `hashlib.sha256(salt + password)` is a good way to store passwords."
+    answer: false
+    explanation: >-
+      SHA-256 is secure for integrity, but it is designed to be fast. A GPU can try billions of guesses per
+      second, so even salted SHA-256 is cheap to brute-force. Passwords need a deliberately slow (ideally
+      memory-hard) password-hashing function such as Argon2id, scrypt, bcrypt or high-iteration PBKDF2.
+
+  - id: explain-salt
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a teammate what a salt does and what slowness does in password hashing. Why do you need
+      both, and why does the salt not have to be secret?
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - The salt makes every stored hash unique, so identical passwords look different.
+      - The salt defeats precomputed tables and forces the attacker to attack each user separately.
+      - Slowness (many iterations, memory) makes each individual guess expensive.
+      - The salt is stored next to the hash; its job is uniqueness, not secrecy - the key cost comes from the slow function.
+    modelAnswer: |
+      Without a salt, two users with the same password have the same hash, and one precomputed table of
+      common-password hashes cracks everyone at once. A unique random salt per password makes every hash
+      different, so the attacker has to attack each user separately and cannot reuse work. But each guess
+      against one user would still be cheap with a fast hash, so we also make the function slow (and
+      ideally memory-hungry) - Argon2id, scrypt or high-iteration PBKDF2 - so every guess costs real time.
+      The salt is stored with the hash because verification needs it; its value comes from being unique,
+      not secret.
+
+  - id: mcq-compare-digest
+    type: mcq
+    skill: explanation
+    prompt: Why should a server check a webhook's HMAC with `hmac.compare_digest(received, expected)` rather than `received == expected`?
+    explanation: >-
+      An ordinary comparison can stop at the first differing character, so the response time depends on how
+      many leading characters were right. Over many requests an attacker can use that to build a valid tag
+      one character at a time. compare_digest avoids content-based early exits.
+    options:
+      - id: a
+        text: "`==` may return as soon as one character differs, so timing leaks how much of a guess was correct"
+        correct: true
+        feedback: Correct - that is a timing side channel, and compare_digest is designed to avoid it.
+      - id: b
+        text: "`==` does not work on hexadecimal strings"
+        feedback: "`==` compares strings correctly; the problem is how long it takes, not the result."
+      - id: c
+        text: compare_digest decrypts the tag before comparing
+        feedback: An HMAC tag is not encrypted and nothing is decrypted - compare_digest just compares carefully.
+      - id: d
+        text: compare_digest is faster
+        feedback: Speed is not the point; predictable timing is.
+
+  - id: mcq-tls
+    type: mcq
+    skill: recognition
+    difficulty: 2
+    prompt: In an HTTPS (TLS 1.3) connection, what is public-key cryptography mainly used for?
+    explanation: >-
+      Public-key operations are slow, so TLS uses them once per connection: an ephemeral key exchange to agree
+      on shared secrets, and a signature (backed by the certificate) to prove the server's identity. The
+      actual page data is encrypted with fast symmetric authenticated encryption.
+    options:
+      - id: a
+        text: Encrypting every byte of every page with the server's public key
+        feedback: That would be far too slow. Bulk data uses symmetric AEAD such as AES-GCM.
+      - id: b
+        text: Agreeing on fresh shared keys and proving the server's identity with its certificate
+        correct: true
+        feedback: Right - key exchange plus authentication. Symmetric keys derived from the handshake protect the data.
+      - id: c
+        text: Hashing the user's password before it is sent
+        feedback: TLS does not hash form fields; it encrypts the whole connection. Password hashing happens on the server.
+      - id: d
+        text: Compressing the traffic so it travels faster
+        feedback: Cryptography and compression are unrelated; TLS 1.3 in fact removed compression.
+
+  - id: password-store
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Complete `hash_password` and `verify_password` using the provided `pbkdf2_sha256` helper.
+
+      - `hash_password(password, salt=None)` returns the string
+        `"pbkdf2_sha256$<iterations>$<salt as hex>$<hash as hex>"` using `ITERATIONS`. If no salt is given,
+        create a new random 16-byte salt with the `secrets` module.
+      - `verify_password(password, stored)` splits the stored string, recomputes the hash with the **stored**
+        iterations and salt, and compares with `hmac.compare_digest`. Return `True` or `False`.
+    starterCode: |
+      import hmac
+      import secrets
+
+      ITERATIONS = 10_000   # kept small so the checks run quickly; production: 600,000 or more
+
+      def pbkdf2_sha256(password, salt, iterations, length=32):
+          """Given helper: PBKDF2-HMAC-SHA256 (RFC 8018). Takes and returns bytes."""
+          result, block = b"", 1
+          while len(result) < length:
+              u = hmac.digest(password, salt + block.to_bytes(4, "big"), "sha256")
+              acc = int.from_bytes(u, "big")
+              for _ in range(iterations - 1):
+                  u = hmac.digest(password, u, "sha256")
+                  acc ^= int.from_bytes(u, "big")
+              result += acc.to_bytes(32, "big")
+              block += 1
+          return result[:length]
+
+      def hash_password(password, salt=None):
+          # Return "pbkdf2_sha256$<iterations>$<salt hex>$<hash hex>".
+          # If salt is None, create a random 16-byte salt.
+          pass
+
+      def verify_password(password, stored):
+          # Recompute with the stored iterations and salt; compare in constant time.
+          pass
+    solution: |
+      import hmac
+      import secrets
+
+      ITERATIONS = 10_000   # kept small so the checks run quickly; production: 600,000 or more
+
+      def pbkdf2_sha256(password, salt, iterations, length=32):
+          """Given helper: PBKDF2-HMAC-SHA256 (RFC 8018). Takes and returns bytes."""
+          result, block = b"", 1
+          while len(result) < length:
+              u = hmac.digest(password, salt + block.to_bytes(4, "big"), "sha256")
+              acc = int.from_bytes(u, "big")
+              for _ in range(iterations - 1):
+                  u = hmac.digest(password, u, "sha256")
+                  acc ^= int.from_bytes(u, "big")
+              result += acc.to_bytes(32, "big")
+              block += 1
+          return result[:length]
+
+      def hash_password(password, salt=None):
+          if salt is None:
+              salt = secrets.token_bytes(16)
+          digest = pbkdf2_sha256(password.encode(), salt, ITERATIONS)
+          return f"pbkdf2_sha256${ITERATIONS}${salt.hex()}${digest.hex()}"
+
+      def verify_password(password, stored):
+          algorithm, iterations, salt_hex, digest_hex = stored.split("$")
+          if algorithm != "pbkdf2_sha256":
+              return False
+          candidate = pbkdf2_sha256(password.encode(), bytes.fromhex(salt_hex), int(iterations))
+          return hmac.compare_digest(candidate.hex(), digest_hex)
+    tests:
+      - name: Stored format is correct
+        code: |
+          salt = b"0123456789abcdef"
+          stored = hash_password("pw", salt)
+          assert isinstance(stored, str), f"hash_password should return a str, got {stored!r}."
+          parts = stored.split("$")
+          assert len(parts) == 4 and parts[0] == "pbkdf2_sha256", f"Expected 'pbkdf2_sha256$...$...$...', got {stored!r}."
+          assert parts[1] == str(ITERATIONS), f"The second field should be the iteration count {ITERATIONS}, got {parts[1]!r}."
+          assert parts[2] == salt.hex(), "The third field should be salt.hex()."
+          assert parts[3] == pbkdf2_sha256(b"pw", salt, ITERATIONS).hex(), "The fourth field should be pbkdf2_sha256(password.encode(), salt, ITERATIONS).hex()."
+      - name: Verifies right and wrong passwords
+        code: |
+          stored = hash_password("correct horse", b"fixed-test-salt!")
+          assert verify_password("correct horse", stored) is True, "The right password must verify (return True)."
+          assert verify_password("Correct horse", stored) is False, "A different password must not verify (return False)."
+          assert verify_password("", stored) is False, "An empty password must not verify."
+      - name: A new random salt each time
+        code: |
+          a = hash_password("same password")
+          b = hash_password("same password")
+          assert a != b, "With no salt given, each call must create a new random salt, so two hashes of the same password differ."
+          assert len(a.split("$")[2]) == 32, "Use a 16-byte salt (32 hex characters): secrets.token_bytes(16)."
+          assert verify_password("same password", a) and verify_password("same password", b), "Both hashes must still verify."
+          assert calls("token_bytes") or calls("token_hex") or calls("urandom"), "Create salts with the secrets module (secrets.token_bytes(16)), never with random."
+      - name: Uses the stored iteration count
+        code: |
+          salt = b"older-hash-salt!"
+          old = "pbkdf2_sha256$1000$" + salt.hex() + "$" + pbkdf2_sha256(b"pw", salt, 1000).hex()
+          assert verify_password("pw", old) is True, "verify_password must read the iteration count from the stored string, so hashes made with older settings still verify."
+      - name: Compares in constant time
+        code: |
+          assert calls("compare_digest"), "Compare the hashes with hmac.compare_digest, not ==."
+    hints:
+      - "`stored.split(\"$\")` gives the four parts; `int(...)` and `bytes.fromhex(...)` turn them back into numbers and bytes."
+      - "`pbkdf2_sha256` takes bytes - call `password.encode()` first."
+      - "Return `hmac.compare_digest(candidate.hex(), digest_hex)` so the result is True or False."
+    feedback:
+      - when: { errorType: TypeError }
+        message: The helper works on bytes. Convert the password with `.encode()`, and the stored hex salt with `bytes.fromhex()`.
+      - when: { codeContains: "import random" }
+        message: Salts must come from `secrets` (a cryptographically secure generator), not `random`.
+    explanation: >-
+      The stored string carries everything verification needs - algorithm, cost, salt and hash - so you can
+      raise ITERATIONS later without breaking old accounts (and rehash them on their next login). A fresh salt
+      per password defeats precomputed tables, and compare_digest avoids leaking timing information.
+
+  - id: debug-webhook
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A payment provider signs each webhook it sends you: the `X-Signature` header holds the hex
+      **HMAC-SHA256** of the raw request body, keyed with a shared secret. This check rejects genuine
+      webhooks and also has a security weakness. Fix both problems.
+    starterCode: |
+      import hashlib, hmac
+
+      WEBHOOK_SECRET = b"whsec_demo_only"   # real code loads this from a secret store
+
+      def signature_is_valid(body: bytes, signature: str) -> bool:
+          expected = hashlib.sha256(WEBHOOK_SECRET + body).hexdigest()
+          return expected == signature
+    solution: |
+      import hashlib, hmac
+
+      WEBHOOK_SECRET = b"whsec_demo_only"   # real code loads this from a secret store
+
+      def signature_is_valid(body: bytes, signature: str) -> bool:
+          expected = hmac.new(WEBHOOK_SECRET, body, hashlib.sha256).hexdigest()
+          return hmac.compare_digest(expected, signature)
+    tests:
+      - name: Accepts genuine signatures
+        code: |
+          import hashlib, hmac
+          body = b'{"event": "payment.succeeded", "order": 42}'
+          good = hmac.new(WEBHOOK_SECRET, body, hashlib.sha256).hexdigest()
+          assert signature_is_valid(body, good) is True, "A genuine HMAC-SHA256 signature must be accepted. sha256(secret + body) is not an HMAC - use hmac.new(WEBHOOK_SECRET, body, hashlib.sha256)."
+      - name: Rejects tampered bodies and wrong keys
+        code: |
+          import hashlib, hmac
+          body = b'{"event": "payment.succeeded", "order": 42}'
+          good = hmac.new(WEBHOOK_SECRET, body, hashlib.sha256).hexdigest()
+          assert signature_is_valid(b'{"event": "payment.succeeded", "order": 43}', good) is False, "A changed body must be rejected."
+          forged = hmac.new(b"attacker-key", body, hashlib.sha256).hexdigest()
+          assert signature_is_valid(body, forged) is False, "A signature made with a different key must be rejected."
+          assert signature_is_valid(body, "not-a-signature") is False, "Garbage signatures must be rejected."
+      - name: Compares in constant time
+        code: |
+          assert calls("compare_digest"), "Compare signatures with hmac.compare_digest so response timing does not leak how much of a forged signature was right."
+    hints:
+      - "The provider uses HMAC, not a plain hash of secret + body. Which function in the `hmac` module computes one?"
+      - "`hmac.new(key, message, hashlib.sha256).hexdigest()` gives the expected hex signature."
+      - Replace `==` with `hmac.compare_digest(expected, signature)`.
+    feedback:
+      - when: { codeContains: "== signature" }
+        message: Comparing with == can leak timing information. Use hmac.compare_digest.
+    explanation: >-
+      `sha256(secret + body)` is not what the provider computes, so genuine webhooks failed - and that
+      construction is also vulnerable to length-extension attacks. HMAC is the standard keyed construction.
+      `compare_digest` removes the timing side channel that `==` can create.
+
+  - id: reset-token
+    type: code
+    skill: transfer
+    prompt: |
+      Password-reset links contain a token: anyone who can guess it can take over the account. Rewrite
+      `new_reset_token()` so that it returns an **unguessable, URL-safe** string with at least 32 bytes of
+      randomness. Do not use the `random` module.
+    starterCode: |
+      import random
+
+      def new_reset_token():
+          # Make an unguessable, URL-safe token with at least 32 bytes of randomness.
+          return str(random.randint(100000, 999999))
+    solution: |
+      import secrets
+
+      def new_reset_token():
+          return secrets.token_urlsafe(32)
+    tests:
+      - name: Long enough
+        code: |
+          token = new_reset_token()
+          assert isinstance(token, str), f"Return a str, got {type(token).__name__}."
+          assert len(token) >= 43, f"32 random bytes give at least 43 URL-safe characters; your token has {len(token)} characters."
+      - name: URL-safe characters only
+        code: |
+          import string
+          allowed = set(string.ascii_letters + string.digits + "-_")
+          token = new_reset_token()
+          assert set(token) <= allowed, f"Use only URL-safe characters (letters, digits, - and _); got {token!r}."
+      - name: Different every time
+        code: |
+          tokens = {new_reset_token() for _ in range(200)}
+          assert len(tokens) == 200, "Every call must return a new token."
+      - name: Does not use the random module
+        code: |
+          import ast
+          imported = set()
+          for node in ast.walk(ast.parse(source)):
+              if isinstance(node, ast.Import):
+                  imported |= {alias.name.split(".")[0] for alias in node.names}
+              elif isinstance(node, ast.ImportFrom) and node.module:
+                  imported.add(node.module.split(".")[0])
+          assert "random" not in imported, "The random module is predictable - use the secrets module for security tokens."
+          assert "secrets" in imported, "Import and use the secrets module."
+    hints:
+      - The `secrets` module has a function that returns URL-safe text directly.
+      - "`secrets.token_urlsafe(32)` uses 32 random bytes."
+    explanation: >-
+      `secrets.token_urlsafe(32)` gives 256 bits of randomness from the operating system's secure generator,
+      encoded with URL-safe Base64 (43 characters). A six-digit `random` number has only a million
+      possibilities and comes from a predictable generator. In production, also store only a hash of the token,
+      expire it quickly and allow it to be used once.
+
+  - id: parsons-hmac
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a program that signs a message and verifies it, printing `True` for the
+      original and `False` for a modified message. Two lines are distractors.
+    solution: |
+      import hashlib, hmac
+      key = b"demo-key-from-secret-store"
+      def sign(body):
+          return hmac.new(key, body, hashlib.sha256).hexdigest()
+      def verify(body, tag):
+          return hmac.compare_digest(sign(body), tag)
+      tag = sign(b"order 42 paid")
+      print(verify(b"order 42 paid", tag))
+      print(verify(b"order 43 paid", tag))
+    distractors:
+      - "    return hashlib.sha256(body).hexdigest()"
+      - "tag = sign(\"order 42 paid\")"
+    expectedOutput: |
+      True
+      False
+    explanation: >-
+      The key and `sign` must exist before `verify` uses them, and the tag is computed before verifying. A plain
+      `sha256(body)` uses no key, so anyone could forge it, and HMAC needs bytes, not a str.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-salt
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import hashlib
+
+      def store(password, salt):
+          return hashlib.sha256(salt + password.encode()).hexdigest()
+
+      a = store("blue-moon", b"salt-A")
+      b = store("blue-moon", b"salt-B")
+      c = store("blue-moon", b"salt-A")
+      print(a == b, a == c)
+    answer: "False True"
+    explanation: >-
+      Different salts give different hashes of the same password (a != b). The function is deterministic, so
+      the same salt and password always give the same hash (a == c) - which is exactly how verification works.
+    wrongAnswers:
+      - answer: "True True"
+        feedback: The salt is part of what is hashed, so changing it changes the digest completely.
+      - answer: "False False"
+        feedback: Hashing is deterministic - with the same salt and password you always get the same result, which is what makes verification possible.
+
+  - id: m-mcq-session-id
+    type: mcq
+    skill: design
+    prompt: Which expression should generate a new session ID after a user logs in?
+    explanation: >-
+      Session IDs must be unguessable, so they need plenty of randomness from a cryptographically secure
+      generator. The other options are predictable or derived from public information.
+    options:
+      - id: a
+        text: "`secrets.token_urlsafe(32)`"
+        correct: true
+        feedback: Correct - 256 bits from the OS's secure random generator, safe to put in a cookie.
+      - id: b
+        text: "`str(random.random())`"
+        feedback: The random module is predictable from its state, and attackers can reconstruct that state from outputs.
+      - id: c
+        text: "`hashlib.sha256(username.encode()).hexdigest()`"
+        feedback: Anyone who knows the username can compute this - hashing public data does not make it secret.
+      - id: d
+        text: "`base64.b64encode(f\"{user_id}:{login_time}\".encode())`"
+        feedback: Base64 hides nothing; the user ID and approximate time are easy to guess.
+
+  - id: m-design-hash-or-encrypt
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: >-
+      Your app stores each customer's API key for a third-party service, because your server must call that
+      service on the customer's behalf later. How should those keys be stored?
+    explanation: >-
+      You must be able to recover the original key to use it, so a one-way hash is impossible. Encrypt it with
+      authenticated encryption, keeping the encryption key separate from the database (a KMS or secret
+      manager). Passwords are different: you only need to verify them, so they are hashed.
+    options:
+      - id: a
+        text: Hash them with Argon2id, like passwords
+        feedback: A hash is one-way. You could check a key but never send it to the third-party service.
+      - id: b
+        text: Encrypt them with AES-GCM using a key held in a KMS or secret manager, not in the database
+        correct: true
+        feedback: Right - you need the original back, so encrypt (with authentication), and keep the key elsewhere.
+      - id: c
+        text: Base64-encode them so they are not readable at a glance
+        feedback: Base64 is not protection; anyone with the database can decode it.
+      - id: d
+        text: Store them in plain text, because the database is behind a firewall
+        feedback: Databases, backups and logs leak. Defence in depth means the data stays protected even then.
+
+  - id: m-tf-encryption-integrity
+    type: true-false
+    skill: explanation
+    prompt: "True or false: if an attacker cannot read encrypted data, they also cannot change it in a meaningful way."
+    answer: false
+    explanation: >-
+      Without authentication, ciphertext can be malleable: as in the toy XOR example, flipping bits in the
+      ciphertext flips the same bits in the plaintext, so an attacker who knows the format can change 100 into
+      900 without the key. Authenticated encryption (AES-GCM, ChaCha20-Poly1305) detects such changes.
+
+  - id: m-signed-cookie
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Implement tamper-proof cookies with HMAC-SHA256 and the given `KEY`.
+
+      - `sign(value)` returns `"<value>.<hex tag>"`, where the tag is the hex HMAC-SHA256 of `value`.
+      - `unsign(cookie)` returns the value if the tag is valid, otherwise `None`. Values may themselves
+        contain dots, so split on the **last** dot. Compare tags in constant time.
+    starterCode: |
+      import hashlib, hmac
+
+      KEY = b"demo-cookie-key"   # real apps load this from a secret store
+
+      def sign(value):
+          return value
+
+      def unsign(cookie):
+          return cookie
+    solution: |
+      import hashlib, hmac
+
+      KEY = b"demo-cookie-key"   # real apps load this from a secret store
+
+      def sign(value):
+          tag = hmac.new(KEY, value.encode(), hashlib.sha256).hexdigest()
+          return f"{value}.{tag}"
+
+      def unsign(cookie):
+          value, dot, tag = cookie.rpartition(".")
+          if not dot:
+              return None
+          expected = hmac.new(KEY, value.encode(), hashlib.sha256).hexdigest()
+          if hmac.compare_digest(expected, tag):
+              return value
+          return None
+    tests:
+      - name: sign produces value.tag
+        code: |
+          import hashlib, hmac
+          expected = "user=ana." + hmac.new(KEY, b"user=ana", hashlib.sha256).hexdigest()
+          assert sign("user=ana") == expected, f"sign('user=ana') should be 'user=ana.<hex HMAC-SHA256 of the value>', got {sign('user=ana')!r}."
+      - name: Round trip, including dots in the value
+        code: |
+          for value in ["user=ana", "user=ana.smith", ""]:
+              assert unsign(sign(value)) == value, f"unsign(sign({value!r})) should give {value!r} back. Split on the last dot (rpartition)."
+      - name: Rejects tampering
+        code: |
+          cookie = sign("role=viewer")
+          tag = cookie.rsplit(".", 1)[1]
+          assert unsign("role=admin." + tag) is None, "Changing the value must invalidate the cookie."
+          assert unsign(cookie[:-1] + ("0" if cookie[-1] != "0" else "1")) is None, "Changing the tag must invalidate the cookie."
+          assert unsign("no-dot-here") is None, "A cookie without a tag must be rejected."
+      - name: Constant-time comparison
+        code: |
+          assert calls("compare_digest"), "Use hmac.compare_digest to compare tags."
+    hints:
+      - "`hmac.new(KEY, value.encode(), hashlib.sha256).hexdigest()` is the tag."
+      - "`cookie.rpartition(\".\")` returns (before, \".\", after) using the last dot; if there is no dot, the middle part is empty."
+    explanation: >-
+      The tag binds the value to the server's key: changing either part, or forging a tag without the key, fails
+      verification. Splitting on the last dot keeps values containing dots intact, and compare_digest avoids a
+      timing side channel. Note that signing is not encrypting - the value is still readable by the user.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-salt, m-mcq-session-id, m-design-hash-or-encrypt, m-tf-encryption-integrity, m-signed-cookie]
+
+cheatsheet: |
+  ```python
+  import base64, hashlib, hmac, secrets
+
+  base64.b64encode(b"data")                       # encoding: NOT secret
+  hashlib.sha256(b"data").hexdigest()             # integrity fingerprint (64 hex chars)
+  tag = hmac.new(key, msg, hashlib.sha256).hexdigest()   # message authentication
+  hmac.compare_digest(tag, received)              # constant-time comparison
+  secrets.token_urlsafe(32)                       # tokens, session IDs, reset links
+  secrets.token_bytes(16)                         # salts
+  # Passwords (on CPython): argon2-cffi PasswordHasher, hashlib.scrypt(..., n=2**17, r=8, p=1, maxmem=...)
+  #                         or hashlib.pbkdf2_hmac("sha256", pw, salt, 600_000)
+  ```
+  - Encoding ≠ hashing ≠ encryption · MD5/SHA-1: never for security
+  - Passwords: unique salt + slow (memory-hard) hash; store parameters with the hash
+  - Encryption needs authentication (AES-GCM / ChaCha20-Poly1305), fresh nonces, keys in a KMS
+  - TLS: public-key for key exchange + server identity; symmetric AEAD for data
+  - Don't roll your own crypto

@@ -1,0 +1,1034 @@
+id: ml.evaluation-metrics
+concept: ml.evaluation-metrics
+title: Evaluation Metrics
+subtitle: Choosing numbers that match the cost of mistakes
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  A fraud model that never flags fraud is 99% accurate. Learn to build a confusion matrix from
+  predictions, compute accuracy, precision, recall and F1, see how the decision threshold trades them
+  off, understand ROC curves and AUC, measure regression errors with MAE, RMSE and R², and pick the
+  metric that matches what each kind of mistake costs.
+objectives:
+  - Build a confusion matrix (TP, FP, FN, TN) from true labels and predictions in pure Python.
+  - Compute accuracy, precision, recall and F1 by hand and in code, and explain the accuracy paradox on imbalanced data.
+  - Explain how moving the decision threshold trades precision against recall, and what an ROC curve and AUC summarise.
+  - Compute MAE, RMSE and R² for regression and explain how each responds to large errors.
+  - Choose a metric — or an explicit cost function and threshold — from the real cost of false positives and false negatives.
+sources:
+  - title: "Metrics and scoring: quantifying the quality of predictions"
+    url: https://scikit-learn.org/stable/modules/model_evaluation.html
+    publisher: scikit-learn
+  - title: confusion_matrix
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.confusion_matrix.html
+    publisher: scikit-learn
+  - title: precision_score
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_score.html
+    publisher: scikit-learn
+  - title: roc_auc_score
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html
+    publisher: scikit-learn
+  - title: Tuning the decision threshold for class prediction
+    url: https://scikit-learn.org/stable/modules/classification_threshold.html
+    publisher: scikit-learn
+  - title: Probability calibration
+    url: https://scikit-learn.org/stable/modules/calibration.html
+    publisher: scikit-learn
+sections:
+  - id: why
+    title: The 99% accurate model that catches nothing
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A bank sees 10 fraudulent transactions in every 1,000. Here is a "model" that simply approves
+          everything:
+      - type: code
+        runnable: true
+        code: |
+          labels = [1] * 10 + [0] * 990          # 10 frauds in 1,000 transactions
+          always_legit = [0] * len(labels)       # a "model" that never flags anything
+
+          accuracy = sum(p == y for p, y in zip(always_legit, labels)) / len(labels)
+          caught = sum(1 for p, y in zip(always_legit, labels) if p == 1 and y == 1)
+          print("accuracy:", accuracy)
+          print("frauds caught:", caught, "of", sum(labels))
+        expectedOutput: |
+          accuracy: 0.99
+          frauds caught: 0 of 10
+        caption: 99% accuracy, zero value. Accuracy hides the only cases that matter.
+      - type: markdown
+        body: |
+          This is the **[accuracy paradox](glossary:accuracy-paradox)**: when one class is rare, a useless
+          model can have excellent accuracy. The metric decides what "good" means, so a wrong metric lets
+          a model look fine on paper while failing at its real job. This lesson builds the metrics that do
+          not fall for it, from first principles, and checks every one against a hand calculation.
+
+  - id: confusion-matrix
+    title: The confusion matrix
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For a yes/no (binary) classifier, call the class you care about **positive** (fraud, spam,
+          disease) and the other **negative**. Every prediction falls into one of four cells:
+
+          | | **Predicted negative** | **Predicted positive** |
+          |---|---|---|
+          | **Actually negative** | True negative (TN) | [False positive](glossary:false-positive) (FP) — false alarm |
+          | **Actually positive** | [False negative](glossary:false-negative) (FN) — miss | True positive (TP) |
+
+          This table of counts is the **[confusion matrix](glossary:confusion-matrix)**. "True/false" says
+          whether the prediction was right; "positive/negative" says what was predicted. Every
+          classification metric is computed from these four numbers. Step through the counting loop:
+      - type: visualization
+        component: python-tracer
+        title: Counting the four cells
+        caption: Each (actual, predicted) pair increments exactly one counter. Watch which branch runs for each pair.
+        props:
+          code: |
+            y_true = [1, 0, 1, 0, 1]
+            y_pred = [1, 1, 0, 0, 1]
+            tp = fp = fn = tn = 0
+            for t, p in zip(y_true, y_pred):
+                if t == 1 and p == 1:
+                    tp += 1
+                elif t == 0 and p == 1:
+                    fp += 1
+                elif t == 1 and p == 0:
+                    fn += 1
+                else:
+                    tn += 1
+            print(tp, fp, fn, tn)
+      - type: markdown
+        body: |
+          A `Counter` over `(actual, predicted)` pairs does the same counting in one line. This is the
+          ten-example dataset the rest of the lesson uses:
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter
+
+          y_true = [1, 0, 1, 1, 0, 0, 1, 0, 0, 1]
+          y_pred = [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]
+
+          counts = Counter(zip(y_true, y_pred))      # keys are (actual, predicted) pairs
+          tp, fp = counts[(1, 1)], counts[(0, 1)]
+          fn, tn = counts[(1, 0)], counts[(0, 0)]
+          print(f"TP={tp} FP={fp} FN={fn} TN={tn}")
+          print("               predicted 0   predicted 1")
+          print(f"actual 0 (neg) {tn:^11}   {fp:^11}")
+          print(f"actual 1 (pos) {fn:^11}   {tp:^11}")
+        expectedOutput: |
+          TP=3 FP=1 FN=2 TN=4
+                         predicted 0   predicted 1
+          actual 0 (neg)      4             1
+          actual 1 (pos)      2             3
+        caption: Rows are the actual class and columns the predicted class — the same layout scikit-learn's confusion_matrix uses.
+        annotations:
+          - line: 6
+            text: "A missing key in a Counter counts as 0, so cells with no examples are handled automatically."
+      - type: callout
+        variant: warning
+        title: Check the layout before reading someone else's matrix
+        body: |
+          scikit-learn puts actual classes in rows and predictions in columns, so for labels 0 and 1 the
+          matrix is `[[TN, FP], [FN, TP]]`. Some textbooks and tools swap the axes or put the positive class
+          first. Always check the labels before reading off TP and FP.
+      - type: item
+        ref: predict-precision
+
+  - id: precision-recall
+    title: Accuracy, precision, recall and F1
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Metric | Formula | Question it answers |
+          |---|---|---|
+          | **Accuracy** | (TP + TN) / all | What fraction of all predictions were right? |
+          | **[Precision](glossary:precision-metric)** | TP / (TP + FP) | When the model says "positive", how often is it right? |
+          | **[Recall](glossary:recall-metric)** (sensitivity, true positive rate) | TP / (TP + FN) | Of the real positives, what fraction did it find? |
+          | **[F1 score](glossary:f1-score)** | 2 · P · R / (P + R) | One number that is high only when **both** P and R are high |
+
+          Precision is about the **flagged** items (the "predicted positive" column); recall is about the
+          **actual** positives (the "actually positive" row). Here they are for the matrix above, checked
+          against the hand calculation with `math.isclose`:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          tp, fp, fn, tn = 3, 1, 2, 4                  # from the confusion matrix above
+
+          accuracy = (tp + tn) / (tp + fp + fn + tn)
+          precision = tp / (tp + fp)                   # of the flagged items, how many were right?
+          recall = tp / (tp + fn)                      # of the real positives, how many did we find?
+          f1 = 2 * precision * recall / (precision + recall)
+
+          print("accuracy ", accuracy)
+          print("precision", precision)
+          print("recall   ", recall)
+          print("F1       ", round(f1, 4))
+
+          # Check against the hand calculation: 7/10, 3/4, 3/5 and 2 * 0.75 * 0.6 / 1.35 = 2/3
+          assert math.isclose(accuracy, 7 / 10) and math.isclose(precision, 3 / 4)
+          assert math.isclose(recall, 3 / 5) and math.isclose(f1, 2 / 3)
+          print("all match the hand calculation")
+        expectedOutput: |
+          accuracy  0.7
+          precision 0.75
+          recall    0.6
+          F1        0.6667
+          all match the hand calculation
+        annotations:
+          - line: 6
+            text: 4 messages were flagged (TP + FP); 3 of them really were positive.
+          - line: 7
+            text: 5 messages were really positive (TP + FN); the model found 3 of them.
+      - type: markdown
+        body: |
+          **Why a harmonic mean?** The F1 score is the harmonic mean of precision and recall, which is
+          dragged down by whichever is smaller. A model that flags a single obvious fraud and misses 99
+          others has perfect precision but useless recall:
+      - type: code
+        runnable: true
+        code: |
+          precision, recall = 1.0, 0.01        # flags one fraud correctly, misses 99
+          arithmetic = (precision + recall) / 2
+          f1 = 2 * precision * recall / (precision + recall)
+          print("arithmetic mean:", arithmetic)
+          print("F1 (harmonic):  ", round(f1, 4))
+        expectedOutput: |
+          arithmetic mean: 0.505
+          F1 (harmonic):   0.0198
+        caption: The arithmetic mean rewards the lopsided model with 0.5; F1 correctly reports that it is nearly useless.
+      - type: callout
+        variant: misconception
+        title: '"Precision and recall are just two words for accuracy"'
+        body: |
+          They divide by different things. Precision divides by what the model **flagged**; recall divides by
+          what was **actually there**. The "always legit" fraud model has accuracy 0.99, recall 0, and an
+          undefined precision (it flagged nothing, so 0 / 0).
+      - type: item
+        ref: explain-accuracy-paradox
+
+  - id: thresholds
+    title: "Walkthrough: the decision threshold"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Most classifiers — [logistic regression](concept:ml.logistic-regression) included — output a
+          **score** (often a probability) rather than a hard yes/no. A **[decision threshold](glossary:decision-threshold)**
+          turns the score into a label: "positive if score ≥ threshold". 0.5 is only a default. Here are 12
+          scored examples (6 positive, 6 negative) evaluated at four thresholds:
+      - type: code
+        runnable: true
+        code: |
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+
+          for threshold in [0.3, 0.5, 0.7, 0.9]:
+              preds = [1 if s >= threshold else 0 for s in scores]
+              tp = sum(1 for y, p in zip(labels, preds) if y == 1 and p == 1)
+              fp = sum(1 for y, p in zip(labels, preds) if y == 0 and p == 1)
+              fn = sum(1 for y, p in zip(labels, preds) if y == 1 and p == 0)
+              print(f"threshold {threshold}: flagged {tp + fp:2}  precision {tp / (tp + fp):.2f}  recall {tp / (tp + fn):.2f}")
+        expectedOutput: |
+          threshold 0.3: flagged 10  precision 0.60  recall 1.00
+          threshold 0.5: flagged  7  precision 0.71  recall 0.83
+          threshold 0.7: flagged  4  precision 1.00  recall 0.67
+          threshold 0.9: flagged  2  precision 1.00  recall 0.33
+        caption: Raising the threshold flags fewer items — precision rises, recall falls.
+        annotations:
+          - line: 5
+            text: The model (the scores) never changes; only the rule that turns scores into decisions does.
+      - type: markdown
+        body: |
+          This is the **precision–recall trade-off**. A low threshold catches every positive but raises
+          many false alarms; a high threshold is almost never wrong when it fires but misses a lot. No
+          threshold is "correct" in general — the right one depends on what each kind of mistake costs, as
+          you will compute at the end of this lesson. Choose it on **validation** data, never on the test
+          set.
+
+  - id: roc
+    title: ROC curves and AUC
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Instead of picking one threshold, you can look at **all** of them at once. An
+          **[ROC curve](glossary:roc-curve)** plots, for every threshold:
+
+          - the **true positive rate** (TPR = recall = TP / (TP + FN)) on the vertical axis, against
+          - the **false positive rate** (FPR = FP / (FP + TN), the fraction of negatives wrongly flagged).
+
+          Lowering the threshold from "flag nothing" (0, 0) to "flag everything" (1, 1) traces the curve. A
+          perfect ranker goes straight up to (0, 1) first; a random one follows the diagonal. The **area
+          under the curve**, [ROC AUC](glossary:roc-auc), summarises it: 1.0 is a perfect ranking, 0.5 is
+          random guessing. AUC also has a direct meaning — the probability that a randomly chosen positive
+          gets a higher score than a randomly chosen negative (ties count half). The code computes it both
+          ways:
+      - type: code
+        runnable: true
+        code: |
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+          pos = sum(labels)
+          neg = len(labels) - pos
+
+          points = [(0.0, 0.0)]                                   # threshold above every score
+          for t in sorted(set(scores), reverse=True):             # lower the threshold step by step
+              tp = sum(1 for y, s in zip(labels, scores) if s >= t and y == 1)
+              fp = sum(1 for y, s in zip(labels, scores) if s >= t and y == 0)
+              points.append((fp / neg, tp / pos))                 # (false positive rate, true positive rate)
+          print([(round(x, 2), round(y, 2)) for x, y in points])
+
+          area = sum((x2 - x1) * (y1 + y2) / 2 for (x1, y1), (x2, y2) in zip(points, points[1:]))
+          print("AUC (area under the ROC curve):", round(area, 3))
+
+          pairs = [(sp, sn) for sp, yp in zip(scores, labels) if yp == 1 for sn, yn in zip(scores, labels) if yn == 0]
+          ranked = sum(1.0 if sp > sn else 0.5 if sp == sn else 0.0 for sp, sn in pairs)
+          print("P(random positive scores above random negative):", round(ranked / len(pairs), 3))
+        expectedOutput: |
+          [(0.0, 0.0), (0.0, 0.17), (0.0, 0.33), (0.0, 0.5), (0.0, 0.67), (0.17, 0.67), (0.17, 0.83), (0.33, 0.83), (0.5, 0.83), (0.5, 1.0), (0.67, 1.0), (0.83, 1.0), (1.0, 1.0)]
+          AUC (area under the ROC curve): 0.889
+          P(random positive scores above random negative): 0.889
+        caption: The trapezoid area and the pairwise ranking probability agree — 32 of the 36 (positive, negative) pairs are ranked correctly.
+        annotations:
+          - line: 7
+            text: Sorting the distinct scores gives every threshold at which a prediction changes.
+          - line: 13
+            text: Trapezoid rule over consecutive ROC points.
+          - line: 16
+            text: Every (positive, negative) pair, 6 × 6 = 36 of them.
+      - type: markdown
+        body: |
+          What AUC does **not** tell you:
+
+          - **Which threshold to use.** It averages over all thresholds, including ones you would never
+            deploy.
+          - **Whether the scores are good probabilities.** Multiplying every score by 0.1 leaves AUC
+            unchanged. Checking that "0.8" really means 80% is **calibration** (see the scikit-learn
+            calibration guide).
+          - **How it does on rare positives.** With 1 positive per 1,000, a small FPR still means a flood of
+            false alarms. The **precision–recall curve** (and its summary, average precision) is more
+            informative there; see [imbalanced data](concept:ml.imbalanced-data).
+      - type: item
+        ref: mcq-auc
+
+  - id: regression-metrics
+    title: "Regression metrics: MAE, RMSE and R²"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When the model predicts a number, the errors are `actual − predicted`, and three summaries are
+          standard:
+
+          | Metric | Formula | Notes |
+          |---|---|---|
+          | **[MAE](glossary:mean-absolute-error)** | mean of `abs(error)` | Same units as the target; every unit of error counts the same |
+          | **[RMSE](glossary:root-mean-squared-error)** | `sqrt(mean of error²)` | Same units; big errors count disproportionately (it is the square root of [MSE](glossary:mean-squared-error)) |
+          | **[R²](glossary:r-squared)** | `1 − Σ error² / Σ (actual − mean)²` | 1 = perfect, 0 = no better than always predicting the mean, **negative** = worse than that |
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          actual = [200, 150, 320, 410, 280]        # e.g. house prices in thousands
+          predicted = [210, 140, 300, 430, 285]
+          n = len(actual)
+          errors = [a - p for a, p in zip(actual, predicted)]
+
+          mae = sum(abs(e) for e in errors) / n
+          mse = sum(e ** 2 for e in errors) / n
+          rmse = math.sqrt(mse)
+          mean_actual = sum(actual) / n
+          ss_res = sum(e ** 2 for e in errors)
+          ss_tot = sum((a - mean_actual) ** 2 for a in actual)
+          r2 = 1 - ss_res / ss_tot
+
+          print("errors:", errors)
+          print("MAE ", mae)
+          print("RMSE", round(rmse, 2))
+          print("R²  ", round(r2, 4))
+          assert mae == 65 / 5 and mse == 1025 / 5 and ss_tot == 41480
+        expectedOutput: |
+          errors: [-10, 10, 20, -20, -5]
+          MAE  13.0
+          RMSE 14.32
+          R²   0.9753
+        caption: "Hand check: |errors| sum to 65 (MAE 13); squares sum to 1,025 (MSE 205, RMSE ≈ 14.32); the mean is 272 and Σ(actual − 272)² = 41,480, so R² = 1 − 1025/41480 ≈ 0.975."
+      - type: markdown
+        body: |
+          RMSE is always at least as large as MAE, and the gap grows when a few errors are large. Change one
+          miss from 5 to 100 and compare:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def mae(errors):
+              return sum(abs(e) for e in errors) / len(errors)
+
+          def rmse(errors):
+              return math.sqrt(sum(e ** 2 for e in errors) / len(errors))
+
+          small = [-10, 10, 20, -20, -5]
+          one_big = [-10, 10, 20, -20, -100]          # the same, but one miss of 100
+          print("MAE ", mae(small), "->", mae(one_big))
+          print("RMSE", round(rmse(small), 1), "->", round(rmse(one_big), 1))
+        expectedOutput: |
+          MAE  13.0 -> 32.0
+          RMSE 14.3 -> 46.9
+        caption: One large miss more than triples RMSE. Use RMSE when big misses are disproportionately bad; MAE when every unit of error costs the same.
+      - type: callout
+        variant: misconception
+        title: '"R² is a squared number, so it cannot be negative"'
+        body: |
+          R² is defined as 1 − SS_res / SS_tot, not as a square. A model that is worse than always predicting
+          the mean of the evaluation data has SS_res > SS_tot and a **negative** R². Predicting
+          `[30, 20, 10]` for actual values `[10, 20, 30]` gives R² = −3.0.
+
+  - id: choosing
+    title: Choosing a metric by the cost of errors
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Start from the decision the model drives and ask: **what does each kind of mistake cost?**
+
+          | Situation | Costly mistake | Emphasise |
+          |---|---|---|
+          | Screening test for a serious disease (positives get a follow-up test) | Missing a sick patient (FN) | Recall, at an acceptable precision |
+          | Spam filter moving mail out of the inbox | Hiding a real email (FP) | Precision, at an acceptable recall |
+          | Fraud alerts reviewed by analysts | Both, with known costs | Expected cost; precision at the review capacity |
+          | Delivery-time estimate shown to customers | Large misses annoy far more | RMSE (or a high percentile of the error) |
+          | Inventory forecast where each unit of error costs the same | Every unit equally | MAE |
+
+          When the costs are known, compute them directly and pick the threshold that minimises the total
+          on validation data. Suppose an analyst review costs 5 and a missed fraud costs 100:
+      - type: code
+        runnable: true
+        code: |
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+          COST_FP = 5       # an analyst reviews a legitimate transaction
+          COST_FN = 100     # a fraud goes through unnoticed
+
+          def cost_at(threshold):
+              preds = [1 if s >= threshold else 0 for s in scores]
+              fp = sum(1 for y, p in zip(labels, preds) if y == 0 and p == 1)
+              fn = sum(1 for y, p in zip(labels, preds) if y == 1 and p == 0)
+              return fp * COST_FP + fn * COST_FN
+
+          for t in [0.2, 0.35, 0.5, 0.7]:
+              print("threshold", t, "cost", cost_at(t))
+          best = min(sorted(set(scores)), key=cost_at)
+          print("cheapest threshold:", best)
+        expectedOutput: |
+          threshold 0.2 cost 25
+          threshold 0.35 cost 15
+          threshold 0.5 cost 110
+          threshold 0.7 cost 200
+          cheapest threshold: 0.35
+        caption: Because a miss costs 20 times a review, the best threshold is far below the default 0.5.
+      - type: callout
+        variant: production
+        title: Report metrics like a professional
+        body: |
+          Always show the confusion matrix and a baseline next to any headline number; state the threshold;
+          report uncertainty (the spread across cross-validation folds, or a bootstrap interval); and break
+          metrics down by important groups (regions, devices, customer segments) — an average can hide a
+          segment where the model fails, which is also the starting point of a [fairness](concept:ml.fairness)
+          review.
+      - type: item
+        ref: mcq-metric-choice
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `ZeroDivisionError: division by zero` in precision | The model predicted no positives (TP + FP = 0) | Decide what an undefined metric means (often 0.0) and handle it explicitly |
+          | Precision and recall look swapped | Arguments passed as `(y_pred, y_true)` | scikit-learn's metrics take `(y_true, y_pred)` — true values first |
+          | 99% accuracy, but users complain | Imbalanced classes | Report precision, recall, the confusion matrix and a baseline |
+          | Great AUC, poor decisions in production | The threshold (or calibration) was never chosen for the real costs | Tune the threshold on validation data with the real costs |
+          | R² looks great on one dataset, terrible on another | R² depends on how much the targets vary in each dataset | Compare MAE/RMSE in units, against a baseline |
+          | Metrics computed on the training data | Optimistic scores | Use held-out data ([train/val/test](concept:ml.train-val-test)) |
+      - type: code
+        runnable: true
+        code: |
+          y_true = [1, 0, 1, 0]
+          y_pred = [0, 0, 0, 0]          # the model never predicts the positive class
+          tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+          fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+          print("tp:", tp, "fp:", fp)
+          precision = tp / (tp + fp)
+        expectedOutput: |
+          tp: 0 fp: 0
+        expectError: ZeroDivisionError
+        caption: "Precision is 0 / 0 here. scikit-learn's precision_score returns 0.0 with an UndefinedMetricWarning by default (zero_division='warn'); plain Python raises ZeroDivisionError: division by zero."
+      - type: item
+        ref: debug-recall
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: code-confusion
+      - type: item
+        ref: code-prf
+      - type: item
+        ref: parsons-mae-rmse
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **More than two classes.** Precision and recall are computed per class (one class against the
+          rest) and then averaged. *Macro* averaging weights every class equally (good for spotting a
+          neglected rare class); *micro* averaging pools all TP/FP/FN counts first (for single-label
+          problems it equals accuracy); *weighted* averaging weights each class by its frequency.
+
+          **Ranking metrics vs threshold metrics.** AUC and average precision judge the *ordering* of
+          scores; precision, recall and F1 judge the *decisions* at one threshold. A model can win on one
+          and lose on the other, so pick the family that matches how the output is used — a ranked review
+          queue or an automatic decision.
+
+          **Calibration.** A model is calibrated when, among the cases it scores 0.8, about 80% are
+          positive. Reliability diagrams and the Brier score (the MSE of predicted probabilities) measure
+          it. Calibration matters whenever probabilities are used as probabilities: expected-cost
+          calculations, risk scores, or combining models.
+
+          **Metrics are estimates.** With a small test set, a metric has wide uncertainty; resampling the
+          test set with replacement (bootstrapping) and recomputing the metric shows how much it moves.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install scikit-learn
+          from sklearn.metrics import (
+              accuracy_score, confusion_matrix, f1_score, mean_absolute_error, precision_score,
+              r2_score, recall_score, roc_auc_score, root_mean_squared_error,
+          )
+
+          y_true = [1, 0, 1, 1, 0, 0, 1, 0, 0, 1]
+          y_pred = [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]
+          print(confusion_matrix(y_true, y_pred))      # [[4 1]
+                                                       #  [2 3]]  rows = actual, columns = predicted
+          tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel().tolist()
+          print(accuracy_score(y_true, y_pred), precision_score(y_true, y_pred),
+                recall_score(y_true, y_pred), f1_score(y_true, y_pred))   # 0.7 0.75 0.6 0.666...
+
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+          print(roc_auc_score(labels, scores))         # 0.888... - scores, not 0/1 predictions
+
+          actual = [200, 150, 320, 410, 280]
+          predicted = [210, 140, 300, 430, 285]
+          print(mean_absolute_error(actual, predicted),       # 13.0
+                root_mean_squared_error(actual, predicted),   # 14.317...
+                r2_score(actual, predicted))                  # 0.9752...
+        caption: >-
+          Illustrative: scikit-learn needs NumPy and does not run in this browser runtime; install it with
+          pip and run the file locally. Note the argument order (y_true, y_pred), that roc_auc_score needs
+          scores rather than hard labels, and that root_mean_squared_error (added in scikit-learn 1.4)
+          replaces the old mean_squared_error(..., squared=False), which newer versions no longer accept.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Count **TP, FP, FN, TN** first; every classification metric is built from them.
+          - **Accuracy** misleads on imbalanced data (the accuracy paradox) — compare with a baseline.
+          - **Precision** = TP / (TP + FP): trust in a flag. **Recall** = TP / (TP + FN): share of positives
+            found. **F1** = their harmonic mean.
+          - The **threshold** trades precision against recall; choose it on validation data from the costs.
+          - **ROC AUC** = ranking quality across all thresholds (0.5 random, 1.0 perfect); it says nothing
+            about the threshold or calibration. Prefer precision–recall views for rare positives.
+          - Regression: **MAE** (robust, in units), **RMSE** (punishes big misses), **R²** (vs the mean;
+            can be negative).
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "Here is a confusion matrix — compute precision and recall", followed by a scenario: "For
+          cancer screening (or a spam filter, or fraud review), which metric would you optimise and why?"
+          Answer from the cost of each error type, mention the threshold, and say how you would pick it
+          (validation data, explicit costs or a capacity constraint).
+
+items:
+  - id: predict-precision
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print (precision first, then recall)?
+    code: |
+      y_true = [1, 1, 0, 0, 1, 0]
+      y_pred = [1, 0, 1, 1, 1, 0]
+      tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+      fp = sum(1 for t, p in zip(y_true, y_pred) if t == 0 and p == 1)
+      fn = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 0)
+      print(round(tp / (tp + fp), 2), round(tp / (tp + fn), 2))
+    answer: "0.5 0.67"
+    explanation: >-
+      TP = 2 (positions 0 and 4), FP = 2 (positions 2 and 3), FN = 1 (position 1). Precision = 2 / 4 = 0.5;
+      recall = 2 / 3 ≈ 0.67.
+    wrongAnswers:
+      - answer: "0.67 0.5"
+        feedback: >-
+          Those are swapped. Precision divides by everything the model flagged (TP + FP = 4); recall divides
+          by everything that was actually positive (TP + FN = 3).
+      - answer: "0.5 0.5"
+        feedback: "Count the actual positives: y_true has three 1s, and the model found two of them, so recall is 2/3."
+
+  - id: explain-accuracy-paradox
+    type: explain
+    skill: explanation
+    prompt: >-
+      A churn model is reported as "96% accurate". Only 4% of customers churn. Explain why this number may
+      be meaningless, and which numbers you would ask for instead.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Notes that always predicting "no churn" already achieves 96% accuracy, so 96% may add nothing (the baseline).
+      - Explains that accuracy is dominated by the majority class and hides performance on the rare class.
+      - Asks for the confusion matrix and for precision and recall on the churn class (or F1 / PR-AUC).
+      - Mentions that the right trade-off depends on the cost of missed churners versus wasted retention offers, and the threshold.
+    modelAnswer: |
+      With 4% churners, a model that predicts "nobody churns" is right 96% of the time, so 96% accuracy may
+      mean the model has learned nothing. Accuracy is dominated by the 96% majority and says nothing about
+      the churners, who are the point of the model. I would ask for the confusion matrix and the
+      precision and recall for the churn class (and possibly F1 or precision–recall AUC), compared with the
+      majority baseline. Then I would choose the threshold from the costs: what a missed churner costs
+      versus what a retention offer to a loyal customer costs.
+
+  - id: mcq-auc
+    type: mcq
+    skill: recognition
+    prompt: A model's ROC AUC on held-out data is 0.85. Which statement is correct?
+    explanation: >-
+      AUC is the probability that a randomly chosen positive receives a higher score than a randomly chosen
+      negative. It is threshold-free, so it says nothing about accuracy at any particular threshold or about
+      whether the scores are calibrated probabilities.
+    options:
+      - id: a
+        text: A randomly chosen positive gets a higher score than a randomly chosen negative 85% of the time.
+        correct: true
+        feedback: Correct — that is exactly what the area under the ROC curve measures.
+      - id: b
+        text: The model is 85% accurate at the default threshold of 0.5.
+        feedback: AUC averages over all thresholds; accuracy at 0.5 could be much higher or lower.
+      - id: c
+        text: When the model outputs 0.85, there is an 85% chance the example is positive.
+        feedback: That is calibration, which AUC does not measure. Rescaling all scores leaves AUC unchanged.
+      - id: d
+        text: 85% of the positives are found.
+        feedback: That is recall at some threshold. AUC summarises the whole curve, not one point on it.
+
+  - id: mcq-metric-choice
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A model screens blood samples for a serious but treatable disease. Every sample it flags gets a
+      cheap, accurate follow-up test. Missing a sick patient can be fatal. Which approach fits best?
+    explanation: >-
+      False negatives are very costly and false positives are cheap (a follow-up test), so you want high
+      recall: set the threshold low enough to catch nearly all sick patients, while keeping precision at a
+      level the follow-up testing can handle.
+    options:
+      - id: a
+        text: Maximise accuracy, since it counts every correct answer.
+        feedback: If the disease is rare, accuracy is dominated by healthy patients and can look excellent while missing sick ones.
+      - id: b
+        text: Prioritise recall, choosing a low threshold, subject to a manageable number of follow-up tests.
+        correct: true
+        feedback: Correct. Misses are costly and false alarms are cheap to resolve.
+      - id: c
+        text: Prioritise precision, so that nobody is sent for an unnecessary follow-up.
+        feedback: That would raise the threshold and miss more sick patients — the costliest error here.
+      - id: d
+        text: Use R², because it is the most complete metric.
+        feedback: R² is a regression metric; this is a classification decision.
+
+  - id: debug-recall
+    type: debug
+    skill: debugging
+    prompt: |
+      `recall(y_true, y_pred)` should return the fraction of **actual positives** that were predicted
+      positive (return `0.0` if there are no actual positives). For the example it prints `0.75`, but the
+      correct recall is `0.6`. Fix the function.
+    starterCode: |
+      def recall(y_true, y_pred):
+          tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+          flagged = sum(1 for p in y_pred if p == 1)
+          if flagged == 0:
+              return 0.0
+          return tp / flagged
+
+      y_true = [1, 0, 1, 1, 0, 0, 1, 0, 0, 1]
+      y_pred = [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]
+      print(recall(y_true, y_pred))
+    solution: |
+      def recall(y_true, y_pred):
+          tp = sum(1 for t, p in zip(y_true, y_pred) if t == 1 and p == 1)
+          actual_positives = sum(1 for t in y_true if t == 1)
+          if actual_positives == 0:
+              return 0.0
+          return tp / actual_positives
+
+      y_true = [1, 0, 1, 1, 0, 0, 1, 0, 0, 1]
+      y_pred = [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]
+      print(recall(y_true, y_pred))
+    expectedOutput: |
+      0.6
+    tests:
+      - name: Correct on the lesson's example
+        code: |
+          import math
+          got = recall([1, 0, 1, 1, 0, 0, 1, 0, 0, 1], [1, 0, 0, 1, 0, 1, 1, 0, 0, 0])
+          assert math.isclose(got, 0.6), f"3 of the 5 actual positives were found, so recall is 0.6. Got {got!r}."
+      - name: Divides by the actual positives
+        code: |
+          import math
+          got = recall([1, 1, 1, 1], [1, 0, 0, 0])
+          assert math.isclose(got, 0.25), f"One of four actual positives was found: recall 0.25. Got {got!r}. Recall's denominator is TP + FN, the actual positives."
+          got = recall([1, 0, 0, 0], [1, 1, 1, 1])
+          assert math.isclose(got, 1.0), f"The only actual positive was found: recall 1.0, however many false alarms there are. Got {got!r}."
+      - name: Handles no actual positives
+        code: |
+          got = recall([0, 0, 0], [1, 0, 1])
+          assert got == 0.0, f"With no actual positives, return 0.0 (got {got!r})."
+    hints:
+      - "`flagged` counts what the model predicted positive. Which metric divides by that?"
+      - Recall divides by the number of **actual** positives, TP + FN — count the 1s in y_true.
+      - Remember to update the zero check to use the new denominator.
+    feedback:
+      - when: { outputEquals: "0.75\n" }
+        message: 0.75 is the precision (3 of 4 flagged items were right). Recall divides by the actual positives in y_true.
+    explanation: >-
+      The original divided TP by the number of predicted positives, which is precision. Recall answers "of
+      everything that was really positive, how much did we find?", so its denominator counts the 1s in
+      y_true (TP + FN).
+
+  - id: code-confusion
+    type: code
+    skill: implementation
+    prompt: |
+      Write `confusion_counts(y_true, y_pred)` that returns the tuple `(tp, fp, fn, tn)` for binary labels
+      (1 = positive, 0 = negative).
+    starterCode: |
+      def confusion_counts(y_true, y_pred):
+          pass
+
+      print(confusion_counts([1, 0, 1, 1, 0, 0, 1, 0, 0, 1], [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]))
+    solution: |
+      def confusion_counts(y_true, y_pred):
+          tp = fp = fn = tn = 0
+          for t, p in zip(y_true, y_pred):
+              if t == 1 and p == 1:
+                  tp += 1
+              elif t == 0 and p == 1:
+                  fp += 1
+              elif t == 1 and p == 0:
+                  fn += 1
+              else:
+                  tn += 1
+          return tp, fp, fn, tn
+
+      print(confusion_counts([1, 0, 1, 1, 0, 0, 1, 0, 0, 1], [1, 0, 0, 1, 0, 1, 1, 0, 0, 0]))
+    expectedOutput: |
+      (3, 1, 2, 4)
+    tests:
+      - name: Counts the lesson's example
+        code: |
+          got = confusion_counts([1, 0, 1, 1, 0, 0, 1, 0, 0, 1], [1, 0, 0, 1, 0, 1, 1, 0, 0, 0])
+          assert got is not None, "confusion_counts returned None. Return (tp, fp, fn, tn)."
+          assert tuple(got) == (3, 1, 2, 4), f"Expected (3, 1, 2, 4), got {got!r}."
+      - name: Distinguishes false positives from false negatives
+        code: |
+          got = tuple(confusion_counts([1, 0], [0, 1]))
+          assert got == (0, 1, 1, 0), f"Actual 1 predicted 0 is a false negative; actual 0 predicted 1 is a false positive. Expected (0, 1, 1, 0), got {got!r}."
+      - name: Works for other data
+        code: |
+          import random
+          rng = random.Random(1)
+          t = [rng.randint(0, 1) for _ in range(50)]
+          p = [rng.randint(0, 1) for _ in range(50)]
+          expected = (sum(a and b for a, b in zip(t, p)), sum((not a) and b for a, b in zip(t, p)),
+                      sum(a and not b for a, b in zip(t, p)), sum((not a) and (not b) for a, b in zip(t, p)))
+          got = tuple(confusion_counts(t, p))
+          assert got == expected, f"On random labels expected {expected}, got {got}."
+          assert sum(got) == 50, "The four counts must add up to the number of examples."
+    hints:
+      - Loop over `zip(y_true, y_pred)` and look at each (actual, predicted) pair.
+      - A false positive is actual 0 but predicted 1; a false negative is actual 1 but predicted 0.
+      - Return the four counts in the order `tp, fp, fn, tn`.
+    feedback:
+      - when: { outputEquals: "(3, 2, 1, 4)\n" }
+        message: FP and FN are swapped. A false positive is a false ALARM (actual 0, predicted 1).
+    explanation: >-
+      Each pair lands in exactly one cell, so a loop with four branches (or a Counter over the pairs) builds
+      the confusion matrix. Getting FP and FN the right way round matters: they feed different metrics.
+
+  - id: code-prf
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `precision_recall_f1(tp, fp, fn)` that returns `(precision, recall, f1)`.
+
+      - If a denominator is zero, use `0.0` for that metric (like scikit-learn's `zero_division=0`).
+      - F1 is `2 * p * r / (p + r)`, or `0.0` when `p + r` is 0.
+    starterCode: |
+      def precision_recall_f1(tp, fp, fn):
+          pass
+
+      print(precision_recall_f1(3, 1, 2))
+    solution: |
+      def precision_recall_f1(tp, fp, fn):
+          precision = tp / (tp + fp) if tp + fp > 0 else 0.0
+          recall = tp / (tp + fn) if tp + fn > 0 else 0.0
+          if precision + recall == 0:
+              f1 = 0.0
+          else:
+              f1 = 2 * precision * recall / (precision + recall)
+          return precision, recall, f1
+
+      p, r, f = precision_recall_f1(3, 1, 2)
+      print(p, r, round(f, 4))
+    expectedOutput: |
+      0.75 0.6 0.6667
+    tests:
+      - name: Matches the hand calculation
+        code: |
+          import math
+          result = precision_recall_f1(3, 1, 2)
+          assert result is not None, "The function returned None. Return (precision, recall, f1)."
+          p, r, f = result
+          assert math.isclose(p, 0.75) and math.isclose(r, 0.6), f"Expected precision 0.75 and recall 0.6, got {p!r} and {r!r}."
+          assert math.isclose(f, 2 / 3), f"F1 = 2 * 0.75 * 0.6 / 1.35 = 0.667, got {f!r}."
+      - name: Uses the harmonic mean for F1
+        code: |
+          import math
+          p, r, f = precision_recall_f1(1, 0, 99)
+          assert math.isclose(p, 1.0) and math.isclose(r, 0.01), f"Expected precision 1.0 and recall 0.01, got {p!r}, {r!r}."
+          assert math.isclose(f, 2 * 0.01 / 1.01), f"F1 should be about 0.0198 (harmonic mean), got {f!r}. Did you average p and r instead?"
+      - name: No predicted positives
+        code: |
+          p, r, f = precision_recall_f1(0, 0, 5)
+          assert (p, r, f) == (0.0, 0.0, 0.0), f"With tp = fp = 0, precision is undefined (use 0.0) and recall is 0, so F1 is 0.0. Got {(p, r, f)!r}."
+      - name: No actual positives
+        code: |
+          p, r, f = precision_recall_f1(0, 4, 0)
+          assert (p, r, f) == (0.0, 0.0, 0.0), f"With tp = fn = 0, recall is undefined (use 0.0). Got {(p, r, f)!r}."
+    hints:
+      - "A conditional expression keeps it short: `tp / (tp + fp) if tp + fp > 0 else 0.0`."
+      - Do the same for recall with `tp + fn`.
+      - Guard F1 too — when both precision and recall are 0 the formula divides by zero.
+    feedback:
+      - when: { errorType: ZeroDivisionError }
+        message: A denominator was zero. Check tp + fp, tp + fn and precision + recall before dividing.
+    explanation: >-
+      Precision and recall share the numerator TP but divide by different totals. Undefined cases (0/0)
+      need an explicit policy — returning 0.0 is common — and F1 needs its own guard because it divides
+      by p + r.
+
+  - id: parsons-mae-rmse
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to compute and print MAE and RMSE (rounded to 2 decimals) for three predictions.
+      One line is a distractor.
+    solution: |
+      import math
+      actual = [3, 5, 9]
+      predicted = [4, 5, 6]
+      errors = [a - p for a, p in zip(actual, predicted)]
+      mae = sum(abs(e) for e in errors) / len(errors)
+      rmse = math.sqrt(sum(e ** 2 for e in errors) / len(errors))
+      print(round(mae, 2), round(rmse, 2))
+    distractors:
+      - mae = sum(errors) / len(errors)
+    expectedOutput: |
+      1.33 1.83
+    explanation: >-
+      The errors are -1, 0 and 3. MAE averages their absolute values (4 / 3 ≈ 1.33); RMSE is the square
+      root of the mean squared error (sqrt(10 / 3) ≈ 1.83). Averaging the raw errors (the distractor) lets
+      positive and negative misses cancel.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-f1
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      tp, fp, fn = 8, 2, 8
+      precision = tp / (tp + fp)
+      recall = tp / (tp + fn)
+      print(precision, recall, round(2 * precision * recall / (precision + recall), 3))
+    answer: "0.8 0.5 0.615"
+    explanation: >-
+      Precision = 8 / 10 = 0.8, recall = 8 / 16 = 0.5, and F1 = 2 × 0.8 × 0.5 / 1.3 = 0.8 / 1.3 ≈ 0.615,
+      lower than the arithmetic mean 0.65 because the harmonic mean leans towards the smaller value.
+    wrongAnswers:
+      - answer: "0.8 0.5 0.65"
+        feedback: 0.65 is the arithmetic mean. F1 is the harmonic mean, 2PR / (P + R) = 0.8 / 1.3 ≈ 0.615.
+      - answer: "0.5 0.8 0.615"
+        feedback: Precision divides by the predicted positives (tp + fp = 10); recall by the actual positives (tp + fn = 16).
+
+  - id: m-mcq-spam
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Your spam filter moves flagged messages to a junk folder that most users never open. Product managers
+      say losing a real message (for example a job offer) is far worse than letting some spam through. How
+      should you evaluate and tune the filter?
+    explanation: >-
+      A false positive (a real message hidden as spam) is the costly error, so precision on the spam class
+      matters most: set the threshold high enough that flagged messages are almost always spam, then
+      maximise recall subject to that precision level, measured on validation data.
+    options:
+      - id: a
+        text: Require very high precision for the spam class, then get as much recall as possible at that precision.
+        correct: true
+        feedback: Correct. False alarms are the expensive mistake here, so precision is the constraint.
+      - id: b
+        text: Maximise recall so that no spam ever reaches the inbox.
+        feedback: High recall pushes the threshold down and hides more real email — the costly error in this product.
+      - id: c
+        text: Maximise accuracy, which balances both errors automatically.
+        feedback: Accuracy weighs both errors equally, but here one is far more costly than the other.
+      - id: d
+        text: Maximise ROC AUC and keep the default 0.5 threshold.
+        feedback: AUC says nothing about the operating threshold, and 0.5 was never chosen for these costs.
+
+  - id: m-tf-negative-r2
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: a regression model's R² on a test set can be negative.
+    answer: true
+    explanation: >-
+      R² = 1 − SS_res / SS_tot compares the model with always predicting the mean of the evaluation data.
+      If the model's squared errors are larger than that baseline's, SS_res > SS_tot and R² is negative.
+
+  - id: m-code-cost-threshold
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write `best_threshold(labels, scores, cost_fp, cost_fn)` that tries each **distinct score** as a
+      threshold (predict 1 when `score >= threshold`), computes the total cost
+      `FP * cost_fp + FN * cost_fn`, and returns the threshold with the **lowest** cost. If several tie,
+      return the **smallest** threshold.
+    starterCode: |
+      def best_threshold(labels, scores, cost_fp, cost_fn):
+          pass
+
+      labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+      scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+      print(best_threshold(labels, scores, 5, 100))
+    solution: |
+      def best_threshold(labels, scores, cost_fp, cost_fn):
+          def cost(t):
+              fp = sum(1 for y, s in zip(labels, scores) if y == 0 and s >= t)
+              fn = sum(1 for y, s in zip(labels, scores) if y == 1 and s < t)
+              return fp * cost_fp + fn * cost_fn
+          return min(sorted(set(scores)), key=cost)
+
+      labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+      scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+      print(best_threshold(labels, scores, 5, 100))
+    expectedOutput: |
+      0.35
+    tests:
+      - name: Cheap reviews, expensive misses
+        code: |
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+          got = best_threshold(labels, scores, 5, 100)
+          assert got == 0.35, f"With FP cost 5 and FN cost 100, 0.35 costs 15 (3 false alarms, no misses). Got {got!r}."
+      - name: Expensive false alarms push the threshold up
+        code: |
+          labels = [1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0]
+          scores = [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1]
+          got = best_threshold(labels, scores, 100, 5)
+          assert got == 0.7, f"With FP cost 100 and FN cost 5, threshold 0.7 (no false alarms, 2 misses, cost 10) is cheapest. Got {got!r}."
+      - name: Ties go to the smallest threshold
+        code: |
+          got = best_threshold([0, 1, 0, 1], [0.2, 0.4, 0.6, 0.8], 1, 1)
+          assert got == 0.4, f"Thresholds 0.4 and 0.8 both cost 1; return the smaller, 0.4. Got {got!r}."
+          got = best_threshold([1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0], [0.95, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.35, 0.3, 0.2, 0.1], 1, 1)
+          assert got == 0.6, f"With equal costs, 0.6 and 0.7 both cost 2; return 0.6. Got {got!r}."
+    hints:
+      - Write a helper `cost(t)` that counts false positives (label 0, score >= t) and false negatives (label 1, score < t).
+      - The candidate thresholds are `sorted(set(scores))` — sorted ascending, so the smallest comes first.
+      - "`min(candidates, key=cost)` returns the first candidate with the lowest cost."
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: The function returns None. Return the cheapest threshold.
+      - when: { outputEquals: "0.5\n" }
+        message: 0.5 is the default threshold, not the cheapest one. Compute the cost of every distinct score.
+    explanation: >-
+      Turning business costs into a cost function makes the threshold choice explicit and auditable. The
+      same scores give very different best thresholds depending on which mistake is expensive — the model
+      did not change, only the decision rule. In practice, compute this on validation data.
+
+  - id: m-mcq-rmse-mae
+    type: mcq
+    skill: explanation
+    prompt: |
+      Two delivery-time models are evaluated on the same test set. Model A: MAE 4.0, RMSE 4.5. Model B:
+      MAE 3.5, RMSE 9.0 (both in minutes). What is the most likely explanation?
+    explanation: >-
+      RMSE squares errors before averaging, so it is inflated by a few large errors, while MAE treats every
+      minute equally. B is usually closer (lower MAE) but makes some very large misses (high RMSE relative
+      to MAE). Which model is better depends on whether big misses are disproportionately costly.
+    options:
+      - id: a
+        text: Model B is usually more accurate but occasionally makes very large errors.
+        correct: true
+        feedback: Correct. A large gap between RMSE and MAE signals a few big misses.
+      - id: b
+        text: Model B is better on every order, because its MAE is lower.
+        feedback: A lower MAE is an average; the much higher RMSE shows B has some much larger errors than A.
+      - id: c
+        text: The numbers are inconsistent, because RMSE must equal MAE.
+        feedback: RMSE is always at least MAE and equals it only when every error has the same size.
+      - id: d
+        text: Model A must have a negative R².
+        feedback: Nothing here compares either model with the mean baseline, so R² cannot be inferred.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-f1, m-mcq-spam, m-tf-negative-r2, m-code-cost-threshold, m-mcq-rmse-mae]
+
+cheatsheet: |
+  ```text
+                     predicted 0   predicted 1
+  actual 0 (neg)        TN            FP   (false alarm)
+  actual 1 (pos)        FN (miss)     TP
+
+  accuracy  = (TP + TN) / all
+  precision = TP / (TP + FP)        recall (TPR) = TP / (TP + FN)
+  F1        = 2PR / (P + R)         FPR          = FP / (FP + TN)
+  MAE = mean|e|    RMSE = sqrt(mean e²)    R² = 1 - Σe² / Σ(y - ȳ)²
+  ```
+  - Imbalanced data: accuracy misleads — show the confusion matrix and a baseline
+  - Raise the threshold → precision ↑ recall ↓; choose it on validation data from the costs
+  - ROC AUC = P(positive ranked above negative); not a threshold, not calibration
+  - scikit-learn: `metric(y_true, y_pred)` — true values first; `roc_auc_score(y_true, scores)`

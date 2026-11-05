@@ -1,0 +1,237 @@
+id: csv-processor
+title: Streaming CSV Cleaner and Aggregator
+track: python-intermediate
+level: intermediate
+estimatedHours: 7
+environment: local
+starterKit: projects/csv-processor
+summary: >-
+  Clean a messy real-world sales export with the csv module (types, missing values, duplicates,
+  broken rows), aggregate it per region, product or month in one streaming pass of generators, and
+  produce a text report plus a spreadsheet-safe summary CSV.
+concepts:
+  - python.csv-json
+  - python.generators
+  - python.dataclasses
+  - python.dictionaries
+  - python.raising-exceptions
+  - python.cli-apps
+  - python.type-hints
+  - python.testing
+problem: |
+  A shop exports its orders as CSV with the columns
+  `order_id,order_date,region,product,quantity,unit_price`. The data is messy in all the usual
+  ways: stray spaces, `NA` and empty cells, a quantity typed as `ten`, an impossible date, a
+  duplicated order, a price written `$11.50`, a row broken by an unquoted comma. You will build
+  `csv_processor.py`, a command-line tool that cleans it and answers "how much did we sell, per
+  region / product / month?".
+
+  **Input:** a UTF-8 CSV file (with or without the byte-order mark Excel adds).
+  **Output:** a text report on stdout (row counts, rejected rows by column with line numbers,
+  then count / total / mean / min / max per group and a TOTAL row) and, optionally, the per-group
+  table as a CSV file that is safe to open in a spreadsheet.
+
+  The file may be far larger than memory, so rows must be **streamed** through
+  [generators](concept:python.generators): read one row, clean it, add it to running totals, forget
+  it. Bad rows are rejected with a reason, never silently "fixed" by guessing.
+
+  Example (`sales.csv` is the sample from the kit's README):
+
+  ```text
+  > python csv_processor.py sales.csv
+  Rows read: 10 | kept: 5 | rejected: 5
+  Rejected rows by column:
+    order_date   1
+    order_id     1
+    quantity     2
+    row          1
+  Examples:
+    line 6: quantity: 'ten' is not a whole number
+    line 7: order_date: '2026-02-30' is not a real calendar date
+    line 8: quantity: value is missing
+    line 9: order_id: duplicate of line 4
+    line 11: row: 1 more field(s) than the header (an unquoted comma?)
+
+  Revenue by region
+  Region        Count       Total        Mean         Min         Max
+  East              1       23.00       23.00       23.00       23.00
+  North             2       25.50       12.75       12.00       13.50
+  South             1       12.00       12.00       12.00       12.00
+  Unknown           1        9.00        9.00        9.00        9.00
+  TOTAL             5       69.50       13.90        9.00       23.00
+  ```
+
+  Other runs: `--group-by product|month`, `--value quantity`, `--summary-csv summary.csv`,
+  `--max-examples 3`.
+acceptanceCriteria:
+  - "`is_missing` treats `None`, blank text and the markers `NA`, `n/a`, `NaN`, `null`, `None` and `-` (any case, any surrounding spaces) as missing."
+  - "Quantities parse to `int` (accepting `3.0`, rejecting `2.5`, `ten` and values below 1); prices parse to two-decimal `Decimal` (one leading `$`, `£` or `€` allowed; negatives, `1,200.00` and `4.999` rejected); dates must be real `YYYY-MM-DD` dates."
+  - "`clean_row` normalises whitespace, title-cases regions, defaults a missing region to `Unknown`, and raises `RowError` whose `column` names the first bad column."
+  - "`read_rows` is a generator over `csv.DictReader` that normalises header names, reports an empty file or missing columns with `CsvProcessingError`, yields the file line number of each row, and reads no further than needed."
+  - "`clean_rows` yields a `Sale` or a `Rejected(line, column, reason)` for every row, rejecting surplus fields and duplicate order ids (pointing at the first occurrence)."
+  - "`aggregate` and `build_report` compute count, total, mean (rounded half up to cents), min and max per region, product or month in one pass; every rejection is counted but only `max_examples` are kept."
+  - "The summary CSV escapes cells that start with `=`, `+`, `-`, `@`, tab or carriage return, and files are opened with `newline=\"\"` and an explicit UTF-8 encoding."
+  - "`main(argv)` prints the report and returns 0; a missing file or missing column prints `error: ...` to stderr and returns 1; an invalid option exits with code 2."
+  - "All tests pass with `GW_TARGET=solution` and the code is ruff-clean, typed and documented."
+architecture: |
+  A pipeline of small functions joined by generators. Each stage handles one row at a time, so
+  memory depends on the number of groups, not the number of rows.
+
+  ```text
+   file (newline="", utf-8-sig)
+     │  lines, lazily
+     ▼
+   read_rows()  ── csv.DictReader, header check ──►  (line_no, raw dict)        [generator]
+     │
+     ▼
+   clean_rows() ── clean_row() + duplicate check ──►  Sale | Rejected            [generator]
+     │                └─ is_missing / clean_text / parse_whole_number / parse_money / parse_iso_date
+     ▼
+   build_report() ── GroupStats.add() per group, Counter of rejections ──► Report
+     │
+     ├──► format_report()      text table on stdout
+     └──► write_summary_csv()  csv.writer + escape_formula ──► summary.csv
+  ```
+
+  * **Values** raise `ValueError` with a message that quotes the bad text; **rows** wrap that into
+    `RowError(column, message)`; **file-level** problems are `CsvProcessingError`
+    ([raising exceptions](concept:python.raising-exceptions)). Each layer catches only what it can
+    handle.
+  * **Data types** ([dataclasses](concept:python.dataclasses)): `Sale` (frozen, with `revenue` and
+    `month` properties), `Rejected`, `GroupStats` (running count/total/min/max; the mean is derived)
+    and `Report`.
+  * **csv details** ([CSV and JSON](concept:python.csv-json)): open files with `newline=""` so the
+    csv module handles line endings and quoted newlines; read with `utf-8-sig` to drop Excel's BOM.
+    `DictReader(restkey=...)` collects surplus fields and fills short rows with `None`.
+  * **CLI** ([command-line apps](concept:python.cli-apps)): argparse with `choices`, a custom type
+    for `--max-examples`, and `main` as the only place that prints or picks exit codes.
+setup: |
+  You need Python 3.11 or newer. The program uses only the standard library; `pytest` is installed
+  just for the tests. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\csv-processor
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+  `.\.venv\Scripts\python.exe -m pytest` without activating.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/csv-processor
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/csv_processor.py`. Copy the sample data from the kit's README into `sales.csv` and
+  run `python starter/csv_processor.py sales.csv`.
+milestones:
+  - id: values
+    title: Parse and normalise values
+    description: |
+      Implement `is_missing`, `clean_text`, `parse_whole_number`, `parse_money` and
+      `parse_iso_date`. Parsers return typed values (`int`, `Decimal`, `date`) or raise `ValueError`
+      with a message that quotes the bad input.
+
+      The tests (heavily parametrized) cover missing markers, whitespace, `3.0` vs `2.5`, minimums,
+      currency symbols, thousands separators, extra decimals and impossible dates.
+      Run `python -m pytest -k Milestone1`.
+  - id: rows
+    title: Clean whole rows
+    description: |
+      Implement `clean_row` and the `Sale.revenue` / `Sale.month` properties. Normalise text,
+      title-case the region (missing becomes `Unknown`), require every other column, and convert the
+      parsers' `ValueError` into `RowError(column, message)`.
+
+      The tests check a typed `Sale` comes out, normalisation, the region default, and that ten
+      different bad values each name the right column. Run `python -m pytest -k Milestone2`.
+  - id: streaming
+    title: Stream the file
+    description: |
+      Implement the generators `read_rows` (over `csv.DictReader`: header normalisation, empty-file
+      and missing-column errors, line numbers) and `clean_rows` (yield `Sale` or `Rejected`, reject
+      surplus fields and duplicate order ids), plus `Rejected.describe`.
+
+      The tests feed `io.StringIO` text and a generator that raises if read too far (proving the
+      code streams), and check blank lines, quoted commas and the exact rejected lines of the
+      sample. Run `python -m pytest -k Milestone3`.
+  - id: aggregation
+    title: Group and aggregate in one pass
+    description: |
+      Implement `GroupStats.add` and `mean` (rounded half up to cents), `aggregate` (by region,
+      product or month; revenue or quantity), `Report.rows_rejected` / `rows_kept`, `build_report`
+      (single pass, every rejection counted, only `max_examples` kept) and `summarise_file`.
+
+      The tests check exact totals, means, min and max, group ordering, one-shot generator input,
+      bad choices and a 5,000-row generated stream. Run `python -m pytest -k Milestone4`.
+  - id: report-cli
+    title: Report, safe CSV output and CLI
+    description: |
+      Implement `format_report`, `escape_formula`, `write_summary_csv`, `build_parser` and `main`.
+      The summary CSV must neutralise formulas coming from the input data.
+
+      The tests check the report lines, the CSV written to a `StringIO`, formula escaping, and the
+      CLI end to end with `tmp_path` files: grouping options, a byte-order mark, `--max-examples`,
+      a missing file, a missing column and an invalid option. Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 96 pytest tests in `tests/test_csv_processor.py`, one class per milestone
+  (`TestMilestone1Values` … `TestMilestone5ReportCli`). By default they import your `starter/` code:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone3   # one milestone
+  python -m pytest -x -q           # stop at the first failure, short output
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Most tests use in-memory `io.StringIO` text; the CLI tests write files to pytest's `tmp_path`.
+  Nothing touches the network or depends on the clock. Add a test (or a row to a parametrize list)
+  for every new kind of dirty data you decide to handle.
+security:
+  - CSV formula injection. A cell such as =HYPERLINK(...) becomes a live formula when the output is opened in Excel or LibreOffice, so text starting with = + - @ tab or carriage return is prefixed with an apostrophe before it is written.
+  - Treat the input as untrusted. Every value is validated and nothing from the file is passed to eval, a shell or a SQL string.
+  - Bound memory. Rows are streamed, only a few rejected examples are kept, and the csv module's default field size limit (128 KiB) turns a single giant field into a reported csv.Error instead of exhausting memory.
+  - Do not silently repair data. Guessing that 1,200 means 1200 or that 01/03 is 1 March corrupts results; rejected rows are reported with their line numbers so a person can fix the source.
+  - The tool only writes to the path given in --summary-csv. Check that path before running on shared machines, because an existing file is replaced.
+extensions:
+  - Write rejected rows, with their line number and reason, to a rejects.csv so they can be fixed and re-imported.
+  - Make the schema data-driven (column name, parser, required, default) so the same tool can clean a different CSV layout from a small config file.
+  - Add a --where option such as region=North and a --top N option that lists the N largest groups.
+  - Compute a median per group with bounded memory (for example a reservoir sample) and explain why an exact median needs more memory than a mean.
+  - Compare speed and memory against pandas.read_csv with chunksize on a generated file of a million rows.
+rubric:
+  - criterion: Data cleaning correctness
+    needsWork: Crashes on bad rows, silently guesses values, or uses float for money.
+    meets: Every value is typed and validated; bad rows are rejected with the right column and line number; missing regions default to Unknown.
+    exceeds: Reasons are specific enough to fix the source data, and new kinds of dirty data are handled with matching tests.
+  - criterion: Streaming design
+    needsWork: Reads the whole file into a list before processing.
+    meets: read_rows and clean_rows are generators and build_report makes a single pass with running statistics.
+    exceeds: Memory use is documented and bounded (examples capped, only per-group state kept), and demonstrated on a large generated file.
+  - criterion: Output quality and safety
+    needsWork: Report is hard to read, or the summary CSV writes untrusted text as-is.
+    meets: Aligned text report with counts and a TOTAL row; summary CSV opened with newline="" and formulas escaped.
+    exceeds: Output formats are tested end to end and documented, and the CLI reports every file-level error with a clear message and exit code.
+  - criterion: Code structure and testing
+    needsWork: One long function; some provided tests fail.
+    meets: Small typed, documented functions in clear layers; all provided tests pass; ruff-clean.
+    exceeds: You added parametrized tests and fixtures for your own edge cases or extensions.

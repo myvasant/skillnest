@@ -1,0 +1,217 @@
+id: de.batch-streaming
+concept: de.batch-streaming
+title: Batch vs streaming processing
+subtitle: Batch processes bounded data on a schedule; streaming processes unbounded events continuously — the trade-off
+  is latency vs complexity and cost
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: Batch processes bounded data on a schedule; streaming processes unbounded events continuously — the trade-off
+  is latency vs complexity and cost.
+objectives:
+- Explain the role of batch vs streaming processing in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: 'Streaming 101: The world beyond batch'
+  url: https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
+  publisher: O'Reilly Radar (Tyler Akidau)
+- title: Structured Streaming Programming Guide
+  url: https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html
+  publisher: Apache Software Foundation
+- title: Timely Stream Processing
+  url: https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/
+  publisher: Apache Flink
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Batch processes bounded data on a schedule; streaming processes unbounded events continuously — the trade-off
+      is latency vs complexity and cost. Choosing streaming when an hourly batch would do multiplies operational
+      cost; choosing batch when the business needs second-level freshness fails the use case.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Batch jobs process a bounded dataset (for example yesterday''s partition) on a schedule; they are simple
+      to reason about, rerun and backfill.
+
+      - Streaming jobs process an unbounded sequence of events as they arrive, with latencies from milliseconds
+      to seconds, and run continuously.
+
+      - Event time (when something happened) differs from processing time (when the system saw it); windows (tumbling,
+      sliding, session) group events by event time.
+
+      - Watermarks estimate how far event time has progressed, deciding when a window is complete enough to emit
+      and how late data is handled.
+
+      - Micro-batching (Spark Structured Streaming''s default mode) runs small batches continuously — a middle ground;
+      always ask how fresh the data really needs to be.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+
+      - Events do not arrive in order; aggregating by arrival time gives wrong results when devices are offline
+      or networks are slow.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def batches(values, size):\n    if size <= 0: raise ValueError(\"size must be positive\")\n    return\
+      \ [values[i:i+size] for i in range(0, len(values), size)]\n\nprint(batches([1,2,3,4,5], 2))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: batch-streaming-code
+  - type: item
+    ref: batch-streaming-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Batch jobs process a bounded dataset (for example yesterday''s partition) on a schedule; they are simple
+      to reason about, rerun and backfill.
+
+      - Streaming jobs process an unbounded sequence of events as they arrive, with latencies from milliseconds
+      to seconds, and run continuously.
+
+      - Event time (when something happened) differs from processing time (when the system saw it); windows (tumbling,
+      sliding, session) group events by event time.
+
+      - Watermarks estimate how far event time has progressed, deciding when a window is complete enough to emit
+      and how late data is handled.
+
+      - Micro-batching (Spark Structured Streaming''s default mode) runs small batches continuously — a middle ground;
+      always ask how fresh the data really needs to be.
+
+
+      **Watch for**
+
+      - Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+
+      - Events do not arrive in order; aggregating by arrival time gives wrong results when devices are offline
+      or networks are slow.'
+  - type: item
+    ref: batch-streaming-mcq
+  - type: item
+    ref: batch-streaming-tf
+  - type: item
+    ref: batch-streaming-code
+items:
+- id: batch-streaming-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of batch vs streaming processing?
+  explanation: Batch jobs process a bounded dataset (for example yesterday's partition) on a schedule; they are
+    simple to reason about, rerun and backfill.
+  options:
+  - id: a
+    text: Batch jobs process a bounded dataset (for example yesterday's partition) on a schedule; they are simple
+      to reason about, rerun and backfill.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: batch-streaming-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: batch-streaming-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying batch vs streaming processing to a dataset that may contain missing, duplicate or malformed
+    records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: batch-streaming-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for batch vs streaming processing. The assertions test the main behaviour and an important
+    edge case.
+  starterCode: "def batches(values, size):\n    raise NotImplementedError('Complete this function')"
+  solution: "def batches(values, size):\n    if size <= 0: raise ValueError(\"size must be positive\")\n    return\
+    \ [values[i:i+size] for i in range(0, len(values), size)]"
+  tests:
+  - name: Core transformation
+    code: assert batches([1,2,3,4,5], 2) == [[1,2],[3,4],[5]]
+  - name: Edge case
+    code: 'assert batches([], 3) == []
+
+      try: batches([1], 0)
+
+      except ValueError: pass
+
+      else: raise AssertionError("zero batch size must fail")'
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - batch-streaming-mcq
+  - batch-streaming-tf
+  - batch-streaming-code
+cheatsheet: '**Key ideas**
+
+  - Batch jobs process a bounded dataset (for example yesterday''s partition) on a schedule; they are simple to
+  reason about, rerun and backfill.
+
+  - Streaming jobs process an unbounded sequence of events as they arrive, with latencies from milliseconds to seconds,
+  and run continuously.
+
+  - Event time (when something happened) differs from processing time (when the system saw it); windows (tumbling,
+  sliding, session) group events by event time.
+
+  - Watermarks estimate how far event time has progressed, deciding when a window is complete enough to emit and
+  how late data is handled.
+
+  - Micro-batching (Spark Structured Streaming''s default mode) runs small batches continuously — a middle ground;
+  always ask how fresh the data really needs to be.
+
+
+  **Data quality risks**
+
+  - Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+
+  - Events do not arrive in order; aggregating by arrival time gives wrong results when devices are offline or networks
+  are slow.'

@@ -1,0 +1,203 @@
+id: rag.context-assembly
+concept: rag.context-assembly
+title: Context assembly and prompting
+subtitle: Select, order, deduplicate and label retrieved chunks within a token budget, and instruct the model to
+  answer only from them
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Select, order, deduplicate and label retrieved chunks within a token budget, and instruct the model to
+  answer only from them.
+objectives:
+- Explain the role of context assembly and prompting in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: 'Lost in the Middle: How Language Models Use Long Contexts'
+  url: https://arxiv.org/abs/2307.03172
+  publisher: arXiv
+- title: LLM01:2025 Prompt Injection
+  url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+  publisher: OWASP GenAI Security Project
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Select, order, deduplicate and label retrieved chunks within a token budget, and instruct the model to
+      answer only from them. Retrieval returns a pile of chunks. How you select, order, label and frame them in
+      the prompt decides whether the model uses the right evidence, stays within budget and can cite its sources.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Set a token budget for context (leaving room for instructions, history and the answer), then fill it
+      with the best-ranked chunks after removing near-duplicates.
+
+      - Label each chunk with an ID and source metadata (title, section, date) so the model can cite it and you
+      can trace it.
+
+      - Models use information at the start and end of a long context more reliably than the middle ("lost in the
+      middle"), so lead with the strongest evidence and do not pad with marginal chunks.
+
+      - Instruct the model to answer only from the provided context, cite chunk IDs, and say it does not know when
+      the context is insufficient.
+
+      - Clearly delimit retrieved text (for example with XML-style tags) and treat it as data, not instructions
+      — documents can contain prompt-injection text.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- More context is not always better; extra marginal chunks add cost and latency and can distract the
+      model.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def assemble_context(chunks, token_budget):\n    selected=[];used=0\n    for chunk in chunks:\n     \
+      \   cost=chunk[\"tokens\"]\n        if cost<0: raise ValueError(\"negative token count\")\n        if used+cost>token_budget:\
+      \ break\n        selected.append(chunk);used+=cost\n    return selected,used\n\nprint(assemble_context([{\"\
+      id\":\"a\",\"tokens\":40},{\"id\":\"b\",\"tokens\":30}], 60))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: context-assembly-code
+  - type: item
+    ref: context-assembly-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Set a token budget for context (leaving room for instructions, history and the answer), then fill it with
+      the best-ranked chunks after removing near-duplicates.
+
+      - Label each chunk with an ID and source metadata (title, section, date) so the model can cite it and you
+      can trace it.
+
+      - Models use information at the start and end of a long context more reliably than the middle ("lost in the
+      middle"), so lead with the strongest evidence and do not pad with marginal chunks.
+
+      - Instruct the model to answer only from the provided context, cite chunk IDs, and say it does not know when
+      the context is insufficient.
+
+      - Clearly delimit retrieved text (for example with XML-style tags) and treat it as data, not instructions
+      — documents can contain prompt-injection text.
+
+
+      **Limitations**
+
+      - More context is not always better; extra marginal chunks add cost and latency and can distract the model.'
+  - type: item
+    ref: context-assembly-mcq
+  - type: item
+    ref: context-assembly-tf
+  - type: item
+    ref: context-assembly-code
+items:
+- id: context-assembly-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of context assembly and prompting?
+  explanation: Set a token budget for context (leaving room for instructions, history and the answer), then fill
+    it with the best-ranked chunks after removing near-duplicates.
+  options:
+  - id: a
+    text: Set a token budget for context (leaving room for instructions, history and the answer), then fill it with
+      the best-ranked chunks after removing near-duplicates.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: More context is not always better; extra marginal chunks add cost and latency and can distract the model.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: context-assembly-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: More context is not always better; extra marginal chunks add cost and latency and can distract the model.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: context-assembly-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding context assembly and prompting to an application. Describe the design, one failure mode,
+    and how you would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: context-assembly-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for context assembly and prompting. The assertions include the normal
+    path and a meaningful edge case.
+  starterCode: "def assemble_context(chunks, token_budget):\n    raise NotImplementedError('Complete this function')"
+  solution: "def assemble_context(chunks, token_budget):\n    selected=[];used=0\n    for chunk in chunks:\n   \
+    \     cost=chunk[\"tokens\"]\n        if cost<0: raise ValueError(\"negative token count\")\n        if used+cost>token_budget:\
+    \ break\n        selected.append(chunk);used+=cost\n    return selected,used"
+  tests:
+  - name: Core behaviour
+    code: chosen,used=assemble_context([{"id":"a","tokens":40},{"id":"b","tokens":30}],60)
+  - name: Edge case
+    code: 'assert [x["id"] for x in chosen] == ["a"] and used == 40
+
+      assert assemble_context([],10) == ([],0)'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - context-assembly-mcq
+  - context-assembly-tf
+  - context-assembly-code
+cheatsheet: '**Key ideas**
+
+  - Set a token budget for context (leaving room for instructions, history and the answer), then fill it with the
+  best-ranked chunks after removing near-duplicates.
+
+  - Label each chunk with an ID and source metadata (title, section, date) so the model can cite it and you can
+  trace it.
+
+  - Models use information at the start and end of a long context more reliably than the middle ("lost in the middle"),
+  so lead with the strongest evidence and do not pad with marginal chunks.
+
+  - Instruct the model to answer only from the provided context, cite chunk IDs, and say it does not know when the
+  context is insufficient.
+
+  - Clearly delimit retrieved text (for example with XML-style tags) and treat it as data, not instructions — documents
+  can contain prompt-injection text.
+
+
+  **Failure modes**
+
+  - More context is not always better; extra marginal chunks add cost and latency and can distract the model.'

@@ -1,0 +1,212 @@
+id: secure-config
+title: "Secure configuration: typed settings and secrets that never leak"
+track: production
+level: intermediate
+estimatedHours: 5
+summary: >-
+  Build a configuration module with pydantic-settings that turns environment variables into typed,
+  validated settings, fails fast with clear messages when secrets are missing, prints a masked view of
+  itself, and redacts secrets from every log line, traceback included.
+problem: |
+  Your service reads its configuration from environment variables, the way containers and platforms
+  provide it. Today it uses `os.environ["..."]` scattered around the code. Last month three incidents
+  happened:
+
+  1. `APP_PORT=80OO` (letter O) was only noticed when the server failed to start in production.
+  2. A deploy forgot `APP_API_KEY`; the app ran for an hour before the first call that needed it crashed.
+  3. A debug log line printed the database URL, password included, into the central log system.
+
+  Build `secure_settings.py` so that all configuration is **declared once, typed and validated at
+  startup**, errors **name every bad variable but never repeat its value**, secrets are `SecretStr`
+  objects that do not print themselves, and a logging filter **redacts** what slips through anyway.
+
+  **Inputs:** `APP_*` environment variables, optionally a `.env` file (real variables win).
+  **Outputs:** an immutable `AppSettings` object, or a `ConfigError` listing problems; a masked
+  `describe()` dictionary; log output with secrets replaced by `**********`.
+
+  **Example session**
+
+  ```text
+  $ APP_PORT=80OO python starter/secure_settings.py
+  invalid configuration:
+    - APP_PORT: Input should be a valid integer, unable to parse string as an integer
+    - APP_DATABASE_URL is required but not set
+    - APP_API_KEY is required but not set
+    - APP_SECRET_KEY is required but not set
+  (exit code 2)
+
+  $ cp .env.example .env && python starter/secure_settings.py
+  {"environment": "development", "port": 8000,
+   "database_url": "postgresql://app:**********@localhost:5432/app", "api_key": "**********", ...}
+
+  $ APP_ENVIRONMENT=production python starter/secure_settings.py
+  invalid configuration:
+    - APP_PUBLIC_BASE_URL must use https in production; APP_DATABASE_URL still has the placeholder
+      value from .env.example; ...
+  ```
+
+  And in the logs: `logger.info("connecting with password=%s", pw)` comes out as
+  `connecting with password=**********`.
+concepts:
+  - backend.configuration
+  - backend.secrets-management
+  - mlops.environment-config
+  - backend.pydantic-validation
+  - python.logging
+  - python.testing
+acceptanceCriteria:
+  - "`AppSettings` reads `APP_*` variables (case-insensitive values for environment and log level), converts them to `bool`/`int`/`float`/enums/`HttpUrl`, and stores `database_url`, `api_key` and `secret_key` as required `SecretStr` fields; instances are immutable."
+  - "Invalid values are rejected: port outside 1-65535, unknown log level or environment, malformed URLs, database schemes other than PostgreSQL/SQLite, a PostgreSQL URL without a host, API key under 16 or secret key under 32 characters."
+  - "In production, `APP_DEBUG=true`, an `http://` public URL or any secret containing `change-me` is rejected, with all problems reported together."
+  - "`load_settings()` raises `ConfigError` whose message names every missing or invalid variable (`APP_API_KEY is required but not set`) and contains no submitted value, and which is not chained to pydantic's `ValidationError`."
+  - "Environment variables override the `.env` file; `env_file=None` ignores `.env`; unknown `APP_*` variables are logged as warnings by name only."
+  - "`.env.example` documents every setting with placeholders that load in development and are refused in production; `.env` is git-ignored."
+  - "`describe()` returns a JSON-serialisable dictionary of every setting with secrets masked and the database URL showing host but not password; `repr(settings)` shows no secret."
+  - "`RedactingFilter` masks known secret values, URL passwords, bearer tokens and `password=` / `api_key:` style pairs in messages, formatted arguments and tracebacks; `configure_logging` attaches it to a handler at the configured level."
+architecture: |
+  ```text
+   environment (APP_*) ---+
+                          +--> AppSettings (pydantic-settings)  --ValidationError--> describe_validation_error
+   .env file (optional) --+      typed fields, SecretStr,                               |  names only, no values
+                                 field + production validators                          v
+                                        |                                         ConfigError -> exit 2
+                                        v
+                                 load_settings() -------> describe(settings)  -> masked dict (safe to print)
+                                        |
+                                        +-------------> secret_values(settings)
+                                                               |
+             logger.info(...) --> Handler --[RedactingFilter(secrets)]--> formatter --> stream / log system
+  ```
+
+  * **AppSettings** is the single source of truth: one declaration per setting with its type, default
+    and constraints. Required secrets have no default, so a missing value is a startup error.
+  * **load_settings** is the only constructor the app uses. It warns about unknown `APP_*` names, turns
+    pydantic's detailed (and value-revealing) errors into one line per variable, and raises
+    `ConfigError` without exception chaining.
+  * **describe** and **mask_url** give operators a view of the effective configuration that is safe
+    to log at startup or show on an admin page.
+  * **RedactingFilter** is defence in depth: it lives on the *handler*, so it sees records from every
+    logger that propagates there, and it rewrites the message, arguments and traceback text.
+environment: local
+starterKit: projects/secure-config
+setup: |
+  You need Python 3.11 or newer.
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\secure-config
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  Copy-Item .env.example .env
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/secure-config
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  cp .env.example .env
+  python -m pytest -k Milestone1
+  ```
+
+  `.env` is git-ignored; edit it freely. Check your configuration at any time with
+  `python starter/secure_settings.py`. Set a variable for one command with
+  `$env:APP_PORT="9000"; python starter/secure_settings.py` (PowerShell) or
+  `APP_PORT=9000 python starter/secure_settings.py` (macOS/Linux).
+milestones:
+  - id: m1-typed-settings
+    title: Typed settings with validation
+    description: |
+      Declare the `AppSettings` fields (types, defaults, `Field` constraints, `SecretStr` secrets with no
+      default), make the model frozen, and add the validators: case-insensitive enums, database URL
+      scheme and host, minimum secret lengths, and a model validator for the production rules.
+
+      **Tests (`TestMilestone1TypedSettings`)** set variables with `monkeypatch.setenv`, build
+      `AppSettings(_env_file=None)`, and check defaults, type conversion, `SecretStr`, eleven invalid
+      values, that `repr`/`str` hide secrets, and that assignment fails.
+  - id: m2-fail-fast
+    title: Fail fast with safe error messages
+    description: |
+      Implement `describe_validation_error`, `unknown_app_variables` and `load_settings`. Convert every
+      pydantic error to `APP_X is required but not set` or `APP_X: <reason>`, raise `ConfigError`
+      outside the `except` block, and warn about unknown `APP_*` names. Keep `.env.example` complete.
+
+      **Tests (`TestMilestone2FailFast`)** check that all missing secrets are reported at once, that a
+      secret pasted into the wrong variable is never echoed, that the `.env` file is read but overridden
+      by real variables, the production rules, the unknown-variable warning, `.env.example` and `.gitignore`.
+  - id: m3-safe-describe
+    title: A masked view of the configuration
+    description: |
+      Implement `mask_url` and `describe`, which returns every setting as JSON-safe values with secrets
+      replaced by `**********` and the database URL showing user, host and database but not the password.
+
+      **Tests (`TestMilestone3SafeDescribe`)** check masking, URLs without passwords, JSON
+      serialisation, that every field is described, and the `main()` command-line check (exit 0 or 2).
+  - id: m4-redaction
+    title: Redact secrets from logs
+    description: |
+      Implement `secret_values`, `redact` (known values first, then URL credentials, bearer tokens and
+      sensitive `key=value` pairs), the `RedactingFilter` (message, arguments and traceback), and
+      `configure_logging`, which attaches the filter to a handler and sets the level from settings.
+
+      **Tests (`TestMilestone4Redaction`)** feed eight log-line patterns through `redact`, log formatted
+      arguments and an exception through a filtered handler, and check that records from a child logger
+      are redacted and that the configured level is respected.
+testing: |
+  From `projects/secure-config` (tests target `starter/` by default):
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone4   # one milestone
+  ```
+
+  Against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  An autouse fixture removes every `APP_*` variable and changes into a temporary directory, so neither
+  your shell nor a real `.env` file can change the results. Tests set variables with
+  `monkeypatch.setenv` (undone automatically after each test), write `.env` files under `tmp_path`, use
+  `caplog` for the unknown-variable warning and an isolated logger writing to `io.StringIO` for the
+  redaction checks.
+security:
+  - "Secrets in source control: commit only `.env.example` with placeholders; keep `.env` in `.gitignore`; in production inject secrets from a secrets manager or platform secrets, not files baked into images."
+  - "Secrets in error messages: pydantic's `ValidationError` text includes `input_value=...`. Build your own messages with `include_input=False`, and raise without chaining so tracebacks and error trackers never see the original."
+  - "Secrets in logs: `SecretStr` protects against `print(settings)`, but code can still call `get_secret_value()` and log it. A redacting filter on every handler is the safety net, not a replacement for not logging secrets."
+  - "Late failure: a missing or malformed secret discovered on the first request becomes an outage. Validate everything at startup and exit non-zero so the deploy fails instead."
+  - "Unsafe production defaults: debug mode, plain-HTTP URLs and placeholder secrets that work in development are refused when `APP_ENVIRONMENT=production`."
+  - "Redaction limits: pattern-based redaction has false negatives (a secret in an unusual format) and false positives (`token_count=5`). Prefer structured logging with an allow-list of fields for sensitive systems."
+extensions:
+  - "Read secrets from files with pydantic-settings' `secrets_dir=\"/run/secrets\"` (Docker and Kubernetes secrets) and test it with files under `tmp_path`."
+  - "Add a fingerprint to `describe()` for each secret (for example the first 8 hex characters of an HMAC with a fixed key) so operators can tell which secret version is deployed without seeing it."
+  - "Support secret rotation: accept `APP_SECRET_KEY` and an optional `APP_SECRET_KEY_PREVIOUS`, and verify with both while signing with the new one."
+  - "Make `unknown_app_variables` suggest the closest real name with `difflib.get_close_matches` (\"did you mean APP_PORT?\")."
+  - "Switch the log output to JSON and redact by field name as well as by pattern; see the [logging and tracing](concept:mlops.logging-tracing) concept."
+rubric:
+  - criterion: Typed, validated configuration
+    needsWork: Settings are read with `os.environ[...]` where needed, as strings, without validation.
+    meets: One `AppSettings` class with types, constraints, required secrets and production rules; invalid values fail at startup.
+    exceeds: Cross-field rules are documented, every setting is in `.env.example`, and typos in variable names are detected.
+  - criterion: Safe failure messages
+    needsWork: Errors are pydantic's raw output (with input values) or a crash on first use.
+    meets: "`ConfigError` names every bad variable at once, never contains values and is not chained."
+    exceeds: Messages tell the operator how to fix each problem, and the CLI check is used in a deploy pipeline.
+  - criterion: Secret handling
+    needsWork: Secrets are plain `str`, printed in `repr`, or committed in a `.env` file.
+    meets: Secrets are `SecretStr`, `describe()` masks them (URL passwords included), `.env` is git-ignored.
+    exceeds: Supports file-based secrets or rotation and documents where production secrets come from.
+  - criterion: Log redaction
+    needsWork: No redaction, or only the message text (arguments and tracebacks leak).
+    meets: A handler-level filter redacts known values, URL credentials, bearer tokens and key/value pairs in messages, arguments and tracebacks.
+    exceeds: Tests cover false positives and negatives, and logs are structured with an allow-list of fields.

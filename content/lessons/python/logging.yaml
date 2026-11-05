@@ -1,0 +1,323 @@
+id: python.logging
+concept: python.logging
+title: Logging in Python
+subtitle: Record what a program is doing without turning every message into a print statement
+estimatedMinutes: 35
+reviewedOn: 2026-11-04
+summary: >-
+  Learn how Python's logging system records events with severity levels, named loggers and handlers. Configure
+  logging once at an application boundary, add useful context, capture exceptions and avoid leaking secrets.
+objectives:
+  - Explain the difference between temporary print debugging and application logging.
+  - Choose an appropriate severity level for an event.
+  - Create a named logger and understand how loggers, handlers and formatters work together.
+  - Configure logging once and avoid duplicate messages.
+  - Record exception details and useful context without exposing secrets or personal data.
+  - Capture log output in a test so logging behaviour can be verified.
+sources:
+  - title: Logging HOWTO
+    url: https://docs.python.org/3/howto/logging.html
+    publisher: Python Software Foundation
+  - title: Logging Cookbook
+    url: https://docs.python.org/3/howto/logging-cookbook.html
+    publisher: Python Software Foundation
+sections:
+  - id: why-logging
+    title: Why programs need logs
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          `print()` is useful while learning, but a long-running program needs a better record of what happened.
+          Imagine an API that fails at 2 a.m. The developer may not be watching its terminal. A **log** is a
+          time-ordered record of events that can be collected and inspected later.
+
+          Python's standard-library `logging` module provides this system. A log record can include a severity,
+          timestamp, logger name, message and exception details. The application can send records to a terminal,
+          a file or another destination without changing every call site.
+      - type: callout
+        variant: analogy
+        title: A log is a flight recorder
+        body: |
+          A flight recorder does not control the aircraft. It records useful events so investigators can
+          understand what happened. Logging plays a similar role in software: it gives evidence after a problem.
+      - type: callout
+        variant: misconception
+        title: Logging does not replace error handling
+        body: |
+          Logging records an event; it does not automatically fix it or make an exception safe to ignore. Decide
+          whether to recover, retry, return an error or let the exception reach a caller. Log at the layer that
+          has enough context, and avoid logging the same exception at every layer.
+
+  - id: severity-levels
+    title: Severity levels and named loggers
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A severity level communicates how important an event is. Python provides these common levels, from
+          least to most severe:
+
+          | Method | When to use it |
+          |---|---|
+          | `debug()` | Detailed diagnostic information useful while investigating |
+          | `info()` | A normal, meaningful milestone such as a job completing |
+          | `warning()` | Something unexpected happened, but work can continue |
+          | `error()` | An operation failed |
+          | `critical()` | A serious failure may stop the application |
+
+          A **logger** is the named object your code calls. Prefer `logging.getLogger(__name__)` in each module.
+          The module name becomes the logger name, which helps identify where an event came from. The configured
+          threshold filters records: if a logger is set to `INFO`, its `DEBUG` records are ignored.
+      - type: code
+        runnable: true
+        code: |
+          import logging
+          from io import StringIO
+
+          stream = StringIO()
+          handler = logging.StreamHandler(stream)
+          handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+
+          logger = logging.getLogger("lesson.orders")
+          logger.handlers.clear()
+          logger.propagate = False
+          logger.setLevel(logging.INFO)
+          logger.addHandler(handler)
+
+          logger.debug("debug detail is filtered")
+          logger.info("order %s accepted", 42)
+          logger.warning("delivery is delayed")
+          print(stream.getvalue().strip())
+          logger.removeHandler(handler)
+        expectedOutput: |
+          INFO:lesson.orders:order 42 accepted
+          WARNING:lesson.orders:delivery is delayed
+        annotations:
+          - line: 5
+            text: A formatter controls the fields and layout of each displayed record.
+          - line: 11
+            text: INFO is the threshold, so DEBUG is filtered out but INFO and WARNING are kept.
+          - line: 14
+            text: Percent-style arguments are passed separately; logging formats the message only when needed.
+      - type: item
+        ref: logging-level-predict
+
+  - id: logger-handler-formatter
+    title: "Logger, handler and formatter: three different jobs"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Keep these responsibilities separate:
+
+          1. A **logger** is the entry point your code calls. It decides whether a record meets its level threshold
+             and passes the record onward.
+          2. A **handler** decides where a record goes: console, file, email or a custom stream.
+          3. A **formatter** decides how the record is rendered, for example `%(asctime)s %(levelname)s %(message)s`.
+
+          A logger can have multiple handlers. Loggers also form a hierarchy: `app.api.routes` is a child of
+          `app.api`, which is a child of `app`. By default, records can propagate to parent loggers. Adding
+          handlers at several levels without understanding propagation can print the same event more than once.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Usually run once by the application entry point, not inside every function.
+          import logging
+
+          logging.basicConfig(
+              level=logging.INFO,
+              format="%(asctime)s %(levelname)s %(name)s %(message)s",
+          )
+        caption: |
+          Illustrative application-level configuration. In a larger application, configure handlers and
+          formatters deliberately at startup; a library should normally create a named logger but not configure
+          the application's root logger.
+      - type: callout
+        variant: tip
+        title: Configure at the boundary
+        body: |
+          Put application-wide configuration in the program's entry point. In reusable modules, define
+          `logger = logging.getLogger(__name__)` and emit records. This keeps libraries from unexpectedly
+          changing the logging behaviour of the application that imports them.
+
+  - id: exceptions-and-context
+    title: Log exceptions and useful context
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          When you are already inside an `except` block, `logger.exception("message")` records the message and
+          the active exception traceback. It is shorthand for an error-level log with exception information.
+          Use it when the current layer can add useful context and is responsible for recording the failure.
+
+          Prefer structured context such as an order ID or job ID over vague messages like `something failed`.
+          Use stable identifiers where possible; do not include passwords, access tokens, session cookies, full
+          payment details or unnecessary personal information.
+      - type: code
+        runnable: true
+        code: |
+          import logging
+          from io import StringIO
+
+          stream = StringIO()
+          handler = logging.StreamHandler(stream)
+          logger = logging.getLogger("lesson.importer")
+          logger.handlers.clear()
+          logger.propagate = False
+          logger.setLevel(logging.ERROR)
+          logger.addHandler(handler)
+
+          try:
+              int("not-a-number")
+          except ValueError:
+              logger.exception("could not parse customer count")
+
+          print("ValueError" in stream.getvalue())
+          print("could not parse customer count" in stream.getvalue())
+          logger.removeHandler(handler)
+        expectedOutput: |
+          True
+          True
+        annotations:
+          - line: 13
+            text: The except block is the right place for logger.exception because the exception is active here.
+          - line: 15
+            text: The traceback helps identify the failure location; the message adds business context.
+      - type: callout
+        variant: warning
+        title: Do not log secrets
+        body: |
+          A log file often has broader access and a longer retention period than the original request. Redact
+          sensitive values before logging. Logging an entire request object or environment dictionary can expose
+          credentials even when the message looks harmless.
+
+  - id: mistakes-and-testing
+    title: Common logging mistakes and how to test them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          Common mistakes include:
+
+          - Calling `basicConfig()` in every function. Configure once at startup.
+          - Adding a new handler every time a function runs. Reuse or remove handlers deliberately.
+          - Setting the threshold too high and losing useful diagnostics, or too low and flooding production logs.
+          - Using f-strings for every log message. Prefer `logger.info("user %s signed in", user_id)` so formatting
+            can be deferred until the record is actually emitted.
+          - Catching an exception, logging it and silently continuing when the program cannot safely continue.
+          - Logging credentials or raw personal data.
+
+          Logging can be tested without writing to a real file: attach a `StreamHandler` to an `io.StringIO`, call
+          the code, and assert on the captured text. This keeps the test deterministic and avoids filesystem side
+          effects.
+      - type: item
+        ref: logging-capture-code
+      - type: item
+        ref: logging-transfer
+
+  - id: summary
+    title: Summary and checklist
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Use `logging`, not scattered `print()` calls, for application diagnostics.
+          - Choose a level that reflects the event's severity.
+          - Use a named logger such as `logging.getLogger(__name__)`.
+          - Logger = event entry point; handler = destination; formatter = layout.
+          - Configure application logging once, normally at startup.
+          - Use `logger.exception()` inside an `except` block when a traceback is useful.
+          - Add context, but never expose secrets or unnecessary personal data.
+          - Test logging by capturing a stream.
+      - type: item
+        ref: logging-transfer
+items:
+  - id: logging-level-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      import logging
+      from io import StringIO
+      stream = StringIO()
+      logger = logging.getLogger("prediction.logger")
+      logger.handlers.clear()
+      logger.propagate = False
+      logger.setLevel(logging.WARNING)
+      handler = logging.StreamHandler(stream)
+      logger.addHandler(handler)
+      logger.info("started")
+      logger.error("failed")
+      print(stream.getvalue().strip())
+      logger.removeHandler(handler)
+    answer: |
+      failed
+    wrongAnswers:
+      - answer: |
+          started
+          failed
+        feedback: INFO is below the WARNING threshold, so it is filtered out.
+      - answer: |
+          
+        feedback: ERROR meets the threshold and is written to the stream.
+    explanation: A logger set to WARNING filters INFO but accepts ERROR. The stream therefore contains only the second message.
+  - id: logging-capture-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `capture_info(message)` so it returns the text of one INFO log record. Use a named logger, an in-memory stream and a handler. Do not print the message directly.
+    explanation: Capture the record through a stream handler, then remove the handler so later calls do not duplicate output.
+    starterCode: |
+      def capture_info(message):
+          # Create a stream and capture one INFO record.
+          pass
+    solution: |
+      import logging
+      from io import StringIO
+
+      def capture_info(message):
+          stream = StringIO()
+          logger = logging.getLogger("exercise.capture_info")
+          logger.handlers.clear()
+          logger.propagate = False
+          logger.setLevel(logging.INFO)
+          handler = logging.StreamHandler(stream)
+          logger.addHandler(handler)
+          try:
+              logger.info("%s", message)
+              return stream.getvalue().strip()
+          finally:
+              logger.removeHandler(handler)
+              handler.close()
+    tests:
+      - name: captures the message
+        code: assert capture_info("job complete") == "job complete"
+      - name: handles an empty message
+        code: assert capture_info("") == ""
+    hints:
+      - Import `StringIO` from `io` and `logging` from the standard library.
+      - Attach a `StreamHandler` to the named logger.
+      - Return `stream.getvalue().strip()` and remove the handler in a `finally` block.
+  - id: logging-transfer
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A web request fails and the same exception is logged in the database layer, service layer and route handler. Explain why this may be harmful and where you would log it.
+    rubric:
+      - Explains that repeated logging creates duplicate noise and makes one failure look like several.
+      - Chooses a layer that has useful context and owns the recovery or reporting decision.
+    modelAnswer: Logging the same exception at every layer creates duplicate records and makes incident timelines harder to read. I would normally log it once at the boundary that has enough context and decides how the failure is reported or recovered. Lower layers should raise a meaningful exception or add context without repeatedly logging it.
+    explanation: Logs should tell one coherent story. Exception propagation is not itself a reason to emit another identical log record.
+masteryCheck:
+  passThreshold: 0.75
+  items: [logging-level-predict, logging-capture-code, logging-transfer]
+cheatsheet: |
+  - `logging.getLogger(__name__)` creates a module-named logger.
+  - Levels: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+  - Logger = event entry point; handler = destination; formatter = layout.
+  - Configure application handlers once at startup.
+  - `logger.exception()` records a traceback inside an `except` block.
+  - Never log passwords, tokens, cookies or unnecessary personal data.

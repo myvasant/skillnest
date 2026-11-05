@@ -1,0 +1,619 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ------------------------------------------------------------------ files
+  - id: python.files.with-statement
+    level: junior
+    kind: conceptual
+    concepts: [python.files]
+    question: |
+      Why do Python developers write `with open("data.txt", encoding="utf-8") as f:` instead of
+      `f = open("data.txt")`? What does `with` guarantee, and why does the encoding argument matter?
+    answer: |
+      `with` makes the file object close itself when the indented block ends — whether the block finishes
+      normally, returns early or raises an exception. It is shorthand for opening the file and calling
+      `f.close()` in a `finally` clause. Closing matters for two reasons: writes are **buffered** in memory
+      and only reach the disk when the buffer is flushed (which `close()` does), and open files consume a
+      limited operating-system resource (file descriptors/handles; on Windows an open file may also be
+      locked). Relying on garbage collection to close files is a CPython implementation detail and is not
+      guaranteed on other interpreters or after a crash.
+
+      Without an explicit `encoding`, Python 3.14 decodes text with the locale's preferred encoding, which
+      differs between machines (often cp1252 on Windows, UTF-8 on macOS/Linux). The same code can then read
+      a file correctly on one machine and raise `UnicodeDecodeError` or produce mojibake on another. Python
+      3.15 makes UTF-8 mode the default (PEP 686), but passing `encoding="utf-8"` is explicit and works on
+      every version.
+    keyPoints:
+      - with closes the file on exit from the block, including when an exception is raised.
+      - Closing flushes buffered writes; unclosed files can lose or hide data.
+      - Open files use a limited OS resource; relying on garbage collection is a CPython detail.
+      - The default text encoding is platform-dependent in 3.14, so pass encoding="utf-8" explicitly.
+    followUps:
+      - What is the try/finally equivalent of a with block?
+      - What happens to the data written so far if an exception occurs halfway through the with block?
+      - How would you write a file "atomically" so a crash never leaves it half-written?
+    pitfalls:
+      - Saying with "makes file operations faster" or "prevents exceptions".
+      - Believing the encoding argument is only needed for non-English text.
+
+  - id: python.files.mode-w-truncates
+    level: junior
+    kind: debugging
+    concepts: [python.files]
+    question: |
+      A script logs each run with `with open("runs.log", "w", encoding="utf-8") as f: f.write(message + "\n")`.
+      The team notices the log only ever contains the latest run. What is wrong, and which mode should it
+      use? When would `"x"` be the right choice instead?
+    answer: |
+      Mode `"w"` truncates the file to zero length the moment it is opened, so every run erases the previous
+      entries before writing its own. A log should be opened with `"a"` (append): the file is created if it
+      does not exist, existing content is kept, and every write goes to the end.
+
+      `"x"` (exclusive creation) creates the file but raises `FileExistsError` if it already exists. It is
+      the right choice when overwriting would be a bug — for example, a report or export that must never
+      replace an earlier one — because the program can detect the situation instead of silently destroying
+      data.
+    keyPoints:
+      - '"w" truncates the file as soon as it is opened, before anything is written.'
+      - '"a" keeps existing content and appends at the end, creating the file if needed.'
+      - '"x" creates the file only if it does not exist, raising FileExistsError otherwise.'
+      - Choosing the mode is a data-safety decision, not just syntax.
+    followUps:
+      - What does "r+" do, and how does it differ from "w+"?
+      - Why might two processes appending to the same log still interleave lines?
+    pitfalls:
+      - Suggesting reading the whole file and rewriting it with "w" instead of using "a".
+
+  - id: python.files.relative-paths
+    level: mid
+    kind: scenario
+    concepts: [python.files]
+    question: |
+      Your script `tools/report.py` reads `open("template.txt", encoding="utf-8")`, and `template.txt` lives
+      next to `report.py`. It works on your machine but fails with `FileNotFoundError` in the CI job and when
+      a colleague runs it. How do you diagnose and fix this properly?
+    answer: |
+      A relative path is resolved against the process's **current working directory**, not the folder the
+      script is in. It works when you run `python report.py` from inside `tools/`, but CI and your colleague
+      run `python tools/report.py` from the repository root, so Python looks for `./template.txt` in the root.
+
+      Diagnose by printing `os.getcwd()` and `os.path.abspath("template.txt")` (or `Path("template.txt").resolve()`)
+      to see where Python is actually looking. Fix it by building the path from the script's own location:
+      `Path(__file__).resolve().parent / "template.txt"`, which is independent of where the program is
+      launched. For data that must be configurable, accept the path as a command-line argument or
+      environment variable instead of hard-coding it.
+    keyPoints:
+      - Relative paths are resolved from the current working directory, not the script's directory.
+      - Diagnose with os.getcwd() and an absolute version of the path.
+      - Fix by building paths from Path(__file__).resolve().parent (or by passing paths in as configuration).
+      - Avoid os.chdir() hacks, which affect the whole process.
+    followUps:
+      - How would you load a data file that ships inside an installed package?
+      - Why are Windows paths in normal string literals risky?
+    pitfalls:
+      - Fixing it with a hard-coded absolute path to one developer's machine.
+      - Calling os.chdir() at the top of the script.
+
+  # --------------------------------------------------------------- csv-json
+  - id: python.csv-json.csv-strings
+    level: junior
+    kind: debugging
+    concepts: [python.csv-json]
+    question: |
+      A colleague totals a CSV column with `total += row["amount"]` inside a `csv.DictReader` loop and gets
+      `TypeError: unsupported operand type(s) for +=: 'int' and 'str'`. Another script splits lines with
+      `line.split(",")` and produces wrong columns for some rows. Explain both problems and the fixes.
+    answer: |
+      CSV is plain text with no types: the csv module returns every field as a `str`, so `row["amount"]` is
+      something like `"12.50"`. You must convert explicitly — `float(row["amount"])`, or `decimal.Decimal`
+      for money — ideally in one place right after reading each row, with error handling for bad values.
+
+      `split(",")` ignores CSV's quoting rules. A field containing a comma is wrapped in double quotes
+      (`"Hopper, Grace"`), a quote inside a field is doubled, and quoted fields may even contain line breaks.
+      Splitting on commas tears such fields apart and shifts every later column. Use `csv.reader` or
+      `csv.DictReader`, and open the file with `newline=""` (plus an explicit encoding) so the module sees
+      the raw line endings.
+    keyPoints:
+      - csv returns every value as a string; convert with int(), float() or Decimal.
+      - Quoted fields can contain commas, doubled quotes and newlines, so split(",") is wrong.
+      - Use csv.reader/DictReader and open files with newline="" and encoding="utf-8".
+      - Convert and validate at the boundary, right after reading.
+    followUps:
+      - Why does the csv documentation insist on newline=""?
+      - How would you handle a CSV exported by Excel that starts with a byte-order mark?
+    pitfalls:
+      - Suggesting eval() or a regular expression to parse CSV lines.
+
+  - id: python.csv-json.json-roundtrip
+    level: mid
+    kind: conceptual
+    concepts: [python.csv-json]
+    question: |
+      How do Python types map to JSON and back? What does `json.loads(json.dumps({1: (2, 3), "ok": None}))`
+      return, and which Python values cannot be serialized at all?
+    answer: |
+      `json.dumps` maps dict → object, list and tuple → array, str → string, int and float → number,
+      True/False → true/false and None → null. `json.loads` maps them back: object → dict, array → list,
+      string → str, integer numbers → int, real numbers → float, true/false → True/False, null → None.
+
+      The round trip is lossy because JSON has fewer types. Object keys are always strings, so the int key
+      `1` becomes `"1"`; tuples become lists. The example therefore returns `{'1': [2, 3], 'ok': None}`,
+      which is not equal to the original.
+
+      Sets, bytes, dates/datetimes, Decimal and custom objects raise `TypeError: Object of type ... is not
+      JSON serializable`. Convert them first (e.g. `sorted(a_set)`, `day.isoformat()`), or pass a
+      `default=` function to `dumps`. Python also accepts and emits NaN and Infinity by default, which are
+      not valid JSON; `allow_nan=False` turns that into an error.
+    keyPoints:
+      - "Mapping: dict/object, list+tuple/array, str/string, int+float/number, bool/true-false, None/null."
+      - Keys become strings and tuples become lists, so round trips are not always identity.
+      - Sets, dates, bytes, Decimal and custom objects need explicit conversion or a default= hook.
+      - dumps/loads work with strings; dump/load with file objects.
+    followUps:
+      - How would you serialise a datetime so other services can parse it?
+      - Why might a large integer ID be sent as a JSON string?
+    pitfalls:
+      - Claiming tuples round-trip as tuples.
+      - Confusing json.dumps (returns a string) with json.dump (writes to a file).
+
+  - id: python.csv-json.never-eval
+    level: mid
+    kind: scenario
+    concepts: [python.csv-json]
+    question: |
+      You find `config = eval(open("config.json").read())` in a service that also accepts JSON uploads
+      from users. What are the problems, and how would you rewrite the loading code robustly?
+    answer: |
+      `eval` executes its argument as Python code. Anyone who can influence the text — an uploaded file, a
+      compromised config, a network response — can run arbitrary code with the service's permissions, e.g.
+      `__import__("os").system(...)`. It is also simply incorrect for JSON: `true`, `false` and `null` are
+      not Python names, so valid JSON raises `NameError`. The code also omits an encoding and never closes
+      the file.
+
+      A robust version uses the json module, which only ever builds data:
+
+      ```python
+      import json
+
+      def load_config(path):
+          try:
+              with open(path, encoding="utf-8") as f:
+                  config = json.load(f)
+          except FileNotFoundError:
+              raise SystemExit(f"Config file not found: {path}")
+          except json.JSONDecodeError as err:
+              raise SystemExit(f"Invalid JSON in {path} at line {err.lineno}, column {err.colno}: {err.msg}")
+          if not isinstance(config, dict) or "database_url" not in config:
+              raise SystemExit("Config must be an object with a database_url key")
+          return config
+      ```
+
+      For user uploads, also limit the size, and validate the structure (manually or with a schema
+      library) before using it. `ast.literal_eval` is safe for Python literals but is not a JSON parser.
+    keyPoints:
+      - eval executes code, so untrusted input leads to arbitrary code execution.
+      - eval also fails on valid JSON (true/false/null).
+      - Use json.load with an explicit encoding inside with, and catch json.JSONDecodeError (a ValueError).
+      - Validate the shape and required keys after parsing; limit input size for uploads.
+    followUps:
+      - Is pickle a safe alternative for config files? Why not?
+      - How would you report the location of a syntax error in the JSON to the user?
+    pitfalls:
+      - Suggesting a regex or string checks to "sanitise" input before eval.
+
+  # ----------------------------------------------------------------- modules
+  - id: python.modules.import-twice
+    level: junior
+    kind: conceptual
+    concepts: [python.modules]
+    question: |
+      What exactly happens when Python executes `import helpers`? What happens the second time the same
+      program imports it — and what if you edit `helpers.py` in between?
+    answer: |
+      On the first import Python looks in `sys.modules`; not finding `helpers`, it searches for it (built-in
+      modules, then each folder of `sys.path` in order), creates a new module object, **registers it in
+      `sys.modules`**, executes the file's top-level code inside that module's namespace, and finally binds
+      the name `helpers` in the importing namespace.
+
+      Any later `import helpers` — in the same file or another module of the same process — finds the entry
+      in `sys.modules` and only binds the name. The module's code does not run again, so module-level state
+      (counters, caches, configuration) is shared by everyone who imports it.
+
+      Editing `helpers.py` while the program runs has no effect on the cached module; the change appears in
+      the next process. In an interactive session you can call `importlib.reload(helpers)`, but names
+      bound earlier with `from helpers import x` still refer to the old objects.
+    keyPoints:
+      - Find (sys.modules, built-ins, sys.path) → create → register in sys.modules → execute → bind name.
+      - A second import only binds the name; the module's code runs once per process.
+      - Module-level state is shared by all importers.
+      - Edits require a restart or importlib.reload, with caveats for from-imports.
+    followUps:
+      - Why is the module put into sys.modules before its code runs?
+      - What does `from helpers import x` bind, and what happens if helpers later rebinds x?
+    pitfalls:
+      - Saying each import re-executes the module.
+
+  - id: python.modules.main-guard
+    level: junior
+    kind: coding
+    concepts: [python.modules]
+    question: |
+      What does `if __name__ == "__main__":` do? Restructure this file so that `import stats` from a test
+      file does not print anything:
+
+      ```python
+      def mean(values):
+          return sum(values) / len(values)
+
+      print(mean([1, 2, 3]))
+      ```
+    answer: |
+      Every module has a `__name__` variable. When a file is run directly (`python stats.py`), Python sets
+      its `__name__` to `"__main__"`; when it is imported, `__name__` is the module name (`"stats"`). Code
+      under the guard therefore runs only when the file is the program, not when it is imported — which
+      lets one file be both a reusable module and a script, and keeps imports free of side effects (tests
+      and tools import modules all the time).
+
+      ```python
+      def mean(values):
+          return sum(values) / len(values)
+
+
+      def main():
+          print(mean([1, 2, 3]))
+
+
+      if __name__ == "__main__":
+          main()
+      ```
+
+      Putting the script logic in `main()` keeps the module namespace clean and makes the entry point easy to
+      call from tests or a packaging entry point.
+    keyPoints:
+      - __name__ is "__main__" for the program being run and the module's name when imported.
+      - Code under the guard runs only when the file is executed directly.
+      - Importing should not have side effects such as printing or starting work.
+      - A main() function called from the guard is the conventional structure.
+    followUps:
+      - What is `__name__` inside a module run with `python -m package.module`?
+      - How do console-script entry points in pyproject.toml relate to main()?
+    pitfalls:
+      - Comparing with "main" instead of "__main__".
+      - Putting function definitions inside the guard, so importers cannot use them.
+
+  - id: python.modules.shadowing
+    level: mid
+    kind: debugging
+    concepts: [python.modules]
+    question: |
+      A beginner's script `json.py` does `import json` and then `json.dumps(data)`, and fails with
+      `AttributeError: module 'json' has no attribute 'dumps'`. Explain the cause using the module search
+      path, how you would confirm it, and which modules cannot be shadowed this way.
+    answer: |
+      `import json` searches `sys.path` in order and uses the first match. When a script is run, `sys.path[0]`
+      is the script's own directory, which comes before the standard library. That directory contains
+      `json.py` — the script itself — so `json` refers to the beginner's file, which has no `dumps`.
+      Python 3.13+ adds a hint to such AttributeErrors suggesting renaming the file.
+
+      Confirm with `print(json.__file__)`, which shows the path of the file actually imported. Fix by
+      renaming the script (Python 3 ignores a leftover `__pycache__` .pyc once its source is gone).
+
+      Modules that are built into the interpreter (such as `sys`, `builtins`) or already imported during
+      start-up are found before `sys.path` is searched, so a file with that name does not replace them.
+      Pure-Python standard modules such as `json`, `random`, `csv` or `email`, and third-party packages,
+      can all be shadowed.
+    keyPoints:
+      - import uses the first match on sys.path, and the script's directory comes first.
+      - The script imports itself (or a same-named local file) instead of the stdlib module.
+      - module.__file__ reveals which file was imported; renaming fixes it.
+      - Built-in and already-loaded modules cannot be shadowed this way; pure-Python modules can.
+    followUps:
+      - How does `python -P` or PYTHONSAFEPATH change this behaviour?
+      - Why might the same shadowing bug appear only in one developer's environment?
+    pitfalls:
+      - Blaming a broken Python installation and reinstalling.
+
+  # --------------------------------------------------------- comprehensions
+  - id: python.comprehensions.loop-to-comprehension
+    level: junior
+    kind: coding
+    concepts: [python.comprehensions]
+    question: |
+      Rewrite this loop as a comprehension, then write a dict comprehension that maps each remaining word to
+      its length:
+
+      ```python
+      result = []
+      for word in words:
+          if word.isalpha():
+              result.append(word.lower())
+      ```
+    answer: |
+      The appended expression moves to the front; the `for` and `if` keep their order:
+
+      ```python
+      result = [word.lower() for word in words if word.isalpha()]
+      lengths = {word: len(word) for word in result}
+      ```
+
+      Both build new collections without modifying `words`. A trailing `if` filters; if you need to keep
+      every item but choose between two values, use a conditional expression at the front instead, e.g.
+      `[w.lower() if w.isalpha() else "?" for w in words]` — an `else` after the trailing `if` is a
+      SyntaxError.
+    keyPoints:
+      - "[expr for x in iterable if cond]: expression first, then for/if in loop order."
+      - "Dict comprehensions use {key: value for ...}; set comprehensions {expr for ...}."
+      - A trailing if filters and takes no else; a conditional expression at the front chooses values.
+      - Comprehensions create new collections and leave the source unchanged.
+    followUps:
+      - What changes if you wrap the comprehension in round brackets instead?
+      - How would you invert a dict with a comprehension, and what happens with duplicate values?
+    pitfalls:
+      - Writing `[word.lower() for word in words if word.isalpha() else word]`.
+
+  - id: python.comprehensions.readability
+    level: mid
+    kind: design
+    concepts: [python.comprehensions]
+    question: |
+      In code review you see `[notify(u) for u in users if u.active]` and a three-level nested comprehension
+      with two filters on one line. What feedback would you give, and when is a comprehension the right
+      tool?
+    answer: |
+      Comprehensions are for **building a collection** from a simple transform-and-filter rule. The first
+      example is run only for its side effect: it builds a list of `notify`'s return values (probably
+      `None`), throws it away, and hides the intent. A plain loop says what it does:
+      `for u in users: if u.active: notify(u)`.
+
+      The nested one may be correct, but readers must unroll several loops and conditions in their head, and
+      you cannot easily add logging, a breakpoint or error handling. Rewrite it as explicit loops, or split it
+      into named intermediate steps or a helper function. Comprehensions also cannot contain statements such
+      as `try`/`except`, so per-item error handling needs a loop (or a helper function called from the
+      comprehension).
+
+      Use a comprehension when the result is a new list/dict/set, the rule fits comfortably on a line or
+      two, and there is at most about two `for`/`if` clauses.
+    keyPoints:
+      - Comprehensions build collections; don't use them for side effects.
+      - Deep nesting and multiple conditions hurt readability and debuggability.
+      - Statements such as try/except cannot appear inside a comprehension.
+      - Prefer loops, helper functions or named steps when logic grows.
+    followUps:
+      - Is a comprehension faster than the equivalent loop? Does that matter here?
+    pitfalls:
+      - Defending one-liners purely on line count.
+
+  - id: python.comprehensions.scope
+    level: senior
+    kind: conceptual
+    concepts: [python.comprehensions]
+    question: |
+      Do comprehension variables leak into the enclosing scope in Python 3? How did CPython implement
+      comprehensions historically, and what changed in Python 3.12 (PEP 709)?
+    answer: |
+      No. In Python 3 a list, dict or set comprehension has its own scope: `x = 1; [x for x in range(3)]`
+      leaves `x == 1`. (In Python 2 list comprehensions did leak their variable.) A plain `for` loop, by
+      contrast, leaves its variable bound to the last value.
+
+      Up to Python 3.11, CPython implemented each comprehension as a hidden nested function (`<listcomp>`)
+      that was created and called immediately, with the outermost iterable passed in as an argument — which
+      is what gave it a separate scope. PEP 709 (Python 3.12) inlines list, dict and set comprehensions into
+      the enclosing code object instead: the iteration variables are isolated by saving and restoring them
+      around the inlined loop. That removes the function-call overhead (up to about 2x faster for small
+      comprehensions) and means comprehensions no longer appear as separate frames in tracebacks, while the
+      language-level scoping semantics are unchanged. Generator expressions are still compiled as separate
+      functions because they must be able to suspend.
+
+      One subtlety remains: only the outermost iterable is evaluated in the enclosing scope, which matters in
+      class bodies, where class-level names are not visible inside the rest of the comprehension.
+    keyPoints:
+      - Comprehension variables do not leak in Python 3 (they did for list comprehensions in Python 2).
+      - Before 3.12 comprehensions were hidden nested functions; PEP 709 inlines list/dict/set comprehensions.
+      - Inlining improves speed and removes the extra traceback frame without changing semantics.
+      - Generator expressions are still separate functions; the outermost iterable is evaluated eagerly in the enclosing scope.
+    followUps:
+      - What does an assignment expression (:=) inside a comprehension bind, and where?
+      - Why can't generator expressions be inlined the same way?
+    pitfalls:
+      - Claiming PEP 709 changed which names are visible inside or outside the comprehension.
+
+  # --------------------------------------------------------------- iterators
+  - id: python.iterators.iterable-vs-iterator
+    level: junior
+    kind: conceptual
+    concepts: [python.iterators]
+    question: |
+      What is the difference between an iterable and an iterator? Is a list an iterator? Is `range(10)`?
+    answer: |
+      An **iterable** is an object that can produce an iterator: `iter(obj)` calls `obj.__iter__()` (or falls
+      back to the old `__getitem__` sequence protocol). An **iterator** is an object with `__next__`: each
+      `next(it)` returns the next item and raises `StopIteration` when there are none left. Iterators keep
+      their position, are single-use, and their `__iter__` returns themselves, so every iterator is also an
+      iterable.
+
+      A list is an iterable but **not** an iterator — `next([1, 2])` raises
+      `TypeError: 'list' object is not an iterator` — and every `for` loop over it gets a fresh
+      `list_iterator`, which is why lists can be looped over repeatedly. `range(10)` is also not an iterator:
+      it is a lazy, immutable sequence that supports `len()`, indexing and O(1) membership for ints, and
+      can be iterated many times. `zip`, `map`, `filter`, `enumerate`, file objects and generators are
+      iterators.
+    keyPoints:
+      - Iterables implement __iter__ and hand out iterators; iterators implement __next__ and keep state.
+      - Iterators raise StopIteration when exhausted and return themselves from __iter__.
+      - Lists and ranges are iterables, not iterators; each loop gets a fresh iterator.
+      - zip, map, filter, enumerate, files and generators are single-use iterators.
+    followUps:
+      - Write the while-loop equivalent of a for loop.
+      - What does `iter(callable, sentinel)` do?
+    pitfalls:
+      - Calling range a generator or an iterator.
+
+  - id: python.iterators.exhausted-zip
+    level: junior
+    kind: debugging
+    concepts: [python.iterators]
+    question: |
+      This code prints each pair but then raises `ValueError: max() iterable argument is empty`. Why, and
+      what are two ways to fix it?
+
+      ```python
+      pairs = zip(names, scores)
+      for name, score in pairs:
+          print(name, score)
+      best = max(pairs, key=lambda p: p[1])
+      ```
+    answer: |
+      `zip` returns an iterator, and iterators are single-use. The `for` loop called `next()` on it until it
+      raised `StopIteration`; afterwards `pairs` is exhausted, so `max()` receives no items.
+
+      Fixes: materialise the pairs once with `pairs = list(zip(names, scores))` — a list is an iterable that
+      gives a new iterator to every loop — or create a fresh iterator for the second pass,
+      `max(zip(names, scores), key=lambda p: p[1])`. Materialising is fine when the data fits in memory;
+      re-creating the iterator avoids holding everything but requires the sources to be re-iterable (lists,
+      not another one-shot iterator). If you genuinely need to branch one iterator into two consumers,
+      `itertools.tee` exists, but it buffers items internally.
+    keyPoints:
+      - zip returns a single-use iterator; the loop exhausts it.
+      - max() on an exhausted iterator sees no items.
+      - Fix with list(zip(...)) or by creating a new zip for the second pass.
+      - The same applies to map, filter, enumerate, files and generators.
+    followUps:
+      - What does `3 in some_iterator` do to the iterator?
+      - When would itertools.tee be appropriate, and what does it cost?
+    pitfalls:
+      - Suggesting the loop "moved the data" out of names and scores.
+
+  - id: python.iterators.modify-while-iterating
+    level: mid
+    kind: debugging
+    concepts: [python.iterators]
+    question: |
+      `for x in nums: if x < 0: nums.remove(x)` leaves some negative numbers in the list, while a similar
+      loop over a dict that deletes keys raises `RuntimeError`. Explain both behaviours and the idiomatic fix.
+    answer: |
+      A list iterator keeps an integer index into the list. Removing the current element shifts every later
+      element one position to the left, and the iterator then advances its index — so the element that moved
+      into the current position is never examined. Consecutive negatives therefore survive. No error is
+      raised, which makes this bug easy to miss.
+
+      Dict (and set) iterators detect that the size changed during iteration and raise
+      `RuntimeError: dictionary changed size during iteration`, because continuing would be ill-defined.
+
+      The idiomatic fix is to build a new collection instead of mutating the one being iterated:
+      `nums = [x for x in nums if x >= 0]` or `d = {k: v for k, v in d.items() if keep(v)}`. If you must
+      mutate in place, iterate over a snapshot — `for x in nums[:]` or `for k in list(d):` — or assign the
+      filtered result back with slice assignment (`nums[:] = ...`) when other references to the list must see
+      the change.
+    keyPoints:
+      - List iterators walk by index; removing items shifts the rest and skips elements silently.
+      - Dicts and sets raise RuntimeError if their size changes during iteration.
+      - Prefer building a new list/dict with a comprehension.
+      - Otherwise iterate over a snapshot (nums[:], list(d)) or use slice assignment.
+    followUps:
+      - Is it safe to change the values (not keys) of a dict while iterating over it?
+    pitfalls:
+      - Fixing it by iterating backwards without explaining why that works.
+
+  # -------------------------------------------------------------- generators
+  - id: python.generators.how-yield-works
+    level: junior
+    kind: conceptual
+    concepts: [python.generators]
+    question: |
+      What happens when you call a function that contains `yield`, and then call `next()` on the result a few
+      times? How is that different from a function that returns a list?
+    answer: |
+      The presence of `yield` (decided at compile time) makes it a generator function. Calling it runs **none**
+      of its body; it returns a generator object holding a suspended frame. Each `next(gen)` resumes the
+      frame and runs until the next `yield`, which hands its value to the caller and pauses the function
+      with its local variables and position intact. When the body finishes or executes `return`,
+      `next()` raises `StopIteration` (a returned value is carried in `StopIteration.value`).
+
+      A list-returning function computes every item before returning and keeps them all in memory; the
+      caller can index it, take its `len()` and loop over it repeatedly. A generator computes values lazily,
+      one per request, using constant memory, can represent infinite sequences and lets the consumer stop
+      early — but it is single-use and has no length or indexing.
+    keyPoints:
+      - Calling a generator function returns a generator and runs none of the body.
+      - next() runs to the next yield, returns the value and pauses with locals preserved.
+      - Finishing the body raises StopIteration; return value goes into StopIteration.value.
+      - Generators are lazy, single-use iterators; lists are eager, reusable and indexable.
+    followUps:
+      - What is the difference between `[x * x for x in data]` and `(x * x for x in data)`?
+      - What does `gen.send(value)` do?
+    pitfalls:
+      - Saying the body runs up to the first yield when the function is called.
+
+  - id: python.generators.large-file-pipeline
+    level: mid
+    kind: coding
+    concepts: [python.generators, python.files]
+    question: |
+      Write code that reports how many lines in a 30 GB log file contain `ERROR` and what the first five
+      error messages are, using bounded memory. Explain why your solution does not load the file.
+    answer: |
+      ```python
+      from itertools import islice
+
+      def error_lines(path):
+          with open(path, encoding="utf-8") as f:   # stays open while the generator runs
+              for line in f:                        # file objects yield one line at a time
+                  if "ERROR" in line:
+                      yield line.rstrip("\n")
+
+      first_five = list(islice(error_lines("app.log"), 5))
+      count = sum(1 for _ in error_lines("app.log"))
+      ```
+
+      A file object is a lazy iterator over lines, and `error_lines` is a generator, so at any moment only
+      the current line is in memory, whatever the file size. `islice` takes the first five matches and stops
+      pulling, so the first call reads only as far as the fifth error. `sum(1 for _ in ...)` counts without
+      building a list. Putting the `with` inside the generator keeps the file open exactly as long as
+      iteration lasts — returning a generator expression from inside a `with` block would fail with
+      `ValueError: I/O operation on closed file`. (Making both passes reads the file twice; a single loop
+      that counts and collects the first five at once would avoid that.)
+    keyPoints:
+      - Iterate over the file object (or a generator over it) instead of read()/readlines().
+      - Generator functions/expressions keep only the current item in memory.
+      - islice limits how much is consumed; sum(1 for ...) counts without a list.
+      - The with statement must be inside the generator so the file is open while it is consumed.
+    followUps:
+      - How would you do it in one pass?
+      - How would the code change for gzip-compressed logs?
+    pitfalls:
+      - Using f.readlines() or list(f).
+      - Returning a generator expression from inside a with block.
+
+  - id: python.generators.yield-from
+    level: senior
+    kind: conceptual
+    concepts: [python.generators]
+    question: |
+      What does `yield from` do beyond `for item in sub: yield item`? And what did PEP 479 change about
+      StopIteration inside generators?
+    answer: |
+      `yield from sub` (PEP 380) delegates to a subiterator. For plain iteration it behaves like the loop,
+      but it also establishes a transparent two-way channel to a subgenerator: values passed with
+      `gen.send(v)` and exceptions passed with `gen.throw(...)` are forwarded to the subgenerator, `close()`
+      is propagated, and the whole `yield from` expression evaluates to the subgenerator's `return` value
+      (taken from its `StopIteration.value`). That made it possible to compose coroutine-style generators,
+      and it was the basis of asyncio before the `async`/`await` syntax (PEP 492). It is also the clean way to
+      write recursive generators such as tree walkers or `flatten`.
+
+      PEP 479 (default since Python 3.7) changed what happens when a `StopIteration` is raised *inside* a
+      generator body — for example by a bare `next()` call on an exhausted iterator. Previously it silently
+      terminated the generator, hiding bugs; now it is converted to
+      `RuntimeError: generator raised StopIteration`. A generator should finish with `return`, and code
+      inside it should use `next(it, default)` or catch `StopIteration` explicitly.
+    keyPoints:
+      - yield from forwards send(), throw() and close() to the subgenerator, not just its values.
+      - The yield from expression evaluates to the subgenerator's return value.
+      - It enables recursive generators and was the foundation of generator-based coroutines.
+      - PEP 479 turns StopIteration escaping a generator body into RuntimeError; use return to finish.
+    followUps:
+      - How does a generator's return value reach the caller of next()?
+      - How do native coroutines (async def) differ from generator-based ones?
+    pitfalls:
+      - Describing yield from as only a shorter for loop.

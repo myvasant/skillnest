@@ -1,0 +1,274 @@
+id: architecture
+order: 20
+title: System Design, Distributed Systems and Cloud
+shortTitle: System Design
+summary: >-
+  Designing systems that meet requirements at scale: estimation, scalability, consistency, distributed
+  patterns, monoliths vs microservices, cloud fundamentals and end-to-end AI system design.
+why: >-
+  Senior engineering is mostly design: choosing components, data flows and trade-offs that will still work
+  when traffic, data and teams grow.
+modules:
+  - id: design
+    title: System design
+    summary: Requirements, estimation, scalability and service boundaries.
+  - id: distributed
+    title: Distributed systems
+    summary: Consistency models and distributed patterns.
+  - id: cloud
+    title: Cloud and AI systems
+    summary: Cloud fundamentals, serverless and AI system design.
+concepts:
+  - id: architecture.system-design-basics
+    title: System design fundamentals
+    module: design
+    level: advanced
+    priority: essential
+    summary: Start from functional and non-functional requirements, sketch components and data flows, identify bottlenecks and state trade-offs explicitly.
+    why: Jumping straight to technology choices produces systems that miss the real requirements; a structured approach makes the design fit the problem and makes its trade-offs visible.
+    requires: [backend.api-design, databases.schema-design]
+    keyIdeas:
+      - Start with functional requirements (what the system does) and non-functional requirements (scale, latency, availability, consistency, cost, security, compliance), with numbers wherever possible.
+      - Sketch the high-level design - clients, API layer, services, data stores, caches, queues and external dependencies - and trace the main request and data flows through it.
+      - Choose data models and stores from access patterns (read/write ratio, query shapes, consistency needs), not from habit.
+      - Look for bottlenecks and single points of failure, and fix the ones that matter for the stated requirements.
+      - Every choice is a trade-off (latency vs consistency, simplicity vs flexibility, cost vs availability); say explicitly what you give up.
+    misconceptions:
+      - There is no single correct design; a good design is one whose trade-offs match the requirements.
+      - Designing for internet-giant scale on day one is usually a mistake; design for current needs with a clear path to grow.
+    interview: Interviewers check that you clarify requirements before drawing boxes and justify each component with a requirement and a trade-off.
+    sources:
+      - title: The System Design Primer
+        url: https://github.com/donnemartin/system-design-primer
+        publisher: Donne Martin (GitHub)
+      - title: AWS Well-Architected Framework
+        url: https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html
+        publisher: Amazon Web Services
+  - id: architecture.capacity-estimation
+    title: Back-of-the-envelope estimation
+    module: design
+    level: advanced
+    priority: essential
+    summary: Estimate requests per second, storage, bandwidth and latency budgets from a few known numbers to choose a sensible design.
+    why: A few rough numbers reveal early whether a design needs one server or a thousand, and stop you over- or under-engineering it.
+    requires: [architecture.system-design-basics]
+    keyIdeas:
+      - Requests per second = requests per day / 86,400 (round to 100,000 seconds a day for mental maths); multiply by a peak factor, often 2-10x, for peak load.
+      - Storage = new items per day x size per item x retention days x replication factor; bandwidth = requests per second x payload size.
+      - Know rough latencies - main memory reference about 100 ns, SSD random read tens to hundreds of microseconds, round trip inside a data centre about 0.5 ms, California to Europe and back about 150 ms.
+      - Powers of two - 2^10 is about a thousand (KB), 2^20 about a million (MB), 2^30 about a billion (GB), 2^40 about a trillion (TB).
+      - State assumptions and round aggressively; the goal is the right order of magnitude, not precision.
+    misconceptions:
+      - You do not design for average load; size for peak plus headroom.
+      - Precision is not the point; spending ten minutes on exact arithmetic misses what the estimate is for.
+    interview: Estimate storage and requests per second for a URL shortener with 100 million new links a month - interviewers check assumptions and orders of magnitude, not exact arithmetic.
+    sources:
+      - title: Latency Numbers Every Programmer Should Know
+        url: https://gist.github.com/jboner/2841832
+        publisher: Jonas Bonér (after Jeff Dean and Peter Norvig)
+      - title: "The Site Reliability Workbook: Non-Abstract Large System Design"
+        url: https://sre.google/workbook/non-abstract-design/
+        publisher: Google
+      - title: The System Design Primer (appendix - powers of two and latency numbers)
+        url: https://github.com/donnemartin/system-design-primer
+        publisher: Donne Martin (GitHub)
+  - id: architecture.scalability
+    title: Scalability patterns
+    module: design
+    level: advanced
+    priority: essential
+    summary: Stateless services, horizontal scaling, caching, read replicas, sharding and asynchronous processing.
+    why: Growth breaks designs at predictable points - the single server, the single database, slow synchronous work - and each scalability pattern addresses one of them.
+    requires: [architecture.system-design-basics, de.distributed-systems-basics]
+    keyIdeas:
+      - Make application servers stateless (sessions in a shared store or signed tokens) so you can add instances behind a load balancer.
+      - Cache at several layers - CDN, application cache such as Redis, database buffer cache - to cut repeated reads.
+      - Scale reads with read replicas (accepting replication lag); scale writes by partitioning (sharding) data on a key that spreads load evenly and avoids hot keys.
+      - Move slow or bursty work off the request path into queues processed asynchronously by workers.
+      - Take the cheapest step first - fix queries and add indexes, then scale vertically, then horizontally, and shard last - because each step adds complexity.
+    misconceptions:
+      - Sharding is not a first step; it complicates joins, transactions and rebalancing, so exhaust simpler options first.
+      - Read replicas do not help write-heavy workloads, and reads from them can be stale.
+    interview: How would you scale a service from a thousand to a million users, and what breaks first?
+    production: After the web tier scales out, the database, connection pools and caches usually become the bottleneck; monitor their saturation.
+    sources:
+      - title: The System Design Primer
+        url: https://github.com/donnemartin/system-design-primer
+        publisher: Donne Martin (GitHub)
+      - title: "The Twelve-Factor App: VI. Processes"
+        url: https://12factor.net/processes
+        publisher: 12factor.net
+      - title: Performance Efficiency Pillar - AWS Well-Architected Framework
+        url: https://docs.aws.amazon.com/wellarchitected/latest/performance-efficiency-pillar/welcome.html
+        publisher: Amazon Web Services
+  - id: architecture.monolith-microservices
+    title: Modular monoliths and microservices
+    module: design
+    level: advanced
+    priority: essential
+    summary: A well-structured monolith is the right default; microservices buy independent deployment and scaling at a large operational cost.
+    why: Service boundaries are among the hardest design decisions to reverse; microservices too early slow small teams down, and a tangled monolith slows large teams down.
+    requires: [architecture.system-design-basics, cs.architecture-tradeoffs]
+    keyIdeas:
+      - A modular monolith is one deployable unit with clear internal modules and interfaces; it keeps transactions, debugging and deployment simple.
+      - Microservices are independently deployable services that each own their data, usually aligned with business capabilities and team boundaries.
+      - They buy independent deployment, scaling and technology choices at the cost of network calls, partial failures, cross-service data consistency, more infrastructure and heavier observability needs.
+      - Start with a monolith and extract a service when there is a clear reason (team autonomy, very different scaling or reliability needs) - the "monolith first" approach.
+      - Services that share one database are coupled as tightly as a monolith but harder to change (a distributed monolith).
+    misconceptions:
+      - Microservices are mainly a way to scale an organisation, not a performance optimisation; in-process calls are faster than network calls.
+      - Splitting code into many repositories is not the same as having well-defined boundaries.
+    interview: When would you split a monolith into services, and how would you choose the first one to extract?
+    sources:
+      - title: Microservices
+        url: https://martinfowler.com/articles/microservices.html
+        publisher: Martin Fowler and James Lewis
+      - title: Monolith First
+        url: https://martinfowler.com/bliki/MonolithFirst.html
+        publisher: Martin Fowler
+      - title: Microservice Architecture pattern
+        url: https://microservices.io/patterns/microservices.html
+        publisher: Chris Richardson (microservices.io)
+  - id: architecture.consistency-models
+    title: Consistency models and consensus
+    module: distributed
+    level: advanced
+    priority: supporting
+    summary: Strong, causal and eventual consistency; leader election and consensus (Raft) keep replicas agreeing despite failures.
+    why: Once data is copied across machines, different readers can see different values; knowing the guarantees tells you which anomalies your users may see.
+    requires: [de.distributed-systems-basics]
+    keyIdeas:
+      - Strong consistency (linearizability) means every read sees the latest completed write, as if there were one copy; it is easiest to reason about but costs latency, and availability during network partitions.
+      - Eventual consistency means replicas converge once writes stop, but reads may be stale meanwhile; causal consistency also preserves cause-before-effect order (a reply is never seen before the message it answers).
+      - CAP - during a network partition a replicated system must choose between consistency and availability; PACELC adds that, even without partitions, it trades latency against consistency.
+      - Quorums - with N replicas, writing to W and reading from R so that R + W > N guarantees every read set overlaps the latest write set.
+      - Consensus algorithms such as Raft elect a leader and replicate a log to a majority, so a cluster of 2f + 1 nodes tolerates f failures (3 nodes tolerate 1, 5 tolerate 2).
+    misconceptions:
+      - The C in CAP (linearizability) is not the C in ACID (keeping invariants valid).
+      - Eventual consistency gives no time bound; under failures, stale reads can last a long time.
+    interview: Explain the CAP theorem with a concrete example, and say which consistency a shopping cart and a bank balance each need.
+    sources:
+      - title: The Raft Consensus Algorithm
+        url: https://raft.github.io/
+        publisher: Diego Ongaro and John Ousterhout
+      - title: Consistency Models
+        url: https://jepsen.io/consistency
+        publisher: Jepsen
+      - title: Eventually Consistent - Revisited
+        url: https://www.allthingsdistributed.com/2008/12/eventually_consistent.html
+        publisher: Werner Vogels (All Things Distributed)
+  - id: architecture.distributed-patterns
+    title: Distributed system patterns
+    module: distributed
+    level: advanced
+    priority: supporting
+    summary: Idempotency keys, the transactional outbox, sagas, CQRS and backpressure solve recurring problems in distributed systems.
+    why: Distributed systems keep hitting the same problems - duplicate requests, lost events, transactions that span services, overload - and these patterns are well-tested answers.
+    requires: [backend.event-driven, architecture.consistency-models]
+    keyIdeas:
+      - Idempotency keys - the client sends a unique key with a request; the server stores the result under that key and returns it on retries, so a retried payment is not charged twice.
+      - Transactional outbox - write the business change and an event row in the same database transaction; a separate relay publishes outbox rows, so events are never lost or sent for rolled-back changes.
+      - Saga - a business transaction across services runs as a sequence of local transactions, each with a compensating action (such as a refund) that runs if a later step fails; coordinated by an orchestrator or by events (choreography).
+      - CQRS separates the write model from read models optimised for queries, usually updated asynchronously, so reads are eventually consistent.
+      - Backpressure - when consumers are overloaded, push back on producers (bounded queues, 429 or 503 responses, rate limits) instead of buffering without limit.
+    misconceptions:
+      - Exactly-once delivery over a network is not generally achievable; aim for at-least-once delivery with idempotent processing.
+      - Sagas do not provide isolation; other transactions can see intermediate states, so the design has to tolerate them.
+    interview: How would you guarantee that an order is saved and an "order created" event is published, without a distributed two-phase commit?
+    sources:
+      - title: "Pattern: Transactional outbox"
+        url: https://microservices.io/patterns/data/transactional-outbox.html
+        publisher: Chris Richardson (microservices.io)
+      - title: "Pattern: Saga"
+        url: https://microservices.io/patterns/data/saga.html
+        publisher: Chris Richardson (microservices.io)
+      - title: Idempotent requests
+        url: https://docs.stripe.com/api/idempotent_requests
+        publisher: Stripe
+  - id: architecture.cloud-fundamentals
+    title: Cloud fundamentals
+    module: cloud
+    level: intermediate
+    priority: essential
+    summary: IaaS, PaaS and SaaS, regions and availability zones, managed services, the shared responsibility model, and how free tiers and billing work.
+    why: Most production systems run on cloud platforms; knowing the service models, the geography and who is responsible for what prevents insecure setups and surprise bills.
+    requires: [foundations.internet-basics, foundations.operating-systems]
+    keyIdeas:
+      - NIST service models - IaaS (you manage the OS and everything above, such as virtual machines), PaaS (you manage your application and data on a managed runtime) and SaaS (you use a finished application).
+      - A region is a geographic area; an availability zone is one or more isolated data centres within a region. Spread across zones for availability, and choose regions for latency and data-residency rules.
+      - Shared responsibility - the provider secures the cloud itself (hardware, facilities, virtualisation); you secure what you put in it (identities and access, data, configuration, and OS patching on IaaS).
+      - Managed services (databases, queues, object storage) trade some control and portability for much less operational work.
+      - Billing is usage-based (compute time, storage, requests, data egress); set budgets and alerts from day one, and treat free-tier details as changeable - check current terms.
+    misconceptions:
+      - The cloud is not secure by default; most cloud breaches come from customer misconfiguration, such as public storage buckets or over-privileged keys.
+      - One availability zone is not high availability; a whole zone can fail.
+    interview: Explain the shared responsibility model and how it differs between a virtual machine, a managed database and a SaaS tool.
+    production: Use infrastructure as code, least-privilege IAM roles and separate accounts or projects per environment.
+    sources:
+      - title: "SP 800-145: The NIST Definition of Cloud Computing"
+        url: https://csrc.nist.gov/pubs/sp/800/145/final
+        publisher: NIST
+      - title: Shared Responsibility Model
+        url: https://aws.amazon.com/compliance/shared-responsibility-model/
+        publisher: Amazon Web Services
+      - title: Regions and Zones
+        url: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html
+        publisher: Amazon Web Services
+  - id: architecture.serverless
+    title: Serverless computing
+    module: cloud
+    level: intermediate
+    priority: supporting
+    summary: Functions and containers that scale to zero — great for spiky workloads, with cold starts, time limits and vendor coupling.
+    why: Many workloads are small or spiky; serverless runs them without managing servers and charges mostly for actual use.
+    requires: [architecture.cloud-fundamentals]
+    keyIdeas:
+      - Functions as a Service (AWS Lambda, Azure Functions, Google Cloud Run functions) run your code in response to events - HTTP requests, queue messages, file uploads, schedules - and scale automatically, often down to zero.
+      - Serverless container platforms (such as Google Cloud Run) run any container image with similar request-driven scaling.
+      - A cold start is the extra delay when a new instance initialises (runtime start, imports, loading a model); keep packages small and do expensive set-up once, outside the request handler.
+      - Limits matter - for example a standard AWS Lambda invocation can run for at most 15 minutes - plus memory, payload and concurrency quotas; check current quotas for your provider.
+      - Functions are stateless and short-lived; keep state in databases, object storage or queues.
+    misconceptions:
+      - Serverless is not always cheaper; under steady high load, always-on instances can cost less.
+      - No servers does not mean no operations; you still own monitoring, timeouts, retries, permissions and cost.
+    interview: When would you choose serverless functions over containers on VMs or Kubernetes for an ML inference endpoint?
+    production: Recursive triggers and retry loops can run up large bills quickly; set concurrency limits and billing alerts.
+    sources:
+      - title: What is AWS Lambda?
+        url: https://docs.aws.amazon.com/lambda/latest/dg/welcome.html
+        publisher: Amazon Web Services
+      - title: Lambda quotas
+        url: https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html
+        publisher: Amazon Web Services
+      - title: "Cloud Programming Simplified: A Berkeley View on Serverless Computing"
+        url: https://arxiv.org/abs/1902.03383
+        publisher: arXiv (Jonas et al., UC Berkeley)
+  - id: architecture.ai-system-design
+    title: Designing AI systems
+    module: cloud
+    level: advanced
+    priority: essential
+    summary: End-to-end design of LLM, RAG and agent systems — model choice, retrieval, evaluation gates, guardrails, fallbacks, observability, latency and cost.
+    why: The LLM call is the easy part; a reliable AI product needs retrieval, evaluation, guardrails, fallbacks and cost control designed together as one system.
+    requires: [architecture.scalability, rag.context-assembly, agents.workflows-vs-agents, mlops.observability, security.llm-security]
+    keyIdeas:
+      - Start from the task and its success metric, and use the simplest design that meets it - one well-prompted call, then a fixed workflow, and only then an autonomous agent.
+      - Choose models by measured quality on your own eval set, latency, cost and data-handling terms; route easy requests to smaller models and hard ones to larger models.
+      - A RAG pipeline has stages - ingestion and chunking, embedding and (often hybrid) search, reranking, permission filtering and context assembly - and each stage needs its own evaluation.
+      - Wrap the model in guardrails - input checks (prompt injection, personal data), output validation (schemas, grounding checks) and human review for high-stakes actions.
+      - Design for failure and cost - timeouts, retries, fallback to another model or a non-AI path, caching, streaming for perceived latency, token budgets and end-to-end tracing.
+    misconceptions:
+      - A bigger model is not always the fix; retrieval quality and evaluation usually matter more.
+      - Agents are not automatically better than workflows; autonomy adds cost, latency and unpredictability.
+    interview: Design a support assistant over internal documents for 10,000 users - cover retrieval, evaluation, guardrails, latency and cost.
+    production: Version every component (prompts, models, indexes, chunking settings) and gate changes on evals, since any of them can change behaviour.
+    sources:
+      - title: Building effective AI agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: Generative AI Lens - AWS Well-Architected Framework
+        url: https://docs.aws.amazon.com/wellarchitected/latest/generative-ai-lens/generative-ai-lens.html
+        publisher: Amazon Web Services
+      - title: Building A Generative AI Platform
+        url: https://huyenchip.com/2024/07/25/genai-platform.html
+        publisher: Chip Huyen

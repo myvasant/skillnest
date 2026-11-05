@@ -1,0 +1,602 @@
+id: python.asyncio
+concept: python.asyncio
+title: Asynchronous Programming with asyncio
+subtitle: Coroutines, tasks and the event loop
+estimatedMinutes: 60
+reviewedOn: 2026-11-04
+summary: Understand how Python's async/await syntax lets one event loop coordinate many I/O tasks without
+  creating one operating-system thread per task. Learn coroutine objects, Tasks, TaskGroup, cancellation,
+  timeouts, blocking-call hazards and the limits of this platform's WebAssembly runtime.
+objectives:
+- Distinguish a coroutine function, a coroutine object, a Task and an event loop.
+- Explain how await suspends the current coroutine and gives the event loop a chance to run other tasks.
+- Run a top-level async program with asyncio.run and group related tasks with TaskGroup.
+- Handle cancellation and timeouts without skipping cleanup or hiding cancellation.
+- Recognise blocking calls that stall the event loop and choose an appropriate offloading strategy.
+- Explain why async code requires compatible libraries through the call chain.
+sources:
+- title: asyncio — Asynchronous I/O
+  url: https://docs.python.org/3.14/library/asyncio.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: Coroutines and tasks
+  url: https://docs.python.org/3.14/library/asyncio-task.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: Developing with asyncio
+  url: https://docs.python.org/3.14/library/asyncio-dev.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: asyncio and free-threaded Python
+  url: https://docs.python.org/3.14/library/asyncio-threading.html
+  publisher: Python Software Foundation
+  version: '3.14'
+sections:
+- id: why-asyncio
+  title: Why asynchronous I/O exists
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'A web service may handle hundreds of requests that spend most of their time waiting for databases,
+
+      remote APIs or sockets. Creating a large number of operating-system threads can consume memory and
+
+      require coordination. A single event loop can instead switch between many tasks while they wait,
+
+      provided the tasks use non-blocking operations.
+
+
+      **Asyncio** is Python''s standard-library framework for writing concurrent code with `async` and
+
+      `await`. It is most useful for I/O-bound programs whose libraries already support asynchronous
+
+      operations. It does not make a CPU-heavy calculation faster by itself.
+
+      '
+  - type: callout
+    variant: misconception
+    title: Async is not a synonym for parallel
+    body: 'Several coroutines may be in progress at once, but one event loop normally runs one task at
+      a time
+
+      on its thread. A task gives control back at an `await` point. CPU work that never awaits can block
+
+      every other task on that event loop.
+
+      '
+- id: coroutine-task-loop
+  title: Coroutine function, coroutine object, Task and event loop
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: 'These four terms describe different things:
+
+
+      1. A **coroutine function** is declared with `async def`.
+
+      2. Calling that function creates a **coroutine object**. The body has not started running yet.
+
+      3. A **Task** wraps a coroutine and schedules it on an event loop.
+
+      4. The **event loop** is the scheduler that runs ready tasks and waits for I/O completion or timers.
+
+
+      Calling `download()` is not the same as running it. You must `await` the coroutine or schedule it
+
+      as a Task. If you create a coroutine and never await or schedule it, Python may warn that it was
+
+      never awaited and its work never happens.
+
+      '
+  - type: code
+    runnable: true
+    code: "import inspect\n\nasync def greet():\n    return \"hello\"\n\npending = greet()\nprint(inspect.iscoroutine(pending))\n\
+      pending.close()\n"
+    expectedOutput: 'True
+
+      '
+    caption: The browser can demonstrate that calling async def creates a coroutine object. It cannot
+      run a full asyncio event loop in the current synchronous Pyodide runner.
+  - type: visualization
+    component: step-diagram
+    title: From async def to a scheduled task
+    caption: Follow the distinction between defining a coroutine, creating its object, scheduling it and
+      the event loop running it.
+    props:
+      width: 760
+      height: 260
+      nodes:
+      - id: function
+        label: async def function
+        x: 100
+        y: 110
+      - id: coroutine
+        label: coroutine object
+        x: 280
+        y: 110
+      - id: task
+        label: scheduled Task
+        x: 470
+        y: 110
+      - id: loop
+        label: event loop runs it
+        x: 660
+        y: 110
+      edges:
+      - id: call
+        from: function
+        to: coroutine
+        label: call()
+      - id: schedule
+        from: coroutine
+        to: task
+        label: create_task()
+      - id: execute
+        from: task
+        to: loop
+        label: scheduler
+      steps:
+      - title: Define
+        body: async def creates a coroutine function; it does not run the body.
+        active:
+        - function
+      - title: Call
+        body: Calling the function creates a coroutine object.
+        active:
+        - function
+        - coroutine
+        - call
+      - title: Schedule
+        body: create_task wraps the coroutine and schedules it on the running event loop.
+        active:
+        - coroutine
+        - task
+        - schedule
+      - title: Execute
+        body: The event loop runs the task until it returns, raises or reaches an await point.
+        active:
+        - task
+        - loop
+        - execute
+  - type: item
+    ref: asyncio-predict-coroutine-object
+- id: await-and-yield
+  title: What await really does
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '`await` pauses the current coroutine until an awaitable has a result. While that coroutine
+      is
+
+      suspended, the event loop can run another ready task. This is **cooperative scheduling**: a task
+
+      must reach an await point before another task on the same loop can take its turn.
+
+
+      Consider two operations that each wait for a response. If you await them one after another, their
+
+      waiting periods are sequential. If you schedule both, their waiting periods can overlap. The total
+
+      time can approach the longest wait rather than the sum of all waits, but real network latency,
+
+      server limits and CPU work still matter.
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "import asyncio\n\nasync def fetch_status(name, delay):\n    await asyncio.sleep(delay)  # yield\
+      \ control while the timer is pending\n    return f\"{name}: ready\"\n\nasync def main():\n    async\
+      \ with asyncio.TaskGroup() as group:\n        first = group.create_task(fetch_status(\"A\", 0.2))\n\
+      \        second = group.create_task(fetch_status(\"B\", 0.1))\n\n    # Results are read in creation\
+      \ order; completion order may differ.\n    print(first.result())\n    print(second.result())\n\n\
+      asyncio.run(main())\n"
+    caption: This is a real asyncio example for local CPython 3.11+. The project's Pyodide WebAssembly
+      runner cannot execute asyncio.run because its current JavaScript runtime does not support the required
+      WebAssembly stack switching. The code is therefore illustrative here and should be run locally.
+  - type: callout
+    variant: note
+    title: Await only what should suspend
+    body: 'Awaiting a slow network request is useful. Awaiting a coroutine that performs a long CPU loop
+      without
+
+      yielding does not make that loop cooperative. Break large computations into suitable chunks or move
+
+      CPU-heavy work to a process pool or another compute service.
+
+      '
+- id: structured-concurrency
+  title: Group tasks and keep their lifetime visible
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: 'Python 3.11 introduced `asyncio.TaskGroup`, an asynchronous context manager for related tasks.
+      When
+
+      the `async with` block exits, it waits for its child tasks. If one child fails with an ordinary
+
+      exception, the group cancels the remaining tasks and reports the failure as an exception group.
+
+
+      This is called **structured concurrency**: child work is tied to a visible parent scope instead
+      of
+
+      being launched and forgotten. It makes cleanup and error handling easier to reason about.
+
+
+      `asyncio.gather()` is also useful, especially when you want results in input order. It has different
+
+      failure and cancellation behaviour, so do not treat it as identical to TaskGroup. For new related
+
+      task groups, prefer TaskGroup unless you specifically need gather''s semantics.
+
+      '
+  - type: callout
+    variant: warning
+    title: Do not create fire-and-forget tasks casually
+    body: 'A task that is never awaited may fail without the caller handling the exception, and its lifetime
+
+      can outlive the request or resource it was supposed to use. Keep a strong reference and collect
+      its
+
+      result, or put it in a TaskGroup. Background work also needs a shutdown and retry policy.
+
+      '
+  - type: item
+    ref: asyncio-taskgroup-choice
+- id: cancellation-and-timeouts
+  title: Cancellation and timeouts are part of normal control flow
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A request can take too long, a user can disconnect, or an application can shut down. Asyncio
+      uses
+
+      **cancellation** to ask a task to stop. A `CancelledError` is raised at a cancellation point, usually
+
+      when the coroutine next awaits.
+
+
+      Use `try/finally` for cleanup such as closing a response or releasing an application resource. If
+
+      you catch `CancelledError` to perform cleanup, normally re-raise it after cleanup. Swallowing
+
+      cancellation can make TaskGroup and timeout behaviour unreliable.
+
+
+      Python 3.11+ provides `asyncio.timeout()` for a scoped timeout:
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "import asyncio\n\nasync def load_profile(client, user_id):\n    async with asyncio.timeout(3):\n\
+      \        return await client.fetch_profile(user_id)\n"
+    caption: 'Illustrative API shape: `client.fetch_profile` represents an async client method. The timeout
+      context cancels the current task if the deadline expires; real code should handle TimeoutError at
+      the layer that can choose a fallback or return an appropriate response.'
+  - type: item
+    ref: asyncio-cancellation-true-false
+- id: blocking-calls
+  title: Do not block the event loop
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: 'The event loop can only switch tasks when the running task gives it control. These calls are
+
+      dangerous inside an async function because they block the event-loop thread:
+
+
+      - `time.sleep(2)` instead of `await asyncio.sleep(2)`.
+
+      - A synchronous HTTP client instead of an async client.
+
+      - A large CPU loop that does not yield.
+
+      - Slow file or database calls made through blocking libraries.
+
+
+      For blocking I/O that cannot be replaced, `asyncio.to_thread()` can move the call to a worker
+
+      thread. For CPU-bound pure-Python work on standard GIL-enabled CPython, consider a process pool.
+
+      Both choices have overhead and must be bounded. The thread and process APIs are not available in
+
+      this platform''s WebAssembly playground.
+
+      '
+  - type: code
+    language: python
+    status: illustrative
+    code: "import asyncio\nimport time\n\ndef read_legacy_file(path):\n    time.sleep(1)  # stand-in for\
+      \ a blocking file or SDK call\n    return f\"read {path}\"\n\nasync def main():\n    result = await\
+      \ asyncio.to_thread(read_legacy_file, \"report.csv\")\n    print(result)\n\nasyncio.run(main())\n"
+    caption: Local CPython example. asyncio.to_thread is available from Python 3.9; it keeps a blocking
+      function from occupying the event-loop thread, but it does not turn CPU-bound Python into multi-core
+      work in the standard GIL-enabled build.
+  - type: item
+    ref: asyncio-debug-blocking-call
+- id: testing-and-debugging
+  title: Test and debug asynchronous code
+  kind: debugging
+  blocks:
+  - type: markdown
+    body: 'Test async functions with an async-aware test runner such as pytest plus `pytest-asyncio`,
+      or use
+
+      `asyncio.run()` in a small local test script. Test more than the successful result:
+
+
+      - What happens when one child task raises?
+
+      - Does a timeout cancel work and release resources?
+
+      - Is cancellation propagated after cleanup?
+
+      - Can a blocking call stall the event loop?
+
+      - Are the number of in-flight tasks and queued items bounded?
+
+
+      Enable asyncio debug mode while developing. It can report slow callbacks and many wrong-thread
+
+      uses of non-thread-safe event-loop APIs. A useful log should identify the task or request without
+
+      exposing credentials or private payloads.
+
+      '
+  - type: callout
+    variant: production
+    title: Bound concurrency, not only the worker count
+    body: 'Use a semaphore or bounded queue to limit simultaneous remote calls. Add request timeouts,
+      retries
+
+      with backoff, cancellation-aware cleanup and graceful shutdown. Retrying every failure immediately
+
+      can amplify an outage; retries need limits and jitter.
+
+      '
+- id: common-mistakes
+  title: Common asyncio mistakes
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: "- **Calling a coroutine and forgetting to await it:** the body does not run.\n- **Calling asyncio.run()\
+      \ from inside an already-running event loop:** use `await main()` in that\n  environment instead;\
+      \ `asyncio.run()` is for the top-level synchronous entry point.\n- **Putting blocking I/O in an\
+      \ async function:** the function is still blocking unless it awaits an\n  async API or explicitly\
+      \ offloads the call.\n- **Assuming async means multiple CPU cores:** one event loop normally runs\
+      \ one task at a time on\n  its thread.\n- **Catching and swallowing CancelledError:** cleanup may\
+      \ run, but cancellation should normally be\n  propagated.\n- **Creating unbounded tasks:** a large\
+      \ input can create more in-flight work than memory or the\n  downstream service can handle.\n- **Mixing\
+      \ asyncio primitives across OS threads:** most asyncio objects are not thread-safe; use\n  documented\
+      \ thread-safe loop methods when bridging threads.\n\nThe browser playground currently cannot execute\
+      \ full asyncio programs. It can teach syntax and\ninspect coroutine objects, while full event-loop\
+      \ examples must be run locally with CPython.\n"
+  - type: item
+    ref: asyncio-runner-choice
+  - type: item
+    ref: asyncio-taskgroup-choice
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- `async def` defines a coroutine function; calling it creates a coroutine object.
+
+      - Await a coroutine or schedule it as a Task; the event loop runs ready tasks.
+
+      - `await` is a cooperative hand-off point, not a promise of parallel CPU execution.
+
+      - TaskGroup gives related tasks a structured lifetime and propagates failures.
+
+      - Use timeouts and cancellation-aware cleanup; normally re-raise CancelledError.
+
+      - Never let blocking calls occupy the event-loop thread; use async libraries or bounded offloading.
+
+      '
+  - type: item
+    ref: asyncio-predict-coroutine-object
+  - type: item
+    ref: asyncio-debug-blocking-call
+  - type: item
+    ref: asyncio-taskgroup-choice
+items:
+- id: asyncio-predict-coroutine-object
+  type: predict-output
+  skill: prediction
+  difficulty: 1
+  prompt: What does this program print? It creates a coroutine object, checks its type, and closes it
+    without running the coroutine body.
+  code: "import inspect\n\nasync def answer():\n    return 42\n\npending = answer()\nprint(inspect.iscoroutine(pending))\n\
+    pending.close()\n"
+  answer: 'True'
+  wrongAnswers:
+  - answer: '42'
+    feedback: The function body has not been awaited or scheduled, so its return statement has not run.
+  - answer: 'False'
+    feedback: Calling an async def function returns a coroutine object; inspect.iscoroutine recognises
+      it.
+  explanation: Calling the coroutine function creates an object representing work. Closing it releases
+    the unused coroutine without executing its body.
+- id: asyncio-taskgroup-choice
+  type: mcq
+  skill: design
+  difficulty: 2
+  prompt: 'A request needs three related async operations. They should all finish before the request returns,
+    and
+
+    if one fails the remaining related work should be cancelled. Which API best expresses that lifetime?
+
+    '
+  options:
+  - id: task-group
+    text: asyncio.TaskGroup used as an async context manager.
+    correct: true
+    feedback: TaskGroup waits for child tasks and cancels the remaining group when a child fails with
+      an ordinary exception.
+  - id: raw-coroutines
+    text: Call each async function and ignore the returned coroutine objects.
+    correct: false
+    feedback: Calling a coroutine function creates an object but does not schedule or run it.
+  - id: detached-tasks
+    text: Create tasks and discard every reference immediately.
+    correct: false
+    feedback: Detached work has unclear lifetime and error handling. The caller can return while tasks
+      are still active.
+  - id: thread-lock
+    text: Protect the operations with threading.Lock.
+    correct: false
+    feedback: A thread lock does not express the lifetime or failure policy of related asyncio tasks.
+  explanation: TaskGroup makes the parent scope responsible for waiting for and handling its child tasks.
+- id: asyncio-cancellation-true-false
+  type: true-false
+  skill: recognition
+  prompt: When a coroutine catches CancelledError to run cleanup, it should normally re-raise the cancellation
+    after cleanup is complete.
+  answer: true
+  explanation: Cancellation is part of task control flow. Swallowing it can break timeout and TaskGroup
+    semantics; cleanup belongs in finally and cancellation should normally propagate.
+- id: asyncio-explain-concurrency
+  type: explain
+  skill: explanation
+  difficulty: 2
+  prompt: Explain how an event loop can make progress on several I/O tasks without running their Python
+    code on several CPU cores at the same time.
+  rubric:
+  - Describes the event loop as a scheduler for ready tasks.
+  - Explains that await suspends the current coroutine while an operation is pending.
+  - Explains that another ready task can run during that wait.
+  - Distinguishes this cooperative concurrency from CPU parallelism.
+  modelAnswer: 'The event loop runs a ready task until it completes or reaches an await point. When the
+    task awaits an
+
+    I/O operation, it is suspended while the operation is pending. The loop can then run another ready
+    task.
+
+    This overlaps waiting periods, but the Python code for tasks on one loop still runs on that loop''s
+
+    thread; it does not automatically execute CPU work on multiple cores.
+
+    '
+  explanation: An event loop runs one ready task at a time. When a coroutine awaits I/O that is still
+    pending, it suspends and the loop can run another ready task on the same thread. This overlaps waiting
+    periods; it does not make CPU instructions run on multiple cores.
+- id: asyncio-debug-blocking-call
+  type: debug
+  skill: debugging
+  difficulty: 3
+  prompt: 'This coroutine blocks the entire event-loop thread while it waits. Replace the blocking sleep
+    with the
+
+    non-blocking asyncio equivalent. The browser runner checks the syntax tree for the correct await shape;
+
+    run the function locally to verify real event-loop behaviour.
+
+    '
+  starterCode: "import asyncio\nimport time\n\nasync def wait_for_report():\n    time.sleep(1)\n    return\
+    \ \"ready\"\n"
+  solution: "import asyncio\n\nasync def wait_for_report():\n    await asyncio.sleep(1)\n    return \"\
+    ready\"\n"
+  tests:
+  - name: defines an async function
+    code: 'import ast
+
+      tree = ast.parse(source)
+
+      function = next((node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name
+      == "wait_for_report"), None)
+
+      assert function is not None, "wait_for_report should remain an async function."
+
+      '
+  - name: awaits the non-blocking timer
+    code: 'import ast
+
+      tree = ast.parse(source)
+
+      calls = [node for node in ast.walk(tree) if isinstance(node, ast.Await) and isinstance(node.value,
+      ast.Call)]
+
+      assert any(isinstance(node.value.func, ast.Attribute) and isinstance(node.value.func.value, ast.Name)
+      and node.value.func.value.id == "asyncio" and node.value.func.attr == "sleep" for node in calls),
+      "use await asyncio.sleep(...) so the event loop can run another task."
+
+      '
+  - name: removes the blocking sleep
+    code: 'import ast
+
+      tree = ast.parse(source)
+
+      blocking = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func,
+      ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "time" and node.func.attr
+      == "sleep"]
+
+      assert not blocking, "time.sleep blocks the event-loop thread; replace it with await asyncio.sleep(...)."
+
+      '
+  hints:
+  - Keep the function declared with async def.
+  - The asyncio version of sleep must be awaited; merely calling it creates another coroutine object.
+  - Remove the time import if it is no longer used.
+  feedback:
+  - when:
+      codeContains: time.sleep
+    message: time.sleep blocks the event loop. Replace it with await asyncio.sleep(...) inside the coroutine.
+  explanation: time.sleep blocks the event-loop thread, so no other task on that loop can run during the
+    wait. await asyncio.sleep suspends the current coroutine and gives the event loop a chance to schedule
+    other tasks.
+- id: asyncio-runner-choice
+  type: mcq
+  skill: transfer
+  difficulty: 2
+  prompt: 'A synchronous command-line program needs to start one top-level async workflow. No event loop
+    is already
+
+    running. Which is the intended entry point?
+
+    '
+  options:
+  - id: asyncio-run
+    text: asyncio.run(main())
+    correct: true
+    feedback: asyncio.run creates and manages the event loop for a top-level coroutine in a synchronous
+      program.
+  - id: direct-call
+    text: main() and ignore the result.
+    correct: false
+    feedback: Calling main creates a coroutine object but does not run it.
+  - id: nested-run
+    text: Call asyncio.run(main()) from inside another running event loop.
+    correct: false
+    feedback: asyncio.run cannot be nested in a thread that already has a running event loop; await the
+      coroutine there.
+  - id: sleep
+    text: time.sleep(1)
+    correct: false
+    feedback: time.sleep blocks the current thread and does not execute an async coroutine.
+  explanation: asyncio.run is the normal top-level entry point for a synchronous program. In a notebook
+    or async web framework, use the event loop already provided by that environment.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - asyncio-predict-coroutine-object
+  - asyncio-cancellation-true-false
+  - asyncio-debug-blocking-call
+  - asyncio-runner-choice
+  - asyncio-explain-concurrency
+cheatsheet: '- Define async work with `async def`; calling it creates a coroutine object.
+
+  - Use `await` to wait without blocking the event-loop thread.
+
+  - Use `asyncio.run(main())` only at a synchronous top-level entry point.
+
+  - Use TaskGroup for related tasks whose lifetime should stay inside one scope.
+
+  - Apply timeouts; clean up in `finally`; normally re-raise CancelledError.
+
+  - Never call blocking I/O or long CPU work directly on the event-loop thread.
+
+  - Use async-compatible libraries end to end; offload unavoidable blocking calls carefully.
+
+  '

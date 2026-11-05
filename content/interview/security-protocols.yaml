@@ -1,0 +1,209 @@
+category:
+  id: security
+  title: Security and privacy
+  summary: Security fundamentals, cryptography and secure AI systems.
+questions:
+  # ------------------------------------------------------------ security mindset
+  - id: security.security-mindset.least-privilege-defence-in-depth
+    level: junior
+    kind: conceptual
+    concepts: [security.security-mindset]
+    question: Explain least privilege and defence in depth, with an example from a system you might build.
+    answer: |
+      Least privilege means every user, service and credential gets only the permissions its job needs, for
+      only as long as it needs them. Defence in depth means layering independent controls so that one failure
+      does not become a breach. Example: a nightly reporting job. Least privilege gives it a short-lived,
+      read-only credential scoped to the reporting tables, not the application's admin database account.
+      Defence in depth puts several layers around the data: the job authenticates, the database role can only
+      SELECT those tables, the network only allows the job's subnet to reach the database, queries are
+      parameterised, and unusual read volumes trigger an alert. If the job's code has a bug or its credential
+      leaks, the damage is limited to reading the reporting tables, and monitoring notices it.
+    keyPoints:
+      - "Least privilege: minimal actions, minimal scope, minimal time; it limits the blast radius of a compromise."
+      - "Defence in depth: several independent layers (authentication, authorisation, validation, network rules, monitoring)."
+      - Layers should fail for different reasons; three checks that trust the same input are not depth.
+      - A concrete example showing what happens when one layer fails.
+    followUps:
+      - How would you find out which permissions a service actually uses before tightening them?
+      - What does "fail closed" mean, and where would you apply it in this design?
+    pitfalls:
+      - Defining both terms abstractly without an example.
+      - Treating a single strong control (e.g. a firewall) as defence in depth.
+
+  - id: security.security-mindset.safe-file-download
+    level: mid
+    kind: coding
+    concepts: [security.security-mindset]
+    question: |
+      An endpoint serves files from an `uploads/` folder: `open("uploads/" + request.args["name"])`. What is
+      wrong, and how would you fix it in Python?
+    answer: |
+      User input is joined straight into a file path, so `../config.py` or `../../etc/passwd` reads files
+      outside the folder (path traversal, CWE-22), and on some systems an absolute path discards the base
+      entirely. Blocking ".." is a deny-list and misses absolute paths, encoded forms and symlinks. Instead,
+      check the outcome:
+
+      ```python
+      from pathlib import Path
+      BASE = Path("uploads").resolve()
+
+      def safe_path(name):
+          target = (BASE / name).resolve()        # applies .., absolute paths, symlinks
+          if not target.is_relative_to(BASE):     # compares whole path components
+              raise ValueError("invalid file name")
+          return target
+      ```
+
+      Return 404 or 400 on failure without revealing which files exist. Better still, avoid user-supplied
+      paths entirely: store uploads under generated IDs and look the real path up in a database, and run the
+      service as a user that cannot read sensitive files anyway (least privilege).
+    keyPoints:
+      - Identifies path traversal via `..` and absolute paths.
+      - Resolves the final path before checking it.
+      - Uses a component-wise check (`is_relative_to`), not a string prefix (`startswith` accepts `uploads_backup`).
+      - Mentions safer designs (ID-based lookup) and least privilege as extra layers.
+    followUps:
+      - Why is `str(target).startswith(str(BASE))` wrong?
+      - What race condition remains between the check and the open, and how would you reduce it?
+    pitfalls:
+      - Fixing it with `name.replace("../", "")`, which `....//` defeats.
+      - Checking `is_relative_to` without resolving first (it is purely lexical).
+
+  - id: security.security-mindset.fail-open-outage
+    level: mid
+    kind: scenario
+    concepts: [security.security-mindset]
+    question: |
+      Your permissions service times out during an incident. A teammate proposes that the API should treat
+      any permission-check error as "allowed" so customers are not blocked. How do you respond?
+    answer: |
+      That is failing open: every outage, and every input that makes the check crash, becomes full access, and
+      an attacker who can slow down the permissions service gets everything. Security checks should fail
+      closed - deny, log, and alert. To keep availability, reduce the chance of the check failing rather than
+      skipping it: short timeouts with retries, a local cache of recent decisions with a short TTL, read-only
+      degraded modes for low-risk endpoints decided in advance, and capacity planning for the permissions
+      service. Any exception should be explicit, reviewed, limited to non-sensitive operations and time-boxed.
+    keyPoints:
+      - Names the fail-open risk and why attackers can exploit it (they can trigger the failure).
+      - States fail-safe defaults - deny and log on error.
+      - Offers availability measures that keep the check (timeouts, caching, planned degraded modes).
+      - Treats availability vs security as an explicit, reviewed trade-off, not an accident in an except block.
+    followUps:
+      - How would you find existing fail-open code in a large codebase?
+      - Which endpoints, if any, could safely serve cached decisions?
+    pitfalls:
+      - Accepting the change because availability is part of CIA, without noticing it destroys confidentiality and integrity.
+
+  # ---------------------------------------------------------- cryptography basics
+  - id: security.cryptography-basics.password-storage
+    level: mid
+    kind: conceptual
+    concepts: [security.cryptography-basics]
+    question: How should an application store passwords, and why is a fast hash like SHA-256 the wrong choice?
+    answer: |
+      Store a one-way, salted, deliberately slow password hash - never the password, never anything reversible.
+      SHA-256 is designed to be fast: a single modern GPU computes billions of hashes per second, so leaked
+      SHA-256 hashes of typical passwords are cracked quickly, and without salts one precomputed table cracks
+      every user with a common password. Use a password-hashing function: OWASP recommends Argon2id (minimum
+      19 MiB memory, 2 iterations, parallelism 1), then scrypt (N=2^17, r=8, p=1) or bcrypt for legacy
+      systems, and PBKDF2-HMAC-SHA256 with 600,000 iterations where FIPS-140 compliance is required. Generate a
+      unique random salt per password (libraries such as argon2-cffi do this for you), store the algorithm and
+      parameters with the hash so you can raise the cost later and rehash on login, and compare in constant
+      time. Optionally add a pepper kept outside the database. Also rate-limit login attempts and support MFA.
+    keyPoints:
+      - Hash, do not encrypt - you only ever need to verify.
+      - Unique random salt per password defeats precomputed tables and identical-hash leaks.
+      - Slow, ideally memory-hard function (Argon2id, scrypt, bcrypt; PBKDF2 for FIPS) makes each guess expensive.
+      - Store parameters with the hash; rehash when parameters increase; constant-time comparison.
+    followUps:
+      - What is the difference between a salt and a pepper?
+      - Why is a memory-hard function better against GPU attackers than PBKDF2?
+    pitfalls:
+      - Saying "SHA-256 with a salt" is sufficient.
+      - Encrypting passwords so they "can be recovered".
+      - Rolling your own iteration scheme instead of using a maintained library.
+
+  - id: security.cryptography-basics.hash-encode-encrypt
+    level: junior
+    kind: conceptual
+    concepts: [security.cryptography-basics]
+    question: What is the difference between encoding, hashing and encryption? Give a use for each.
+    answer: |
+      Encoding (Base64, UTF-8, hex) changes how data is represented so it can travel through a particular
+      channel; it uses no key and anyone can reverse it, so it provides no secrecy - for example Base64 to put
+      binary data in JSON. Hashing (SHA-256) maps any input to a fixed-size fingerprint that cannot be reversed;
+      it is used for integrity, such as checking a downloaded file against a published digest, and (with salts
+      and slow functions) for storing passwords. Encryption (AES-GCM) transforms data with a key so only key
+      holders can read it, and it is reversible with the key - for example encrypting backups or an API key
+      you must use later. Related: a MAC (HMAC) adds a secret key to hashing to prove who produced a message,
+      and authenticated encryption both hides data and detects tampering.
+    keyPoints:
+      - Encoding - no key, reversible by anyone, not security.
+      - Hashing - one-way, fixed size, used for integrity (and password storage with the right function).
+      - Encryption - keyed and reversible, used for confidentiality.
+      - Mentions that encryption alone does not ensure integrity (use AEAD) or that MACs add authenticity.
+    followUps:
+      - Why is Base64 in an HTTP Basic auth header acceptable only over HTTPS?
+      - Would you hash or encrypt a customer's third-party API key? Why?
+    pitfalls:
+      - Calling Base64 "encryption".
+      - Saying hashes can be "decrypted".
+
+  - id: security.cryptography-basics.webhook-verification
+    level: mid
+    kind: coding
+    concepts: [security.cryptography-basics]
+    question: |
+      A payment provider sends webhooks with a header containing the hex HMAC-SHA256 of the raw body, keyed
+      with a shared secret. Write the verification in Python and list the common mistakes.
+    answer: |
+      ```python
+      import hashlib, hmac
+
+      def signature_is_valid(raw_body: bytes, header_value: str, secret: bytes) -> bool:
+          expected = hmac.new(secret, raw_body, hashlib.sha256).hexdigest()
+          return hmac.compare_digest(expected, header_value)
+      ```
+
+      Common mistakes: hashing a re-serialised JSON body instead of the exact raw bytes (whitespace or key order
+      changes break the signature); computing `sha256(secret + body)` instead of an HMAC (vulnerable to
+      length extension and not what the provider computes); comparing with `==` (timing side channel);
+      hard-coding the secret instead of loading it from a secret store; and accepting old replayed webhooks -
+      many providers sign a timestamp too, which should be checked against a small tolerance, and event IDs
+      should be processed idempotently.
+    keyPoints:
+      - Uses `hmac.new(secret, raw_body, hashlib.sha256)` over the raw bytes.
+      - Compares with `hmac.compare_digest`.
+      - Mentions replay protection (timestamps, idempotent processing).
+      - Keeps the secret out of code.
+    followUps:
+      - How would you rotate the webhook secret without downtime?
+      - What happens if a malicious header contains non-ASCII characters, and how do you handle it?
+    pitfalls:
+      - Verifying after parsing and re-encoding the JSON.
+      - Using `==` or a plain hash.
+
+  - id: security.cryptography-basics.tls-public-key-role
+    level: senior
+    kind: conceptual
+    concepts: [security.cryptography-basics]
+    question: In a TLS 1.3 connection, which parts use public-key cryptography and which use symmetric cryptography, and why?
+    answer: |
+      Public-key cryptography is used once per connection, where its special properties are needed: an
+      ephemeral (EC)DHE key exchange lets client and server agree on a fresh shared secret over an untrusted
+      network, and the server proves its identity by signing the handshake with the private key matching its
+      certificate, which the client validates up to a trusted root, checking the hostname and validity dates.
+      Everything else - the application data - is protected with symmetric authenticated encryption (AES-GCM or
+      ChaCha20-Poly1305) using keys derived from the shared secret, because symmetric ciphers are much faster.
+      Hash-based MACs over the handshake transcript (the Finished messages) detect tampering, and ephemeral keys
+      give forward secrecy: stealing the server's long-term key later does not decrypt recorded sessions.
+    keyPoints:
+      - Key exchange (ephemeral ECDHE) and server authentication (certificate + signature) use public-key cryptography.
+      - Bulk data uses symmetric AEAD for speed.
+      - Certificate validation - chain to a trusted root, hostname, validity.
+      - Forward secrecy from ephemeral keys.
+    followUps:
+      - What does disabling certificate verification (`verify=False`) give an attacker?
+      - What is a man-in-the-middle attack, and what does it need to succeed against TLS?
+    pitfalls:
+      - Saying the server's public key encrypts all the traffic.

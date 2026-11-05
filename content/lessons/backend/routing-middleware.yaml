@@ -1,0 +1,209 @@
+id: backend.routing-middleware
+concept: backend.routing-middleware
+title: Routing and middleware
+subtitle: Routers organise endpoints; middleware wraps every request for logging, timing, CORS, compression or authentication
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Routers organise endpoints; middleware wraps every request for logging, timing, CORS, compression or authentication.
+objectives:
+- Explain the core model behind routing and middleware.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Bigger Applications - Multiple Files
+  url: https://fastapi.tiangolo.com/tutorial/bigger-applications/
+  publisher: FastAPI
+- title: Middleware
+  url: https://fastapi.tiangolo.com/tutorial/middleware/
+  publisher: FastAPI
+- title: CORS (Cross-Origin Resource Sharing)
+  url: https://fastapi.tiangolo.com/tutorial/cors/
+  publisher: FastAPI
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Routers organise endpoints; middleware wraps every request for logging, timing, CORS, compression or authentication.
+      Once an API grows past a handful of endpoints it needs to be split into modules, and cross-cutting concerns
+      such as logging, CORS and timing should be written once rather than in every handler.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- `router = APIRouter(prefix="/users", tags=["users"])` groups related endpoints in their own module;
+      `app.include_router(router)` mounts them.
+
+      - `@app.middleware("http")` receives the request and `call_next`; code before `await call_next(request)` runs
+      on the way in and code after it on the way out.
+
+      - Order matters - each added middleware wraps the previous ones, so the last one added is the outermost and
+      sees the request first and the response last.
+
+      - `CORSMiddleware` tells browsers which other origins may call your API; list explicit origins, because browsers
+      reject a wildcard origin when credentials are allowed.
+
+      - Use dependencies rather than middleware for concerns that apply to some routes only, such as authentication
+      on selected endpoints.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it
+      entirely.
+
+      - Middleware that reads the whole request body or buffers responses can break streaming and add memory pressure.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def apply_middleware(request, middleware, handler):\n    response = handler(request)\n    for layer in\
+      \ reversed(middleware): response = layer(request, response)\n    return response\n\ndef add_header(request,\
+      \ response):\n    return {**response, \"headers\": {\"x-app\": \"groundwork\"}}\n\nprint(apply_middleware({},\
+      \ [add_header], lambda request: {\"status\": 200}))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: routing-middleware-code
+  - type: item
+    ref: routing-middleware-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - `router = APIRouter(prefix="/users", tags=["users"])` groups related endpoints in their own module; `app.include_router(router)`
+      mounts them.
+
+      - `@app.middleware("http")` receives the request and `call_next`; code before `await call_next(request)` runs
+      on the way in and code after it on the way out.
+
+      - Order matters - each added middleware wraps the previous ones, so the last one added is the outermost and
+      sees the request first and the response last.
+
+      - `CORSMiddleware` tells browsers which other origins may call your API; list explicit origins, because browsers
+      reject a wildcard origin when credentials are allowed.
+
+      - Use dependencies rather than middleware for concerns that apply to some routes only, such as authentication
+      on selected endpoints.
+
+
+      **Avoid**
+
+      - CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it entirely.
+
+      - Middleware that reads the whole request body or buffers responses can break streaming and add memory pressure.'
+  - type: item
+    ref: routing-middleware-mcq
+  - type: item
+    ref: routing-middleware-tf
+  - type: item
+    ref: routing-middleware-code
+items:
+- id: routing-middleware-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of routing and middleware?
+  explanation: '`router = APIRouter(prefix="/users", tags=["users"])` groups related endpoints in their own module;
+    `app.include_router(router)` mounts them.'
+  options:
+  - id: a
+    text: '`router = APIRouter(prefix="/users", tags=["users"])` groups related endpoints in their own module; `app.include_router(router)`
+      mounts them.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it entirely.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: routing-middleware-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it entirely.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: routing-middleware-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing routing and middleware in a real application. What design decisions would you make,
+    what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: routing-middleware-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for routing and middleware. Implement the stated rule and make sure both ordinary
+    and edge-case tests pass.
+  starterCode: "def apply_middleware(request, middleware, handler):\n    raise NotImplementedError('Complete this\
+    \ function')\n\ndef add_header(request, response):\n    raise NotImplementedError('Complete this function')"
+  solution: "def apply_middleware(request, middleware, handler):\n    response = handler(request)\n    for layer\
+    \ in reversed(middleware): response = layer(request, response)\n    return response\n\ndef add_header(request,\
+    \ response):\n    return {**response, \"headers\": {\"x-app\": \"groundwork\"}}"
+  tests:
+  - name: Core behaviour
+    code: 'assert apply_middleware({}, [add_header], lambda r: {"status": 200})["headers"]["x-app"] == "groundwork"'
+  - name: Edge cases
+    code: 'assert apply_middleware({}, [], lambda r: {"status": 204})["status"] == 204'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - routing-middleware-mcq
+  - routing-middleware-tf
+  - routing-middleware-code
+cheatsheet: '**Core model**
+
+  - `router = APIRouter(prefix="/users", tags=["users"])` groups related endpoints in their own module; `app.include_router(router)`
+  mounts them.
+
+  - `@app.middleware("http")` receives the request and `call_next`; code before `await call_next(request)` runs
+  on the way in and code after it on the way out.
+
+  - Order matters - each added middleware wraps the previous ones, so the last one added is the outermost and sees
+  the request first and the response last.
+
+  - `CORSMiddleware` tells browsers which other origins may call your API; list explicit origins, because browsers
+  reject a wildcard origin when credentials are allowed.
+
+  - Use dependencies rather than middleware for concerns that apply to some routes only, such as authentication
+  on selected endpoints.
+
+
+  **Common mistakes**
+
+  - CORS is not a security boundary for your API; non-browser clients such as curl or scripts ignore it entirely.
+
+  - Middleware that reads the whole request body or buffers responses can break streaming and add memory pressure.'

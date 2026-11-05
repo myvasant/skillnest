@@ -1,0 +1,1185 @@
+id: math.optimization
+concept: math.optimization
+title: Optimisation and Gradient Descent
+subtitle: How models learn — by repeatedly stepping downhill on a loss
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Training a model means finding parameters that make a loss small. Learn to read the derivative as a slope
+  (and estimate it numerically), derive the gradient-descent update, see what the learning rate does when it
+  is too small, right or too large, understand local versus global minima and convexity, and fit a straight
+  line to seeded data by gradient descent in plain Python — checked against the exact answer.
+objectives:
+  - Explain what a loss function is and what it means to minimise it.
+  - Estimate a derivative with forward and central finite differences and compare it with the analytic derivative.
+  - Apply the update rule x ← x − η·f′(x) by hand and in code, and choose a stopping rule.
+  - Predict how a learning rate that is too small, well chosen or too large affects convergence, including divergence to inf and NaN.
+  - Distinguish local and global minima and explain why convex losses make gradient descent reliable.
+  - Fit a two-parameter model (a line) by gradient descent on mean squared error and verify the gradients numerically.
+sources:
+  - title: "Dive into Deep Learning: Gradient Descent"
+    url: https://d2l.ai/chapter_optimization/gd.html
+    publisher: Zhang, Lipton, Li and Smola (d2l.ai)
+  - title: "Dive into Deep Learning: Convexity"
+    url: https://d2l.ai/chapter_optimization/convexity.html
+    publisher: Zhang, Lipton, Li and Smola (d2l.ai)
+  - title: "Dive into Deep Learning: Stochastic Gradient Descent"
+    url: https://d2l.ai/chapter_optimization/sgd.html
+    publisher: Zhang, Lipton, Li and Smola (d2l.ai)
+  - title: "Neural networks: Gradient descent, how neural networks learn"
+    url: https://www.3blue1brown.com/lessons/gradient-descent/
+    publisher: 3Blue1Brown
+  - title: Convex Optimization (free PDF)
+    url: https://web.stanford.edu/~boyd/cvxbook/
+    publisher: Boyd and Vandenberghe (Cambridge University Press)
+  - title: statistics.linear_regression
+    url: https://docs.python.org/3/library/statistics.html#statistics.linear_regression
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why not just try every value?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Three deliveries took 2, 4 and 9 days. You want **one number** c to quote customers, and you measure
+          how good a guess is by its average squared error. The obvious way to find the best c is to try lots of
+          candidates and keep the best. The other way is to start anywhere and repeatedly move **downhill**:
+      - type: code
+        runnable: true
+        code: |
+          data = [2, 4, 9]
+
+          def loss(c):
+              return sum((y - c) ** 2 for y in data) / len(data)
+
+          # Before: try every candidate on a grid
+          candidates = [i * 0.5 for i in range(21)]          # 0.0, 0.5, ..., 10.0
+          best = min(candidates, key=loss)
+          print("grid search:", best, "after", len(candidates), "loss evaluations")
+
+          # After: follow the slope downhill
+          def slope(c):
+              return sum(-2 * (y - c) for y in data) / len(data)
+
+          c = 0.0
+          for step in range(25):
+              c = c - 0.25 * slope(c)
+          print("gradient descent:", round(c, 6), "after 25 steps")
+        expectedOutput: |
+          grid search: 5.0 after 21 loss evaluations
+          gradient descent: 5.0 after 25 steps
+        annotations:
+          - line: 8
+            text: Grid search only finds the best value *on the grid*, and needs one loss evaluation per candidate.
+          - line: 17
+            text: Each step moves c a little in the direction that lowers the loss.
+      - type: markdown
+        body: |
+          With one parameter both work. Now imagine 2 parameters with 100 candidates each: 10,000 evaluations.
+          With 1,000 parameters, 100¹⁰⁰⁰ — more than the number of atoms in the universe. A large language model
+          has billions of parameters. Searching is hopeless; **following the slope** scales, because at every
+          point the slope tells you which way is downhill for *every* parameter at once. That idea —
+          [gradient descent](glossary:gradient-descent) — trains almost every model in machine learning, from
+          linear regression to LLMs.
+
+  - id: loss
+    title: "Loss functions: one number that says how bad"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **loss function** L(θ) takes the model's parameters θ (theta) and returns a single number: how badly
+          the model fits the data. Training means finding the parameters with the **smallest** loss — written
+          `θ* = argmin L(θ)`, "the θ at which L is smallest".
+
+          The workhorse loss for predicting numbers is the **mean squared error** (MSE): the average of
+          (prediction − truth)². Squaring makes every error positive and punishes big errors more than small
+          ones. For the delivery example, the loss as a function of the guess c is a bowl:
+      - type: code
+        runnable: true
+        code: |
+          data = [2, 4, 9]
+
+          def loss(c):
+              return sum((y - c) ** 2 for y in data) / len(data)
+
+          for c in [2, 3, 4, 5, 6, 7, 8]:
+              print(f"c={c}  loss={loss(c):6.3f}  " + "#" * round(loss(c)))
+        expectedOutput: |
+          c=2  loss=17.667  ##################
+          c=3  loss=12.667  #############
+          c=4  loss= 9.667  ##########
+          c=5  loss= 8.667  #########
+          c=6  loss= 9.667  ##########
+          c=7  loss=12.667  #############
+          c=8  loss=17.667  ##################
+        caption: The bottom of the bowl is at c = 5, the mean of the data. (For MSE, the best constant is always the mean.)
+      - type: callout
+        variant: misconception
+        title: '"The goal is the lowest possible training loss"'
+        body: |
+          We minimise the loss on the **training** data because that is what we can compute, but what we care
+          about is performance on data the model has not seen. Pushing training loss ever lower can mean
+          memorising noise — [overfitting](concept:ml.overfitting). Always judge a model on held-out data.
+
+  - id: derivative
+    title: "The derivative: the slope tells you which way is downhill"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          From [derivatives](concept:math.derivatives): the derivative f′(x) is the **slope** of f at x — how
+          fast f changes when x changes a little.
+
+          - **Sign:** f′(x) > 0 means f increases to the right, so downhill is to the **left**; f′(x) < 0
+            means downhill is to the **right**; f′(x) = 0 means flat (a possible minimum).
+          - **Size:** a large |f′(x)| means a steep slope; near the bottom of a bowl it shrinks towards 0.
+
+          You can **estimate** a slope without any calculus, by evaluating f at two nearby points — a *finite
+          difference*:
+
+          ```text
+          forward difference:  (f(x + h) − f(x)) / h
+          central difference:  (f(x + h) − f(x − h)) / (2h)
+          ```
+
+          For f(x) = (x − 3)², calculus (power rule plus chain rule) gives the exact slope f′(x) = 2(x − 3).
+          Compare the estimates with it at x = 5, where the true slope is 4:
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return (x - 3) ** 2
+
+          def f_prime(x):              # from calculus: d/dx (x - 3)^2 = 2(x - 3)
+              return 2 * (x - 3)
+
+          def forward_diff(f, x, h):
+              return (f(x + h) - f(x)) / h
+
+          def central_diff(f, x, h):
+              return (f(x + h) - f(x - h)) / (2 * h)
+
+          x = 5.0
+          print("analytic:", f_prime(x))
+          for h in [1.0, 0.1, 0.001, 1e-6]:
+              print(f"h={h:<6} forward={forward_diff(f, x, h):.6f}  central={central_diff(f, x, h):.6f}")
+        expectedOutput: |
+          analytic: 4.0
+          h=1.0    forward=5.000000  central=4.000000
+          h=0.1    forward=4.100000  central=4.000000
+          h=0.001  forward=4.001000  central=4.000000
+          h=1e-06  forward=4.000001  central=4.000000
+        caption: The forward difference is off by about h; the central difference is far more accurate (exact for this quadratic).
+        annotations:
+          - line: 8
+            text: "Slope of the line through (x, f(x)) and (x + h, f(x + h)) — a secant that approaches the tangent as h shrinks."
+          - line: 11
+            text: Looking both ways cancels the first error term, so the error shrinks like h² instead of h.
+      - type: markdown
+        body: |
+          This comparison is also a real engineering tool, called **gradient checking**: when you derive a
+          gradient by hand, compare it with a central-difference estimate at a few points before trusting it.
+          (Frameworks do not train with finite differences — they need two loss evaluations *per parameter*;
+          automatic differentiation gets every partial derivative at once. See
+          [partial derivatives and gradients](concept:math.partial-gradients).)
+
+  - id: gradient-descent
+    title: Gradient descent, step by step
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The slope points **uphill**, so to go down we step the **opposite** way, by an amount proportional to
+          the slope:
+
+          ```text
+          x_new = x − η · f′(x)
+          ```
+
+          η (eta) is the [learning rate](glossary:learning-rate), a small positive number such as 0.1. With
+          many parameters, f′ becomes the gradient vector ∇L and the same rule updates every parameter at once:
+          `θ ← θ − η ∇L(θ)`.
+
+          By hand, for f(x) = (x − 3)², starting at x = −4 with η = 0.1:
+
+          | step | x | f′(x) = 2(x − 3) | x − 0.1·f′(x) |
+          |---|---|---|---|
+          | 1 | −4 | −14 | −4 + 1.4 = **−2.6** |
+          | 2 | −2.6 | −11.2 | −2.6 + 1.12 = **−1.48** |
+          | 3 | −1.48 | −8.96 | −1.48 + 0.896 = **−0.584** |
+
+          The slope is negative, so x moves right — towards 3 — and the steps shrink as the slope flattens.
+          Play the steps, then move the learning-rate slider:
+      - type: visualization
+        component: gradient-descent
+        title: Gradient descent on f(x) = (x − 3)²
+        caption: Each dot is one step. Try learning rates of 0.02, 0.1, 0.5 and 0.9 and compare the paths.
+        props:
+          target: 3
+          start: -4
+          learningRate: 0.1
+      - type: visualization
+        component: python-tracer
+        title: The update loop in Python
+        caption: Watch g (the slope) shrink as x approaches 3, so each step is smaller than the last.
+        props:
+          code: |
+            def grad(x):
+                return 2 * (x - 3)
+
+            x = -4.0
+            lr = 0.1
+            for step in range(3):
+                g = grad(x)
+                x = x - lr * g
+            print(x)
+      - type: markdown
+        body: |
+          **When to stop?** Common rules: a fixed number of steps; stop when the gradient is tiny
+          (|f′(x)| < tolerance); or stop when the loss stops improving. In ML training you usually run for a
+          budget of steps and keep the parameters that score best on validation data.
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return (x - 3) ** 2
+
+          def grad(x):
+              return 2 * (x - 3)
+
+          x = -4.0
+          learning_rate = 0.1
+          for step in range(1, 31):
+              x = x - learning_rate * grad(x)
+              if step <= 3 or step % 10 == 0:
+                  print(f"step {step:2}: x = {x:.4f}  loss = {f(x):.6f}")
+
+          x, steps = -4.0, 0
+          while abs(grad(x)) > 1e-6:                # stop when the slope is (almost) flat
+              x = x - 0.1 * grad(x)
+              steps += 1
+          print("stopped after", steps, "steps at x =", round(x, 6))
+        expectedOutput: |
+          step  1: x = -2.6000  loss = 31.360000
+          step  2: x = -1.4800  loss = 20.070400
+          step  3: x = -0.5840  loss = 12.845056
+          step 10: x = 2.2484  loss = 0.564932
+          step 20: x = 2.9193  loss = 0.006513
+          step 30: x = 2.9913  loss = 0.000075
+          stopped after 74 steps at x = 3.0
+        annotations:
+          - line: 10
+            text: The whole algorithm is this one line, repeated.
+          - line: 15
+            text: A tolerance-based stopping rule instead of a fixed number of steps.
+      - type: item
+        ref: mcq-why-minus
+      - type: item
+        ref: predict-one-step
+
+  - id: learning-rate
+    title: "The learning rate: too small, just right, too large"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For f(x) = (x − 3)², one step does something very simple to the distance from the minimum:
+
+          ```text
+          x_new − 3 = (x − 3) − η·2(x − 3) = (1 − 2η)(x − 3)
+          ```
+
+          Every step multiplies the distance by **(1 − 2η)**. So:
+
+          | η | factor 1 − 2η | behaviour |
+          |---|---|---|
+          | 0.01 | 0.98 | converges, but very slowly |
+          | 0.1 | 0.8 | converges smoothly |
+          | 0.5 | 0 | lands exactly on the minimum in one step (special to this function) |
+          | 0.9 | −0.8 | overshoots and **oscillates**, but still converges |
+          | 1.0 | −1 | bounces between two points forever |
+          | 1.1 | −1.2 | **diverges**: every step overshoots further |
+      - type: code
+        runnable: true
+        code: |
+          def grad(x):
+              return 2 * (x - 3)
+
+          for lr in [0.01, 0.1, 0.5, 0.9, 1.0, 1.1]:
+              x = -4.0
+              for _ in range(20):
+                  x = x - lr * grad(x)
+              print(f"lr={lr:<5} after 20 steps: x = {x:10.4f}   distance to minimum = {abs(x - 3):.4g}")
+        expectedOutput: |
+          lr=0.01  after 20 steps: x =    -1.6733   distance to minimum = 4.673
+          lr=0.1   after 20 steps: x =     2.9193   distance to minimum = 0.0807
+          lr=0.5   after 20 steps: x =     3.0000   distance to minimum = 0
+          lr=0.9   after 20 steps: x =     2.9193   distance to minimum = 0.0807
+          lr=1.0   after 20 steps: x =    -4.0000   distance to minimum = 7
+          lr=1.1   after 20 steps: x =  -265.3632   distance to minimum = 268.4
+      - type: visualization
+        component: gradient-descent
+        title: A learning rate that is too large
+        caption: With η = 1.04 every step lands further from the minimum on the opposite side. Lower the slider below 1 to watch it recover.
+        props:
+          target: 3
+          start: -4
+          learningRate: 1.04
+      - type: markdown
+        body: |
+          The safe range depends on how sharply the loss curves (its second derivative): steeper bowls need
+          smaller steps. That is why the same learning rate can work for one model and diverge for another, and
+          why **feature scaling** (putting inputs on similar scales) makes training easier — it keeps the bowl
+          from being extremely steep in one direction and flat in another.
+
+          **What divergence looks like in practice:** the loss grows, overflows to `inf`, and then
+          `inf − inf` produces `nan` (not a number), which spreads to everything it touches:
+      - type: code
+        runnable: true
+        code: |
+          def loss(x):
+              return (x - 3) * (x - 3)
+
+          def grad(x):
+              return 2 * (x - 3)
+
+          x = -4.0
+          for step in range(1, 1201):
+              x = x - 1.5 * grad(x)                     # learning rate far too large
+              if step in (10, 100, 1000, 1100, 1200):
+                  print(f"step {step:4}: x = {x:.3g}  loss = {loss(x):.3g}")
+        expectedOutput: |
+          step   10: x = -7.16e+03  loss = 5.14e+07
+          step  100: x = -8.87e+30  loss = 7.87e+61
+          step 1000: x = -7.5e+301  loss = inf
+          step 1100: x = nan  loss = nan
+          step 1200: x = nan  loss = nan
+        caption: '"My loss is NaN" is very often a learning rate that is too large (or bad input data).'
+      - type: item
+        ref: mcq-lr-diverge
+      - type: item
+        ref: explain-learning-rate
+
+  - id: minima-convexity
+    title: Local minima, global minima and convexity
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Gradient descent only sees the slope where it stands, so it stops at the bottom of whatever valley it
+          walks into — a [local minimum](glossary:local-minimum). The lowest point overall is the **global
+          minimum**. The function f(x) = x⁴ − 3x² + x has two valleys of different depths:
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return x**4 - 3 * x**2 + x
+
+          def grad(x):
+              return 4 * x**3 - 6 * x + 1
+
+          for start in [-2.0, -0.5, 0.5, 2.0]:
+              x = start
+              for _ in range(200):
+                  x = x - 0.01 * grad(x)
+              print(f"start {start:4}: ends at x = {x:7.4f}, loss = {f(x):.4f}")
+        expectedOutput: |
+          start -2.0: ends at x = -1.3008, loss = -3.5139
+          start -0.5: ends at x = -1.3008, loss = -3.5139
+          start  0.5: ends at x =  1.1309, loss = -1.0702
+          start  2.0: ends at x =  1.1309, loss = -1.0702
+        caption: Same algorithm, same learning rate — the starting point decides which valley you end in.
+        annotations:
+          - line: 5
+            text: The derivative of x⁴ − 3x² + x, by the power rule applied to each term.
+      - type: markdown
+        body: |
+          A function is [convex](glossary:convex-function) if the straight line (chord) between any two points
+          on its graph never goes below the graph — a single bowl. For convex functions **every local minimum
+          is a global minimum**, so gradient descent with a suitable learning rate cannot get stuck in a worse
+          valley. For a twice-differentiable function of one variable, convex means f″(x) ≥ 0 everywhere:
+          (x − 3)² has f″ = 2, while x⁴ − 3x² + x has f″ = 12x² − 6, which is negative near 0.
+
+          You can catch non-convexity with the chord test: the function at the midpoint of the two minima
+          lies **above** the midpoint of the chord joining them.
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return x**4 - 3 * x**2 + x
+
+          a, b = -1.3008, 1.1309                      # the two minima found above
+          mid = (a + b) / 2
+          print(f"f(midpoint) = {f(mid):.4f}, chord midpoint = {(f(a) + f(b)) / 2:.4f}")
+        expectedOutput: |
+          f(midpoint) = -0.1065, chord midpoint = -2.2921
+        caption: The graph rises above the chord, so this function is not convex.
+      - type: markdown
+        body: |
+          **What this means for ML.** The MSE loss of linear regression is convex in its parameters, so gradient
+          descent finds the global minimum. Neural-network losses are **not** convex: there are many minima and
+          saddle points. Yet in practice, large networks trained with noisy, stochastic gradient descent
+          reliably reach solutions that generalise well — an active research topic rather than a theorem.
+          Different random initialisations can end at different (often similarly good) solutions.
+      - type: item
+        ref: tf-convex-local
+
+  - id: fit-a-line
+    title: "Two parameters: fitting a line by gradient descent"
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Now a real model. Ten points lie near the line y = 2x + 1 with random noise (seeded, so the run is
+          reproducible). We fit ŷ = w·x + b by minimising
+
+          ```text
+          L(w, b) = (1/n) Σ (w·xᵢ + b − yᵢ)²
+          ```
+
+          Two parameters means two partial derivatives (hold one fixed, differentiate with respect to the
+          other — the chain rule gives the factor 2 and the inner derivative xᵢ or 1):
+
+          ```text
+          ∂L/∂w = (2/n) Σ (ŷᵢ − yᵢ) · xᵢ        ∂L/∂b = (2/n) Σ (ŷᵢ − yᵢ)
+          ```
+
+          First, gradient checking: compare these formulas with central differences at an arbitrary point.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          random.seed(42)
+          xs = [i / 2 for i in range(10)]                          # 0.0, 0.5, ..., 4.5
+          ys = [2 * x + 1 + random.gauss(0, 0.5) for x in xs]      # true line y = 2x + 1, plus noise
+
+          def mse(w, b):
+              return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+          def gradients(w, b):
+              n = len(xs)
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              return dw, db
+
+          def numerical_gradients(w, b, h=1e-6):
+              dw = (mse(w + h, b) - mse(w - h, b)) / (2 * h)
+              db = (mse(w, b + h) - mse(w, b - h)) / (2 * h)
+              return dw, db
+
+          print("analytic: ", [round(g, 6) for g in gradients(0.5, -1.0)])
+          print("numerical:", [round(g, 6) for g in numerical_gradients(0.5, -1.0)])
+        expectedOutput: |
+          analytic:  [-30.032157, -10.611264]
+          numerical: [-30.032157, -10.611264]
+        caption: The formulas agree with the finite-difference estimate, so they are safe to train with.
+        annotations:
+          - line: 12
+            text: ŷᵢ − yᵢ for every point, computed once and reused by both partial derivatives.
+          - line: 18
+            text: Nudge one parameter at a time, holding the other fixed — that is what "partial" means.
+      - type: markdown
+        body: |
+          Now train: start at w = b = 0 and apply the update to **both** parameters at once, using gradients
+          computed from the same (w, b). Python's `statistics.linear_regression` (3.10+) gives the exact
+          least-squares answer to compare with.
+      - type: code
+        runnable: true
+        code: |
+          import random
+          import statistics
+
+          random.seed(42)
+          xs = [i / 2 for i in range(10)]
+          ys = [2 * x + 1 + random.gauss(0, 0.5) for x in xs]
+
+          def mse(w, b):
+              return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+          def gradients(w, b):
+              n = len(xs)
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              return dw, db
+
+          w, b = 0.0, 0.0
+          learning_rate = 0.05
+          for step in range(1, 1001):
+              dw, db = gradients(w, b)
+              w, b = w - learning_rate * dw, b - learning_rate * db
+              if step in (1, 10, 100, 1000):
+                  print(f"step {step:4}: w = {w:.4f}  b = {b:.4f}  MSE = {mse(w, b):.4f}")
+
+          exact = statistics.linear_regression(xs, ys)
+          print(f"closed form: w = {exact.slope:.4f}  b = {exact.intercept:.4f}")
+        expectedOutput: |
+          step    1: w = 1.6329  b = 0.5431  MSE = 1.8113
+          step   10: w = 2.0593  b = 0.7438  MSE = 0.0835
+          step  100: w = 1.9987  b = 0.9288  MSE = 0.0716
+          step 1000: w = 1.9926  b = 0.9474  MSE = 0.0715
+          closed form: w = 1.9926  b = 0.9474
+        caption: Gradient descent reaches the exact least-squares line. The fit is not exactly 2 and 1 because of the noise.
+        annotations:
+          - line: 22
+            text: Tuple assignment updates both parameters from the same old values — a simultaneous update.
+      - type: markdown
+        body: |
+          This is exactly [linear regression](concept:ml.linear-regression), trained the way neural networks
+          are trained. Notice how quickly the loss falls at first and how slowly the last digits settle: the
+          bowl is steep in one direction and shallow in another.
+
+          **Beyond plain gradient descent.** Real training rarely uses the full dataset for every step:
+
+          - **Stochastic / mini-batch gradient descent** estimates the gradient from a small random batch of
+            examples. Each step is far cheaper, and the noise can help escape poor regions; with a constant
+            learning rate it hovers *near* the minimum rather than settling exactly, which is why learning rates
+            are usually decayed over time.
+          - **Momentum** keeps a running average of past gradients to roll through flat stretches and damp
+            oscillation; **Adam** and **AdamW** also adapt the step size per parameter. Learning-rate schedules
+            (warm-up, then decay) are part of every modern recipe — see [optimizers](concept:dl.optimizers).
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          random.seed(42)
+          xs = [i / 2 for i in range(10)]
+          ys = [2 * x + 1 + random.gauss(0, 0.5) for x in xs]
+
+          def mse(w, b):
+              return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+          rng = random.Random(0)                     # separate, seeded generator for shuffling
+          w, b = 0.0, 0.0
+          pairs = list(zip(xs, ys))
+          for epoch in range(200):
+              rng.shuffle(pairs)
+              for i in range(0, len(pairs), 4):      # mini-batches of up to 4 points
+                  batch = pairs[i:i + 4]
+                  errors = [w * x + b - y for x, y in batch]
+                  dw = 2 / len(batch) * sum(e * x for e, (x, _) in zip(errors, batch))
+                  db = 2 / len(batch) * sum(errors)
+                  w, b = w - 0.05 * dw, b - 0.05 * db
+          print(f"mini-batch SGD: w = {w:.3f}  b = {b:.3f}  MSE = {mse(w, b):.4f}")
+        expectedOutput: |
+          mini-batch SGD: w = 2.026  b = 0.954  MSE = 0.0807
+        caption: Close to the optimum (MSE 0.0715) but not on it — each step follows a noisy estimate of the gradient.
+
+  - id: under-the-hood
+    title: Under the hood — choosing h, and why frameworks don't use finite differences
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          A smaller h reduces the **truncation error** of a finite difference, but subtracting two nearly equal
+          floating-point numbers loses digits (**rounding error**), and that error grows as h shrinks. Below
+          about h = 1e-8 the forward estimate of the slope 4 gets *worse*:
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return (x - 3) ** 2
+
+          def forward_diff(f, x, h):
+              return (f(x + h) - f(x)) / h
+
+          for h in [1e-1, 1e-4, 1e-8, 1e-12]:
+              estimate = forward_diff(f, 5.0, h)
+              print(f"h={h:<6} forward estimate={estimate:.10f}  error={abs(estimate - 4):.1e}")
+        expectedOutput: |
+          h=0.1    forward estimate=4.1000000000  error=1.0e-01
+          h=0.0001 forward estimate=4.0001000000  error=1.0e-04
+          h=1e-08  forward estimate=3.9999999757  error=2.4e-08
+          h=1e-12  forward estimate=4.0003556023  error=3.6e-04
+        caption: Rules of thumb for float64 — around 1e-8 for forward differences and 1e-5 for central differences, scaled to the size of x.
+      - type: markdown
+        body: |
+          **Cost.** A finite-difference gradient needs one or two extra loss evaluations *per parameter*: for a
+          model with a billion parameters, that is billions of forward passes per step. Reverse-mode automatic
+          differentiation (backpropagation) computes all partial derivatives exactly, for roughly the cost of a
+          few forward passes, by applying the chain rule backwards through the operations that were executed —
+          see [backpropagation](concept:dl.backpropagation). Finite differences remain the standard way to
+          *test* hand-written gradients.
+
+          **Why the minus sign is not a convention.** For a small step d, f(x + d) ≈ f(x) + f′(x)·d. Choosing
+          d = −η f′(x) gives f(x + d) ≈ f(x) − η f′(x)², which is smaller whenever f′(x) ≠ 0 and η is small
+          enough for the approximation to hold. In many dimensions the same argument shows −∇L is the direction
+          of steepest descent.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Loss grows, then `inf`, then `nan` | Learning rate too large (or unscaled features) | Lower η by 3–10×; scale inputs; check the data for extreme values. |
+          | `OverflowError` from `** 2` | Divergence: values got huge (float `**` raises instead of returning inf) | Same as above — it is a symptom, not the bug. |
+          | Loss barely moves | Learning rate too small, or a gradient that is (almost) zero due to a bug | Raise η; gradient-check your formulas. |
+          | Loss rises steadily from the first step | Sign error: `x + η·grad` climbs uphill | Subtract the gradient. |
+          | Training converges to the wrong answer | Wrong gradient formula | Compare with central differences at a few points. |
+          | Different runs end at different losses | Non-convex loss: different starts, different minima | Expected for neural networks; fix the seed to reproduce, compare on validation data. |
+          | Great training loss, poor real-world results | Overfitting | Evaluate on held-out data; regularise; stop early. |
+      - type: code
+        runnable: true
+        code: |
+          def f(x):
+              return (x - 3) ** 2
+
+          def grad(x):
+              return 2 * (x - 3)
+
+          x = -4.0
+          for step in range(2000):
+              x = x - 1.5 * grad(x)      # learning rate far too large
+              loss = f(x)
+        expectError: OverflowError
+        caption: "Divergence surfacing as a crash: once x is about 1e155, squaring it with ** overflows."
+      - type: item
+        ref: debug-sign
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks run your functions on several different loss functions and datasets, and compare them with
+          exact answers, so they must implement the algorithm rather than the example's numbers.
+      - type: item
+        ref: code-gd-function
+      - type: item
+        ref: code-fit-line
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Training = minimising a loss L(θ) over the parameters θ. MSE = mean of squared errors.
+          - The derivative is the slope: its sign says which way is uphill, its size how steep. Estimate it with
+            the central difference `(f(x+h) − f(x−h)) / 2h`; use that to check hand-derived gradients.
+          - Gradient descent: `θ ← θ − η ∇L(θ)`, repeated until the gradient is tiny or the budget runs out.
+          - Learning rate: too small → slow; too large → oscillation or divergence (inf, NaN).
+          - Convex loss → every local minimum is global (linear regression). Non-convex loss → the start matters
+            (neural networks).
+          - Two parameters: compute both partial derivatives from the same values, update both at once.
+          - In practice: mini-batch SGD, momentum/Adam and learning-rate schedules build on this same update.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "explain gradient descent" (the update rule and why it subtracts the gradient), "what happens if
+          the learning rate is too high or too low?", "batch vs mini-batch vs stochastic gradient descent", and
+          "derive the gradient of MSE for linear regression" — write ∂L/∂w = (2/n)Σ(ŷ − y)x and ∂L/∂b =
+          (2/n)Σ(ŷ − y), and mention checking it numerically.
+
+items:
+  - id: mcq-why-minus
+    type: mcq
+    skill: explanation
+    prompt: In the update `x = x − η · f′(x)`, why do we **subtract** the derivative?
+    explanation: >-
+      The derivative points in the direction in which f increases (uphill). To decrease f we move the opposite
+      way. Its size also makes steps large where the slope is steep and small near a minimum.
+    options:
+      - id: a
+        text: Because the derivative points uphill, and we want to go downhill.
+        correct: true
+        feedback: Right — moving against the slope decreases the function (for a small enough step).
+      - id: b
+        text: Because derivatives are always positive, so subtracting makes x smaller.
+        feedback: Derivatives can be negative; then subtracting moves x to the right, which is still downhill.
+      - id: c
+        text: It is an arbitrary convention; adding would work just as well.
+        feedback: Adding the derivative climbs uphill and increases the loss — it maximises instead of minimising.
+      - id: d
+        text: To keep x from growing too large.
+        feedback: The learning rate controls step size; the sign is about direction.
+
+  - id: predict-one-step
+    type: predict-output
+    skill: prediction
+    prompt: For f(x) = (x − 3)², what does this print?
+    code: |
+      def grad(x):
+          return 2 * (x - 3)
+
+      x = 5.0
+      for _ in range(2):
+          x = x - 0.25 * grad(x)
+      print(x)
+    answer: "3.5"
+    explanation: >-
+      Step 1: grad(5) = 4, so x = 5 − 0.25·4 = 4.0. Step 2: grad(4) = 2, so x = 4 − 0.25·2 = 3.5. The gradient
+      halves as x approaches 3, so the second step is half as long.
+    wrongAnswers:
+      - answer: "4.0"
+        feedback: That is after one step. The loop runs twice; the second step uses the new, smaller gradient.
+      - answer: "3.0"
+        feedback: Each step uses the slope at the current point; here the distance to 3 halves each time, so it is 0.5 away after two steps.
+      - answer: "7.5"
+        feedback: That adds the gradient (climbing uphill). The update subtracts η times the gradient.
+
+  - id: mcq-lr-diverge
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A training log shows the loss after each step: `4.1, 6.3, 15.8, 97.2, 2310.5, inf, nan`. What is the most
+      likely cause?
+    explanation: >-
+      A loss that grows geometrically and then overflows is the signature of divergence: each step overshoots the
+      minimum by more than the last. Lower the learning rate (and check feature scaling).
+    options:
+      - id: a
+        text: The learning rate is too large, so every step overshoots further.
+        correct: true
+        feedback: Correct — reduce the learning rate, for example by 10×, and scale the input features.
+      - id: b
+        text: The learning rate is too small.
+        feedback: Too small a learning rate makes the loss fall slowly; it does not make it explode.
+      - id: c
+        text: The model has reached the global minimum.
+        feedback: At a minimum the loss stops decreasing; it does not grow to infinity.
+      - id: d
+        text: The loss function is convex.
+        feedback: Convexity helps convergence; divergence happens on convex functions too when steps are too large.
+
+  - id: explain-learning-rate
+    type: explain
+    skill: explanation
+    prompt: >-
+      Using f(x) = (x − 3)², explain why η = 0.1 converges, η = 0.9 oscillates but converges, and η = 1.1
+      diverges. What general lesson does this teach about choosing a learning rate?
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - "Derives or states that one step multiplies the distance to the minimum by (1 − 2η)."
+      - "Explains that |1 − 2η| < 1 shrinks the distance (convergence) and a negative factor flips sides (oscillation)."
+      - "Explains that |1 − 2η| > 1 (η > 1 here) grows the distance every step (divergence)."
+      - States that the safe range depends on the curvature of the loss, so learning rates must be tuned per problem (and features scaled).
+    modelAnswer: |
+      The update is x − η·2(x − 3), so the new distance to the minimum is (1 − 2η) times the old one. With
+      η = 0.1 the factor is 0.8: the distance shrinks by 20% each step and x approaches 3 from one side. With
+      η = 0.9 the factor is −0.8: x jumps to the other side every step (oscillation), but the distance still
+      shrinks. With η = 1.1 the factor is −1.2: every jump lands further away, so x diverges. In general the safe
+      range depends on how sharply the loss curves — steeper bowls need smaller steps — so the learning rate has
+      to be tuned for each problem, and scaling features helps keep the curvature similar in every direction.
+
+  - id: tf-convex-local
+    type: true-false
+    skill: recognition
+    prompt: "True or false: for a convex function, every local minimum is also a global minimum."
+    answer: true
+    explanation: >-
+      A convex function is a single bowl: if a point were a local minimum but not the global one, the chord to the
+      global minimum would pass below the graph next to the local minimum, contradicting convexity. That is why
+      gradient descent is reliable on convex losses such as linear regression's MSE.
+
+  - id: debug-sign
+    type: debug
+    skill: debugging
+    prompt: |
+      This loop should find the w that minimises `loss(w) = (w − 7)² + 1`, i.e. print `7.0 1.0`. Instead the
+      numbers explode. Fix the update.
+    starterCode: |
+      def loss(w):
+          return (w - 7) ** 2 + 1
+
+      def grad(w):
+          return 2 * (w - 7)
+
+      w = 0.0
+      for step in range(100):
+          w = w + 0.1 * grad(w)
+      print(round(w, 4), round(loss(w), 4))
+    solution: |
+      def loss(w):
+          return (w - 7) ** 2 + 1
+
+      def grad(w):
+          return 2 * (w - 7)
+
+      w = 0.0
+      for step in range(100):
+          w = w - 0.1 * grad(w)
+      print(round(w, 4), round(loss(w), 4))
+    expectedOutput: |
+      7.0 1.0
+    tests:
+      - name: reaches the minimum
+        code: |
+          assert abs(w - 7) < 1e-4, f"w should end close to 7, but it is {w!r}."
+          assert output().strip() == "7.0 1.0", f"Expected the output '7.0 1.0', got {output()!r}."
+      - name: works for a different minimum (no hard-coding)
+        code: |
+          changed = source.replace("(w - 7)", "(w - 4)")
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert abs(ns["w"] - 4) < 1e-4, f"With the minimum moved to 4, your loop ended at w = {ns['w']!r}. Keep the gradient-descent update instead of setting w directly."
+    hints:
+      - Does the loss go up or down after each step? Print it inside the loop.
+      - The gradient points uphill. Which sign takes you downhill?
+      - "Change `w + 0.1 * grad(w)` to `w - 0.1 * grad(w)`."
+    feedback:
+      - when: { codeMatches: "w\\s*=\\s*7" }
+        message: Setting w to 7 directly skips the algorithm. Fix the sign of the update so the loop finds 7 itself.
+    explanation: >-
+      Adding the gradient moves uphill: the distance to 7 is multiplied by 1.2 every step, so w runs away.
+      Subtracting it multiplies the distance by 0.8, and after 100 steps w is 7 to many decimal places.
+
+  - id: code-gd-function
+    type: code
+    skill: implementation
+    prompt: |
+      Write `gradient_descent(grad, start, learning_rate, steps)` that starts at `start`, applies the update
+      `x = x − learning_rate · grad(x)` exactly `steps` times, and returns the final x. `grad` is a function
+      that returns the derivative at a point.
+    starterCode: |
+      def gradient_descent(grad, start, learning_rate, steps):
+          x = start
+          # repeat `steps` times: move x against the gradient
+          return x
+
+      # minimise (x - 3)^2, whose derivative is 2(x - 3)
+      print(round(gradient_descent(lambda x: 2 * (x - 3), -4.0, 0.1, 100), 6))
+    solution: |
+      def gradient_descent(grad, start, learning_rate, steps):
+          x = start
+          for _ in range(steps):
+              x = x - learning_rate * grad(x)
+          return x
+
+      # minimise (x - 3)^2, whose derivative is 2(x - 3)
+      print(round(gradient_descent(lambda x: 2 * (x - 3), -4.0, 0.1, 100), 6))
+    expectedOutput: |
+      3.0
+    tests:
+      - name: finds the minimum of (x - 3)^2
+        code: |
+          got = gradient_descent(lambda x: 2 * (x - 3), -4.0, 0.1, 100)
+          assert abs(got - 3) < 1e-6, f"Expected about 3, got {got!r}."
+      - name: does exactly `steps` updates
+        code: |
+          import math
+          got = gradient_descent(lambda x: 2 * (x - 3), -4.0, 0.1, 3)
+          assert math.isclose(got, -0.584), f"After 3 steps from -4 with rate 0.1, x should be -0.584 (as in the table), got {got!r}."
+          assert gradient_descent(lambda x: 2 * (x - 3), 1.5, 0.1, 0) == 1.5, "With steps=0, return the start unchanged."
+      - name: works for other functions
+        code: |
+          got = gradient_descent(lambda x: 2 * (x + 2), 10.0, 0.25, 60)
+          assert abs(got + 2) < 1e-6, f"Minimising (x + 2)^2 should end near -2, got {got!r}."
+          import math
+          expected = 1.0
+          for _ in range(5):
+              expected = expected - 0.1 * 4 * expected ** 3
+          got = gradient_descent(lambda x: 4 * x ** 3, 1.0, 0.1, 5)
+          assert math.isclose(got, expected), f"For grad 4x^3 from 1.0 (rate 0.1, 5 steps) expected {expected:.6f}, got {got!r}."
+      - name: a too-large learning rate is not hidden
+        code: |
+          got = gradient_descent(lambda x: 2 * (x - 3), -4.0, 1.1, 20)
+          assert abs(got - 3) > 100, "With learning rate 1.1 the method should diverge. Apply the update as written, without clamping or stopping early."
+    hints:
+      - "Use a `for _ in range(steps):` loop."
+      - "Inside it: `x = x - learning_rate * grad(x)`."
+      - Return x after the loop, not inside it.
+    feedback:
+      - when: { outputEquals: "-4.0\n" }
+        message: x never changes. Add a loop that applies the update `steps` times.
+    explanation: >-
+      The function is the whole algorithm: evaluate the gradient where you are, take a step of size
+      learning_rate × gradient in the opposite direction, repeat. Because grad is a parameter, the same code
+      minimises any differentiable function of one variable.
+
+  - id: code-fit-line
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write `fit_line(xs, ys, learning_rate=0.01, steps=5000)` that fits ŷ = w·x + b by **gradient descent on
+      the mean squared error**, starting from w = b = 0, and returns `(w, b)`. Use
+
+      `∂L/∂w = (2/n) Σ (ŷᵢ − yᵢ)·xᵢ` and `∂L/∂b = (2/n) Σ (ŷᵢ − yᵢ)`.
+
+      The checks compare your result with the exact least-squares line on several datasets (you may not call
+      `statistics.linear_regression` yourself).
+    starterCode: |
+      def fit_line(xs, ys, learning_rate=0.01, steps=5000):
+          w, b = 0.0, 0.0
+          # gradient descent on mean squared error
+          return w, b
+
+      w, b = fit_line([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+      print(round(w, 3), round(b, 3))
+    solution: |
+      def fit_line(xs, ys, learning_rate=0.01, steps=5000):
+          w, b = 0.0, 0.0
+          n = len(xs)
+          for _ in range(steps):
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              w, b = w - learning_rate * dw, b - learning_rate * db
+          return w, b
+
+      w, b = fit_line([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+      print(round(w, 3), round(b, 3))
+    expectedOutput: |
+      1.97 1.06
+    tests:
+      - name: fits the example data
+        code: |
+          w_, b_ = fit_line([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+          assert abs(w_ - 1.97) < 1e-3 and abs(b_ - 1.06) < 1e-3, f"Expected about (1.97, 1.06), got ({w_!r}, {b_!r})."
+      - name: matches least squares on seeded noisy data
+        code: |
+          import random, statistics
+          rng = random.Random(5)
+          xs = [i / 4 for i in range(12)]
+          ys = [-1.5 * x + 4 + rng.gauss(0, 0.3) for x in xs]
+          exact = statistics.linear_regression(xs, ys)
+          w_, b_ = fit_line(xs, ys)
+          assert abs(w_ - exact.slope) < 1e-3 and abs(b_ - exact.intercept) < 1e-3, (
+              f"On another dataset you returned ({w_:.4f}, {b_:.4f}) but least squares gives "
+              f"({exact.slope:.4f}, {exact.intercept:.4f}). Check both gradient formulas."
+          )
+      - name: uses gradient descent, not a library fit
+        code: |
+          assert not calls("linear_regression"), "Implement gradient descent yourself instead of calling statistics.linear_regression."
+          assert uses("For", "While"), "Use a loop that repeats the gradient-descent update."
+    hints:
+      - "Inside a loop over `range(steps)`, first compute the errors `w * x + b - y` for every point."
+      - "dw is `2 / n * sum(error * x)`, db is `2 / n * sum(error)` — both from the same errors."
+      - "Update both at once: `w, b = w - learning_rate * dw, b - learning_rate * db`."
+    feedback:
+      - when: { outputEquals: "0.0 0.0\n" }
+        message: w and b never change. Add the gradient-descent loop.
+      - when: { outputContains: "nan" }
+        message: The values blew up. Check the sign of the update (subtract the gradients) and that you divide by n.
+    explanation: >-
+      Each iteration computes the prediction errors once, turns them into the two partial derivatives of the MSE,
+      and moves both parameters against their gradients simultaneously. Because the MSE of a line is convex, the
+      iterations converge to the same line as the closed-form least-squares solution.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-lr-half
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The minimum of (x + 1)² is at x = −1. What does this print?
+    code: |
+      def grad(x):
+          return 2 * (x + 1)
+
+      for lr in [0.5, 1.0]:
+          x = 4.0
+          for _ in range(3):
+              x = x - lr * grad(x)
+          print(lr, x)
+    answer: |
+      0.5 -1.0
+      1.0 -6.0
+    explanation: >-
+      With η = 0.5 the factor (1 − 2η) is 0, so the first step lands exactly on −1 and stays there. With η = 1 the
+      factor is −1: x = −x − 2 flips between 4 and −6 forever, so after 3 steps x = −6.
+    wrongAnswers:
+      - answer: |
+          0.5 -1.0
+          1.0 -1.0
+        feedback: A bigger step is not always faster. With η = 1 every step overshoots by exactly as much as it moves, so x bounces between 4 and −6.
+      - answer: |
+          0.5 1.5
+          1.0 -1.0
+        feedback: "With η = 0.5: 4 − 0.5·2·(4 + 1) = 4 − 5 = −1 after the very first step."
+
+  - id: m-mcq-nonconvex
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      You train the same neural network twice with different random initial weights. Same data, same learning
+      rate. The final training losses are 0.31 and 0.27. What is the best explanation?
+    explanation: >-
+      Neural-network losses are non-convex, so gradient descent from different starting points can settle in
+      different minima (or regions) of different quality. This is expected; fix the seed to reproduce a run and
+      compare runs on validation data.
+    options:
+      - id: a
+        text: The loss is non-convex, so different starting points can lead gradient descent to different minima.
+        correct: true
+        feedback: Correct. Small differences between runs are normal for non-convex training.
+      - id: b
+        text: There must be a bug, because gradient descent always finds the global minimum.
+        feedback: That guarantee holds for convex functions only; neural-network losses are not convex.
+      - id: c
+        text: The learning rate was too small in the first run.
+        feedback: Both runs used the same learning rate; the difference comes from where they started.
+      - id: d
+        text: Random initialisation changes the training data.
+        feedback: The data is the same; the initial weights determine where on the loss surface descent begins.
+
+  - id: m-code-numerical-derivative
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write two functions:
+
+      - `numerical_derivative(f, x, h=1e-5)` — the **central** difference estimate `(f(x + h) − f(x − h)) / (2h)`;
+      - `minimize(f, start, learning_rate, steps)` — gradient descent that uses `numerical_derivative` for the
+        slope, so it can minimise any function without a hand-written derivative.
+    starterCode: |
+      def numerical_derivative(f, x, h=1e-5):
+          ...
+
+      def minimize(f, start, learning_rate, steps):
+          ...
+
+      print(round(numerical_derivative(lambda x: x ** 3, 2.0), 6))
+      print(round(minimize(lambda x: (x - 3) ** 2, 0.0, 0.1, 200), 6))
+    solution: |
+      def numerical_derivative(f, x, h=1e-5):
+          return (f(x + h) - f(x - h)) / (2 * h)
+
+      def minimize(f, start, learning_rate, steps):
+          x = start
+          for _ in range(steps):
+              x = x - learning_rate * numerical_derivative(f, x)
+          return x
+
+      print(round(numerical_derivative(lambda x: x ** 3, 2.0), 6))
+      print(round(minimize(lambda x: (x - 3) ** 2, 0.0, 0.1, 200), 6))
+    expectedOutput: |
+      12.0
+      3.0
+    tests:
+      - name: central differences are accurate
+        code: |
+          import math
+          got = numerical_derivative(lambda x: x ** 3, 2.0)
+          assert got is not None and abs(got - 12) < 1e-6, (
+              f"The slope of x^3 at 2 is 12; you returned {got!r}. A forward difference is off by about 6e-5 here — "
+              "use the central difference (f(x + h) - f(x - h)) / (2h)."
+          )
+          assert abs(numerical_derivative(math.sin, 0.0) - 1) < 1e-8, "The slope of sin at 0 should be 1."
+          assert abs(numerical_derivative(math.exp, 1.0) - math.e) < 1e-6, "The slope of exp at 1 should be e."
+      - name: minimize finds minima of different functions
+        code: |
+          got = minimize(lambda x: (x - 3) ** 2, 0.0, 0.1, 200)
+          assert got is not None and abs(got - 3) < 1e-6, f"Minimising (x - 3)^2 should end near 3, got {got!r}."
+          got = minimize(lambda x: (x + 1.5) ** 2 + 2, 4.0, 0.2, 200)
+          assert abs(got + 1.5) < 1e-6, f"Minimising (x + 1.5)^2 + 2 should end near -1.5, got {got!r}."
+          got = minimize(lambda x: x ** 4 - 3 * x ** 2 + x, 2.0, 0.01, 500)
+          assert abs(got - 1.1309) < 1e-3, f"From 2.0 the quartic's nearest minimum is about 1.1309; got {got!r}."
+      - name: minimize uses numerical_derivative
+        code: |
+          assert calls("numerical_derivative"), "Call numerical_derivative inside minimize to get the slope."
+    hints:
+      - "numerical_derivative is one line: `return (f(x + h) - f(x - h)) / (2 * h)`."
+      - minimize is the gradient-descent loop from the lesson, with `numerical_derivative(f, x)` in place of a hand-written grad(x).
+    feedback:
+      - when: { outputContains: "12.00006" }
+        message: That looks like a forward difference. Use f(x + h) and f(x - h), and divide by 2h.
+    explanation: >-
+      The central difference cancels the first-order error term, so with h = 1e-5 it is accurate to about 1e-10
+      for smooth functions. Plugging it into the gradient-descent loop gives a general minimiser — slow for many
+      parameters (two evaluations per parameter per step), which is why real frameworks use automatic
+      differentiation, but ideal for checking gradients.
+
+  - id: m-debug-lr
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `train` fits a line by gradient descent, but it prints `nan nan`. The gradient formulas are correct. Find
+      the real problem and fix it so `train` converges with its default arguments (the checks also run it on
+      another dataset).
+    starterCode: |
+      def train(xs, ys, learning_rate=0.2, steps=2000):
+          w, b = 0.0, 0.0
+          n = len(xs)
+          for _ in range(steps):
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              w, b = w - learning_rate * dw, b - learning_rate * db
+          return w, b
+
+      w, b = train([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+      print(round(w, 3), round(b, 3))
+    solution: |
+      def train(xs, ys, learning_rate=0.05, steps=2000):
+          w, b = 0.0, 0.0
+          n = len(xs)
+          for _ in range(steps):
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              w, b = w - learning_rate * dw, b - learning_rate * db
+          return w, b
+
+      w, b = train([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+      print(round(w, 3), round(b, 3))
+    expectedOutput: |
+      1.97 1.06
+    tests:
+      - name: converges on the example
+        code: |
+          import math
+          w_, b_ = train([0, 1, 2, 3, 4], [1, 3.1, 4.9, 7.2, 8.8])
+          assert math.isfinite(w_) and math.isfinite(b_), f"train still returns ({w_}, {b_}). The steps overshoot — use a smaller learning rate."
+          assert abs(w_ - 1.97) < 0.01 and abs(b_ - 1.06) < 0.01, f"Expected about (1.97, 1.06) but got ({w_:.4f}, {b_:.4f}). If it is finite but wrong, the learning rate may now be too small for 2000 steps."
+      - name: converges on another dataset
+        code: |
+          import statistics
+          xs = [0, 0.5, 1, 1.5, 2]
+          ys = [3, 2.1, 1.0, -0.1, -0.9]
+          exact = statistics.linear_regression(xs, ys)
+          w_, b_ = train(xs, ys)
+          assert abs(w_ - exact.slope) < 0.01 and abs(b_ - exact.intercept) < 0.01, f"On other data train returned ({w_:.4f}, {b_:.4f}); expected about ({exact.slope:.4f}, {exact.intercept:.4f})."
+      - name: still gradient descent
+        code: |
+          assert not calls("linear_regression"), "Keep the gradient-descent loop; don't replace it with a library fit."
+    hints:
+      - Print w, b and the loss for the first few steps. Do they settle or grow?
+      - Growing values that end in nan are the signature of a learning rate that is too large.
+      - Try a learning rate around 0.05. (Too small, such as 0.001, will not converge in 2000 steps.)
+    feedback:
+      - when: { outputEquals: "nan nan\n" }
+        message: Still diverging. Reduce the default learning rate.
+    explanation: >-
+      With η = 0.2 each step overshoots the minimum along the steepest direction of the loss bowl, so the
+      parameters grow until they overflow to inf and become nan. For this data any learning rate below about 0.15
+      is stable; 0.05 converges well within 2000 steps. Scaling the inputs to a similar range is the other standard
+      fix, because it reduces the curvature that limits the step size.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-lr-half, m-mcq-nonconvex, m-code-numerical-derivative, m-debug-lr]
+
+cheatsheet: |
+  ```python
+  def numerical_derivative(f, x, h=1e-5):          # central difference, error ~ h²
+      return (f(x + h) - f(x - h)) / (2 * h)
+
+  x = start
+  for _ in range(steps):                           # gradient descent
+      x = x - learning_rate * grad(x)              # subtract: the gradient points uphill
+
+  # linear regression, MSE loss: errors e_i = w*x_i + b - y_i
+  dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+  db = 2 / n * sum(errors)
+  w, b = w - lr * dw, b - lr * db                  # simultaneous update
+  ```
+  - Learning rate: too small → slow · too large → oscillation, divergence, inf, NaN
+  - For (x − c)²: each step multiplies the distance by (1 − 2η); stable for 0 < η < 1
+  - Convex → local minimum = global minimum · non-convex → result depends on the start
+  - Check hand-derived gradients against central differences; judge models on held-out data

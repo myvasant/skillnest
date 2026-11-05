@@ -1,0 +1,580 @@
+id: tooling
+order: 4
+title: Git, GitHub, Linux and the Shell
+shortTitle: Git & Linux
+summary: >-
+  Version control with Git, collaboration on GitHub, and working confidently in a Linux shell — the daily
+  tools of every software, data and AI engineer.
+why: >-
+  Every team uses version control and almost every server runs Linux. Without these, you cannot collaborate,
+  recover from mistakes or deploy anything.
+modules:
+  - id: git
+    title: Git
+    summary: Commits, branches, merging, undoing mistakes and how Git stores history.
+  - id: github
+    title: GitHub collaboration
+    summary: Remotes, pull requests, reviews and team workflows.
+  - id: linux
+    title: Linux and the shell
+    summary: The file system, permissions, processes, pipes and shell scripting.
+concepts:
+  # --------------------------------------------------------------------- git
+  - id: tooling.version-control
+    title: Why version control
+    module: git
+    level: beginner
+    priority: essential
+    summary: Version control records snapshots of a project so you can see what changed, when and why, undo mistakes and work in parallel with others.
+    requires: [foundations.files-and-paths]
+    why: Without version control a bad edit can destroy days of work and collaborating means emailing files around; every professional codebase is versioned.
+    keyIdeas:
+      - A version control system records snapshots of a project (commits), each with an author, a timestamp and a message explaining why.
+      - You can compare any two versions, find the change that introduced a bug, and restore any earlier state.
+      - Branches let several lines of work proceed in parallel and be combined later.
+      - Git is distributed, so every clone holds the full history and most operations are local and fast; hosts such as GitHub and GitLab hold shared copies.
+    misconceptions:
+      - Git is not GitHub; Git is the version control tool on your machine and GitHub is a hosting and collaboration service built around it.
+      - Version control is not a backup of everything; files you never commit, or that you ignore, are not protected.
+    tools: [Git]
+    sources:
+      - title: "Pro Git, 1.1 About Version Control"
+        url: https://git-scm.com/book/en/v2/Getting-Started-About-Version-Control
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "The Missing Semester: Version Control (Git)"
+        url: https://missing.csail.mit.edu/2020/version-control/
+        publisher: MIT CSAIL
+  - id: tooling.git-basics
+    title: Git basics — init, add, commit, status, log, diff
+    module: git
+    level: beginner
+    priority: essential
+    summary: The working tree, the staging area and commits; recording changes with clear messages and inspecting history.
+    requires: [tooling.version-control, foundations.terminal-basics]
+    tools: [Git]
+    why: These few commands are what you use dozens of times a day; understanding the staging area prevents half-finished or accidental commits.
+    keyIdeas:
+      - "Git has three areas: the working tree (your files), the staging area or index (what the next commit will contain) and the repository (committed history)."
+      - "`git init` creates a repository, `git add <file>` stages changes and `git commit -m \"message\"` records the staged snapshot."
+      - "`git status` shows modified, staged and untracked files; run it before and after every other command while learning."
+      - "`git diff` shows unstaged changes, `git diff --staged` shows what will be committed, and `git log --oneline --graph` shows history."
+      - Make each commit one logical change with a short imperative subject ("Fix rounding in invoice totals") and a body explaining why if it is not obvious.
+    misconceptions:
+      - "`git commit` records only what was staged; `git commit -a` stages modified tracked files but still skips new, untracked ones."
+      - A commit stores a snapshot of the whole project, not a diff; Git computes diffs when you ask for them.
+    interview: Expect to explain the working tree, index and HEAD, and what `add`, `commit` and `status` each do.
+    sources:
+      - title: "Pro Git, 2.2 Recording Changes to the Repository"
+        url: https://git-scm.com/book/en/v2/Git-Basics-Recording-Changes-to-the-Repository
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: Git reference manual
+        url: https://git-scm.com/docs
+        publisher: Git project
+  - id: tooling.gitignore-hygiene
+    title: .gitignore and repository hygiene
+    module: git
+    level: beginner
+    priority: essential
+    summary: Keep generated files, environments and secrets out of the repository; a secret committed once lives on in history.
+    requires: [tooling.git-basics]
+    why: Committed virtual environments, build output and large data bloat the repository, and committed API keys are harvested by bots within minutes of being pushed to a public host.
+    keyIdeas:
+      - "`.gitignore` lists patterns for untracked files Git should ignore, such as `__pycache__/`, `.venv/`, `*.log` and `.env`."
+      - It only affects untracked files; to stop tracking a file that is already committed, run `git rm --cached <file>` and commit.
+      - Keep secrets in environment variables or a secrets manager and commit an `.env.example` with placeholder values instead.
+      - A secret that was pushed even once must be treated as leaked; revoke and rotate it first, then optionally purge it from history (e.g. with git filter-repo).
+      - Start from a template in the github/gitignore collection, and use pre-commit hooks or secret scanners to catch mistakes before they are pushed.
+    misconceptions:
+      - Deleting a secret in a new commit does not remove it; it stays in history and in every existing clone and fork.
+      - Adding an already-committed file to `.gitignore` does not untrack it.
+    tools: [pre-commit, git-filter-repo]
+    production: Enable secret scanning and push protection on your Git host, and rotate any credential that ever reaches a remote.
+    sources:
+      - title: gitignore documentation
+        url: https://git-scm.com/docs/gitignore
+        publisher: Git project
+      - title: Removing sensitive data from a repository
+        url: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository
+        publisher: GitHub Docs
+      - title: A collection of .gitignore templates
+        url: https://github.com/github/gitignore
+        publisher: GitHub
+  - id: tooling.git-undo
+    title: Undoing changes — restore, reset, revert, reflog
+    module: git
+    level: intermediate
+    priority: essential
+    summary: Choose the right tool to discard local edits, unstage, rewrite unpushed commits, safely revert pushed ones, and recover "lost" work with the reflog.
+    requires: [tooling.git-basics, tooling.git-branching]
+    why: Everyone commits the wrong thing eventually; knowing which undo command is safe in which situation turns a panic into a one-line fix.
+    keyIdeas:
+      - "`git restore <file>` discards unstaged edits to a file and `git restore --staged <file>` unstages it."
+      - "Fix the last unpushed commit with `git commit --amend`; move a branch back with `git reset`, where `--soft` keeps changes staged, `--mixed` (the default) keeps them unstaged and `--hard` discards them."
+      - "`git revert <commit>` undoes a pushed commit by adding a new commit that inverts it, leaving shared history intact."
+      - "`git reflog` lists where HEAD has been, so commits lost after a reset or rebase can be recovered with `git branch rescue HEAD@{2}`; entries expire (by default after 90 days, 30 for unreachable commits)."
+      - "`git stash` shelves uncommitted work temporarily and `git stash pop` brings it back."
+    misconceptions:
+      - Uncommitted changes discarded with `git reset --hard` or `git restore` cannot be recovered from the reflog; only committed work can.
+      - "`git revert` does not return the project to an earlier commit; it undoes the changes introduced by that one commit."
+    interview: Interviewers ask when to use reset versus revert and how to recover a commit after a bad reset.
+    sources:
+      - title: "Pro Git, 2.4 Undoing Things"
+        url: https://git-scm.com/book/en/v2/Git-Basics-Undoing-Things
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "Pro Git, 7.7 Reset Demystified"
+        url: https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: git-reflog documentation
+        url: https://git-scm.com/docs/git-reflog
+        publisher: Git project
+  - id: tooling.git-branching
+    title: Branches and merging
+    module: git
+    level: beginner
+    priority: essential
+    summary: A branch is a movable pointer to a commit; merging combines histories with a fast-forward or a merge commit.
+    requires: [tooling.git-basics]
+    why: Branches let you work on a feature or experiment without disturbing working code, and merge it back when it is ready.
+    keyIdeas:
+      - A branch is a lightweight, movable pointer to a commit; each new commit moves the current branch forward, and `HEAD` records which branch you are on.
+      - "`git switch -c feature` creates a branch and switches to it, `git switch main` switches back, and `git branch` lists branches (`git checkout` is the older, overloaded command)."
+      - A fast-forward merge happens when the target branch has not moved since you branched; Git simply moves the pointer and creates no new commit.
+      - When both branches have new commits, Git performs a three-way merge using their common ancestor and records a merge commit with two parents.
+      - Delete merged branches with `git branch -d`; `git branch -D` force-deletes unmerged ones.
+    misconceptions:
+      - Creating a branch does not copy any files; it just records a reference to one commit, which is why branches are cheap.
+      - Uncommitted changes are not stored on a branch; they travel with you when you switch, or Git refuses to switch if they would be overwritten.
+    interview: Expect to explain what a branch really is and the difference between a fast-forward and a merge commit.
+    sources:
+      - title: "Pro Git, 3.1 Branches in a Nutshell"
+        url: https://git-scm.com/book/en/v2/Git-Branching-Branches-in-a-Nutshell
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "Pro Git, 3.2 Basic Branching and Merging"
+        url: https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - id: tooling.git-merge-conflicts
+    title: Resolving merge conflicts
+    module: git
+    level: intermediate
+    priority: essential
+    summary: Conflicts happen when two branches change the same lines; read the conflict markers, decide the correct result, test, then commit.
+    requires: [tooling.git-branching]
+    why: Conflicts are a normal part of team work; resolving them calmly and correctly prevents lost changes and broken builds.
+    keyIdeas:
+      - A conflict occurs when both sides changed the same lines, or one side edited a file the other deleted; Git merges everything else automatically.
+      - Conflicted files contain `<<<<<<<`, `=======` and `>>>>>>>` markers around the current branch's version ("ours") and the incoming version ("theirs").
+      - Edit the file to the correct combined result (often neither side alone), remove the markers, `git add` it, then `git commit` (or `git rebase --continue`).
+      - "`git status` lists files that are still unmerged, and `git merge --abort` returns to the state before the merge."
+      - Small, short-lived branches that are merged or rebased onto `main` frequently produce fewer and smaller conflicts.
+    misconceptions:
+      - A merge without conflicts is not necessarily correct; two clean changes can still break each other, so run the tests.
+      - During a rebase "ours" and "theirs" are swapped compared with a merge, because your commits are being replayed onto the other branch.
+    tools: [VS Code merge editor]
+    sources:
+      - title: "Pro Git, 3.2 Basic Branching and Merging (basic merge conflicts)"
+        url: https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-and-Merging
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: Resolving a merge conflict using the command line
+        url: https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/resolving-a-merge-conflict-using-the-command-line
+        publisher: GitHub Docs
+  - id: tooling.git-rebase
+    title: Rebase, cherry-pick and rewriting history
+    module: git
+    level: advanced
+    priority: supporting
+    summary: Rebasing replays commits onto a new base for a linear history; never rewrite history others have already pulled.
+    requires: [tooling.git-branching, tooling.git-undo]
+    why: A clean, linear history is easier to review, bisect and revert, but rewriting shared history can destroy teammates' work.
+    keyIdeas:
+      - "`git rebase main` replays your branch's commits on top of the latest `main`, creating new commits with new hashes and a linear history."
+      - Interactive rebase (`git rebase -i HEAD~3`) lets you reorder, reword, squash and drop commits before sharing them.
+      - "`git cherry-pick <commit>` copies a single commit onto the current branch, for example to backport a fix to a release branch."
+      - Do not rebase commits that others have built on; when you must update a pushed branch that only you use, prefer `git push --force-with-lease` to `--force`.
+      - Merging preserves exactly what happened, while rebasing tells a cleaner story; many teams rebase locally and choose a merge method for pull requests.
+    misconceptions:
+      - Rebasing does not move the original commits; it creates copies, and the originals stay reachable through the reflog for a while.
+      - Rebasing does not avoid conflicts; you may have to resolve them once for each replayed commit.
+    interview: Expect "merge or rebase, and when?" and what force-pushing a shared branch does to teammates.
+    sources:
+      - title: "Pro Git, 3.6 Rebasing"
+        url: https://git-scm.com/book/en/v2/Git-Branching-Rebasing
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "Pro Git, 7.6 Rewriting History"
+        url: https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: git-rebase documentation
+        url: https://git-scm.com/docs/git-rebase
+        publisher: Git project
+  - id: tooling.git-internals
+    title: How Git stores data
+    module: git
+    level: advanced
+    priority: optional
+    summary: Blobs, trees, commits and refs in a content-addressed object store explain why Git is fast and why commits are immutable.
+    requires: [tooling.git-branching, cs.hashing]
+    why: Knowing the object model turns confusing commands (reset, rebase, detached HEAD) into simple pointer moves and makes recovery from mistakes predictable.
+    keyIdeas:
+      - Git is a content-addressed store in which every object is named by a hash of its content (SHA-1 in most repositories; SHA-256 repositories are supported).
+      - Blobs hold file contents, trees map names to blobs and subtrees, commits point to one tree plus parent commits, author and message, and annotated tags name objects.
+      - A commit's hash covers its tree and parents, so changing anything in the past changes every later hash, which is why commits are immutable and rewritten history has new IDs.
+      - Refs (branches and tags) are names that point to commits, traditionally stored as files under `.git/refs` or in `packed-refs` (newer Git versions also support the reftable format); `HEAD` normally points to a branch.
+      - Explore with `git cat-file -p <hash>`, `git ls-tree` and `git rev-parse`; `git gc` compresses objects into packfiles with delta compression.
+    misconceptions:
+      - Git does not store each commit as a diff; it stores snapshots, and packfiles add delta compression only as a storage optimisation.
+      - Identical files share a single blob, so renaming a file or keeping copies does not duplicate its content.
+    sources:
+      - title: "Pro Git, 10.2 Git Objects"
+        url: https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "Pro Git, 10.3 Git References"
+        url: https://git-scm.com/book/en/v2/Git-Internals-Git-References
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+  # ------------------------------------------------------------------ github
+  - id: tooling.git-remotes
+    title: Remotes — clone, fetch, pull, push
+    module: github
+    level: beginner
+    priority: essential
+    summary: A remote is another copy of the repository; fetch downloads commits, pull fetches and integrates, push uploads, and tracking branches connect them.
+    requires: [tooling.git-branching, foundations.internet-basics]
+    why: Remotes are how work is shared, backed up and deployed; most confusion with Git in teams comes from not knowing what is local and what is remote.
+    keyIdeas:
+      - "`git clone <url>` copies a repository and names its source remote `origin`; `git remote -v` lists remotes."
+      - "`git fetch` downloads new commits into remote-tracking branches such as `origin/main` without touching your own branches or files."
+      - "`git pull` is `git fetch` followed by integrating the upstream branch into yours, by merging or, with `--rebase` or `pull.rebase=true`, by rebasing."
+      - "`git push -u origin feature` uploads a branch and sets its upstream so later `git push` and `git pull` need no arguments; a push is rejected if the remote has commits you do not have."
+      - Hosts authenticate Git over SSH keys or HTTPS with tokens and credential helpers; GitHub does not accept account passwords for Git operations.
+    misconceptions:
+      - "`origin/main` is your local record of the remote as of the last fetch, not a live view of it."
+      - "`git pull` is not just a download; it changes your current branch and can produce conflicts."
+    interview: Interviewers ask for the difference between fetch and pull and what a rejected (non-fast-forward) push means.
+    sources:
+      - title: "Pro Git, 2.5 Working with Remotes"
+        url: https://git-scm.com/book/en/v2/Git-Basics-Working-with-Remotes
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+      - title: "Pro Git, 3.5 Remote Branches"
+        url: https://git-scm.com/book/en/v2/Git-Branching-Remote-Branches
+        publisher: Scott Chacon and Ben Straub (git-scm.com)
+  - id: tooling.github-collaboration
+    title: Collaborating on GitHub
+    module: github
+    level: beginner
+    priority: essential
+    summary: Repositories, issues, forks, README and licence files, and how open-source and team projects coordinate work.
+    requires: [tooling.git-remotes]
+    tools: [GitHub, GitHub CLI]
+    why: GitHub (and similar hosts such as GitLab) is where teams plan, discuss, review and ship code, and where your public work is visible to employers.
+    keyIdeas:
+      - A hosted repository adds issues, pull requests, discussions, CI (GitHub Actions) and access control on top of Git.
+      - Issues track bugs and tasks; a pull request description containing "Fixes" or "Closes" followed by the issue number closes that issue automatically when the PR is merged into the default branch.
+      - To contribute to a project you cannot push to, fork it, push to a branch in your fork and open a pull request against the original.
+      - A README, LICENSE, CONTRIBUTING guide and code of conduct tell others how to use and contribute to a project.
+      - Grant people the least access they need and protect important branches with required reviews and status checks.
+    misconceptions:
+      - Public code is not automatically open source; without a licence, default copyright applies and others have no permission to reuse it.
+      - A fork is not a branch; it is a separate copy of the repository under another account.
+    sources:
+      - title: Contributing to a project
+        url: https://docs.github.com/en/get-started/exploring-projects-on-github/contributing-to-a-project
+        publisher: GitHub Docs
+      - title: Linking a pull request to an issue
+        url: https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue
+        publisher: GitHub Docs
+      - title: Open Source Guides
+        url: https://opensource.guide/
+        publisher: GitHub
+  - id: tooling.pull-requests
+    title: Pull requests
+    module: github
+    level: intermediate
+    priority: essential
+    summary: Propose changes on a branch, describe them, respond to review, keep CI green, and merge with a clean history.
+    requires: [tooling.github-collaboration, tooling.git-merge-conflicts]
+    tools: [GitHub, GitHub CLI]
+    why: Pull requests are the unit of change in most teams; how you shape and describe them decides how fast and how well they are reviewed.
+    keyIdeas:
+      - A pull request proposes merging one branch into another and collects the diff, discussion, reviews and CI results in one place.
+      - Keep PRs small and focused, and describe what changed, why, how it was tested and any risks; open a draft PR early to get feedback on direction.
+      - Respond to every review comment, by changing the code or by explaining, and push follow-up commits to the same branch.
+      - Branch protection rules or rulesets can require approvals and passing status checks before a PR can be merged.
+      - GitHub offers merge commits (keep every commit), squash and merge (one commit) and rebase and merge (linear, keeps commits); teams usually standardise on one.
+    misconceptions:
+      - Passing CI does not mean a change is correct; it means the existing checks pass.
+      - Squash merging does not delete the review discussion; it only collapses the branch's commits into one on the target branch.
+    interview: Behavioural interviews ask how you structure a large change into reviewable PRs and how you respond to critical review feedback.
+    sources:
+      - title: Pull requests (reference)
+        url: https://docs.github.com/en/pull-requests/reference/pull-requests
+        publisher: GitHub Docs
+      - title: About merge methods on GitHub
+        url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github
+        publisher: GitHub Docs
+      - title: About protected branches
+        url: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches
+        publisher: GitHub Docs
+  - id: tooling.branching-strategies
+    title: Branching strategies
+    module: github
+    level: intermediate
+    priority: supporting
+    summary: Trunk-based development, GitHub flow and release branches trade integration speed against release control.
+    requires: [tooling.pull-requests]
+    why: A team's branching strategy determines how often work is integrated, how releases are cut and how painful merges become.
+    keyIdeas:
+      - Trunk-based development integrates small changes into `main` at least daily and hides unfinished work behind feature flags.
+      - GitHub flow uses a short-lived branch per change, a pull request with review and CI, a merge to `main`, then deployment.
+      - Release branches (e.g. `release/2.3`) stabilise a version while `main` moves on, with fixes cherry-picked between them.
+      - GitFlow (develop, feature, release and hotfix branches) suits scheduled, versioned releases but adds overhead for continuously deployed services.
+      - The longer a branch lives, the larger and riskier its merge; choose the lightest strategy your release process allows.
+    misconceptions:
+      - More branches do not mean more safety; long-lived branches delay integration and hide conflicts until the end.
+    interview: Interviewers ask which strategy you would choose for a continuously deployed web service versus a versioned library, and why.
+    sources:
+      - title: GitHub flow
+        url: https://docs.github.com/en/get-started/using-github/github-flow
+        publisher: GitHub Docs
+      - title: Patterns for Managing Source Code Branches
+        url: https://martinfowler.com/articles/branching-patterns.html
+        publisher: Martin Fowler
+      - title: Trunk Based Development
+        url: https://trunkbaseddevelopment.com/
+        publisher: Paul Hammant
+  # ------------------------------------------------------------------- linux
+  - id: tooling.linux-filesystem
+    title: The Linux file system and navigation
+    module: linux
+    level: beginner
+    priority: essential
+    summary: The single directory tree rooted at /, standard directories, and commands to list, move, copy, find and inspect files.
+    requires: [foundations.terminal-basics]
+    why: Servers, containers and cloud machines are mostly Linux without a graphical interface, so you must find, inspect and manage files from the shell.
+    keyIdeas:
+      - Everything lives in one tree rooted at `/`; disks and devices are mounted into it rather than getting drive letters.
+      - "Standard directories: `/home` (users), `/etc` (configuration), `/var` (logs and changing data), `/tmp` (temporary files), `/usr/bin` (programs), `/opt`, `/dev` (devices) and `/proc` (process information)."
+      - Navigate with `pwd`, `cd` and `ls -la`; `~` is your home directory and names starting with `.` are hidden.
+      - Manage files with `cp -r`, `mv`, `rm -r`, `mkdir -p` and `touch`; inspect them with `cat`, `less`, `head`, `tail -f`, `file`, `du -sh` and `df -h`.
+      - Find files with `find . -name "*.py"` and text with `grep -rn "pattern" .`; `man <command>` and `<command> --help` document each tool.
+    misconceptions:
+      - "`rm` has no recycle bin; deleted files are gone, so check globs such as `rm -rf ./*` before pressing Enter."
+      - Paths are case-sensitive on Linux, so `Data.csv` and `data.csv` are different files.
+    sources:
+      - title: hier(7) — description of the file system hierarchy
+        url: https://man7.org/linux/man-pages/man7/hier.7.html
+        publisher: Linux man-pages project
+      - title: Filesystem Hierarchy Standard 3.0
+        url: https://refspecs.linuxfoundation.org/FHS_3.0/fhs/index.html
+        publisher: The Linux Foundation
+      - title: "The Missing Semester: Course overview + the shell"
+        url: https://missing.csail.mit.edu/2020/course-shell/
+        publisher: MIT CSAIL
+  - id: tooling.linux-permissions
+    title: Linux users and permissions
+    module: linux
+    level: beginner
+    priority: essential
+    summary: rwx permissions for user, group and others, chmod/chown, sudo and why services run as unprivileged users.
+    requires: [tooling.linux-filesystem, foundations.permissions]
+    why: "\"Permission denied\" is one of the most common errors on servers, and permissions are the first line of defence when a process is compromised."
+    keyIdeas:
+      - Every file has an owner, a group and permission bits for the user, the group and others; read is 4, write is 2 and execute is 1.
+      - "`ls -l` shows modes such as `-rwxr-x---`; `chmod 750 run.sh` or `chmod u+x run.sh` changes them and `chown user:group file` changes ownership."
+      - On a directory, `r` lets you list names, `w` lets you create and delete entries, and `x` lets you enter it and access the files inside.
+      - "`sudo` runs a single command as root (and logs it); root bypasses almost every permission check, so use it only when needed."
+      - Run services as dedicated unprivileged users so a compromised process can only touch what that user can access.
+    misconceptions:
+      - "`chmod 777` does not fix permission errors; it lets every user modify the file and is a security hole."
+      - "`sudo` does not apply to shell redirection: `sudo echo x > /etc/file` fails because your own shell opens the file; use `echo x | sudo tee /etc/file`."
+    production: Containers should also run as a non-root user, with only the files they need mounted and writable.
+    sources:
+      - title: chmod(1)
+        url: https://man7.org/linux/man-pages/man1/chmod.1.html
+        publisher: Linux man-pages project
+      - title: path_resolution(7) — how permissions are checked when a path is resolved
+        url: https://man7.org/linux/man-pages/man7/path_resolution.7.html
+        publisher: Linux man-pages project
+      - title: credentials(7) — process identifiers
+        url: https://man7.org/linux/man-pages/man7/credentials.7.html
+        publisher: Linux man-pages project
+  - id: tooling.linux-processes
+    title: Processes, signals and services
+    module: linux
+    level: intermediate
+    priority: essential
+    summary: Inspect and control running programs (ps, top, kill), understand signals and exit codes, and manage long-running services.
+    requires: [tooling.linux-filesystem, foundations.operating-systems]
+    why: Deployed applications are long-running processes; you need to find them, stop them cleanly, read their logs and understand why they exited.
+    keyIdeas:
+      - Every process has a PID, a parent, an owner and an exit status; `ps aux`, `top` or `htop` and `pgrep` show what is running.
+      - Exit code 0 means success and any other value means failure; `$?` holds the last command's code, and 128+N means the process was killed by signal N.
+      - "`kill PID` sends SIGTERM (please exit cleanly), `kill -9 PID` sends SIGKILL (cannot be caught or ignored), Ctrl+C sends SIGINT, and many daemons reload their configuration on SIGHUP."
+      - Run a command in the background with `cmd &` and manage jobs with `jobs`, `fg` and `bg`; `nohup` or tmux keeps work running after you log out.
+      - Most distributions manage services with systemd, using `systemctl status|start|stop|restart|enable <unit>` and `journalctl -u <unit>` for logs.
+    misconceptions:
+      - "`kill -9` should be a last resort because it prevents cleanup such as flushing files, closing connections and removing lock files."
+      - To find what is using a port, search by port rather than by name, with `ss -ltnp` or `lsof -i :8000`.
+    interview: Expect questions on the difference between SIGTERM and SIGKILL and how you would find and stop a process holding a port.
+    production: Handle SIGTERM gracefully (finish in-flight work, then exit), because systemd, Docker and Kubernetes send it before falling back to SIGKILL.
+    sources:
+      - title: signal(7) — overview of signals
+        url: https://man7.org/linux/man-pages/man7/signal.7.html
+        publisher: Linux man-pages project
+      - title: ps(1)
+        url: https://man7.org/linux/man-pages/man1/ps.1.html
+        publisher: Linux man-pages project
+      - title: systemctl
+        url: https://www.freedesktop.org/software/systemd/man/latest/systemctl.html
+        publisher: systemd project (freedesktop.org)
+  - id: tooling.shell-pipes
+    title: Streams, redirection and pipes
+    module: linux
+    level: beginner
+    priority: essential
+    summary: Every program has stdin, stdout and stderr; redirection and pipes compose small tools (grep, sort, uniq, wc) into powerful one-liners.
+    requires: [tooling.linux-filesystem]
+    why: Combining small tools answers questions about logs and data files in seconds, without writing a program.
+    keyIdeas:
+      - Every process starts with three streams, numbered 0 (stdin), 1 (stdout) and 2 (stderr).
+      - "`>` writes stdout to a file (overwriting), `>>` appends, `<` reads stdin from a file, `2>` redirects stderr and `2>&1` sends stderr wherever stdout currently goes."
+      - "`a | b` connects the stdout of `a` to the stdin of `b`; both run at the same time and data streams between them."
+      - Small tools compose, for example `sort access.log | uniq -c | sort -rn | head` lists the most frequent lines; also learn `grep`, `wc -l`, `cut`, `tr`, `tail` and `xargs`.
+      - "`tee` copies a stream to a file while passing it on, and `/dev/null` discards anything written to it."
+    misconceptions:
+      - "Order matters: `cmd > out.txt 2>&1` captures both streams, but `cmd 2>&1 > out.txt` still sends stderr to the terminal."
+      - A pipe carries only stdout; error messages still appear on screen unless you redirect stderr too.
+      - "`uniq` removes only adjacent duplicate lines, so sort first."
+    sources:
+      - title: "Bash Reference Manual: Redirections"
+        url: https://www.gnu.org/software/bash/manual/html_node/Redirections.html
+        publisher: GNU Project
+      - title: "Bash Reference Manual: Pipelines"
+        url: https://www.gnu.org/software/bash/manual/html_node/Pipelines.html
+        publisher: GNU Project
+      - title: "The Missing Semester: Data Wrangling"
+        url: https://missing.csail.mit.edu/2020/data-wrangling/
+        publisher: MIT CSAIL
+  - id: tooling.shell-scripting
+    title: Shell scripting
+    module: linux
+    level: intermediate
+    priority: supporting
+    summary: Automate tasks with bash scripts — variables, quoting, conditions, loops, exit codes and safe defaults such as set -euo pipefail.
+    requires: [tooling.shell-pipes, tooling.linux-permissions, tooling.linux-processes]
+    tools: [Bash, ShellCheck]
+    why: Setup steps, deployments, CI jobs and container entrypoints are usually shell scripts, and small quoting mistakes in them cause outages and data loss.
+    keyIdeas:
+      - Start scripts with a shebang such as `#!/usr/bin/env bash` and make them executable with `chmod +x script.sh`.
+      - 'Assign with `name=value` (no spaces around `=`) and always quote expansions, as in `"$file"` and `"$@"`, to prevent word splitting and glob expansion.'
+      - "`set -euo pipefail` makes the script exit on a failing command (`-e`), on an unset variable (`-u`) and when any command in a pipeline fails (`pipefail`)."
+      - Use `[[ ... ]]` for tests, `if`, `for`, `while` and `case` for control flow, `$(command)` for command substitution and `exit 1` to report failure.
+      - Lint scripts with ShellCheck, and switch to Python once a script grows long or needs real data structures or error handling.
+    misconceptions:
+      - "`set -e` is not complete error handling; it is ignored in conditions, in `&&`/`||` lists and in several other contexts."
+      - "`sh` is not always bash; on Debian and Ubuntu it is dash, which lacks bash features such as `[[` and arrays."
+    sources:
+      - title: Bash Reference Manual
+        url: https://www.gnu.org/software/bash/manual/bash.html
+        publisher: GNU Project
+      - title: "Bash Reference Manual: The Set Builtin"
+        url: https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html
+        publisher: GNU Project
+      - title: ShellCheck
+        url: https://www.shellcheck.net/
+        publisher: ShellCheck project
+  - id: tooling.ssh
+    title: SSH and remote machines
+    module: linux
+    level: intermediate
+    priority: essential
+    summary: Secure Shell logs into remote machines and copies files using key pairs instead of passwords.
+    requires: [tooling.linux-permissions, foundations.internet-basics]
+    why: SSH is how you reach servers, cloud VMs and GPU machines, and how Git authenticates to hosts without passwords.
+    keyIdeas:
+      - "`ssh user@host` opens an encrypted shell on a remote machine; the server proves its identity with a host key that your client remembers in `~/.ssh/known_hosts`."
+      - Create a key pair with `ssh-keygen -t ed25519`; the private key stays on your machine, protected by a passphrase, and the public key goes into the server's `~/.ssh/authorized_keys` (e.g. with `ssh-copy-id`).
+      - Copy files with `scp` or `sftp`, sync directories with `rsync -avz`, and forward a port with `ssh -L 8080:localhost:80 host`.
+      - "`~/.ssh/config` stores host aliases, usernames, key files and jump hosts, and `ssh-agent` holds unlocked keys so you type the passphrase once."
+      - OpenSSH refuses private keys that other users can read; keep `~/.ssh` at mode `700` and private keys at `600`.
+    misconceptions:
+      - Never copy your private key to servers or share it; only the public key is distributed.
+      - A "remote host identification has changed" warning is not something to bypass blindly; it can mean the server was rebuilt or that the connection is being intercepted.
+    interview: Interviewers ask how public-key authentication works and how you would secure SSH access to a server.
+    production: Disable password and direct root login, and for teams prefer short-lived SSH certificates or a managed access service over long-lived shared keys.
+    sources:
+      - title: ssh(1)
+        url: https://man.openbsd.org/ssh
+        publisher: OpenBSD / OpenSSH
+      - title: ssh-keygen(1)
+        url: https://man.openbsd.org/ssh-keygen
+        publisher: OpenBSD / OpenSSH
+      - title: Connecting to GitHub with SSH
+        url: https://docs.github.com/en/authentication/connecting-to-github-with-ssh
+        publisher: GitHub Docs
+  - id: tooling.package-managers
+    title: System package managers
+    module: linux
+    level: beginner
+    priority: supporting
+    summary: apt, dnf, Homebrew and winget install and update system software from trusted repositories.
+    requires: [foundations.installing-tools, tooling.linux-permissions]
+    tools: [apt, dnf, Homebrew, winget]
+    why: Package managers install tools and their dependencies reproducibly and keep them patched, instead of downloading installers by hand.
+    keyIdeas:
+      - A package manager installs software and its dependencies from signed repositories and tracks what is installed so it can be upgraded or removed cleanly.
+      - On Debian and Ubuntu, `sudo apt update` refreshes the package lists, then `sudo apt install <pkg>` installs and `sudo apt upgrade` upgrades; Fedora and RHEL use `sudo dnf install <pkg>`.
+      - macOS users typically use Homebrew (`brew install <pkg>`); Windows has winget (`winget install <id>`).
+      - System package managers serve the operating system; a project's Python libraries belong in a virtual environment managed with pip or uv.
+      - Distribution repositories favour stability, so their versions can lag behind upstream; use vendor repositories, containers or version managers when you need newer releases.
+    misconceptions:
+      - "`apt update` does not upgrade anything; it only refreshes the list of available versions."
+      - Installing Python packages system-wide with `sudo pip install` can break operating system tools; many distributions now block it (PEP 668, "externally managed environment").
+    sources:
+      - title: apt(8)
+        url: https://manpages.debian.org/stable/apt/apt.8.en.html
+        publisher: Debian
+      - title: Homebrew documentation
+        url: https://docs.brew.sh/
+        publisher: Homebrew
+      - title: Use WinGet to install and manage applications
+        url: https://learn.microsoft.com/en-us/windows/package-manager/winget/
+        publisher: Microsoft Learn
+  - id: tooling.ci-basics
+    title: What continuous integration is
+    module: github
+    level: beginner
+    priority: supporting
+    summary: CI runs automated checks — linting, tests, builds — on a clean machine for every push or pull request, so problems are caught before they are merged.
+    why: Pull requests are only as safe as the checks run on them; knowing what "keep CI green" means is part of everyday collaboration.
+    requires: [tooling.git-remotes]
+    keyIdeas:
+      - A workflow file in the repository (for GitHub Actions, `.github/workflows/*.yml`) defines when checks run and what they do.
+      - Each run starts from a fresh environment, so it catches "works on my machine" problems such as missing dependencies.
+      - Required status checks can block merging until the checks pass.
+      - Fast checks (formatting, linting) should run first so failures surface quickly.
+    misconceptions:
+      - A green CI run only proves that the checks which exist passed; it is not proof the code is correct.
+    tools: [GitHub Actions]
+    sources:
+      - title: "GitHub Actions documentation"
+        url: https://docs.github.com/en/actions
+        publisher: GitHub
+  - id: tooling.git-tags-releases
+    title: Tags and releases
+    module: git
+    level: intermediate
+    priority: optional
+    summary: Tags name specific commits (usually versions such as v1.2.0); releases package a tag with notes and artefacts.
+    why: Users and deployments need stable, named versions rather than moving branch tips.
+    requires: [tooling.git-branching]
+    keyIdeas:
+      - "Annotated tags (`git tag -a v1.0.0 -m \"message\"`) store author, date and message; lightweight tags are just names."
+      - "Tags are not pushed by default; use `git push origin v1.0.0` or `git push --tags`."
+      - Semantic versioning (MAJOR.MINOR.PATCH) signals breaking changes, new features and fixes.
+    misconceptions:
+      - Moving or deleting a published tag breaks anyone who relied on it; publish a new version instead.
+    sources:
+      - title: "Pro Git: Tagging"
+        url: https://git-scm.com/book/en/v2/Git-Basics-Tagging
+        publisher: Scott Chacon and Ben Straub
+      - title: Semantic Versioning 2.0.0
+        url: https://semver.org/
+        publisher: semver.org

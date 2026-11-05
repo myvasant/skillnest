@@ -1,0 +1,596 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ------------------------------------------------------------- while loops
+  - id: python.while-loops.while-vs-for
+    level: junior
+    kind: conceptual
+    concepts: [python.while-loops, python.for-loops]
+    question: |
+      When would you choose a `while` loop instead of a `for` loop in Python? Give an example of each.
+    answer: |
+      A `for` loop walks through an iterable — a string, a range, a list, a file — and runs its body
+      once per item. Use it whenever there is a sequence to visit or a known number of repetitions:
+      `for score in scores:` or `for i in range(10):`. It manages the loop variable for you and cannot
+      run forever over a finite sequence.
+
+      A `while` loop repeats as long as a condition is true, checking it before every iteration. Use it
+      when the number of repetitions is **not known in advance** and depends on something discovered
+      while running: keep asking until the input is valid, keep doubling until a value passes a target,
+      keep reading until a sentinel such as `done`, or loop "forever" (`while True:`) in a server or
+      game loop that exits with `break`.
+
+      With `while` you are responsible for the three parts — initialise the loop variable, test it, and
+      update it in the body so the condition eventually becomes false — which is why `for` is the
+      default choice whenever it fits.
+    keyPoints:
+      - for iterates over the items of an iterable; while repeats while a condition is true.
+      - while fits an unknown number of repetitions (input validation, sentinels, convergence, event loops).
+      - With while, the programmer must initialise, test and update the loop variable.
+      - for cannot get stuck on a finite sequence, so prefer it when there is something to iterate over.
+    followUps:
+      - "Rewrite `for i in range(5): print(i)` as a while loop."
+      - How do you write a loop whose body runs at least once, given Python has no do-while?
+    pitfalls:
+      - Using while with a manual index to walk a string or list.
+      - Saying for loops are "faster" as the main reason, rather than clarity and safety.
+
+  - id: python.while-loops.find-infinite-loop
+    level: junior
+    kind: debugging
+    concepts: [python.while-loops]
+    question: |
+      This loop is meant to print 0.0, 0.1, …, 0.9 and stop, but it never ends. Why, and how would you
+      fix it?
+
+      ```python
+      x = 0.0
+      while x != 1.0:
+          print(x)
+          x += 0.1
+      ```
+    answer: |
+      0.1 cannot be represented exactly in binary floating point, so repeatedly adding it accumulates
+      tiny errors. After ten additions `x` is `0.9999999999999999`, not `1.0`; the next addition jumps
+      past 1.0, so `x != 1.0` stays True forever.
+
+      Two fixes, in order of preference:
+
+      1. Control the loop with an integer and compute the float from it:
+         `for i in range(10): print(i / 10)` — exact count, no drift.
+      2. If a float condition is unavoidable, use an inequality that cannot be stepped over
+         (`while x < 1.0:`) — but be aware that drift can still change the iteration count (here it
+         would run 11 times, because 0.9999999999999999 < 1.0).
+
+      The general lesson: a loop ends only if its update moves the variable onto a value that makes the
+      condition false. Equality tests (`!=`) are fragile whenever the variable can skip the exit value —
+      with floats, or with integers stepping by more than 1.
+    keyPoints:
+      - Binary floating point cannot represent 0.1 exactly, so the sum never equals 1.0 exactly.
+      - "!= can be stepped over; the condition never becomes false."
+      - Prefer an integer counter (range) and derive the float value from it.
+      - "< avoids the infinite loop but float drift can still change the number of iterations."
+    followUps:
+      - How would you stop a runaway loop in a terminal, and what exception does that raise?
+      - Name two other common causes of infinite while loops.
+    pitfalls:
+      - Blaming a "Python bug" instead of floating-point representation.
+      - Fixing it with round() inside the condition without understanding why it failed.
+
+  - id: python.while-loops.input-validation
+    level: mid
+    kind: coding
+    concepts: [python.while-loops, python.input-output]
+    question: |
+      Write code that keeps asking the user for a whole number between 1 and 10 until they enter one,
+      then prints it. Non-numeric input such as `abc` must not crash the program.
+    answer: |
+      A loop that exits from the middle keeps a single `input()` call:
+
+      ```python
+      while True:
+          text = input("Number from 1 to 10: ")
+          if text.isdecimal() and 1 <= int(text) <= 10:
+              break
+          print("Please enter a whole number from 1 to 10.")
+      number = int(text)
+      print("You chose", number)
+      ```
+
+      `text.isdecimal()` is checked first, and `and` short-circuits, so `int()` is only called on text
+      made of decimal digits. (`isdecimal` is safer than `isdigit` here: `"²".isdigit()` is True but
+      `int("²")` raises ValueError. Both reject "-3" and " 5"; if those should be accepted, strip the
+      text first, or use `try`/`except ValueError` around `int(text)`, which is the more general and
+      more common production approach.)
+
+      The equivalent "priming read" version reads once before the loop and again at the end of the
+      body; `while True` with `break` avoids duplicating the prompt.
+    keyPoints:
+      - Loop until the input is valid; the number of attempts is unknown, so while is the right tool.
+      - Validate before converting, or catch ValueError from int().
+      - Use short-circuit and so int() only runs on digit strings.
+      - while True with break avoids duplicating the input() call; a priming read is the alternative.
+      - Re-prompt with a helpful message on invalid input.
+    followUps:
+      - How would you limit the user to three attempts and report failure? (A loop else, or a counter.)
+      - Why does `int(" 7 ")` work while `" 7 ".isdecimal()` is False?
+    pitfalls:
+      - Converting with int() before checking, so "abc" raises ValueError.
+      - Forgetting to read new input inside the loop, creating an infinite loop.
+
+  # --------------------------------------------------------------- for loops
+  - id: python.for-loops.range-semantics
+    level: junior
+    kind: conceptual
+    concepts: [python.for-loops]
+    question: |
+      What numbers do `range(5)`, `range(2, 8, 2)` and `range(5, 0, -1)` produce? Why does range exclude
+      its stop value, and is a range a list?
+    answer: |
+      `range(5)` gives 0, 1, 2, 3, 4; `range(2, 8, 2)` gives 2, 4, 6; `range(5, 0, -1)` gives
+      5, 4, 3, 2, 1. Start defaults to 0 and is included; stop is always excluded; step defaults to 1
+      and may be negative (it cannot be 0).
+
+      Excluding stop makes the common cases clean: `range(n)` produces exactly n numbers, which are
+      exactly the valid indexes of a sequence of length n; `range(a, b)` has `b - a` numbers; and
+      adjacent ranges `range(0, 5)` and `range(5, 10)` meet without overlapping. It matches slicing,
+      where `s[a:b]` also excludes b.
+
+      A range is not a list. It is an immutable sequence object that stores only start, stop and step
+      and computes items on demand, so it uses the same small amount of memory regardless of its length.
+      It still supports `len()`, indexing, slicing and `in` (which CPython answers arithmetically for
+      integers). `list(range(5))` materialises it.
+    keyPoints:
+      - Correct outputs, including stop being excluded and the negative-step case.
+      - range(n) has n items that match the indexes of a length-n sequence; range(a, b) has b - a items.
+      - The half-open convention matches slicing.
+      - range is a lazy, immutable sequence with constant memory, not a list.
+      - Supports len, indexing and membership tests.
+    followUps:
+      - What does `range(10, 0)` produce, and why?
+      - How would you include n itself in `range(1, n)`?
+    pitfalls:
+      - Saying range(1, 5) includes 5.
+      - Saying range builds a list in memory (that was Python 2's range).
+
+  - id: python.for-loops.enumerate-zip
+    level: junior
+    kind: coding
+    concepts: [python.for-loops]
+    question: |
+      Rewrite this more idiomatically, and explain what changes:
+
+      ```python
+      for i in range(len(names)):
+          print(i + 1, names[i], scores[i])
+      ```
+    answer: |
+      ```python
+      for position, (name, score) in enumerate(zip(names, scores), start=1):
+          print(position, name, score)
+      ```
+
+      `zip(names, scores)` walks both sequences in parallel and yields pairs; `enumerate(..., start=1)`
+      adds a counter starting at 1. No index arithmetic is needed, so there is no chance of an off-by-one
+      error or of indexing the wrong list, and the code works for any iterables, not just sequences that
+      support indexing.
+
+      One behavioural difference: the original raises IndexError if `scores` is shorter than `names`,
+      while zip silently stops at the shorter input. Since Python 3.10, `zip(names, scores, strict=True)`
+      raises ValueError on a length mismatch, which restores the safety check.
+    keyPoints:
+      - enumerate supplies the index (with start=1 for human numbering).
+      - zip pairs items from several iterables position by position.
+      - Removes manual indexing and off-by-one risks; works with any iterable.
+      - zip stops at the shortest input; strict=True (3.10+) raises on mismatched lengths.
+    followUps:
+      - When is `range(len(x))` still reasonable? (When you need to modify `x[i]` in place or look at neighbours.)
+    pitfalls:
+      - Forgetting the parentheses when unpacking nested pairs.
+      - Not noticing that zip hides length mismatches.
+
+  - id: python.for-loops.iteration-protocol
+    level: senior
+    kind: conceptual
+    concepts: [python.for-loops, python.iterators]
+    question: |
+      Explain what Python actually does when it runs `for x in obj:`. Use that to explain why assigning to
+      `x` in the body does not affect the loop, and why removing items from a list while iterating over
+      it skips elements.
+    answer: |
+      The for statement evaluates `obj` once and calls `iter(obj)` to get an iterator. Before each
+      iteration it calls `next()` on that iterator and assigns the result to the target `x` with an
+      ordinary assignment; when `next()` raises `StopIteration`, the loop ends (and runs its `else`
+      clause, if there is one). If `obj` is not iterable, `iter()` raises
+      `TypeError: '...' object is not iterable`.
+
+      Because the iterator — not the name — holds the position, rebinding `x` inside the body only
+      changes what that name refers to until the next `next()` call rebinds it. The loop's progress and
+      the underlying collection are untouched.
+
+      A list iterator in CPython stores an integer position into the list and stops when the position
+      reaches the list's current length. Removing the current item shifts later items one slot left, so
+      the next position skips the element that slid into the slot just visited. (Appending during
+      iteration can make the loop run forever.) The fix is to iterate over a copy (`for x in lst[:]`) or,
+      better, build a new list of the items to keep.
+    keyPoints:
+      - for calls iter() once, then next() before every iteration, until StopIteration.
+      - The loop variable is bound by plain assignment each iteration.
+      - The iterator holds the position, so rebinding the loop variable has no effect on the loop.
+      - A list iterator tracks an index; mutating the list shifts items and causes skips (or endless loops).
+      - Fix by iterating over a copy or building a new list.
+    followUps:
+      - How would you write a class that can be used in a for loop?
+      - What happens if you modify a dict while iterating over it?
+    pitfalls:
+      - Claiming for loops use indexes internally for all iterables.
+      - Suggesting `for i in range(len(lst))` with del as a fix (it causes IndexError or skips).
+
+  # ------------------------------------------------------------ loop control
+  - id: python.loop-control.loop-else
+    level: mid
+    kind: conceptual
+    concepts: [python.loop-control]
+    question: |
+      When does the `else` block of a `for` or `while` loop run? Show a situation where it is genuinely
+      useful.
+    answer: |
+      A loop's `else` runs when the loop terminates normally — the for loop's iterator is exhausted, or
+      the while condition becomes false — and is skipped if the loop is ended by `break`. A loop that
+      runs zero times therefore also runs its else. The best mental name for it is "no break".
+
+      It is useful for searches, where break means "found" and else means "looked everywhere, not
+      found":
+
+      ```python
+      for d in range(2, n):
+          if n % d == 0:
+              print(n, "is divisible by", d)
+              break
+      else:
+          print(n, "is prime")
+      ```
+
+      Without it you need a flag variable set inside the loop and checked afterwards. Because many
+      developers misread `else` as "if the loop did not run", teams often add a comment
+      (`else:  # no break`) or prefer the flag, or move the search into a function that returns early.
+    keyPoints:
+      - else runs when the loop ends without break, including after zero iterations.
+      - break skips the else.
+      - Natural fit for search loops ("not found" branch).
+      - The flag-variable alternative and readability concerns.
+    followUps:
+      - Does a `return` inside the loop skip the else? (Yes — the loop does not finish normally.)
+      - Rewrite the example with a flag variable.
+    pitfalls:
+      - Saying else runs only when the loop body never ran.
+      - Indenting else under the if inside the loop, turning it into an if/else that runs every iteration.
+
+  - id: python.loop-control.break-nested
+    level: mid
+    kind: coding
+    concepts: [python.loop-control]
+    question: |
+      You are searching a grid with two nested for loops and want to stop **both** loops as soon as you
+      find a target. `break` in the inner loop does not do it. What are your options in Python?
+    answer: |
+      `break` only exits the innermost enclosing loop, and Python has no labelled break (PEP 3136
+      proposed one and was rejected). Common options:
+
+      1. **Move the search into a function and `return`** — the cleanest; returning leaves all loops at
+         once and gives the result a name.
+      2. **A flag**: set `found = True` before breaking the inner loop, and check it right after the
+         inner loop to break the outer one.
+      3. **for-else with continue/break**: put `else: continue` after the inner loop and `break` after
+         that — the outer break only runs if the inner loop broke. Correct but hard to read.
+      4. **Flatten the loops** into one, e.g. iterate over `itertools.product(rows, cols)` or a generator
+         of coordinates, then a single break suffices.
+
+      Raising and catching a custom exception also works but is rarely justified for normal control flow.
+    keyPoints:
+      - break exits only the innermost loop; no labelled break in Python.
+      - Function with return is the cleanest solution.
+      - A flag checked after the inner loop works without functions.
+      - Flattening with itertools.product (or a generator) allows a single break.
+    followUps:
+      - Which option would you choose in production code, and why?
+    pitfalls:
+      - Believing break exits all loops.
+      - Proposing exceptions as the first choice for ordinary control flow.
+
+  - id: python.loop-control.continue-in-while
+    level: junior
+    kind: debugging
+    concepts: [python.loop-control, python.while-loops]
+    question: |
+      This program is supposed to print the odd numbers below 10, but it hangs. Why?
+
+      ```python
+      n = 0
+      while n < 10:
+          if n % 2 == 0:
+              continue
+          print(n)
+          n += 1
+      ```
+    answer: |
+      `continue` skips the rest of the current iteration and goes straight back to the while condition.
+      On the first iteration n is 0, which is even, so `continue` jumps back before `n += 1` runs. n stays
+      0 forever, the condition stays True, and the loop never ends.
+
+      Fixes: update before you can `continue` —
+
+      ```python
+      n = 0
+      while n < 10:
+          n += 1
+          if n % 2 == 0:
+              continue
+          print(n)
+      ```
+
+      (this prints 1, 3, 5, 7, 9) — or avoid the manual counter entirely with
+      `for n in range(1, 10, 2): print(n)`. In a for loop, continue is safe because the next value comes
+      from the iterator.
+    keyPoints:
+      - continue in a while loop jumps back to the condition, skipping the rest of the body.
+      - The update below the continue never runs, so the loop variable never changes.
+      - Move the update before continue, or use a for loop / range with a step.
+    followUps:
+      - Why is the same pattern safe in a for loop?
+    pitfalls:
+      - Suggesting break instead, which changes the program's meaning.
+
+  # -------------------------------------------------------------------- lists
+  - id: python.lists.append-vs-extend
+    level: junior
+    kind: conceptual
+    concepts: [python.lists]
+    question: |
+      What is the difference between `lst.append(x)`, `lst.extend(x)` and `lst + x`? What do they return?
+    answer: |
+      `append(x)` adds `x` as a **single** new item at the end, whatever it is — appending a list nests
+      it: `[1, 2].append([3, 4])` gives `[1, 2, [3, 4]]`.
+
+      `extend(iterable)` adds **each item** of the iterable: `[1, 2].extend([3, 4])` gives
+      `[1, 2, 3, 4]`. Because it accepts any iterable, `lst.extend("ab")` adds `"a"` and `"b"`.
+
+      Both change the list in place and return `None`, so `lst = lst.append(x)` loses the list.
+
+      `lst + other` creates a **new** list and leaves `lst` unchanged; both operands must be lists.
+      `lst += other` is in-place, like `extend` (it accepts any iterable and mutates the same object,
+      which matters if other names refer to the list).
+    keyPoints:
+      - append adds one item (possibly a nested list); extend adds each item of an iterable.
+      - Both mutate in place and return None.
+      - "+ builds a new list; += mutates in place like extend."
+      - extend with a string adds its characters.
+    followUps:
+      - What is the time complexity of append, and why? (Amortised O(1) because of over-allocation.)
+    pitfalls:
+      - Assigning the result of append or extend.
+      - Assuming += and + behave identically when the list is aliased.
+
+  - id: python.lists.sort-vs-sorted
+    level: junior
+    kind: debugging
+    concepts: [python.lists]
+    question: |
+      A colleague's code fails with `TypeError: 'NoneType' object is not subscriptable` on the last line.
+      What is wrong?
+
+      ```python
+      prices = load_prices()
+      prices = prices.sort()
+      cheapest = prices[0]
+      ```
+    answer: |
+      `list.sort()` sorts the list **in place** and returns `None`. The second line therefore sorts the
+      list and then rebinds `prices` to `None`, so the sorted list is lost and `None[0]` fails.
+
+      Fix either by calling the method without assigning — `prices.sort()` — or by using the built-in
+      `sorted()`, which returns a new list: `prices = sorted(prices)`. Choose `sorted()` when you need to
+      keep the original order or when the input is any iterable (it always returns a list); choose
+      `.sort()` to reorder a list you own without allocating a second one.
+
+      Returning `None` from mutating methods is a deliberate Python convention: it signals that the
+      object itself was changed rather than a new one created. (Here `min(prices)` would be even simpler
+      if only the cheapest price is needed.)
+    keyPoints:
+      - sort() mutates the list and returns None; the assignment discards the list.
+      - Fix with prices.sort() alone or prices = sorted(prices).
+      - sorted() returns a new list from any iterable; sort() works only on lists, in place.
+      - Mutating methods returning None is a deliberate convention.
+      - min() avoids sorting if only the smallest value is needed.
+    followUps:
+      - Is Python's sort stable, and why might that matter?
+    pitfalls:
+      - Saying sort() "returns the sorted list".
+
+  - id: python.lists.complexity
+    level: senior
+    kind: conceptual
+    concepts: [python.lists, cs.dynamic-arrays]
+    question: |
+      How are Python lists implemented in CPython, and what does that imply for the cost of `lst[i]`,
+      `append`, `insert(0, x)`, `pop()`, `pop(0)` and `x in lst`? When would you use a different type?
+    answer: |
+      A CPython list is a dynamic array: a contiguous array of references (pointers) to objects, plus the
+      current length and the allocated capacity.
+
+      - `lst[i]` and `lst[i] = x` are O(1): direct offset into the array.
+      - `append` and `pop()` at the end are amortised O(1): CPython over-allocates when it grows the
+        array, so most appends need no reallocation; occasionally it reallocates and copies, but growing
+        proportionally keeps the average cost constant.
+      - `insert(0, x)`, `pop(0)` and removals in the middle are O(n): every later reference shifts.
+      - `x in lst`, `lst.index(x)`, `lst.remove(x)` are O(n): a linear scan comparing with `==`.
+      - `sort()` is O(n log n) in the worst case and close to O(n) on already-ordered data (Timsort),
+        and stable.
+
+      Alternatives: `collections.deque` for fast appends and pops at both ends (queues); a `set` or
+      `dict` for frequent membership tests or lookups by key (average O(1)); `heapq` for repeatedly
+      taking the smallest item; `array.array` for compact storage of many numbers.
+    keyPoints:
+      - Dynamic array of references with over-allocation.
+      - O(1) indexing; amortised O(1) append and pop() at the end.
+      - O(n) insert/pop at the front, and O(n) membership, index and remove.
+      - Stable O(n log n) sort that is fast on partly ordered data.
+      - deque for queues, set/dict for membership, heapq for priority queues.
+    followUps:
+      - Why is append only amortised O(1), not O(1) every time?
+      - How would you implement a FIFO queue efficiently?
+    pitfalls:
+      - Describing lists as linked lists.
+      - Using list.pop(0) in a hot loop as a queue.
+
+  - id: python.lists.remove-while-iterating
+    level: mid
+    kind: debugging
+    concepts: [python.lists, python.for-loops]
+    question: |
+      Why does this print `[1, 2, 3]` instead of `[1, 3]`, and how do you fix it?
+
+      ```python
+      nums = [1, 2, 2, 3]
+      for n in nums:
+          if n == 2:
+              nums.remove(n)
+      print(nums)
+      ```
+    answer: |
+      The for loop iterates by position. At position 1 it sees the first 2 and removes it; the list
+      becomes `[1, 2, 3]` and the second 2 slides into position 1. The iterator then moves on to position
+      2, which now holds 3, so the second 2 is never examined.
+
+      Never change the length of a list while iterating over it. Fixes:
+
+      ```python
+      nums = [n for n in nums if n != 2]        # build a new list (list comprehension)
+
+      kept = []                                  # the same with a loop
+      for n in nums:
+          if n != 2:
+              kept.append(n)
+
+      for n in nums[:]:                          # iterate over a copy, mutate the original
+          if n == 2:
+              nums.remove(n)
+      ```
+
+      Building a new list is clearest and O(n); repeated `remove()` is O(n) per call, so O(n²) overall.
+      If other code holds a reference to the original list, assign in place with `nums[:] = kept`.
+    keyPoints:
+      - The list iterator walks by index; removal shifts later items left, so one is skipped.
+      - Do not mutate a list's length while iterating over it.
+      - Build a new list (loop or comprehension) or iterate over a copy.
+      - Repeated remove() is quadratic; filtering into a new list is linear.
+      - nums[:] = new_list updates the original object for other references.
+    followUps:
+      - What would happen if the loop appended to the list instead?
+    pitfalls:
+      - Fixing it with an index loop and del, which raises IndexError or still skips items.
+
+  # ------------------------------------------------------------------ slicing
+  - id: python.slicing.reverse-palindrome
+    level: junior
+    kind: coding
+    concepts: [python.slicing]
+    question: |
+      Write an expression that reverses a string `s`, and use it to check whether `s` is a palindrome,
+      ignoring case. Explain how the slice works.
+    answer: |
+      ```python
+      def is_palindrome(s):
+          t = s.lower()
+          return t == t[::-1]
+      ```
+
+      `s[::-1]` is a slice with omitted start and stop and a step of -1. With a negative step the
+      defaults flip: start means "the last item" and stop means "past the first item", so the slice walks
+      the whole string from right to left and returns a new string. Comparing the lower-cased string with
+      its reverse tells you whether it reads the same both ways.
+
+      For real text you would also remove non-letters first, e.g.
+      `t = "".join(ch for ch in s.lower() if ch.isalnum())`, and use `casefold()` for more thorough
+      case-insensitive comparison of non-English text.
+    keyPoints:
+      - s[::-1] reverses any sequence and returns a new one.
+      - Negative step walks right to left; omitted bounds cover the whole sequence.
+      - Normalise case (lower or casefold) before comparing.
+      - Optionally strip punctuation and spaces for sentence palindromes.
+    followUps:
+      - What is the difference between `lst[::-1]`, `lst.reverse()` and `reversed(lst)`?
+    pitfalls:
+      - Using lst.reverse() and printing its result (None).
+
+  - id: python.slicing.shallow-copy
+    level: mid
+    kind: conceptual
+    concepts: [python.slicing, python.copying]
+    question: |
+      Is `b = a[:]` a copy of the list `a`? What happens if `a` contains other lists?
+    answer: |
+      Yes, but a **shallow** one. Slicing a list always creates a new list object, so `b is a` is False,
+      and appending to, removing from or reassigning slots of `b` does not affect `a`. (Contrast `b = a`,
+      which copies nothing — both names refer to the same list.)
+
+      The new list holds references to the **same item objects**. For immutable items (numbers, strings,
+      tuples of immutables) that is indistinguishable from a full copy. For mutable items such as inner
+      lists, both outer lists share them:
+
+      ```python
+      grid = [[1, 2], [3, 4]]
+      copy = grid[:]
+      copy[0].append(99)
+      print(grid)    # [[1, 2, 99], [3, 4]]
+      ```
+
+      `a[:]`, `list(a)`, `a.copy()` and `copy.copy(a)` are all shallow. Use `copy.deepcopy(a)` when the
+      nested objects must be independent, accepting the extra time and memory.
+    keyPoints:
+      - Slicing a list creates a new outer list (b is not a).
+      - The copy is shallow — the items themselves are shared.
+      - Mutating a shared inner list is visible through both lists.
+      - a[:], list(a), a.copy() and copy.copy() are shallow; copy.deepcopy() copies recursively.
+      - b = a is not a copy at all.
+    followUps:
+      - Why does `[[0] * 3] * 3` behave surprisingly?
+    pitfalls:
+      - Calling a slice a "deep copy".
+
+  - id: python.slicing.semantics
+    level: senior
+    kind: conceptual
+    concepts: [python.slicing]
+    question: |
+      Explain how slicing handles out-of-range and negative bounds, what object Python creates for
+      `s[a:b:c]`, and what it costs. Mention any edge cases you would watch for in production code.
+    answer: |
+      `s[a:b:c]` builds a `slice(a, b, c)` object and passes it to `s.__getitem__`. The sequence
+      normalises the bounds (as `slice.indices(len(s))` shows): negative values have `len(s)` added,
+      values beyond either end are clipped, and omitted values default according to the sign of the step.
+      Unlike indexing, slicing never raises IndexError — `"cat"[1:100]` is `"at"`, and an impossible range
+      is simply empty. A step of 0 raises ValueError.
+
+      For built-in sequences, slicing copies the selected references into a new object, so it costs
+      O(k) time and memory for a slice of k items; `big[1:]` inside a loop is a hidden O(n²). Strings and
+      lists do not provide views (use `memoryview` for bytes-like data). On mutable sequences, slices can
+      be assigned (`lst[i:j] = items`, which may change the length) and deleted; extended slices with a
+      step require a replacement of exactly the same length.
+
+      Edge cases: `s[-n:]` returns the whole sequence when n is 0 (because -0 == 0), so prefer
+      `s[len(s) - n:]` when n can be 0; silent clipping can hide off-by-one bugs; and slicing a list is
+      shallow. Custom classes can support slicing by handling slice objects in `__getitem__`.
+    keyPoints:
+      - Slice syntax creates a slice object handled by __getitem__; indices() shows the normalisation.
+      - Negative bounds are offset by len; out-of-range bounds are clipped; no IndexError; step 0 is an error.
+      - Slicing copies k references — O(k); repeated slicing in loops can be quadratic.
+      - Slice assignment and deletion on lists; extended slice assignment needs equal lengths.
+      - "Edge cases: s[-0:] is the whole sequence, silent clipping, shallow copies."
+    followUps:
+      - How would you make your own class support `obj[1:5]`?
+    pitfalls:
+      - Claiming slices raise IndexError for out-of-range bounds.
+      - Assuming slices are views that share memory with the original list.

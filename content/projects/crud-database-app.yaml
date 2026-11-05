@@ -1,0 +1,273 @@
+id: crud-database-app
+title: "CRUD database app: notes on SQLite with migrations"
+track: backend
+level: intermediate
+estimatedHours: 10
+summary: >-
+  Persist the notes API in SQLite: explicit transactions, a migration runner that applies numbered
+  SQL files exactly once and in order, a repository layer that uses only parameterised queries, and a
+  FastAPI app whose data survives restarts.
+problem: |
+  The notes API from the [REST API project](project:rest-api) kept its notes in a Python dictionary.
+  Every deploy, crash or restart deleted all of them. Your team wants the same API, with the same URLs
+  and status codes, backed by a real database. It also wants schema changes to be **repeatable** on
+  every copy of the database: your laptop, a teammate's, the test server and production.
+
+  You will use SQLite, the database that ships inside Python (`import sqlite3`). It is a single file,
+  needs no server, and is a full SQL database with transactions and foreign keys. Real backends need
+  the same skills on any SQL database:
+
+  * **Transactions**: a note and its tags are saved together or not at all.
+  * **Migrations**: the schema lives in numbered files (`0001_create_notes.sql`, `0002_create_tags.sql`,
+    `0003_add_indexes.sql`). A runner applies the ones a database has not seen yet and records each
+    one in a `schema_migrations` table.
+  * **A repository layer**: the API calls `repo.add(...)` and `repo.page(...)`, never SQL directly.
+  * **Parameterised queries**: user input travels as `?` parameters, never inside the SQL text.
+
+  **What persists:** the `notes` table (id, title, body, timestamps), the `tags` table (each name
+  once), the `note_tags` table linking them (with each tag's position), and `schema_migrations`.
+
+  **Example session**
+
+  ```text
+  $ NOTES_DB_PATH=notes.db python -m uvicorn --factory notes_db:app_from_env --app-dir starter
+  (startup: migrations 0001, 0002, 0003 applied)
+
+  POST /notes {"title": "Read about WAL", "tags": ["Databases", "to-read"]}
+  201 Location: http://127.0.0.1:8000/notes/1
+      {"id": 1, "title": "Read about WAL", "body": "", "tags": ["databases", "to-read"], ...}
+
+  POST /notes {"title": "Robert'); DROP TABLE notes; --"}
+  201 {"id": 2, "title": "Robert'); DROP TABLE notes; --", ...}      (stored as plain text)
+
+  GET /notes?tag=databases
+  200 {"items": [{"id": 1, ...}], "total": 1, "limit": 20, "offset": 0, "next_offset": null}
+
+  (Ctrl+C, start the server again: no migrations to apply)
+
+  GET /notes/1
+  200 {"id": 1, "title": "Read about WAL", ...}
+
+  $ python -m sqlite3 notes.db "SELECT version, name FROM schema_migrations"
+  (1, 'create_notes')
+  (2, 'create_tags')
+  (3, 'add_indexes')
+  ```
+concepts:
+  - databases.sqlite-python
+  - databases.sql-modification
+  - databases.schema-design
+  - databases.transactions
+  - databases.migrations
+  - backend.fastapi-basics
+  - security.input-handling
+acceptanceCriteria:
+  - "`connect()` returns an autocommit connection (`isolation_level=None`) with `sqlite3.Row` rows, `PRAGMA foreign_keys = ON` and WAL journaling for file databases."
+  - "`transaction()` runs `BEGIN IMMEDIATE`, commits when the block succeeds, rolls back and re-raises when it fails, and rejects nesting with `RuntimeError`."
+  - "`discover_migrations()` returns `NNNN_name.sql` files sorted by number with a SHA-256 checksum, ignores non-SQL files, and raises `MigrationError` for bad names, duplicate numbers and gaps."
+  - "`apply_migrations()` applies pending files in order and returns their versions. Each file and its `schema_migrations` row commit together, so a failing file leaves no tables behind and is not recorded. A second run returns `[]`."
+  - "`apply_migrations()` refuses to run, changing nothing, if an applied file's checksum changed or the database records a version that has no file."
+  - "Migrations 0002 and 0003 create `tags` (unique names), `note_tags` (composite primary key, `position`, `ON DELETE CASCADE` foreign keys) and an index that turns a lookup by `tag_id` into a `SEARCH` in `EXPLAIN QUERY PLAN`."
+  - "`SqliteNoteRepository` implements `add`, `get`, `page`, `update` and `delete`. Tags keep their order, pages are ordered by id with a correct `total`, ids are never reused, and a failure part-way through `add` or `update` leaves the database unchanged."
+  - "Every SQL statement is a fixed string with `?` placeholders. SQL-looking input is stored literally, and an AST check finds no f-string, `%` or `.format()` SQL."
+  - "The API keeps the rest-api contract (201 + `Location`, 404 `{\"detail\": \"note 42 not found\"}`, 204, 422), applies migrations at startup, opens and closes one connection per request, and serves notes created before a restart."
+architecture: |
+  ```text
+  HTTP request
+      |
+      v
+  FastAPI route (create_note, list_notes, ...)          <- given: same contract as rest-api
+      |  Depends(get_repository)
+      v
+  SqliteNoteRepository(conn, clock)                      <- milestone 4
+      |  fixed SQL + ? parameters, transaction() around multi-statement writes
+      v
+  sqlite3.Connection  <- get_connection(): one per request, closed in `finally`   <- milestones 1 and 5
+      |
+      v
+  notes.db  (notes, tags, note_tags, schema_migrations)
+      ^
+      |  apply_migrations() at startup (lifespan)        <- milestone 2
+  migrations/0001_create_notes.sql, 0002_create_tags.sql, 0003_add_indexes.sql   <- milestone 3
+  ```
+
+  * **`connect` / `transaction`** (milestone 1): every connection is configured identically. Writes
+    that touch several rows run inside `transaction()`, which takes the write lock up front
+    (`BEGIN IMMEDIATE`) and guarantees `COMMIT` or `ROLLBACK`.
+  * **Migration runner** (milestone 2): `discover_migrations` validates the folder;
+    `apply_migrations` first checks the recorded history (versions and checksums), then applies each
+    pending file and inserts its `schema_migrations` row in one transaction. Because Python's
+    `executescript()` commits any open transaction before it runs, the runner puts `BEGIN IMMEDIATE`
+    at the start of the script itself.
+  * **Schema** (milestone 3): `notes` 1 -- n `note_tags` n -- 1 `tags`. A many-to-many link table with a
+    composite primary key, cascading deletes, and an index for the "notes with tag X" lookup.
+  * **Repository** (milestone 4): the only code that knows SQL. `page()` serves "all notes" and "notes
+    with tag X" with one fixed statement (`WHERE ? IS NULL OR id IN (...)`). Tags for a whole page come
+    from a single query that passes the ids as one JSON parameter (`json_each(?)`), avoiding one query
+    per note.
+  * **App** (milestone 5): `create_app(db_path, clock)` stores only configuration on `app.state`. The
+    lifespan runs the migrations, and a yield dependency gives each request its own connection. Nothing
+    global, nothing shared between requests.
+environment: local
+starterKit: projects/crud-database-app
+setup: |
+  You need Python 3.11 or newer. SQLite is part of Python; there is nothing else to install for the
+  required milestones. From the repository root:
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\crud-database-app
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/crud-database-app
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Run the API against a database file and open `http://127.0.0.1:8000/docs`:
+
+  ```powershell
+  $env:NOTES_DB_PATH = "notes.db"
+  python -m uvicorn --factory notes_db:app_from_env --app-dir starter --reload
+  ```
+
+  ```bash
+  NOTES_DB_PATH=notes.db python -m uvicorn --factory notes_db:app_from_env --app-dir starter --reload
+  ```
+
+  Inspect the file with `python -m sqlite3 notes.db` (Python 3.12+) or the `sqlite3` command-line tool.
+
+  **Optional: PostgreSQL.** Once everything passes, you can port the repository to
+  [PostgreSQL](concept:databases.postgresql). You need a local server (an installer, or
+  `docker run --name notes-pg -e POSTGRES_PASSWORD=devpassword -p 5432:5432 -d postgres:17`) and
+  `python -m pip install "psycopg[binary]>=3.2"`. The README lists every difference: `%s` placeholders,
+  `GENERATED ALWAYS AS IDENTITY`, `RETURNING id`, `with conn.transaction():`, `TIMESTAMPTZ`. None of it
+  is needed for the tests.
+milestones:
+  - id: m1-connection-transactions
+    title: Connections and transactions
+    description: |
+      Implement `connect()` and the `transaction()` context manager. Open connections in autocommit
+      mode (`isolation_level=None`), so Python never starts a transaction you did not ask for. Read
+      rows by column name, enforce foreign keys, and use WAL for files. `transaction()` runs
+      `BEGIN IMMEDIATE`, then `COMMIT`; on any exception it runs `ROLLBACK` and re-raises.
+
+      **Tests (`TestMilestone1ConnectionAndTransactions`)** check the pragmas and row factory. They
+      check that committed rows are visible to a second connection and that a failing block leaves no
+      rows. A second connection must be refused the write lock while your transaction is open, and
+      nested transactions must raise `RuntimeError`.
+  - id: m2-migration-runner
+    title: A migration runner
+    description: |
+      Implement `discover_migrations`, `applied_migrations`, `schema_version` and `apply_migrations`.
+      Files are named `NNNN_snake_case.sql` and numbered 1..n without gaps. The runner checks the
+      recorded history before changing anything. Each pending file runs in one transaction together
+      with its `schema_migrations` row (version, name, SHA-256 checksum, `applied_at` from the clock).
+
+      **Tests (`TestMilestone2MigrationRunner`)** build throwaway migration folders in `tmp_path`.
+      They check ordering, bad names, duplicates and gaps, that one run applies everything and a
+      second applies nothing, and that only new files are applied. A file that fails half-way must
+      leave no table and no record, and can be fixed and re-run. Edited files and databases newer
+      than the code must be detected.
+  - id: m3-schema
+    title: "The schema: tags, links and an index"
+    description: |
+      Write `migrations/0002_create_tags.sql` (`tags` with unique names; `note_tags` with `note_id`,
+      `tag_id`, `position`, a composite primary key and `ON DELETE CASCADE` foreign keys) and
+      `migrations/0003_add_indexes.sql` (an index on `note_tags (tag_id)`). `0001_create_notes.sql` is
+      given as the worked example.
+
+      **Tests (`TestMilestone3Schema`)** apply the real migrations. They check the tables and columns,
+      the unique tag names and the title `CHECK` constraint, that links to missing notes and duplicate
+      links are rejected, and that deleting a note removes its links. `EXPLAIN QUERY PLAN` must show a
+      `SEARCH`, not a `SCAN`, for a lookup by `tag_id`, and ids must never be reused.
+  - id: m4-repository
+    title: The repository layer
+    description: |
+      Implement `SqliteNoteRepository`: `add`, `get`, `page`, `update`, `delete` and the helpers
+      `_set_tags` and `_tags_for`. Use only fixed SQL strings with `?` placeholders. `update` merges the
+      sent fields into the current row and writes a fixed column list. `add` and `update` run in one
+      transaction each. A page's tags come from one query.
+
+      **Tests (`TestMilestone4Repository`)** check the interface, persistence across connections, tag
+      order, paging and tag filtering, and partial updates with timestamps. When the tag step fails
+      half-way, `add` and `update` must leave nothing behind. SQL injection attempts must be stored
+      literally or match nothing, and an AST check must find no SQL built with f-strings, `%` or
+      `.format()`.
+  - id: m5-api
+    title: The API on SQLite
+    description: |
+      Wire the database into FastAPI. `get_connection` is a yield dependency that opens one connection
+      per request and closes it in `finally`. The app's lifespan applies the migrations at startup.
+      `app_from_env` reads `NOTES_DB_PATH`. The routes are given and keep the rest-api contract.
+
+      **Tests (`TestMilestone5Api`)** start the app with `TestClient` and check startup migrations,
+      201 + `Location`, 404/422/204, paging and tag filters, and PATCH validation. A note created
+      before a restart must still be there afterwards. A spy on `connect` checks that each request
+      opens exactly one connection and that every connection is closed.
+testing: |
+  Run the tests from `projects/crud-database-app`. By default they test `starter/`:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone2   # one milestone
+  python -m pytest -x -q           # stop at the first failure
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Every test gets a fresh database file in pytest's `tmp_path`. An in-memory database will not work
+  here, because each `:memory:` connection is a separate, empty database. Time comes from an injected
+  `FakeClock`, so timestamps are exact and nothing sleeps. Lock behaviour is tested with a second
+  connection opened with `timeout=0`, which fails immediately instead of waiting. The optional
+  PostgreSQL port has no automated tests. If you write some, mark them `@pytest.mark.network`, skip
+  them unless a DSN environment variable is set, and use `pytest.importorskip("psycopg")`.
+security:
+  - "SQL injection: building SQL with f-strings, `%` or `+` lets input such as `'); DROP TABLE notes; --` become code. Pass every value as a `?` parameter; the tests check that such text is stored literally and that no SQL is formatted."
+  - "Dynamic SQL for partial updates: assembling `SET col = ?` from client-supplied field names reopens injection through column names. Merge the changes in Python and write a fixed column list instead."
+  - "Partial writes: a crash between inserting a note and its tags would leave inconsistent data. Multi-statement writes run in one transaction, and migrations commit together with their bookkeeping row."
+  - "Integrity in depth: `CHECK`, `NOT NULL`, `UNIQUE` and foreign-key constraints in the schema reject bad data even if it bypasses the API. SQLite enforces foreign keys only after `PRAGMA foreign_keys = ON` on every connection."
+  - "Tampered or edited migrations: the checksum check stops an edited migration from silently creating different schemas on different machines. Migration files are code: review them like code, and never build them from user input."
+  - "The database file is the data. Keep `notes.db` out of version control and out of public folders, restrict its file permissions, and back it up with `sqlite3`'s backup API or `VACUUM INTO`, not by copying a file that is in use."
+  - "Error leakage: database exceptions can reveal table names and SQL. The API returns generic 404/422 bodies; do not return `str(exc)` from a `sqlite3.Error` to clients."
+extensions:
+  - "Add a fourth migration that adds a `pinned` column with `ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))`, expose it in the models, and sort pinned notes first. Do not edit migrations 0001 to 0003."
+  - "Write a `rollback`/down migration convention (for example `0004_add_pinned.down.sql`) and a `migrate_to(version)` function, and test that up then down returns the schema to the same `sqlite_master` contents."
+  - "Port the repository to [PostgreSQL](concept:databases.postgresql) with psycopg 3 behind the same `NoteRepository` interface, run the repository tests against both backends with a parametrised fixture, and add a connection pool."
+  - "Add `GET /notes?q=word` full-text search with an SQLite FTS5 virtual table kept in sync by triggers, created in a new migration."
+  - "Make the tables `STRICT` (SQLite 3.37+) in a migration that copies the data into new tables, and measure the effect of your index with `EXPLAIN QUERY PLAN` on 100,000 generated notes."
+rubric:
+  - criterion: Query safety
+    needsWork: Some SQL is built with f-strings, `%` or concatenated input, or partial updates assemble column names dynamically.
+    meets: Every statement is fixed text with `?` placeholders; injection-style input is stored literally and the AST check passes.
+    exceeds: Also explains why identifiers cannot be parameters, and shows how a column-name allow-list would be done safely if ever needed.
+  - criterion: Transactions and integrity
+    needsWork: Writes that touch several tables run without a transaction, or foreign keys are not enabled, so failures leave orphaned or half-written rows.
+    meets: Multi-statement writes are all-or-nothing via `transaction()`; constraints (`CHECK`, `UNIQUE`, cascading foreign keys) protect the data at the database level.
+    exceeds: Explains `BEGIN IMMEDIATE` versus deferred transactions and WAL, and adds a test or note on what happens when two writers compete for the lock.
+  - criterion: Migrations
+    needsWork: The schema is created by ad-hoc code at startup, or migrations can run twice, out of order, or half-apply.
+    meets: Numbered files applied once each, in order and atomically, recorded with checksums; edited or unknown migrations stop the runner.
+    exceeds: Adds down migrations or a `migrate_to(version)` tool, and documents a safe procedure for changing a column in production.
+  - criterion: Layering and resource handling
+    needsWork: Routes run SQL directly, or connections are global, shared between requests or never closed.
+    meets: Routes only call the repository; each request gets its own connection that is always closed; configuration comes from `create_app` arguments or the environment.
+    exceeds: A second backend (PostgreSQL or another in-memory store) passes the same repository tests without any change to the API code.

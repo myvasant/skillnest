@@ -1,0 +1,345 @@
+id: security
+order: 19
+title: Security, Privacy and Responsible AI
+shortTitle: Security & Responsible AI
+summary: >-
+  Security fundamentals, cryptography basics, threat modelling, web application security, secrets and
+  supply chain, privacy engineering, LLM-specific risks, and responsible, well-governed AI.
+why: >-
+  Every system in this curriculum handles data and takes actions. Security and privacy failures harm real
+  people; responsible AI practice is increasingly a legal and professional requirement.
+modules:
+  - id: fundamentals
+    title: Security fundamentals
+    summary: The security mindset, cryptography basics and threat modelling.
+  - id: appsec
+    title: Application security
+    summary: The OWASP Top 10, input handling, secrets and dependencies.
+  - id: privacy
+    title: Privacy
+    summary: Personal data, minimisation, retention and regulation awareness.
+  - id: responsible-ai
+    title: Responsible AI
+    summary: LLM security, fairness, transparency and governance.
+concepts:
+  - id: security.security-mindset
+    title: The security mindset
+    module: fundamentals
+    level: beginner
+    priority: essential
+    summary: Confidentiality, integrity and availability; attack surface, least privilege and defence in depth — thinking about how things fail on purpose.
+    why: Attackers look for ways to make a system misbehave on purpose; thinking like them while designing is far cheaper than patching after a breach.
+    requires: [foundations.permissions, foundations.internet-basics]
+    keyIdeas:
+      - The CIA triad - confidentiality (only authorised people can read data), integrity (data cannot be changed without authorisation) and availability (the system works when needed).
+      - The attack surface is every input, endpoint, dependency, credential and person an attacker can reach; shrink it by removing unused features, ports and permissions.
+      - Least privilege - every user, service and token gets only the permissions it needs, for only as long as it needs them.
+      - Defence in depth - layer independent controls (authentication, authorisation, validation, network rules, monitoring) so one failure does not become a breach.
+      - Secure defaults and failing closed - when something is uncertain or errors (missing permission, failed check), deny access.
+    misconceptions:
+      - Security through obscurity (hidden URLs, secret formats) is not a control; assume attackers know how your system works.
+      - Being too small to be a target is a myth; most attacks are automated and opportunistic, scanning everything reachable.
+    interview: Explain least privilege and defence in depth with an example from a system you have built.
+    sources:
+      - title: Secure design principles
+        url: https://www.ncsc.gov.uk/collection/cyber-security-design-principles
+        publisher: UK National Cyber Security Centre
+      - title: Secure by Design
+        url: https://www.cisa.gov/securebydesign
+        publisher: US Cybersecurity and Infrastructure Security Agency (CISA)
+      - title: "Glossary: least privilege"
+        url: https://csrc.nist.gov/glossary/term/least_privilege
+        publisher: NIST
+  - id: security.cryptography-basics
+    title: Cryptography basics
+    module: fundamentals
+    level: intermediate
+    priority: essential
+    summary: Hashing vs encryption, symmetric vs public-key cryptography, signatures, secure randomness and password hashing — and never rolling your own.
+    why: Passwords, tokens, HTTPS and signed packages all depend on cryptography; choosing the wrong primitive, or a home-made one, silently removes the protection.
+    requires: [security.security-mindset, foundations.binary-and-data]
+    keyIdeas:
+      - A hash (such as SHA-256) is a one-way, fixed-length fingerprint used for integrity; encryption is reversible with a key and used for confidentiality.
+      - Symmetric encryption (AES-GCM) uses one shared key and is fast; public-key cryptography (RSA, elliptic curves) uses a key pair for key exchange and digital signatures; TLS combines both.
+      - A digital signature proves who produced data and that it was not changed; an HMAC does the same with a shared secret key.
+      - Store passwords with a slow, salted password-hashing function - OWASP recommends Argon2id (minimum 19 MiB memory, 2 iterations, parallelism 1), with scrypt or bcrypt as fallbacks - never a fast hash like plain SHA-256.
+      - Use a cryptographically secure random generator for tokens and keys - in Python `secrets.token_urlsafe()`, never the `random` module.
+    misconceptions:
+      - Base64 is an encoding, not encryption; anyone can decode it.
+      - Encryption alone does not guarantee integrity; use authenticated encryption (such as AES-GCM) so tampering is detected.
+      - The rule against rolling your own crypto covers protocols and constructions too, not just algorithms; use well-reviewed libraries such as pyca/cryptography or libsodium.
+    tools: [pyca/cryptography, libsodium]
+    interview: How should an application store passwords, and why is a fast hash like SHA-256 the wrong choice?
+    production: Most real crypto failures are leaked or hard-coded keys rather than broken algorithms; keep keys in a KMS or vault and plan rotation.
+    sources:
+      - title: Password Storage Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: Cryptographic Storage Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: secrets — Generate secure random numbers for managing secrets
+        url: https://docs.python.org/3/library/secrets.html
+        publisher: Python Software Foundation
+  - id: security.threat-modeling
+    title: Threat modelling
+    module: fundamentals
+    level: intermediate
+    priority: essential
+    summary: Map data flows and trust boundaries, ask what can go wrong (for example with STRIDE), and prioritise mitigations.
+    why: You cannot defend against everything; threat modelling finds the most likely and damaging attacks on your design early, when fixes are cheap.
+    requires: [security.security-mindset]
+    keyIdeas:
+      - The four questions of the Threat Modeling Manifesto - What are we working on? What can go wrong? What are we going to do about it? Did we do a good enough job?
+      - Draw a data flow diagram of external entities, processes, data stores and data flows, and mark the trust boundaries where data crosses between levels of trust.
+      - STRIDE prompts for what can go wrong - Spoofing, Tampering, Repudiation, Information disclosure, Denial of service and Elevation of privilege.
+      - For each threat decide to mitigate, eliminate (remove the feature), transfer or accept it, and record the decision and its owner.
+      - Revisit the model when the design changes; it is a living document, not a one-off exercise.
+    misconceptions:
+      - Threat modelling is not only for security specialists; a 30-minute whiteboard session on a new feature finds real issues.
+      - It is not a generic vulnerability checklist; it is reasoning about your specific design and its data.
+    tools: [OWASP Threat Dragon, Microsoft Threat Modeling Tool]
+    interview: Threat-model a file-upload feature, or an LLM agent with tool access, using STRIDE.
+    sources:
+      - title: Threat Modeling Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: Threat Modeling Manifesto
+        url: https://www.threatmodelingmanifesto.org/
+        publisher: Threat Modeling Manifesto working group
+      - title: Threats - Microsoft Threat Modeling Tool (STRIDE)
+        url: https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats
+        publisher: Microsoft
+  - id: security.owasp-top-10
+    title: Web application risks (OWASP Top 10)
+    module: appsec
+    level: intermediate
+    priority: essential
+    summary: Broken access control, security misconfiguration, supply-chain failures, cryptographic failures, injection, insecure design and the other most common web application risks.
+    why: Most real web breaches exploit a small set of recurring weaknesses; the OWASP Top 10 is the shared vocabulary for them across developers, testers and auditors.
+    requires: [security.threat-modeling, networking.http-basics, backend.authorization]
+    keyIdeas:
+      - "The 2025 edition: A01 Broken Access Control, A02 Security Misconfiguration, A03 Software Supply Chain Failures, A04 Cryptographic Failures, A05 Injection, A06 Insecure Design, A07 Authentication Failures, A08 Software or Data Integrity Failures, A09 Security Logging and Alerting Failures, A10 Mishandling of Exceptional Conditions."
+      - Broken access control is ranked first - for example changing `/invoices/123` to `/invoices/124` exposes another user's invoice (an IDOR); check authorisation on the server for every request and object, and deny by default.
+      - Injection happens when untrusted data is interpreted as code or commands (SQL, shell, templates); parameterised queries and safe APIs prevent it.
+      - The Top 10 is an awareness document built from vulnerability data and a community survey; for a testable list of requirements use the OWASP Application Security Verification Standard (ASVS).
+    misconceptions:
+      - The Top 10 is not a complete security standard; passing a Top 10 scan does not make an application secure.
+      - Hiding a button in the UI is not access control; the server must enforce every permission.
+    interview: Explain broken access control (IDOR) with an example and how you would prevent it in a REST API.
+    production: Automate what you can (dependency and static scanning in CI), but access-control flaws are usually found by tests and review, not scanners.
+    sources:
+      - title: OWASP Top 10:2025
+        url: https://top10.owasp.org/2025/
+        publisher: OWASP Foundation
+        version: "2025"
+      - title: Application Security Verification Standard (ASVS)
+        url: https://owasp.org/projects/asvs
+        publisher: OWASP Foundation
+      - title: Authorization Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+  - id: security.input-handling
+    title: Input validation and output encoding
+    module: appsec
+    level: intermediate
+    priority: essential
+    summary: Validate at trust boundaries, use parameterised queries, encode output for its context, and defend against XSS, SSRF and path traversal.
+    why: Injection and many other attacks start with untrusted input being treated as trusted; handling input and output correctly at trust boundaries removes whole classes of vulnerabilities.
+    requires: [security.owasp-top-10]
+    keyIdeas:
+      - Validate on the server at every trust boundary with allow-lists - type, length, range and format (for example a Pydantic model) - and reject bad input rather than trying to repair it.
+      - Never build SQL by string concatenation; use parameterised queries such as `cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))` in sqlite3, or an ORM. Placeholder style varies by driver.
+      - Prevent XSS with output encoding for the right context (HTML body, attribute, JavaScript, URL); use auto-escaping templates and add a Content Security Policy.
+      - Prevent SSRF when fetching user-supplied URLs - allow-list destinations, block private, loopback and cloud metadata addresses, and re-check after redirects.
+      - Prevent path traversal - never join user input straight into a file path; resolve the final path and check it stays inside the allowed directory.
+    misconceptions:
+      - Client-side validation is for user experience only; attackers bypass it trivially.
+      - Validation alone does not stop SQL injection or XSS; parameterisation and contextual output encoding are the primary defences.
+    interview: How do you prevent SQL injection and XSS, and why is escaping input on the way in the wrong approach?
+    production: Treat LLM output as untrusted input too - encode it before rendering and validate it before it reaches queries, file paths or shell commands.
+    sources:
+      - title: Input Validation Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: SQL Injection Prevention Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: Cross Site Scripting Prevention Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+  - id: security.secrets-handling
+    title: Handling secrets
+    module: appsec
+    level: intermediate
+    priority: essential
+    summary: Store secrets in environment variables or vaults, scan repositories for leaks, rotate on exposure and keep them out of logs and prompts.
+    why: Leaked API keys and database passwords are among the most common causes of breaches and surprise cloud bills; good habits keep secrets out of code, history and logs.
+    requires: [security.cryptography-basics, foundations.environment-variables]
+    keyIdeas:
+      - Never commit secrets; load them at runtime from environment variables or a secret manager (such as HashiCorp Vault, OpenBao or a cloud secret manager), and keep `.env` files in `.gitignore`.
+      - A secret pushed to a repository is compromised even if you delete it later, because history and clones keep it; revoke and rotate it immediately.
+      - Scan for leaks before and after pushing - pre-commit hooks with a scanner such as gitleaks, plus GitHub secret scanning and push protection.
+      - Prefer short-lived, narrowly scoped credentials, such as OIDC federation from CI to the cloud instead of long-lived access keys.
+      - Keep secrets out of logs, error messages, URLs, container images and LLM prompts.
+    misconceptions:
+      - Environment variables are not encrypted; they stop secrets being committed, not being read by anyone who can inspect the process.
+      - A private repository is not a safe place for secrets; access widens over time and repositories get cloned and forked.
+    tools: [gitleaks, pre-commit]
+    interview: You discover an API key was pushed to a public repository an hour ago - what do you do, in order?
+    production: Keep an inventory of which service uses which secret and automate rotation, so rotating a key does not cause an outage.
+    sources:
+      - title: Secrets Management Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: Secret scanning
+        url: https://docs.github.com/en/code-security/concepts/secret-security/secret-scanning
+        publisher: GitHub
+  - id: security.supply-chain
+    title: Dependency and supply-chain security
+    module: appsec
+    level: intermediate
+    priority: essential
+    summary: Pin and audit dependencies (pip-audit, Dependabot), beware typosquatting, verify provenance and generate SBOMs.
+    why: Most of the code you ship was written by someone else; a vulnerable or malicious dependency, or a compromised build, runs with your application's full privileges.
+    requires: [cs.dependency-management, security.security-mindset]
+    keyIdeas:
+      - Pin exact versions in a lock file, with hashes where supported (for example `pip install --require-hashes -r requirements.txt`), so builds are reproducible and cannot silently pull a new release.
+      - Scan dependencies for known vulnerabilities in CI (`pip-audit`, Dependabot alerts and updates) and update regularly in small steps.
+      - Watch for typosquatting and dependency confusion - check the exact package name, maintainers and project history before installing, and configure private package indexes carefully.
+      - An SBOM (Software Bill of Materials, in SPDX or CycloneDX format) lists every component you ship, so you can quickly answer "are we affected?" when a new vulnerability is announced.
+      - SLSA and Sigstore address build integrity - signed provenance shows which source and which pipeline produced an artefact.
+    misconceptions:
+      - Popular packages are not automatically safe; maintainer accounts and build pipelines do get compromised.
+      - Not every reported CVE is exploitable in your application, but each one needs triage rather than blanket dismissal.
+    tools: [pip-audit, Dependabot, OpenSSF Scorecard]
+    interview: How would you reduce the risk of a malicious or vulnerable package entering a Python project?
+    production: CI configuration is part of the supply chain too - pin GitHub Actions and container base images to a commit SHA or digest.
+    sources:
+      - title: Software Supply Chain Security Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: Supply-chain Levels for Software Artifacts (SLSA)
+        url: https://slsa.dev/
+        publisher: OpenSSF
+      - title: Software Bill of Materials (SBOM)
+        url: https://www.cisa.gov/sbom
+        publisher: US Cybersecurity and Infrastructure Security Agency (CISA)
+  - id: security.privacy-engineering
+    title: Privacy engineering
+    module: privacy
+    level: intermediate
+    priority: essential
+    summary: Identify personal data, collect the minimum, limit retention, pseudonymise where possible and respect regulations such as GDPR and India's DPDP Act.
+    why: Personal data brings legal obligations and real harm when it leaks or is misused; designing privacy in from the start is far cheaper than retrofitting it after a breach or complaint.
+    requires: [security.security-mindset]
+    keyIdeas:
+      - Personal data is any information about an identifiable person - names and emails, but also IP addresses, device IDs, location and free text that mentions people.
+      - GDPR Article 5 principles are lawfulness, fairness and transparency; purpose limitation; data minimisation; accuracy; storage limitation; integrity and confidentiality; and accountability.
+      - Minimise and limit - collect only the fields you need, set retention periods with automatic deletion, and restrict access by role.
+      - Pseudonymised data (identifiers replaced by tokens) is still personal data under GDPR for anyone who can re-link it, such as whoever holds the key; true anonymisation is hard to achieve.
+      - India's Digital Personal Data Protection Act 2023 requires notice and consent (or another legitimate use), purpose limitation, security safeguards, breach notification and honouring data principals' rights; its Rules were notified in November 2025 and phase in over about 18 months, so check the current status.
+    misconceptions:
+      - Hashing an email address does not anonymise it; common values can be re-identified by hashing guesses.
+      - Keeping data "in case we need it later" is not a lawful purpose.
+      - This concept is awareness, not legal advice; your organisation's privacy or legal team decides real obligations.
+    interview: How would you design logging and analytics for an app so that personal data is minimised and can be deleted on request?
+    production: Map where personal data flows - including logs, backups, analytics, vector stores and third-party LLM providers - so access and deletion requests can actually be fulfilled.
+    sources:
+      - title: "GDPR Art. 5: Principles relating to processing of personal data"
+        url: https://gdpr-info.eu/art-5-gdpr/
+        publisher: gdpr-info.eu (consolidated text of Regulation (EU) 2016/679)
+      - title: The Digital Personal Data Protection Act, 2023 (Gazette of India)
+        url: https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf
+        publisher: Ministry of Electronics and Information Technology, Government of India
+      - title: NIST Privacy Framework
+        url: https://www.nist.gov/privacy-framework
+        publisher: NIST
+  - id: security.llm-security
+    title: LLM application security
+    module: responsible-ai
+    level: advanced
+    priority: essential
+    summary: The OWASP Top 10 for LLM applications — prompt injection, sensitive information disclosure, supply chain, excessive agency and more.
+    why: LLM apps mix untrusted text with instructions and often give the model tools and data access, which creates attack paths traditional controls do not cover.
+    requires: [genai.prompt-injection, security.owasp-top-10, security.input-handling]
+    keyIdeas:
+      - "The 2025 OWASP Top 10 for LLM Applications: prompt injection, sensitive information disclosure, supply chain, data and model poisoning, improper output handling, excessive agency, system prompt leakage, vector and embedding weaknesses, misinformation, and unbounded consumption."
+      - Indirect prompt injection hides instructions in content the model reads (web pages, documents, emails, tool results); there is no complete fix, so limit what a manipulated model is able to do.
+      - Limit agency - give agents the fewest tools and permissions needed, scope credentials to the current user, and require human approval for high-impact actions such as payments, deletions or sending email.
+      - Treat model output as untrusted - validate and encode it before rendering it, executing it or passing it to tools, SQL or a shell.
+      - Enforce access control in retrieval (filter documents by the user's permissions before they reach the prompt) and set rate, token and cost limits per user.
+    misconceptions:
+      - A system prompt saying "never reveal secrets" is not a security control; never put secrets in prompts at all.
+      - Guardrail classifiers reduce risk but can be bypassed; they complement privilege limits, they do not replace them.
+    interview: How would you defend an agent that reads and sends email against indirect prompt injection?
+    production: Log tool calls and guardrail triggers, monitor them, and red-team the system before launch and after major changes.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP Gen AI Security Project
+        version: "2025"
+      - title: LLM Prompt Injection Prevention Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html
+        publisher: OWASP Cheat Sheet Series
+      - title: MITRE ATLAS (Adversarial Threat Landscape for AI Systems)
+        url: https://atlas.mitre.org/
+        publisher: MITRE
+  - id: security.responsible-ai
+    title: Responsible AI
+    module: responsible-ai
+    level: intermediate
+    priority: essential
+    summary: Fairness, transparency, accountability, human oversight and harm assessment across the AI lifecycle.
+    why: AI systems can be unfair, opaque or harmful even when they are accurate on average; responsible AI practice finds and reduces those harms before they reach people.
+    requires: [ml.fairness, security.privacy-engineering]
+    keyIdeas:
+      - Major frameworks (OECD AI Principles, NIST AI RMF) share core values - fairness, transparency and explainability, privacy, safety and security, accountability, and human oversight.
+      - Assess impact early - who is affected, what happens when the system is wrong, and who bears the cost of errors, especially in high-stakes uses such as hiring, credit or health.
+      - Evaluate performance and error rates per group (disaggregated evaluation), not only overall, and test with diverse and adversarial inputs.
+      - Design for human oversight - people must be able to understand, contest and override decisions, and users should know when they are interacting with AI.
+      - Responsibility covers the whole lifecycle - data collection, training, deployment, monitoring and retirement.
+    misconceptions:
+      - Removing a sensitive attribute such as gender does not make a model fair; proxies like postcode or name can carry the same information.
+      - There is no single fairness metric; some definitions are mathematically incompatible, so choosing one is a documented value judgement.
+    tools: [Fairlearn]
+    interview: How would you check whether a CV-screening model treats applicants fairly, and what would you do if it did not?
+    sources:
+      - title: AI Risk Management Framework
+        url: https://www.nist.gov/itl/ai-risk-management-framework
+        publisher: NIST
+      - title: OECD AI Principles
+        url: https://oecd.ai/en/ai-principles
+        publisher: OECD
+      - title: People + AI Guidebook
+        url: https://pair.withgoogle.com/guidebook/
+        publisher: Google PAIR
+  - id: security.ai-governance
+    title: AI governance and documentation
+    module: responsible-ai
+    level: advanced
+    priority: supporting
+    summary: Model cards, datasheets, risk registers and frameworks such as the NIST AI RMF and the EU AI Act turn principles into practice.
+    why: Principles only matter if someone documents decisions, owns the risks and can show users and regulators what a system does; governance makes responsible AI auditable.
+    requires: [security.responsible-ai]
+    keyIdeas:
+      - A model card documents intended uses, out-of-scope uses, training data, evaluation results (including per group), limitations and ethical considerations (Mitchell et al., 2019).
+      - A datasheet for a dataset documents why and how the data was collected, what it contains, how it was processed, consent, and recommended uses (Gebru et al.).
+      - NIST AI RMF 1.0 organises risk work into four functions - Govern, Map, Measure and Manage - and its Generative AI Profile (NIST AI 600-1) adds GenAI-specific risks.
+      - The EU AI Act is risk-based - prohibited practices, strict obligations for high-risk systems, transparency duties (such as disclosing chatbots and AI-generated content) and rules for general-purpose AI models; obligations phase in from 2025 and some dates have been revised, so check the current timeline.
+      - A risk register lists each identified risk with its likelihood, impact, owner, mitigation and review date.
+    misconceptions:
+      - Governance is not one-off launch paperwork; documentation must be updated as models, data and uses change.
+      - The EU AI Act is not only for EU companies; it can apply to providers elsewhere whose AI systems are placed on the EU market or whose outputs are used in the EU.
+    interview: What would you put in a model card for an internal RAG assistant, and who should review it?
+    production: Keep an inventory of the AI systems and models in use, including third-party APIs; you cannot govern what you do not know exists.
+    sources:
+      - title: Model Cards for Model Reporting
+        url: https://arxiv.org/abs/1810.03993
+        publisher: arXiv (Mitchell et al., 2019)
+      - title: Datasheets for Datasets
+        url: https://arxiv.org/abs/1803.09010
+        publisher: arXiv (Gebru et al.)
+      - title: EU AI Act implementation timeline
+        url: https://artificialintelligenceact.eu/implementation-timeline/
+        publisher: Future of Life Institute (artificialintelligenceact.eu)

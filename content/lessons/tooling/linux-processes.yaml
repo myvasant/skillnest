@@ -1,0 +1,164 @@
+id: tooling.linux-processes
+concept: tooling.linux-processes
+title: Linux processes, signals and services
+subtitle: A process is a running program with its own process ID, resources and execution state
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: A process is a running program with its own process ID, resources and execution state.
+objectives:
+- Explain the purpose and core mental model of linux processes, signals and services.
+- Recognise common failure modes and choose an appropriate diagnostic or implementation approach.
+- Apply the concept in a small exercise and explain the trade-offs.
+sources:
+- title: Pro Git documentation
+  url: https://git-scm.com/docs
+  publisher: Git project
+- title: 'The Missing Semester: The Shell Tools and Scripting'
+  url: https://missing.csail.mit.edu/2020/command-line/
+  publisher: MIT CSAIL
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: A process is a running program with its own process ID, resources and execution state. A shell command
+      starts a process; long-running services are usually supervised so they can restart, log output and start at
+      boot.
+- id: mental-model
+  title: Build the mental model
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: ps and top inspect processes; kill sends a signal; SIGTERM asks a process to exit cleanly, while SIGKILL
+      forces termination and cannot be caught. systemd commonly manages services through systemctl and logs through
+      journalctl.
+  - type: callout
+    variant: misconception
+    title: Avoid the shortcut
+    body: Do not treat a command, framework or status indicator as proof that the system is correct. Verify the
+      intended behaviour, inspect the evidence and test the relevant failure case.
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following Python example models one small part of the idea. It is a teaching model, not a replacement
+      for the real operating-system or network tool.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def signal_policy(signal_name):\n    return {\"SIGTERM\": \"request graceful shutdown\", \"SIGKILL\"\
+      : \"force immediate termination\",\n            \"SIGHUP\": \"commonly request reload or report terminal hangup\"\
+      }.get(signal_name, \"signal-specific behaviour\")\n\nprint(signal_policy(\"SIGTERM\"))"
+    caption: Runnable conceptual model; use the platform runner to inspect the output.
+- id: practice
+  title: Practice and diagnose
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Try the exercise before opening the solution. Think about edge cases and explain why the chosen behaviour
+      is safe.
+  - type: item
+    ref: linux-processes-code
+  - type: item
+    ref: linux-processes-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- A process is a running program with its own process ID, resources and execution state.
+
+      - A shell command starts a process; long-running services are usually supervised so they can restart, log
+      output and start at boot.
+
+      - ps and top inspect processes; kill sends a signal; SIGTERM asks a process to exit cleanly, while SIGKILL
+      forces termination and cannot be caught. systemd commonly manages services through systemctl and logs through
+      journalctl.'
+  - type: item
+    ref: linux-processes-mcq
+  - type: item
+    ref: linux-processes-tf
+  - type: item
+    ref: linux-processes-code
+items:
+- id: linux-processes-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which signal should normally be tried first when asking a process to stop cleanly?
+  explanation: 'Correct: SIGTERM gives the process an opportunity to clean up; SIGKILL is an immediate forced stop.'
+  options:
+  - id: a
+    text: SIGTERM
+    correct: true
+    feedback: 'Correct: SIGTERM gives the process an opportunity to clean up; SIGKILL is an immediate forced stop.'
+  - id: b
+    text: SIGKILL
+    feedback: This confuses the concept with a different layer or responsibility.
+  - id: c
+    text: It is safe to skip verification when the command succeeds.
+    feedback: A successful command is not sufficient evidence that the intended outcome is correct.
+- id: linux-processes-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: A technically successful command or response always proves the overall system behaviour is correct.
+  answer: false
+  explanation: A local success can coexist with incorrect assumptions, missing authorization, stale state, partial
+    failure or unsafe side effects. Verify the complete behaviour.
+- id: linux-processes-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: A forced kill may leave temporary files, locks or partial work behind.
+  rubric:
+  - Identify the relevant system boundary or underlying mechanism rather than guessing from the symptom.
+  - Propose at least one concrete verification step and explain what evidence it would provide.
+  - Mention a realistic risk, limitation or alternative explanation.
+  modelAnswer: Start by identifying the boundary where the behaviour changes. Gather a reproducible example, inspect
+    the relevant state or protocol evidence, and test one hypothesis at a time. Check an alternative explanation
+    before changing configuration. Record the result so another engineer can reproduce the diagnosis.
+  explanation: A strong response explains the mechanism, distinguishes facts from assumptions, and proposes a concrete
+    way to verify the outcome.
+- id: linux-processes-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: 'Complete the helper function shown below. The reference implementation should satisfy both normal and
+    edge-case assertions. Topic: Linux processes, signals and services.'
+  starterCode: "def signal_policy(signal_name):\n    # TODO: implement the behaviour described in the exercise.\n\
+    \    raise NotImplementedError(\"Complete this function\")"
+  solution: "def signal_policy(signal_name):\n    return {\"SIGTERM\": \"request graceful shutdown\", \"SIGKILL\"\
+    : \"force immediate termination\",\n            \"SIGHUP\": \"commonly request reload or report terminal hangup\"\
+    }.get(signal_name, \"signal-specific behaviour\")"
+  tests:
+  - name: Core behaviour
+    code: assert "graceful" in signal_policy("SIGTERM")
+  - name: Edge behaviour
+    code: 'assert "force" in signal_policy("SIGKILL")
+
+      assert signal_policy("UNKNOWN") == "signal-specific behaviour"'
+  hints:
+  - Translate the requirement into a small deterministic rule.
+  - Handle missing, unknown or boundary values explicitly.
+  - Run both assertions; do not optimise before the behaviour is correct.
+  explanation: This exercise checks whether you can apply the lesson’s core rule and handle an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - linux-processes-mcq
+  - linux-processes-tf
+  - linux-processes-code
+cheatsheet: '**Core idea:** A process is a running program with its own process ID, resources and execution state.
+
+
+  **Remember:** A shell command starts a process; long-running services are usually supervised so they can restart,
+  log output and start at boot.
+
+
+  **Apply:** ps and top inspect processes; kill sends a signal; SIGTERM asks a process to exit cleanly, while SIGKILL
+  forces termination and cannot be caught. systemd commonly manages services through systemctl and logs through
+  journalctl.'

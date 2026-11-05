@@ -1,0 +1,937 @@
+id: python.comprehensions
+concept: python.comprehensions
+title: Comprehensions
+subtitle: Building lists, dicts and sets in one readable expression
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  A comprehension builds a new list, dict or set from an iterable — transforming each item and optionally
+  filtering — in a single expression. Learn to translate loops into comprehensions and back, where
+  `if`/`else` goes, how dict and set comprehensions work, why the loop variable does not leak, and when a
+  plain loop is the better choice.
+objectives:
+  - Translate a for loop that appends to a list into a list comprehension, and a comprehension back into a loop.
+  - Use a trailing `if` to filter and a conditional expression (`a if cond else b`) to choose values.
+  - Build dicts and sets with comprehensions, and print sets of strings deterministically with sorted().
+  - Read nested comprehensions in the correct order and decide when a regular loop is clearer.
+  - Explain that comprehension variables are local to the comprehension in Python 3.
+sources:
+  - title: "The Python Tutorial: List Comprehensions"
+    url: https://docs.python.org/3/tutorial/datastructures.html#list-comprehensions
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Displays for lists, sets and dictionaries"
+    url: https://docs.python.org/3/reference/expressions.html#displays-for-lists-sets-and-dictionaries
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Conditional expressions"
+    url: https://docs.python.org/3/reference/expressions.html#conditional-expressions
+    publisher: Python Software Foundation
+  - title: "PEP 709: Inlined comprehensions"
+    url: https://peps.python.org/pep-0709/
+    publisher: Python Software Foundation
+  - title: "PEP 274: Dict Comprehensions"
+    url: https://peps.python.org/pep-0274/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why comprehensions?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A very common job is "make a new list from an old one": square each number, clean each name, keep
+          only the passing scores. With a loop it always takes the same four-line pattern — create an empty
+          list, loop, maybe test, append:
+      - type: code
+        runnable: true
+        code: |
+          numbers = [1, 2, 3, 4, 5, 6]
+
+          even_squares = []
+          for n in numbers:
+              if n % 2 == 0:
+                  even_squares.append(n * n)
+
+          print(even_squares)
+        expectedOutput: |
+          [4, 16, 36]
+      - type: markdown
+        body: |
+          A [comprehension](glossary:comprehension) says the same thing in one expression that reads almost
+          like the English description — "the square of n, for each n in numbers, if n is even":
+      - type: code
+        runnable: true
+        code: |
+          numbers = [1, 2, 3, 4, 5, 6]
+
+          even_squares = [n * n for n in numbers if n % 2 == 0]
+
+          print(even_squares)
+        expectedOutput: |
+          [4, 16, 36]
+        annotations:
+          - line: 3
+            text: "What to collect (n * n), where it comes from (for n in numbers), which ones (if n % 2 == 0)."
+      - type: markdown
+        body: |
+          Beyond saving lines, a comprehension makes the **intent** obvious: it builds a new collection and
+          nothing else. There is no half-built list in an intermediate state for a reader to track, and the
+          result is usually computed a little faster than with `append`.
+
+  - id: anatomy
+    title: Anatomy of a list comprehension
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          ```text
+          [ expression   for name in iterable   if condition ]
+            ^ transform  ^ the loop              ^ optional filter
+          ```
+
+          Python evaluates it like this: loop over `iterable`; for each item, bind `name` to it; if there
+          is a condition and it is false, skip the item; otherwise evaluate `expression` and add the result
+          to a **new list**. The original iterable is not changed.
+
+          The **transform** and the **filter** are independent — you can use either or both:
+      - type: code
+        runnable: true
+        code: |
+          words = ["pear", "fig", "banana", "kiwi"]
+
+          print([w.upper() for w in words])            # transform only
+          print([w for w in words if len(w) > 3])      # filter only
+          print([len(w) for w in words if "a" in w])   # both
+          print(words)                                 # unchanged
+        expectedOutput: |
+          ['PEAR', 'FIG', 'BANANA', 'KIWI']
+          ['pear', 'banana', 'kiwi']
+          [4, 6]
+          ['pear', 'fig', 'banana', 'kiwi']
+        annotations:
+          - line: 4
+            text: "`w for w in ...` keeps each item as it is — the comprehension only filters."
+          - line: 5
+            text: '"pear" and "banana" contain an "a", so their lengths 4 and 6 are collected.'
+      - type: markdown
+        body: |
+          **Translating a loop.** Any loop of the form *empty list → for → (if) → append one expression*
+          converts mechanically. Move the appended expression to the front, then copy the `for` and `if`
+          lines in the same order, without colons:
+
+          | Loop | Comprehension |
+          |---|---|
+          | `result = []` | `result = [` |
+          | `for p in prices:` | `for p in prices` |
+          | `    if p < 100:` | `if p < 100` |
+          | `        result.append(p * 2)` | `p * 2` goes **first**: `[p * 2 for p in prices if p < 100]` |
+
+          It works the other way too: when you meet a comprehension you cannot read, rewrite it as a loop.
+      - type: item
+        ref: predict-filter
+      - type: item
+        ref: mcq-loop-equivalent
+
+  - id: walkthrough
+    title: Step through a loop and a comprehension
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Both functions below compute the same list. Step through them and compare: the loop version
+          shows the list growing with each `append`; the comprehension runs the same steps on a single line,
+          binding `p` to each price in turn.
+      - type: visualization
+        component: python-tracer
+        title: Loop with append vs comprehension
+        caption: >-
+          Watch p inside with_comprehension: it takes the values 120, 45 and 80 while line 9 runs, and is
+          gone afterwards — it belongs to the comprehension, not to the function. The list being built is
+          not shown until it is finished and returned.
+        props:
+          code: |
+            def with_loop(prices):
+                result = []
+                for p in prices:
+                    if p < 100:
+                        result.append(p * 2)
+                return result
+
+            def with_comprehension(prices):
+                return [p * 2 for p in prices if p < 100]
+
+            print(with_loop([120, 45, 80]))
+            print(with_comprehension([120, 45, 80]))
+
+  - id: conditional-expressions
+    title: "Choosing values: `if`/`else` inside a comprehension"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A trailing `if` **drops** items. Sometimes you want to keep every item but **choose** what to put
+          in the new list. That needs a *conditional expression*, which you can use anywhere a value is
+          expected:
+
+          ```text
+          value_if_true if condition else value_if_false
+          ```
+
+          In a comprehension it goes in the **expression** position, at the front:
+      - type: code
+        runnable: true
+        code: |
+          readings = [3, -1, 4, -5, 2]
+
+          print([r for r in readings if r > 0])          # filter: drops negatives
+          print([r if r > 0 else 0 for r in readings])   # choose: replaces negatives
+          print(["even" if r % 2 == 0 else "odd" for r in readings])
+        expectedOutput: |
+          [3, 4, 2]
+          [3, 0, 4, 0, 2]
+          ['odd', 'odd', 'even', 'odd', 'even']
+        annotations:
+          - line: 3
+            text: Three items survive the filter.
+          - line: 4
+            text: Five items in, five items out — each one is either r or 0.
+      - type: callout
+        variant: misconception
+        title: '"The if/else goes at the end"'
+        body: |
+          A trailing `if` cannot have an `else`: `[r for r in readings if r > 0 else 0]` is a
+          `SyntaxError`. Rule of thumb: **filtering** → `if` at the end, no `else`; **choosing** →
+          `a if cond else b` at the front. You can use both in one comprehension.
+      - type: code
+        runnable: true
+        code: |
+          readings = [3, -1, 4]
+          print([r for r in readings if r > 0 else 0])
+        expectError: SyntaxError
+        caption: Python cannot parse an else after the filtering if.
+      - type: item
+        ref: predict-conditional
+
+  - id: dict-set
+    title: Dict and set comprehensions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Change the brackets and you build other collections:
+
+          | Syntax | Builds |
+          |---|---|
+          | `[expr for x in items]` | list |
+          | `{key: value for x in items}` | dict — note the colon |
+          | `{expr for x in items}` | set — duplicates disappear |
+
+          (There is no "tuple comprehension": `(expr for x in items)` creates a
+          [generator](concept:python.generators), which you will meet soon. Use `tuple(...)` around it if
+          you need a tuple.)
+      - type: code
+        runnable: true
+        code: |
+          prices = {"pen": 1.50, "pad": 4.25, "ink": 12.00}
+
+          with_tax = {item: round(price * 1.2, 2) for item, price in prices.items()}
+          print(with_tax)
+
+          cheap = {item: price for item, price in prices.items() if price < 5}
+          print(cheap)
+
+          names = ["Ada", "Lin", "Grace"]
+          lengths = {name: len(name) for name in names}
+          print(lengths)
+        expectedOutput: |
+          {'pen': 1.8, 'pad': 5.1, 'ink': 14.4}
+          {'pen': 1.5, 'pad': 4.25}
+          {'Ada': 3, 'Lin': 3, 'Grace': 5}
+        annotations:
+          - line: 3
+            text: ".items() gives (key, value) pairs; unpack them into two names."
+          - line: 6
+            text: Dict comprehensions can filter too.
+      - type: markdown
+        body: |
+          A set comprehension removes duplicates automatically. Sets have no reliable order — and the
+          order of a set of **strings** can even change from one run to the next — so wrap the set in
+          `sorted()` when you print or compare it:
+      - type: code
+        runnable: true
+        code: |
+          tags = ["Python", "python", "Files", "PYTHON", "files"]
+
+          unique = {tag.lower() for tag in tags}
+          print(sorted(unique))
+          print(len(unique))
+        expectedOutput: |
+          ['files', 'python']
+          2
+      - type: callout
+        variant: tip
+        title: "{} is an empty dict"
+        body: |
+          `{}` creates an empty **dict**, not a set. A set comprehension always has an expression without a
+          colon, so `{x for x in items}` is unambiguous; for an empty set write `set()`.
+
+  - id: nested
+    title: Nested comprehensions — and when not to use them
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A comprehension can have several `for` clauses. They run in the **same order as nested loops
+          written top to bottom**:
+
+          ```python
+          pairs = [(letter, n) for letter in "ab" for n in (1, 2)]
+          # is the same as
+          pairs = []
+          for letter in "ab":
+              for n in (1, 2):
+                  pairs.append((letter, n))
+          ```
+
+          The expression itself can also be a comprehension, which builds a list of lists:
+      - type: code
+        runnable: true
+        code: |
+          matrix = [[1, 2, 3],
+                    [4, 5, 6]]
+
+          flat = [x for row in matrix for x in row]
+          print(flat)
+
+          table = [[r * c for c in range(1, 4)] for r in range(1, 3)]
+          print(table)
+
+          grid = [[0] * 3 for _ in range(2)]   # two separate rows
+          grid[0][0] = 1
+          print(grid)
+        expectedOutput: |
+          [1, 2, 3, 4, 5, 6]
+          [[1, 2, 3], [2, 4, 6]]
+          [[1, 0, 0], [0, 0, 0]]
+        annotations:
+          - line: 4
+            text: Outer loop first (each row), then the inner loop (each x in that row).
+          - line: 7
+            text: The inner comprehension builds one row for each r.
+          - line: 10
+            text: "`_` is the conventional name for a loop variable you don't use. Each pass creates a new inner list — unlike [[0] * 3] * 2, which repeats one list."
+      - type: markdown
+        body: |
+          **Readability is the limit.** Comprehensions are for building a collection from a simple rule.
+          Prefer a plain loop when:
+
+          - the logic needs **several statements**, variables or a `try`/`except` per item;
+          - there are more than about two `for` clauses or conditions — readers have to untangle them;
+          - you only want **side effects** such as printing or writing files. `[print(x) for x in items]`
+            works, but builds a useless list of `None`s and hides the intent; write a `for` loop.
+          - the line no longer fits comfortably on screen.
+
+          ```python
+          # Too clever: hard to read and debug
+          result = [c.upper() if c.isalpha() else "_" for w in text.split() if len(w) > 2 for c in w if c != "x"]
+          ```
+          If you have to pause to decode it, so will everyone else.
+      - type: item
+        ref: explain-readability
+
+  - id: scope
+    title: The loop variable stays inside
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A `for` loop's variable remains defined after the loop, holding the last value. A comprehension's
+          variable does **not**: in Python 3 a comprehension has its own [scope](concept:python.scope), so its
+          variable can neither leak out nor overwrite a variable of the same name outside.
+      - type: code
+        runnable: true
+        code: |
+          for i in range(3):
+              pass
+          print("after the loop, i =", i)
+
+          x = "my important value"
+          squares = [x * x for x in range(4)]
+          print("after the comprehension, x =", x)
+          print(squares)
+        expectedOutput: |
+          after the loop, i = 2
+          after the comprehension, x = my important value
+          [0, 1, 4, 9]
+        annotations:
+          - line: 6
+            text: This x exists only inside the comprehension.
+          - line: 7
+            text: The outer x is untouched. (In Python 2 it would have been 3!)
+      - type: item
+        ref: predict-leak
+
+  - id: mistakes
+    title: Common mistakes
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `SyntaxError: invalid syntax` at `else` | `if ... else` written at the end | Filter: `if cond` at the end, no else. Choose: `a if cond else b` at the front |
+          | `SyntaxError: did you forget parentheses around the comprehension target?` | `[x, x * 2 for x in nums]` | Make a tuple: `[(x, x * 2) for x in nums]` |
+          | A list of `None` values | Comprehension used for printing or `.append()` side effects | Use a regular `for` loop |
+          | Prints `<generator object <genexpr> at 0x…>` | Round brackets create a generator, not a tuple or list | Use `[...]`, or `list(...)` / `tuple(...)` |
+          | `TypeError: cannot use 'list' as a dict key (unhashable type: 'list')` | Dict comprehension key is a list | Use a tuple or string as the key |
+          | Set printed in a different order each run | Sets are unordered | `sorted(the_set)` |
+          | Changing one row changes every row | `[[0] * 3] * 3` repeats one inner list | `[[0] * 3 for _ in range(3)]` |
+      - type: item
+        ref: debug-conditional
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks look for a comprehension in your code — the goal is to practise the new syntax, even
+          where a loop would also work.
+      - type: item
+        ref: clean-names
+      - type: item
+        ref: index-by-id
+      - type: item
+        ref: parsons-passed
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **From hidden function to inlined loop.** Until Python 3.11, CPython compiled every comprehension
+          into a small hidden function that was created and called on the spot — that is how its variable
+          got its own scope. [PEP 709](https://peps.python.org/pep-0709/) (Python 3.12) **inlines** list,
+          dict and set comprehensions into the surrounding code instead, which makes them up to about twice
+          as fast for small inputs, while keeping the same isolation of the loop variable. Generator
+          expressions are still compiled as separate functions. One visible consequence: since 3.12 a
+          comprehension no longer appears as its own `<listcomp>` frame in tracebacks.
+
+          **Why comprehensions are fast.** The loop-and-append version looks up the `append` method and
+          calls it for every item. A comprehension uses a dedicated bytecode instruction (`LIST_APPEND`)
+          that adds the item directly. The difference is real but small; choose between a loop and a
+          comprehension for readability first.
+
+          **The first iterable is evaluated immediately, in the enclosing scope.** Only the *outermost*
+          `iterable` is evaluated outside the comprehension's scope. This rarely matters, except in a class
+          body, where names defined in the class are not visible inside the comprehension apart from that
+          first iterable.
+
+          **Comprehensions are expressions.** You can pass one directly to a function:
+          `sum([p * q for p, q in order])`. With a function call you can even drop the brackets —
+          `sum(p * q for p, q in order)` — which turns it into a generator expression that never builds
+          the intermediate list. See [generators](concept:python.generators).
+      - type: code
+        runnable: true
+        code: |
+          order = [(3, 1.5), (2, 4.25)]   # (quantity, unit price)
+
+          print(sum([q * p for q, p in order]))   # builds a list, then sums it
+          print(sum(q * p for q, p in order))     # generator: no list is built
+        expectedOutput: |
+          13.0
+          13.0
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `[expr for x in items if cond]` = **transform** (`expr`) + optional **filter** (`if cond`),
+            producing a **new** list.
+          - Translate a loop by moving the appended expression to the front and keeping the `for`/`if` order.
+          - `a if cond else b` **chooses** a value and goes at the front; a trailing `if` **drops** items and
+            has no `else`.
+          - `{k: v for ...}` builds a dict; `{x for ...}` builds a set (use `sorted()` to print sets of strings).
+          - Several `for` clauses run like nested loops, outer first. Keep comprehensions short; use a loop
+            for complex logic or side effects.
+          - The comprehension's variable does not leak into the surrounding code (Python 3).
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "rewrite this loop as a comprehension" and "what's the difference between `[x for x in
+          data]` and `(x for x in data)`?" — a list is built eagerly in memory; a generator expression
+          produces items lazily. Mention readability limits and that comprehension variables have their own
+          scope.
+
+items:
+  - id: predict-filter
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      words = ["sky", "river", "sun", "forest"]
+      print([w.upper() for w in words if len(w) > 3])
+    answer: "['RIVER', 'FOREST']"
+    explanation: >-
+      The filter keeps only words longer than three letters ("river", "forest"); the expression converts
+      each kept word to upper case.
+    wrongAnswers:
+      - answer: "['SKY', 'RIVER', 'SUN', 'FOREST']"
+        feedback: The trailing if is a filter — "sky" and "sun" have exactly three letters, so they are dropped.
+      - answer: "['river', 'forest']"
+        feedback: The expression at the front is w.upper(), so each kept word is transformed to capitals.
+      - answer: "[False, True, False, True]"
+        feedback: The condition decides which items are kept; it is not the value collected. The value is w.upper().
+
+  - id: mcq-loop-equivalent
+    type: mcq
+    skill: recognition
+    prompt: "Which loop builds the same list as `result = [n * 10 for n in nums if n > 2]`?"
+    explanation: >-
+      The expression at the front (n * 10) is what gets appended; the for and if run in the order written.
+      Only option b appends n * 10 for the items that pass the test.
+    options:
+      - id: a
+        text: |
+          `result = []`, then `for n in nums:` → `result.append(n > 2)`
+        feedback: That appends the True/False result of the condition. The condition only filters; the appended value is n * 10.
+      - id: b
+        text: |
+          `result = []`, then `for n in nums:` → `if n > 2:` → `result.append(n * 10)`
+        correct: true
+        feedback: Right — expression first in the comprehension, appended last in the loop.
+      - id: c
+        text: |
+          `result = []`, then `for n in nums:` → `result.append(n * 10)` → `if n > 2: break`
+        feedback: A comprehension never stops early; its if skips individual items and the loop continues.
+      - id: d
+        text: |
+          `for n in nums:` → `if n > 2:` → `nums.append(n * 10)`
+        feedback: A comprehension builds a new list and does not modify nums. (Appending to the list you are looping over would also never end here.)
+
+  - id: predict-conditional
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      scores = [72, 45, 90, 30]
+      print(["pass" if s >= 50 else "fail" for s in scores if s != 90])
+    answer: "['pass', 'fail', 'fail']"
+    explanation: >-
+      The trailing if removes 90 first, leaving 72, 45, 30. For each of those, the conditional expression
+      chooses "pass" or "fail": 72 → pass, 45 → fail, 30 → fail.
+    wrongAnswers:
+      - answer: "['pass', 'fail', 'pass', 'fail']"
+        feedback: The trailing if s != 90 filters out 90 entirely, so only three items are collected.
+      - answer: "['pass', 'fail', 'fail', 'fail']"
+        feedback: A filtered-out item is not turned into "fail" — it is skipped completely.
+      - answer: "['pass']"
+        feedback: The conditional expression at the front does not filter. Every item that passes s != 90 produces either "pass" or "fail".
+
+  - id: explain-readability
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate writes `[send_email(user) for user in users if user.active]` to send emails. Another
+      writes a three-level nested comprehension with two conditions on one line. Explain what is wrong
+      with each and what you would write instead.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says comprehensions are for building a collection, not for side effects like sending emails.
+      - Notes the first version builds a pointless list of return values (probably None) and hides the intent.
+      - Says deeply nested comprehensions with several conditions are hard to read and debug.
+      - Recommends a plain for loop (or splitting into steps / helper functions) in both cases.
+    modelAnswer: |
+      A comprehension's job is to build a new list. The email version is run only for its side effect, so
+      it builds a list of whatever send_email returns (probably None) and throws it away — a reader has to
+      notice that the list is never used. A plain `for user in users: if user.active: send_email(user)`
+      states the intent. The triple-nested comprehension works, but readers must mentally unroll three
+      loops and two conditions on one line, and you cannot easily add a print or breakpoint inside. Write
+      it as nested loops, or split it into named intermediate steps or a helper function.
+
+  - id: predict-leak
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? (Two lines.)
+    code: |
+      n = 100
+      doubled = [n * 2 for n in range(3)]
+      print(doubled)
+      print(n)
+    answer: |
+      [0, 2, 4]
+      100
+    explanation: >-
+      Inside the comprehension, n is the comprehension's own variable, taking the values 0, 1, 2. It does
+      not overwrite the n outside, which still refers to 100.
+    wrongAnswers:
+      - answer: |
+          [200, 200, 200]
+          100
+        feedback: The n in n * 2 is the comprehension's loop variable (0, 1, 2), not the outer n.
+      - answer: |
+          [0, 2, 4]
+          2
+        feedback: That is what a for loop would leave behind. A comprehension's variable stays inside the comprehension in Python 3.
+
+  - id: debug-conditional
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should label every number as `"even"` or `"odd"` and print
+      `['odd', 'even', 'even', 'odd']`, but it is a `SyntaxError`. Fix the comprehension (keep using one).
+    starterCode: |
+      nums = [7, 10, 4, 3]
+      labels = ["even" for n in nums if n % 2 == 0 else "odd"]
+      print(labels)
+    solution: |
+      nums = [7, 10, 4, 3]
+      labels = ["even" if n % 2 == 0 else "odd" for n in nums]
+      print(labels)
+    expectedOutput: |
+      ['odd', 'even', 'even', 'odd']
+    tests:
+      - name: labels every number
+        code: |
+          assert labels == ["odd", "even", "even", "odd"], f"labels should be ['odd', 'even', 'even', 'odd'], but it is {labels!r}."
+      - name: uses a list comprehension
+        code: |
+          assert uses("ListComp"), "Keep using a list comprehension — move the if/else to the front."
+      - name: works for other numbers
+        code: |
+          ns = {}
+          import io, contextlib
+          with contextlib.redirect_stdout(io.StringIO()):
+              exec(compile(source.replace("[7, 10, 4, 3]", "[2, 9]"), "<variant>", "exec"), ns)
+          assert ns["labels"] == ["even", "odd"], "Compute the labels from nums rather than typing them."
+    hints:
+      - Do you want to drop some numbers, or keep all of them and choose a label?
+      - Choosing a value needs a conditional expression, `a if condition else b`, at the front.
+      - '["even" if n % 2 == 0 else "odd" for n in nums]'
+    feedback:
+      - when: { errorType: SyntaxError }
+        message: >-
+          A trailing if cannot have an else. Put the whole choice at the front:
+          "even" if n % 2 == 0 else "odd", then for n in nums.
+      - when: { outputEquals: "['even', 'even']\n" }
+        message: Your if is filtering out the odd numbers. Every number needs a label, so use if/else at the front.
+    explanation: >-
+      The trailing if is a filter and cannot have an else. To keep every item and choose between two
+      values, the conditional expression goes in the expression position: "even" if n % 2 == 0 else "odd".
+
+  - id: clean-names
+    type: code
+    skill: implementation
+    prompt: |
+      Names typed into a form are messy. Write `clean_names(raw)` that **returns** a new list in which each
+      name has surrounding spaces removed and is in title case (`" ada lovelace "` → `"Ada Lovelace"`),
+      and **empty or blank entries are left out**. Use a list comprehension.
+    starterCode: |
+      def clean_names(raw):
+          # Return a list comprehension that strips and title-cases each name,
+          # skipping names that are empty after stripping.
+          pass
+
+
+      print(clean_names(["  ada lovelace", "", "GRACE hopper ", "   "]))
+    solution: |
+      def clean_names(raw):
+          return [name.strip().title() for name in raw if name.strip()]
+
+
+      print(clean_names(["  ada lovelace", "", "GRACE hopper ", "   "]))
+    expectedOutput: |
+      ['Ada Lovelace', 'Grace Hopper']
+    tests:
+      - name: cleans the example list
+        code: |
+          result = clean_names(["  ada lovelace", "", "GRACE hopper ", "   "])
+          assert result == ["Ada Lovelace", "Grace Hopper"], f"Expected ['Ada Lovelace', 'Grace Hopper'], got {result!r}."
+      - name: works for other input
+        code: |
+          result = clean_names(["lin", " SAM SMITH", "\t"])
+          assert result == ["Lin", "Sam Smith"], f"clean_names(['lin', ' SAM SMITH', '\\t']) should be ['Lin', 'Sam Smith'], got {result!r}."
+      - name: does not modify the original list
+        code: |
+          original = [" a ", "b"]
+          clean_names(original)
+          assert original == [" a ", "b"], "Build a new list; don't change the list you were given."
+      - name: uses a list comprehension
+        code: |
+          assert uses("ListComp"), "Write the function body with a list comprehension: [... for name in raw if ...]."
+    hints:
+      - "Transform: name.strip().title(). Filter: keep the name only if name.strip() is not empty."
+      - An empty string is falsy, so `if name.strip()` keeps only names with some text.
+      - "[name.strip().title() for name in raw if name.strip()]"
+    feedback:
+      - when: { outputContains: "''" }
+        message: Empty entries are still in the result. Add a filter at the end, such as if name.strip().
+      - when: { outputEquals: "None\n" }
+        message: clean_names must return the list.
+    explanation: >-
+      The expression strips and title-cases each name; the filter `if name.strip()` uses truthiness to drop
+      entries that are empty once spaces are removed. The comprehension builds a new list, leaving raw
+      unchanged.
+
+  - id: index-by-id
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      An API returned a list of user records. Write `names_by_id(users)` that **returns a dict** mapping
+      each user's `"id"` to their `"name"`, including **only active users**. Use a dict comprehension.
+    starterCode: |
+      users = [
+          {"id": 7, "name": "Ada", "active": True},
+          {"id": 3, "name": "Lin", "active": False},
+          {"id": 9, "name": "Sam", "active": True},
+      ]
+
+
+      def names_by_id(users):
+          # Return {id: name, ...} for the active users, using a dict comprehension.
+          pass
+
+
+      print(names_by_id(users))
+    solution: |
+      users = [
+          {"id": 7, "name": "Ada", "active": True},
+          {"id": 3, "name": "Lin", "active": False},
+          {"id": 9, "name": "Sam", "active": True},
+      ]
+
+
+      def names_by_id(users):
+          return {user["id"]: user["name"] for user in users if user["active"]}
+
+
+      print(names_by_id(users))
+    expectedOutput: |
+      {7: 'Ada', 9: 'Sam'}
+    tests:
+      - name: maps active ids to names
+        code: |
+          result = names_by_id(users)
+          assert result == {7: "Ada", 9: "Sam"}, f"Expected {{7: 'Ada', 9: 'Sam'}}, got {result!r}."
+      - name: works for other records
+        code: |
+          other = [{"id": 1, "name": "Kim", "active": False}, {"id": 2, "name": "Bo", "active": True}]
+          result = names_by_id(other)
+          assert result == {2: "Bo"}, f"For the check records the result should be {{2: 'Bo'}}, got {result!r}. Use the users parameter."
+      - name: uses a dict comprehension
+        code: |
+          assert uses("DictComp"), "Build the result with a dict comprehension: {key: value for user in users if ...}."
+    hints:
+      - "A dict comprehension looks like {key: value for item in items if condition}."
+      - 'The key is user["id"] and the value is user["name"].'
+      - 'Filter with if user["active"].'
+    feedback:
+      - when: { outputContains: "Lin" }
+        message: Lin is not active and should be left out. Add a filter on user["active"].
+      - when: { outputContains: "[" }
+        message: "That looks like a list. Use curly braces with key: value to build a dict."
+    explanation: >-
+      Each record contributes one key: value pair, and the trailing if keeps only active users. Dict
+      comprehensions are the idiomatic way to build lookup tables like this.
+
+  - id: parsons-passed
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to keep only the students who scored 60 or more, then print them alphabetically.
+      One line is a distractor.
+    solution: |
+      scores = {"sam": 74, "ada": 91, "lin": 58}
+      passed = {name: s for name, s in scores.items() if s >= 60}
+      for name in sorted(passed):
+          print(name, passed[name])
+    distractors:
+      - "passed = [name: s for name, s in scores.items() if s >= 60]"
+    expectedOutput: |
+      ada 91
+      sam 74
+    explanation: >-
+      A dict comprehension needs curly braces around the key: value expression; square brackets with a
+      colon are a SyntaxError. sorted(passed) iterates over the keys in alphabetical order.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-nested
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this print?
+    code: |
+      pairs = [(r, c) for r in range(3) for c in range(r)]
+      print(pairs)
+    answer: "[(1, 0), (2, 0), (2, 1)]"
+    explanation: >-
+      The for clauses run like nested loops, outer first. r = 0: range(0) is empty, nothing added. r = 1: c
+      takes 0. r = 2: c takes 0 then 1.
+    wrongAnswers:
+      - answer: "[(0, 0), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2)]"
+        feedback: range(r) stops before r, so when r is 0 the inner loop runs zero times and c never equals r.
+      - answer: "[(0, 1), (0, 2), (1, 2)]"
+        feedback: The outer loop is the first for clause (r); each tuple is (r, c), and c ranges below r.
+      - answer: "[[], [(1, 0)], [(2, 0), (2, 1)]]"
+        feedback: Two for clauses in one comprehension produce one flat list, not a list of lists.
+
+  - id: m-mcq-loop-or-comp
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      For each line of a log file you must parse a timestamp, skip lines that fail to parse (logging a
+      warning for each), and collect the rest. What is the best structure?
+    explanation: >-
+      Per-item error handling and logging need several statements and a try/except, which a comprehension
+      cannot contain. A regular loop that appends is clearer and easier to debug.
+    options:
+      - id: a
+        text: A regular for loop with try/except that appends the parsed values.
+        correct: true
+        feedback: Right. Multi-statement logic with error handling belongs in a loop.
+      - id: b
+        text: One list comprehension with the try/except inside the brackets.
+        feedback: try/except is a statement; it cannot appear inside a comprehension at all.
+      - id: c
+        text: A nested comprehension where the inner one logs warnings with print().
+        feedback: Using comprehensions for side effects such as logging hides the intent and builds throwaway lists.
+      - id: d
+        text: A set comprehension, so that duplicate lines are removed automatically.
+        feedback: Removing duplicates was not asked for, it would lose the order of the log, and the error-handling problem remains.
+
+  - id: m-tf-set-order
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: `{w.lower() for w in ["Pear", "apple", "Fig"]}` always prints its items in the order
+      pear, apple, fig.
+    answer: false
+    explanation: >-
+      A set comprehension builds a set, which has no guaranteed order; for strings, the order can even
+      differ between runs because string hashing is randomized per process. Use sorted() or a list
+      comprehension if order matters.
+
+  - id: m-code-table
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `times_table(n)` that **returns** an n × n multiplication table as a list of lists, where row
+      `r` (starting at 1) contains `r * 1, r * 2, ..., r * n`. Use a nested comprehension.
+      For example `times_table(3)` is `[[1, 2, 3], [2, 4, 6], [3, 6, 9]]`.
+    starterCode: |
+      def times_table(n):
+          # One inner list per row r; inside it, one value per column c.
+          pass
+
+
+      for row in times_table(3):
+          print(row)
+    solution: |
+      def times_table(n):
+          return [[r * c for c in range(1, n + 1)] for r in range(1, n + 1)]
+
+
+      for row in times_table(3):
+          print(row)
+    expectedOutput: |
+      [1, 2, 3]
+      [2, 4, 6]
+      [3, 6, 9]
+    tests:
+      - name: 3 x 3 table
+        code: |
+          result = times_table(3)
+          assert result == [[1, 2, 3], [2, 4, 6], [3, 6, 9]], f"times_table(3) returned {result!r}."
+      - name: other sizes
+        code: |
+          assert times_table(1) == [[1]], f"times_table(1) should be [[1]], got {times_table(1)!r}."
+          assert times_table(4)[3] == [4, 8, 12, 16], f"The last row of times_table(4) should be [4, 8, 12, 16], got {times_table(4)[3]!r}."
+      - name: rows are separate lists
+        code: |
+          t = times_table(2)
+          t[0][0] = 99
+          assert t[1][0] == 2, "Changing one row changed another: build each row with its own inner comprehension."
+      - name: uses a nested comprehension
+        code: |
+          import ast
+          comps = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ListComp)]
+          assert any(isinstance(c.elt, ast.ListComp) for c in comps), "Use a comprehension whose expression is another comprehension: [[... for c in ...] for r in ...]."
+    hints:
+      - "Write the inner part first: one row for a fixed r is [r * c for c in range(1, n + 1)]."
+      - Then wrap it in an outer comprehension that runs r from 1 to n.
+      - "[[r * c for c in range(1, n + 1)] for r in range(1, n + 1)]"
+    feedback:
+      - when: { outputContains: "[0," }
+        message: Your table starts at 0. Use range(1, n + 1) so rows and columns start at 1.
+      - when: { outputEquals: "None\n" }
+        message: times_table must return the table.
+    explanation: >-
+      The inner comprehension builds one row; the outer one repeats it for each r. Because the inner
+      comprehension runs again for every r, each row is a distinct list.
+
+  - id: m-debug-grid
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program creates a 3 × 3 board and marks the top-left square. It should print
+      `[['X', '.', '.'], ['.', '.', '.'], ['.', '.', '.']]`, but **every** row gets an X. Fix how the
+      board is created, using a comprehension.
+    starterCode: |
+      board = [["."] * 3] * 3
+      board[0][0] = "X"
+      print(board)
+    solution: |
+      board = [["."] * 3 for _ in range(3)]
+      board[0][0] = "X"
+      print(board)
+    expectedOutput: |
+      [['X', '.', '.'], ['.', '.', '.'], ['.', '.', '.']]
+    tests:
+      - name: only one square is marked
+        code: |
+          assert board == [["X", ".", "."], [".", ".", "."], [".", ".", "."]], f"board is {board!r}."
+      - name: rows are independent
+        code: |
+          assert board[0] is not board[1] and board[1] is not board[2], "The rows must be different list objects."
+      - name: built with a comprehension
+        code: |
+          assert uses("ListComp"), 'Create the board with a list comprehension, e.g. [["."] * 3 for _ in range(3)].'
+    hints:
+      - "`[row] * 3` makes a list containing the same row object three times."
+      - A comprehension evaluates its expression again for every item — so it creates a new row each time.
+      - '[["."] * 3 for _ in range(3)]'
+    feedback:
+      - when: { outputContains: "[['X', '.', '.'], ['X'" }
+        message: The rows are still the same list object. Build each row inside a comprehension.
+    explanation: >-
+      Multiplying a list repeats references: all three rows were one list object, so changing it showed up
+      three times (see [mutability](concept:python.mutability)). The comprehension evaluates ["."] * 3 anew
+      for each of the three iterations, creating independent rows.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-nested, m-mcq-loop-or-comp, m-tf-set-order, m-code-table, m-debug-grid]
+
+cheatsheet: |
+  ```python
+  [x * 2 for x in nums]                    # transform
+  [x for x in nums if x > 0]               # filter (no else!)
+  [x if x > 0 else 0 for x in nums]        # choose a value (if/else at the FRONT)
+  {name: len(name) for name in names}      # dict comprehension
+  {w.lower() for w in words}               # set comprehension -> print sorted(...)
+  [x for row in matrix for x in row]       # nested: outer loop first
+  [[0] * 3 for _ in range(3)]              # independent rows
+  sum(x * x for x in nums)                 # generator expression, no list built
+  ```
+  - Loop → comprehension: appended expression moves to the front; for/if keep their order.
+  - Use a loop for several statements, try/except, or side effects.
+  - The comprehension's variable does not leak out.

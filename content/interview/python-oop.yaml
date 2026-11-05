@@ -1,0 +1,525 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ---------------------------------------------------------------- classes
+  - id: python.classes.what-is-self
+    level: junior
+    kind: conceptual
+    concepts: [python.classes]
+    question: What is `self` in a Python method, and why do you have to write it?
+    answer: |
+      `self` is the conventional name of a method's first parameter. When you call a method on an
+      instance, `acct.deposit(50)`, Python looks up `deposit` on the class and calls it with the instance
+      inserted as the first argument: `BankAccount.deposit(acct, 50)`. That parameter is how the method
+      knows which object's attributes to read and change, so inside the method every attribute access goes
+      through it: `self.balance += amount`.
+
+      `self` is not a keyword — any name would work — but PEP 8 and every Python programmer expect `self`.
+      Python makes it explicit (unlike `this` in Java or C++) in line with "explicit is better than
+      implicit": methods are ordinary functions stored on the class, and you can even call them as
+      `Class.method(obj, ...)`.
+    keyPoints:
+      - obj.method(x) is translated to Class.method(obj, x); the instance arrives as the first parameter.
+      - Attributes are accessed through self; a bare name inside a method is a local or global variable.
+      - self is a convention, not a keyword.
+      - Forgetting self in the definition gives "takes 0 positional arguments but 1 was given".
+    followUps:
+      - What is a bound method, and what does p.method.__self__ refer to?
+      - How do @staticmethod and @classmethod change what the first parameter receives?
+    pitfalls:
+      - Saying self is a reserved word.
+      - Confusing self (the instance) with the class.
+
+  - id: python.classes.shared-class-attribute
+    level: mid
+    kind: debugging
+    concepts: [python.classes]
+    question: |
+      Every `Dog` ends up with every other dog's tricks. Explain the bug and fix it.
+
+      ```python
+      class Dog:
+          tricks = []
+
+          def __init__(self, name):
+              self.name = name
+
+          def add_trick(self, trick):
+              self.tricks.append(trick)
+      ```
+    answer: |
+      `tricks = []` in the class body runs once, when the class is created, so there is a single list
+      stored as a **class attribute**. `self.tricks.append(trick)` is not an assignment: Python looks up
+      `tricks` on the instance, does not find it, falls back to the class, and mutates that one shared
+      list. Every instance therefore sees every trick.
+
+      The fix is to create per-instance mutable state in `__init__`: `self.tricks = []`. Each call creates
+      a new list stored on that instance. Class attributes are fine for constants and genuinely shared,
+      immutable values; mutable per-object data belongs in `__init__`. It is the same root cause as the
+      mutable default argument trap.
+    keyPoints:
+      - The class body runs once, so the list is created once and stored on the class.
+      - Attribute reads fall back from the instance to the class; mutation through that lookup changes the shared object.
+      - Assignment (self.tricks = ...) would create an instance attribute; append does not.
+      - Fix by creating the list in __init__; vars(dog) then shows tricks on the instance.
+    followUps:
+      - "What would `self.count += 1` do if count were a class attribute equal to 0?"
+      - When is a class attribute the right tool?
+    pitfalls:
+      - Claiming Python copies class attributes into each instance.
+      - Fixing it with copy() inside add_trick instead of moving the state into __init__.
+
+  - id: python.classes.init-vs-new
+    level: senior
+    kind: conceptual
+    concepts: [python.classes]
+    question: What is the difference between `__new__` and `__init__`, and when would you override `__new__`?
+    answer: |
+      Calling a class runs `type.__call__`, which first calls `cls.__new__(cls, *args)` to **create** and
+      return a new object, and then — if that object is an instance of `cls` — calls
+      `obj.__init__(*args)` to **initialise** it. `__new__` is a static method that receives the class and
+      must return an object; `__init__` receives the already-created object as `self` and must return
+      `None` (returning anything else raises `TypeError`).
+
+      Almost all classes only need `__init__`. Override `__new__` when creation itself must be controlled:
+      subclassing immutable built-ins such as `int`, `str` or `tuple` (their value is fixed at creation, so
+      it must be set in `__new__`), returning cached or shared instances (interning, singletons), or
+      returning an object of a different class (factories). Metaclasses also use `__new__` to customise
+      class creation.
+    keyPoints:
+      - __new__ creates and returns the instance; __init__ initialises an existing instance and returns None.
+      - type.__call__ calls __new__, then __init__ only if the result is an instance of the class.
+      - Needed for immutable built-in subclasses, instance caching or factory behaviour.
+      - Most classes never need __new__.
+    followUps:
+      - Why can't you change the value of a str subclass in __init__?
+      - What happens if __new__ returns an instance of an unrelated class?
+    pitfalls:
+      - Calling __init__ "the constructor" and claiming it creates the object.
+      - Forgetting to return the object from __new__.
+
+  # ------------------------------------------------------------ inheritance
+  - id: python.inheritance.forgot-super-init
+    level: junior
+    kind: debugging
+    concepts: [python.inheritance]
+    question: |
+      Why does this raise `AttributeError: 'Manager' object has no attribute 'name'`, and how do you fix it?
+
+      ```python
+      class Employee:
+          def __init__(self, name):
+              self.name = name
+
+      class Manager(Employee):
+          def __init__(self, name, reports):
+              self.reports = reports
+
+      print(Manager("Grace", []).name)
+      ```
+    answer: |
+      Defining `__init__` in `Manager` overrides `Employee.__init__`. Python calls exactly one `__init__` —
+      the first one found in the MRO, which is `Manager`'s — and parent initialisers are not called
+      automatically. So `self.name` is never set.
+
+      Fix: call the parent explicitly at the start of the subclass's initialiser with
+      `super().__init__(name)`, then set the subclass's own attributes. Do not pass `self` to it; `super()`
+      already binds the instance.
+    keyPoints:
+      - Overriding __init__ replaces the parent's; Python does not chain initialisers automatically.
+      - super().__init__(name) runs the parent's initialiser on the same object.
+      - super() supplies self, so passing self again causes a "positional arguments" TypeError.
+    followUps:
+      - When could calling Employee.__init__(self, name) directly cause problems?
+      - What happens if Manager does not define __init__ at all?
+    pitfalls:
+      - Copying the parent's assignments into the subclass instead of calling super().
+      - Writing super().__init__(self, name).
+
+  - id: python.inheritance.composition-vs-inheritance
+    level: mid
+    kind: design
+    concepts: [python.inheritance]
+    question: When would you choose composition over inheritance? Give a concrete example.
+    answer: |
+      Use inheritance only for a genuine **is-a** relationship where the subclass can be used anywhere the
+      base class is expected without breaking its promises (the Liskov substitution principle) — e.g.
+      `SavingsAccount(BankAccount)`. Use composition for **has-a** or **uses** relationships: the object
+      holds a part as an attribute and delegates to it.
+
+      Example: `class Stack(list)` looks convenient but inherits `insert`, `sort`, `remove` and dozens of
+      other methods that let callers break the stack's last-in-first-out rule. A `Stack` that stores a
+      list in `self._items` and exposes only `push`, `pop` and `peek` has exactly the interface it needs
+      and can later change its storage without affecting callers.
+
+      Composition also makes parts swappable — an `OrderNotifier` given a sender object can use email,
+      SMS or a test fake — and avoids the fragile base class problem, where subclasses depend on a base
+      class's internal details (which methods call which) and break when those change. So composition is
+      the default; inheritance is for true specialisation, and for frameworks designed to be subclassed.
+    keyPoints:
+      - Inheritance for is-a that honours the base class's contract (Liskov substitution); composition for has-a.
+      - Inheritance exposes the whole parent interface; composition exposes only what you delegate.
+      - Composition allows swapping parts (dependency injection, test fakes).
+      - Inheritance couples the subclass to the base's internals (fragile base class problem).
+    followUps:
+      - Why is Square(Rectangle) a classic Liskov violation?
+      - How do mixins fit into this picture?
+    pitfalls:
+      - Using inheritance purely to reuse a couple of helper methods.
+      - Building deep hierarchies where nobody can tell which method runs.
+
+  - id: python.inheritance.mro-and-super
+    level: senior
+    kind: conceptual
+    concepts: [python.inheritance]
+    question: |
+      Explain what this prints and why. What exactly does `super()` do?
+
+      ```python
+      class A:
+          def who(self): return "A"
+      class B(A):
+          def who(self): return "B" + super().who()
+      class C(A):
+          def who(self): return "C" + super().who()
+      class D(B, C):
+          def who(self): return "D" + super().who()
+      print(D().who(), [k.__name__ for k in D.__mro__])
+      ```
+    answer: |
+      It prints `DBCA ['D', 'B', 'C', 'A', 'object']`.
+
+      Python computes a method resolution order for every class with the **C3 linearization**: each class
+      appears before its bases, bases keep the order in which they are listed, and every class appears
+      once. For `D(B, C)` that is D, B, C, A, object.
+
+      `super()` (zero-argument form, equivalent to `super(CurrentClass, self)`) returns a proxy that looks
+      up attributes in `type(self).__mro__`, starting **after** the class in which the method was defined.
+      So inside `B.who` for a D instance, the next class is C — B's sibling, not its parent A. That is what
+      makes cooperative multiple inheritance work: each method runs exactly once, in MRO order, as long as
+      every class calls `super()` and uses compatible signatures. If a hierarchy has no consistent order,
+      the class statement raises `TypeError: Cannot create a consistent method resolution order (MRO)`.
+    keyPoints:
+      - MRO is computed by C3 and stored in Class.__mro__; children before parents, base order preserved, each class once.
+      - super() searches the MRO of type(self) starting after the defining class.
+      - In a diamond, super() can call a sibling, so the shared base runs once.
+      - Cooperative methods must all call super() with compatible arguments (often **kwargs).
+    followUps:
+      - What changes if B calls A.who(self) directly instead of super()?
+      - How does zero-argument super() know the current class? (the __class__ cell)
+    pitfalls:
+      - Saying super() means "the parent class".
+      - Predicting depth-first order (D, B, A, C).
+
+  # ------------------------------------------------------------- type hints
+  - id: python.type-hints.runtime-enforcement
+    level: junior
+    kind: conceptual
+    concepts: [python.type-hints]
+    question: "Does Python enforce type hints? What happens when you call `def double(x: int) -> int` with a string?"
+    answer: |
+      No. Python stores annotations as metadata but never checks them when the program runs, so
+      `double("ab")` returns `"abab"` without any error. Hints are checked by separate tools — static type
+      checkers such as mypy and pyright, and editors that run them — which analyse the code without running
+      it and would report `Argument 1 to "double" has incompatible type "str"; expected "int"`.
+
+      If you need runtime validation (for data from users, files or APIs) you must write explicit checks
+      such as `isinstance`, or use a library like Pydantic that reads the hints and validates data against
+      them. Teams still use hints because they catch bugs before runtime, document function contracts and
+      make refactoring safer.
+    keyPoints:
+      - The interpreter ignores hints at runtime; wrong types pass through.
+      - Static type checkers (mypy, pyright) check them without running the code.
+      - Runtime validation requires explicit checks or a library such as Pydantic.
+      - Hints still pay off as documentation and early bug detection.
+    followUps:
+      - Where can code read annotations at runtime? (typing.get_type_hints, annotationlib, dataclasses)
+      - What does gradual typing mean?
+    pitfalls:
+      - Saying hints make Python statically typed.
+      - Saying hints convert values to the annotated type.
+
+  - id: python.type-hints.optional-narrowing
+    level: mid
+    kind: coding
+    concepts: [python.type-hints]
+    question: |
+      mypy reports `Item "None" of "str | None" has no attribute "upper"` for this code. Fix it and explain
+      what the checker is doing.
+
+      ```python
+      def find_email(users: dict[str, str], name: str) -> str | None:
+          return users.get(name)
+
+      def shout_email(users: dict[str, str], name: str) -> str:
+          return find_email(users, name).upper()
+      ```
+    answer: |
+      `find_email` honestly declares that it may return `None` (`dict.get` returns None for a missing key),
+      and `None` has no `.upper()`. The checker refuses the unchecked call because at runtime it would raise
+      `AttributeError` for unknown names. Handle the `None` case first:
+
+      ```python
+      def shout_email(users: dict[str, str], name: str) -> str:
+          email = find_email(users, name)
+          if email is None:
+              return "(no email)"
+          return email.upper()
+      ```
+
+      After `if email is None: return ...`, the checker **narrows** the type of `email` from `str | None`
+      to `str`, so `.upper()` is accepted. Other valid choices are raising an exception for the missing case
+      or changing `find_email` to raise instead of returning None — but silencing the checker with
+      `# type: ignore` or `cast` would just hide the crash.
+    keyPoints:
+      - "str | None means the value may be None; callers must handle that case."
+      - Checking `is None` (or isinstance) narrows the union to str for the rest of the branch.
+      - Fix the code, don't silence the checker.
+      - "Alternative designs: raise an exception instead of returning None."
+    followUps:
+      - When is returning None better than raising, and vice versa?
+      - How would you annotate a parameter that defaults to None?
+    pitfalls:
+      - Using `if email:` without considering that an empty string is also falsy.
+      - "Adding `# type: ignore` to make the error go away."
+
+  - id: python.type-hints.adoption-strategy
+    level: senior
+    kind: scenario
+    concepts: [python.type-hints]
+    question: You join a team with a large, untyped Python codebase. How would you introduce type hints and type checking?
+    answer: |
+      Treat it as gradual typing rather than a big-bang rewrite. Add a type checker (mypy or pyright) to CI
+      with a lenient configuration first, so it checks only annotated code and the build stays green. Then
+      annotate where the value is highest: public functions and module boundaries, code handling external
+      data, and modules that change often or break often. New and modified code should be fully annotated
+      (enforce it with per-module strict settings such as mypy's `disallow_untyped_defs`), and strictness is
+      ratcheted up module by module.
+
+      Practical points: install type stubs for third-party libraries (or mark untyped ones explicitly),
+      prefer precise types over `Any`, use `TypedDict` or dataclasses for dict-shaped data, keep runtime
+      validation (e.g. Pydantic) at the edges, and track remaining `type: ignore` comments as debt. Measure
+      progress (percentage of typed functions or modules under strict mode), and avoid reformatting or
+      refactoring large files in the same change as adding types so reviews stay focused.
+    keyPoints:
+      - Gradual adoption — the checker in CI, lenient at first, stricter per module over time.
+      - Annotate boundaries and high-churn or high-risk code first; require hints on new code.
+      - Handle third-party types with stubs; minimise Any and type-ignore.
+      - Hints don't validate runtime data; keep validation at system edges.
+    followUps:
+      - How do you deal with a library that ships no type information?
+      - What is the cost of using Any liberally?
+    pitfalls:
+      - Turning on strict mode for the whole codebase on day one.
+      - Believing annotations replace input validation.
+
+  # ------------------------------------------------------ dataclasses, enums
+  - id: python.dataclasses.mutable-default
+    level: junior
+    kind: debugging
+    concepts: [python.dataclasses]
+    question: |
+      This class definition raises `ValueError: mutable default <class 'list'> for field items is not allowed: use default_factory`. Why, and what is the fix?
+
+      ```python
+      @dataclass
+      class Cart:
+          owner: str
+          items: list[str] = []
+      ```
+    answer: |
+      A default value is evaluated once, when the class is defined. If dataclasses allowed `[]`, every Cart
+      created without an `items` argument would share that same list — adding an item to one cart would add
+      it to all of them (the same trap as mutable default arguments in functions). Dataclasses detect
+      defaults of unhashable types such as list, dict and set and refuse them.
+
+      The fix is `items: list[str] = field(default_factory=list)`. `default_factory` takes a zero-argument
+      callable; the generated `__init__` calls it for every new instance, so each Cart gets its own new list.
+    keyPoints:
+      - Defaults are evaluated once at class definition, so a list default would be shared.
+      - Dataclasses reject unhashable defaults (list, dict, set) to prevent this.
+      - field(default_factory=list) creates a fresh list per instance.
+      - Pass the callable itself (list), not list() or [].
+    followUps:
+      - How would you default a field to a dict of settings?
+      - Why does a frozen dataclass with a list field still allow mutation of the list?
+    pitfalls:
+      - Writing default_factory=[] or default_factory=list().
+
+  - id: python.dataclasses.hashability
+    level: mid
+    kind: conceptual
+    concepts: [python.dataclasses]
+    question: Why can't a plain `@dataclass` instance be used as a dictionary key, and how do you make it hashable safely?
+    answer: |
+      By default `@dataclass` generates `__eq__` that compares fields. Python requires that objects which
+      compare equal have equal hashes, and that a key's hash never changes while it is in a dict or set. A
+      normal dataclass is mutable, so a field-based hash could change after insertion and corrupt the
+      container. Therefore, with `eq=True` and `frozen=False`, the dataclass sets `__hash__ = None` and the
+      instance is unhashable (`TypeError: unhashable type`).
+
+      The safe fix is `@dataclass(frozen=True)`: fields cannot be reassigned, and the dataclass generates a
+      `__hash__` from the fields. All field values must themselves be hashable (use tuples instead of lists).
+      `unsafe_hash=True` forces a hash on a mutable class, but it is only correct if you never mutate
+      instances while they are keys.
+    keyPoints:
+      - eq=True without frozen sets __hash__ to None, making instances unhashable.
+      - Equal objects must have equal, stable hashes; mutable objects can't guarantee that.
+      - frozen=True generates a field-based __hash__; field values must be hashable.
+      - unsafe_hash=True exists but is risky.
+    followUps:
+      - Is a frozen dataclass deeply immutable?
+      - How does replace() help when working with frozen dataclasses?
+    pitfalls:
+      - Using eq=False to make it hashable, which breaks value equality for lookups.
+
+  - id: python.dataclasses.choosing-a-structure
+    level: senior
+    kind: design
+    concepts: [python.dataclasses]
+    question: For representing records in a service, compare a dict, a dataclass, an Enum, a NamedTuple and a Pydantic model. When would you use each?
+    answer: |
+      - **dict** — dynamic or unknown keys, or data merely passing through (e.g. forwarding JSON). Flexible,
+        but no required fields, no attribute-name checking, and the shape is undocumented (a `TypedDict` can
+        describe it for type checkers).
+      - **dataclass** — internal records with a known set of fields: generated `__init__`, `__repr__`,
+        `__eq__`, optional `frozen`, `order` and `slots`, type-checkable fields, methods allowed. It does not
+        validate types at runtime; add checks in `__post_init__` for invariants.
+      - **Enum** — a field whose value comes from a small fixed set (status, role, level). Typos fail loudly,
+        and `Status(value)` rejects unknown input.
+      - **NamedTuple** — immutable, tuple-compatible records (unpacking, indexing), lightweight; good for
+        small value objects or when an API expects tuples, but positional semantics can be surprising.
+      - **Pydantic model** — data crossing a trust boundary (HTTP requests, config files, third-party APIs):
+        it validates and converts types at runtime and produces clear errors, at some runtime cost and a
+        third-party dependency.
+
+      A common architecture parses and validates at the edge (Pydantic or explicit checks), converts to
+      dataclasses with Enum fields for the core logic, and serialises back (e.g. `asdict`) on the way out.
+    keyPoints:
+      - dict for dynamic data; dataclass for known internal records; Enum for fixed choices.
+      - NamedTuple for immutable tuple-like records.
+      - Pydantic (or explicit validation) where external data enters, because dataclasses don't validate types.
+      - Validate at boundaries, use precise types inside.
+    followUps:
+      - How would you validate a dataclass's fields without a third-party library?
+      - What does slots=True buy you, and what does it cost?
+    pitfalls:
+      - Assuming dataclass annotations validate input.
+      - Using a dict everywhere and losing all structure.
+
+  # -------------------------------------------------------- context managers
+  - id: python.context-managers.what-with-does
+    level: junior
+    kind: conceptual
+    concepts: [python.context-managers]
+    question: What does the `with` statement guarantee, and why is `with open(...) as f:` preferred over calling `f.close()` yourself?
+    answer: |
+      `with` calls the context manager's `__enter__` before the block (binding its return value to the `as`
+      name) and guarantees that its `__exit__` runs when the block ends — normally, through `return`,
+      `break` or `continue`, or because an exception was raised. For a file, `__exit__` closes it.
+
+      With a manual `f.close()` at the end, any exception raised between `open` and `close` skips the close,
+      leaking the file handle (and possibly losing buffered writes). `try`/`finally` fixes that, but `with`
+      expresses the same guarantee in one line and cannot be forgotten. The same pattern applies to locks,
+      database transactions, network connections and temporary state changes.
+    keyPoints:
+      - __enter__ runs first; its return value is bound by as.
+      - __exit__ always runs when the block is left, including on exceptions and return.
+      - Manual close() is skipped on exceptions; with is equivalent to a try/finally.
+      - Used for files, locks, transactions, connections and temporary changes.
+    followUps:
+      - In which order are multiple managers in one with statement exited?
+      - Does __exit__ run if __enter__ raises?
+    pitfalls:
+      - Thinking `as` always binds the manager itself.
+      - Using the file object after the with block.
+
+  - id: python.context-managers.write-a-timer
+    level: mid
+    kind: coding
+    concepts: [python.context-managers]
+    question: Write a context manager that measures how long its block takes, first as a class and then with `contextlib.contextmanager`. How would you make it testable?
+    answer: |
+      Class version:
+
+      ```python
+      import time
+
+      class Timer:
+          def __init__(self, clock=time.perf_counter):
+              self.clock = clock
+              self.elapsed = None
+
+          def __enter__(self):
+              self.start = self.clock()
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              self.elapsed = self.clock() - self.start
+              return False          # never swallow exceptions
+      ```
+
+      Generator version:
+
+      ```python
+      from contextlib import contextmanager
+
+      @contextmanager
+      def timer(results, clock=time.perf_counter):
+          start = clock()
+          try:
+              yield
+          finally:
+              results.append(clock() - start)
+      ```
+
+      `perf_counter` is the right clock for measuring intervals (monotonic, high resolution). The cleanup
+      sits in `__exit__` or in a `finally` block so the duration is recorded even when the block raises,
+      and the exception still propagates. Injecting the clock makes it testable: a test passes a fake clock
+      returning fixed values (e.g. 10.0 then 12.5) and asserts that elapsed is exactly 2.5.
+    keyPoints:
+      - __enter__ records the start and returns self; __exit__ computes elapsed and returns False.
+      - The generator version needs try/finally around yield.
+      - Use time.perf_counter for intervals, not time.time.
+      - Inject the clock so tests are deterministic.
+    followUps:
+      - How would you turn the timer into a decorator as well? (ContextDecorator)
+      - Why must __exit__ not return a truthy value here?
+    pitfalls:
+      - Forgetting try/finally in the generator version, so failed blocks are never timed.
+      - Returning True or self from __exit__.
+
+  - id: python.context-managers.exception-semantics
+    level: senior
+    kind: conceptual
+    concepts: [python.context-managers]
+    question: Describe precisely how exceptions interact with context managers — in `__exit__`, when `__enter__` fails, and in `@contextmanager` generators.
+    answer: |
+      The language reference defines `with` roughly as: evaluate the manager, look up `__enter__` and
+      `__exit__` on its **type**, call `__enter__`, then run the block inside `try`. If the block raises,
+      `__exit__(exc_type, exc_value, traceback)` is called; a **truthy** return suppresses the exception and
+      execution continues after the block, while a falsy return lets it propagate. If the block completes,
+      `__exit__(None, None, None)` is called. `__enter__` runs before the protected region, so if it raises,
+      neither the block nor `__exit__` runs — `__enter__` must clean up partial work itself. An exception
+      raised inside `__exit__` replaces the original one (which becomes its `__context__`).
+
+      `@contextmanager` wraps a generator: `__enter__` calls `next()` and returns the yielded value. On normal
+      exit, `__exit__` calls `next()` again and expects `StopIteration` (otherwise `RuntimeError: generator
+      didn't stop`). On an exception it calls `gen.throw(exc)`, raising it at the `yield`; if the generator
+      catches it and finishes, the exception is suppressed; if it re-raises, it propagates. Hence cleanup
+      must be in `try/finally`, and catching exceptions in the generator must be deliberate.
+      `contextlib.ExitStack` builds on this to manage a dynamic number of managers and unwind them in
+      reverse order.
+    keyPoints:
+      - Special methods are looked up on the type; __exit__ receives (type, value, traceback) or three Nones.
+      - Truthy __exit__ return suppresses; falsy propagates.
+      - If __enter__ raises, __exit__ is not called.
+      - "@contextmanager throws the exception into the generator at yield; catching it there suppresses it; try/finally is needed for cleanup."
+    followUps:
+      - How does contextlib.suppress use this protocol?
+      - How would you use ExitStack to open a list of files safely?
+    pitfalls:
+      - Believing __exit__ runs after a failed __enter__.
+      - Returning a truthy value from __exit__ by accident.

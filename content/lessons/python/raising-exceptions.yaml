@@ -1,0 +1,1570 @@
+id: python.raising-exceptions
+concept: python.raising-exceptions
+title: Raising and Defining Exceptions
+subtitle: Signalling clearly that a function cannot do its job
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Catching exceptions is half the story; the other half is raising them. Learn when and how to raise,
+  how to validate inputs with clear messages, how to design your own exception classes and hierarchies,
+  how to chain a low-level error to a high-level one with raise ... from, and when not to use
+  exceptions at all.
+objectives:
+  - Use raise to stop a function that cannot do its job, with a message that names the problem and the bad value.
+  - Validate inputs early and choose correctly between TypeError and ValueError.
+  - Define custom exception classes (and small hierarchies) that carry context in attributes.
+  - Chain exceptions with raise ... from err, read the resulting traceback, and re-raise with a bare raise.
+  - Decide when a function should raise and when it should return a normal value instead.
+sources:
+  - title: "The Python Tutorial: Raising Exceptions"
+    url: https://docs.python.org/3/tutorial/errors.html#raising-exceptions
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: User-defined Exceptions"
+    url: https://docs.python.org/3/tutorial/errors.html#user-defined-exceptions
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The raise statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-raise-statement
+    publisher: Python Software Foundation
+  - title: "Built-in Exceptions (including exception context and the class hierarchy)"
+    url: https://docs.python.org/3/library/exceptions.html
+    publisher: Python Software Foundation
+  - title: "PEP 3134: Exception Chaining and Embedded Tracebacks"
+    url: https://peps.python.org/pep-3134/
+    publisher: Python Software Foundation
+  - title: "PEP 654: Exception Groups and except*"
+    url: https://peps.python.org/pep-0654/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why functions need to raise
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Every function makes a promise: `withdraw(balance, amount)` promises to return the new balance.
+          Sometimes it **cannot** keep that promise — the amount is too large, the input is nonsense, a file
+          is missing. What should it do then?
+
+          A common beginner answer is to print a warning and return *something*:
+      - type: code
+        runnable: true
+        code: |
+          def withdraw(balance, amount):
+              if amount > balance:
+                  print("Not enough money!")
+                  return balance
+              return balance - amount
+
+          balance = 100
+          balance = withdraw(balance, 250)
+          print("Dispensing 250 rupees. New balance:", balance)
+        expectedOutput: |
+          Not enough money!
+          Dispensing 250 rupees. New balance: 100
+        caption: The caller cannot tell that the withdrawal failed — so the machine happily dispenses cash.
+      - type: markdown
+        body: |
+          The warning is printed, but **the calling code never finds out**. Returning the unchanged balance
+          looks exactly like success. Printing is not signalling: the caller cannot react to text on the
+          screen.
+
+          Raising an [exception](glossary:exception) is how a function says "I could not do what you asked"
+          in a way the caller **cannot accidentally ignore**:
+      - type: code
+        runnable: true
+        code: |
+          def withdraw(balance, amount):
+              if amount > balance:
+                  raise ValueError(f"cannot withdraw {amount}: balance is only {balance}")
+              return balance - amount
+
+          balance = 100
+          try:
+              balance = withdraw(balance, 250)
+              print("Dispensing 250 rupees. New balance:", balance)
+          except ValueError as err:
+              print("Transaction refused:", err)
+          print("Balance is still", balance)
+        expectedOutput: |
+          Transaction refused: cannot withdraw 250: balance is only 100
+          Balance is still 100
+        annotations:
+          - line: 3
+            text: The function stops here. It returns nothing; the exception travels to the caller instead.
+          - line: 9
+            text: This line is skipped — the cash is never dispensed.
+      - type: markdown
+        body: |
+          Now the failure is **impossible to miss**: either the caller handles it deliberately (as here), or
+          the program stops with a [traceback](glossary:traceback) that points straight at the problem.
+
+  - id: raise-basics
+    title: The raise statement
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The [raise statement](glossary:raise-statement) has the form:
+
+          ```text
+          raise ExceptionClass("a message explaining what went wrong")
+          ```
+
+          When it runs, Python:
+
+          1. **creates the exception object** (an instance of the class, holding your message);
+          2. **stops the current function immediately** — no later lines run and no value is returned;
+          3. **looks for a handler**: it leaves function after function, back up the call chain, until it
+             finds a `try` with a matching `except`;
+          4. if nothing handles it, **ends the program** and prints a traceback.
+
+          You already know steps 3 and 4 from [exceptions and tracebacks](concept:python.exceptions) — the
+          only new thing is that **you** start the process.
+      - type: code
+        runnable: true
+        code: |
+          def percentage(part, whole):
+              if whole == 0:
+                  raise ValueError("whole must not be zero")
+              return part / whole * 100
+
+          print(percentage(30, 120))
+          print(percentage(5, 0))
+          print("this line never runs")
+        expectedOutput: |
+          25.0
+        expectError: ValueError
+        caption: The first call works. The second raises, nothing handles it, and the program ends with a traceback.
+      - type: markdown
+        body: |
+          **Write messages for the person who will read the traceback** — often you, months later. A good
+          message says *what* was wrong, shows the *bad value* (use `!r` so strings appear in quotes), and
+          often says what was *expected*:
+
+          | Weak | Strong |
+          |---|---|
+          | `raise ValueError` | `raise ValueError(f"quantity must be at least 1, got {quantity}")` |
+          | `raise ValueError("bad input")` | `raise ValueError(f"date must look like YYYY-MM-DD, got {text!r}")` |
+
+          (`raise ValueError` with no parentheses is allowed — Python creates the instance for you — but the
+          message is empty.)
+      - type: item
+        ref: predict-raise-flow
+      - type: visualization
+        component: python-tracer
+        title: An exception travelling up the call stack
+        caption: >-
+          parse_age raises. Watch both function frames disappear without returning — the exception passes
+          through register (which has no handler) and is caught by the try at the bottom.
+        props:
+          code: |
+            def parse_age(text):
+                age = int(text)
+                if age < 0:
+                    raise ValueError(f"age cannot be negative: {age}")
+                return age
+
+            def register(text):
+                age = parse_age(text)
+                return f"registered, age {age}"
+
+            try:
+                print(register("-3"))
+            except ValueError as err:
+                print("Error:", err)
+
+  - id: validation
+    title: "Validate early: ValueError or TypeError?"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The best place to detect bad input is **where it enters** your function, before any work is done.
+          Checks at the top of a function that raise immediately are called
+          [guard clauses](glossary:guard-clause). After them, the rest of the function can trust its data.
+
+          Pick the built-in exception that describes the problem. The two you will raise most often
+          (definitions from the Python documentation):
+
+          - **`TypeError`** — the argument is of an inappropriate **type** (a list where a number was
+            expected).
+          - **`ValueError`** — the argument has the **right type but an inappropriate value** (a number
+            outside the allowed range, a string in the wrong format).
+      - type: code
+        runnable: true
+        code: |
+          def set_volume(level):
+              if not isinstance(level, int) or isinstance(level, bool):
+                  raise TypeError(f"level must be an int, got {type(level).__name__}")
+              if not 0 <= level <= 10:
+                  raise ValueError(f"level must be between 0 and 10, got {level}")
+              return f"volume set to {level}"
+
+          for value in [7, 11, "loud", True]:
+              try:
+                  print(set_volume(value))
+              except (TypeError, ValueError) as err:
+                  print(f"{type(err).__name__}: {err}")
+        expectedOutput: |
+          volume set to 7
+          ValueError: level must be between 0 and 10, got 11
+          TypeError: level must be an int, got str
+          TypeError: level must be an int, got bool
+        annotations:
+          - line: 2
+            text: "bool is a subclass of int (True == 1), so isinstance(True, int) is True. Exclude it explicitly if True makes no sense here."
+          - line: 4
+            text: Right type, wrong value → ValueError.
+          - line: 6
+            text: Both guards passed, so from here on level is known to be valid.
+      - type: callout
+        variant: tip
+        title: How much should you check?
+        body: |
+          Check what would otherwise fail **confusingly** (deep inside, with a message that makes no sense
+          to the caller) or **silently** (a wrong answer). You do not need an `isinstance` check for every
+          argument: if a wrong type will immediately raise a clear `TypeError` anyway, let it. Type hints
+          ([type hints](concept:python.type-hints)) document the expected types for tools, but they do not
+          check anything at runtime.
+      - type: callout
+        variant: warning
+        title: Don't validate with assert
+        body: |
+          `assert level >= 0, "..."` looks like a short way to validate, but running Python with the `-O`
+          (optimise) flag **removes every assert statement**, so your validation silently disappears.
+          `assert` is for tests and for internal "this can never happen" checks. Validate input with an
+          explicit `raise`.
+      - type: item
+        ref: mcq-value-vs-type
+
+  - id: custom-exceptions
+    title: Defining your own exceptions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Built-in exceptions describe *general* problems. Your code has *specific* failure modes: a
+          balance too low, an account locked, a configuration file invalid. A
+          [custom exception](glossary:custom-exception) class gives each one a name that callers can catch
+          precisely.
+
+          A custom exception is just a class that **inherits from `Exception`** (see
+          [inheritance](concept:python.inheritance)). The body can be only a docstring:
+      - type: code
+        runnable: true
+        code: |
+          class InsufficientFundsError(Exception):
+              """Raised when a withdrawal is larger than the balance."""
+
+          def withdraw(balance, amount):
+              if amount > balance:
+                  raise InsufficientFundsError(f"cannot withdraw {amount}; balance is {balance}")
+              return balance - amount
+
+          try:
+              withdraw(100, 250)
+          except InsufficientFundsError as err:
+              print("Refused:", err)
+        expectedOutput: |
+          Refused: cannot withdraw 250; balance is 100
+        annotations:
+          - line: 1
+            text: "Inherit from Exception, and end the name with Error (the PEP 8 convention)."
+          - line: 2
+            text: A docstring is a complete class body — no `pass` needed.
+      - type: markdown
+        body: |
+          **Why not just raise `ValueError`?** Because `except ValueError` would also catch *unrelated*
+          ValueErrors — for example one raised by an `int()` call somewhere inside the same `try`. A specific
+          class lets the caller handle exactly this situation and let everything else propagate.
+
+          **Add context as attributes.** Code that handles the error often needs the details. Don't make it
+          parse your message string; store the data on the exception. Override `__init__`, build the message,
+          and pass it to `super().__init__` so `str(err)` still works:
+      - type: code
+        runnable: true
+        code: |
+          class InsufficientFundsError(Exception):
+              """Raised when a withdrawal is larger than the balance."""
+
+              def __init__(self, balance, amount):
+                  super().__init__(f"cannot withdraw {amount}; balance is {balance}")
+                  self.balance = balance
+                  self.amount = amount
+
+          def withdraw(balance, amount):
+              if amount > balance:
+                  raise InsufficientFundsError(balance, amount)
+              return balance - amount
+
+          try:
+              withdraw(100, 250)
+          except InsufficientFundsError as err:
+              print("Refused:", err)
+              print("Short by", err.amount - err.balance)
+        expectedOutput: |
+          Refused: cannot withdraw 250; balance is 100
+          Short by 150
+        annotations:
+          - line: 5
+            text: super().__init__(message) stores the message, so str(err) and tracebacks show it.
+          - line: 18
+            text: The handler uses the data directly instead of parsing text.
+      - type: callout
+        variant: misconception
+        title: "\"I must subclass BaseException\""
+        body: |
+          Subclass **`Exception`** (or one of its subclasses). `BaseException` is the root of *everything*,
+          including `KeyboardInterrupt` (Ctrl+C) and `SystemExit`, which are deliberately **not**
+          `Exception`s so that `except Exception:` does not swallow them. The Python documentation encourages
+          you to derive new exceptions from `Exception` or one of its subclasses, not from `BaseException`.
+
+  - id: hierarchies
+    title: Exception hierarchies
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Exception classes form a tree through inheritance — an
+          [exception hierarchy](glossary:exception-hierarchy). An `except` clause for a class also catches
+          **every subclass**. The built-in exceptions use this: `KeyError` and `IndexError` are both
+          `LookupError`s.
+      - type: code
+        runnable: true
+        code: |
+          print(KeyError.__mro__)
+
+          for container, key in [({"a": 1}, "b"), ([1, 2, 3], 10)]:
+              try:
+                  container[key]
+              except LookupError as err:
+                  print("caught", type(err).__name__)
+        expectedOutput: |
+          (<class 'KeyError'>, <class 'LookupError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+          caught KeyError
+          caught IndexError
+        annotations:
+          - line: 1
+            text: __mro__ lists the class and all its ancestors, from most to least specific.
+      - type: markdown
+        body: |
+          Libraries do the same: one **base exception** for the whole package, with specific subclasses.
+          Callers who only care that "something in the bank module failed" catch the base class; callers who
+          can fix a specific problem catch the subclass.
+      - type: code
+        runnable: true
+        code: |
+          class BankError(Exception):
+              """Base class for every error raised by the bank code."""
+
+          class InsufficientFundsError(BankError):
+              """The balance is too low."""
+
+          class AccountLockedError(BankError):
+              """The account has been locked."""
+
+          def withdraw(account, amount):
+              if account["locked"]:
+                  raise AccountLockedError(f"account {account['id']} is locked")
+              if amount > account["balance"]:
+                  raise InsufficientFundsError(f"balance {account['balance']} is less than {amount}")
+              account["balance"] -= amount
+
+          accounts = [
+              {"id": "A1", "balance": 50, "locked": False},
+              {"id": "B2", "balance": 500, "locked": True},
+          ]
+          for account in accounts:
+              try:
+                  withdraw(account, 100)
+              except InsufficientFundsError as err:
+                  print("Please top up:", err)
+              except BankError as err:
+                  print("Bank problem:", type(err).__name__, "-", err)
+        expectedOutput: |
+          Please top up: balance 50 is less than 100
+          Bank problem: AccountLockedError - account B2 is locked
+        annotations:
+          - line: 25
+            text: Specific handler first...
+          - line: 27
+            text: "...then the general one, which catches any other BankError subclass."
+      - type: markdown
+        body: |
+          **`except` clauses are checked top to bottom and the first match wins.** A subclass instance
+          matches its parent class, so always put **more specific** clauses **before** more general ones —
+          otherwise the specific clause can never run.
+      - type: callout
+        variant: tip
+        title: Fitting into built-in categories
+        body: |
+          A class may inherit from your base **and** a built-in, e.g.
+          `class InvalidAmountError(BankError, ValueError)`. Then code that catches `ValueError` (perhaps
+          written before your library existed) still handles it, and your own code can catch `BankError`.
+      - type: item
+        ref: predict-except-order
+
+  - id: chaining
+    title: "Chaining: raise ... from err"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A very common pattern is **translating** a low-level error into one that makes sense at your
+          level. Reading a settings dict, `int("eighty")` raises `ValueError: invalid literal for int()...`
+          — accurate, but the caller wants to know that *the configuration* is wrong.
+
+          `raise NewError(...) from err` raises the new exception and records the original as its
+          **cause** in `__cause__`. This is [exception chaining](glossary:exception-chaining): no
+          information is lost.
+      - type: code
+        runnable: true
+        code: |
+          class ConfigError(Exception):
+              """The configuration is missing or invalid."""
+
+          def read_port(settings):
+              try:
+                  return int(settings["port"])
+              except ValueError as err:
+                  raise ConfigError(f"port must be a whole number, got {settings['port']!r}") from err
+
+          try:
+              read_port({"port": "eighty"})
+          except ConfigError as err:
+              print("Caught:", err)
+              print("Cause:", repr(err.__cause__))
+        expectedOutput: |
+          Caught: port must be a whole number, got 'eighty'
+          Cause: ValueError("invalid literal for int() with base 10: 'eighty'")
+        annotations:
+          - line: 7
+            text: "`as err` gives the original exception a name..."
+          - line: 8
+            text: "...and `from err` attaches it as the cause of the new one."
+      - type: markdown
+        body: |
+          If a chained exception is **not** handled, the traceback shows **both** exceptions, the cause
+          first, joined by a sentence you should learn to recognise. Here are the heading lines of that
+          traceback, produced with the `traceback` module (the indented "File ..., line ..." lines are
+          filtered out to keep it short):
+      - type: code
+        runnable: true
+        code: |
+          import traceback
+
+          class ConfigError(Exception):
+              """The configuration is missing or invalid."""
+
+          def read_port(settings):
+              try:
+                  return int(settings["port"])
+              except ValueError as err:
+                  raise ConfigError(f"port must be a whole number, got {settings['port']!r}") from err
+
+          try:
+              read_port({"port": "eighty"})
+          except ConfigError as err:
+              report = "".join(traceback.format_exception(err))
+              for line in report.splitlines():
+                  if not line.startswith(" "):
+                      print(line)
+        expectedOutput: |
+          Traceback (most recent call last):
+          ValueError: invalid literal for int() with base 10: 'eighty'
+
+          The above exception was the direct cause of the following exception:
+
+          Traceback (most recent call last):
+          ConfigError: port must be a whole number, got 'eighty'
+        caption: "Read it bottom-up: the error you got (ConfigError), and above it the error that directly caused it."
+      - type: code
+        runnable: true
+        code: |
+          class ConfigError(Exception):
+              """The configuration is missing or invalid."""
+
+          def read_port(settings):
+              try:
+                  return int(settings["port"])
+              except ValueError as err:
+                  raise ConfigError(f"port must be a whole number, got {settings['port']!r}") from err
+
+          read_port({"port": "eighty"})
+        expectError: ConfigError
+        caption: Run this unhandled version to see the full chained traceback, with line numbers for both errors.
+      - type: markdown
+        body: |
+          **Without `from`**, Python still remembers the earlier exception — automatically, in
+          `__context__` — but the traceback uses a different sentence:
+
+          ```text
+          During handling of the above exception, another exception occurred:
+          ```
+
+          That wording suggests an **accident**: the `except` block itself crashed. So:
+
+          | You write | `__cause__` | `__context__` | Traceback says |
+          |---|---|---|---|
+          | `raise New(...)` inside `except` | `None` | the original | "During handling of the above exception, another exception occurred" |
+          | `raise New(...) from err` | `err` | the original | "The above exception was the direct cause of the following exception" |
+          | `raise New(...) from None` | `None` | the original, but hidden | only the new exception |
+
+          Use `from err` whenever you translate an exception on purpose. Use `from None` only when the
+          original is pure noise for the reader (for example a `KeyError` from an internal lookup that your
+          message already explains).
+      - type: code
+        runnable: true
+        code: |
+          def average(values):
+              try:
+                  return sum(values) / len(values)
+              except ZeroDivisionError:
+                  raise ValueError("cannot average an empty list")     # no 'from'
+
+          try:
+              average([])
+          except ValueError as err:
+              print("message:", err)
+              print("cause:  ", err.__cause__)
+              print("context:", repr(err.__context__))
+        expectedOutput: |
+          message: cannot average an empty list
+          cause:   None
+          context: ZeroDivisionError('division by zero')
+        caption: Implicit chaining. Adding `from err` (with `except ZeroDivisionError as err`) would make the intent explicit.
+      - type: item
+        ref: mcq-chaining
+
+  - id: reraise
+    title: Re-raising with a bare raise
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Sometimes you want to **react** to an exception — log it, clean up, add information — but you
+          cannot actually fix the problem, so the caller should still get it. Inside an `except` block, a
+          bare `raise` (no exception after it) re-raises **the exception being handled**, with its original
+          traceback intact:
+      - type: code
+        runnable: true
+        code: |
+          def load_quantity(text):
+              try:
+                  return int(text)
+              except ValueError:
+                  print("log: could not parse quantity", repr(text))
+                  raise
+
+          try:
+              load_quantity("ten")
+          except ValueError as err:
+              print("caller still sees:", err)
+        expectedOutput: |
+          log: could not parse quantity 'ten'
+          caller still sees: invalid literal for int() with base 10: 'ten'
+        annotations:
+          - line: 6
+            text: Re-raises the same ValueError object. The caller sees it exactly as if it had never been caught.
+      - type: markdown
+        body: |
+          Prefer this to catching an exception and returning a made-up value such as `None` or `-1`, which
+          hides the failure again — the very problem this lesson started with. A bare `raise` outside an
+          `except` block has nothing to re-raise and fails with
+          `RuntimeError: No active exception to reraise`.
+
+  - id: control-flow
+    title: "When not to raise: expected outcomes are not errors"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Exceptions are for situations where a function **cannot keep its promise**. If "not found" or
+          "no" is a perfectly normal answer that callers expect regularly, **return** a value that says so.
+          The standard library draws this line carefully:
+      - type: code
+        runnable: true
+        code: |
+          text = "groundwork"
+          print(text.find("z"))           # find: "not found" is a normal answer (-1)
+
+          try:
+              text.index("z")             # index promises a position, so it raises
+          except ValueError as err:
+              print("ValueError:", err)
+
+          stock = {"tea": 4}
+          print(stock.get("coffee", 0))   # get: a missing key is expected; return a default
+        expectedOutput: |
+          -1
+          ValueError: substring not found
+          0
+      - type: markdown
+        body: |
+          | Situation | Do this |
+          |---|---|
+          | The input is invalid, a required resource is missing, an invariant is broken | **Raise** a specific exception with a clear message. |
+          | "Nothing found" / "no" is a normal, frequent result | **Return** a value: `None`, `False`, an empty list, a default. Make it obvious in the name or type hint (`-> User \| None`). |
+          | You want to leave a deep loop or pass a result back | Use `break`, `return` or a flag — **not** an exception as a hidden goto. |
+          | You caught something you cannot handle | Let it propagate, or re-raise with `raise`. Never `except: pass`. |
+
+          This is about what *your functions communicate*. Catching an exception for a rare failure — the
+          Python style called EAFP, "easier to ask forgiveness than permission", such as
+          `try: value = settings[key]` / `except KeyError: ...` — is perfectly idiomatic.
+
+          There is also a performance reason. Since CPython 3.11 a `try` block costs almost nothing when no
+          exception occurs, but actually **raising and catching** an exception is far slower than returning
+          a value. Using exceptions for the common path of a busy loop is slow as well as unclear.
+      - type: item
+        ref: mcq-raise-or-return
+
+  - id: exception-groups
+    title: "Several errors at once: ExceptionGroup and except*"
+    kind: concept
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Normally one exception ends the work. But sometimes several **independent** things fail and you
+          want to report **all** of them: every invalid field in a form, every failed task in a batch.
+          Python 3.11 added [`ExceptionGroup`](glossary:exception-group) for this, and the `except*` syntax
+          to handle the parts of a group by type.
+      - type: code
+        runnable: true
+        code: |
+          def validate_user(user):
+              errors = []
+              if not isinstance(user.get("name"), str):
+                  errors.append(TypeError("name must be a string"))
+              if user.get("age", 0) < 0:
+                  errors.append(ValueError("age must not be negative"))
+              if "@" not in user.get("email", ""):
+                  errors.append(ValueError("email must contain @"))
+              if errors:
+                  raise ExceptionGroup("invalid user", errors)
+
+          try:
+              validate_user({"name": 42, "age": -1, "email": "ada.example.com"})
+          except* ValueError as group:
+              for err in group.exceptions:
+                  print("value problem:", err)
+          except* TypeError as group:
+              for err in group.exceptions:
+                  print("type problem:", err)
+        expectedOutput: |
+          value problem: age must not be negative
+          value problem: email must contain @
+          type problem: name must be a string
+        annotations:
+          - line: 10
+            text: "ExceptionGroup(message, list_of_exceptions) — the list must not be empty."
+          - line: 14
+            text: "except* receives a smaller group containing only the matching exceptions."
+          - line: 17
+            text: Unlike ordinary except, several except* clauses can run for one group.
+      - type: markdown
+        body: |
+          Rules worth knowing:
+
+          - Each `except*` clause gets an `ExceptionGroup` of the matching exceptions (in `.exceptions`).
+            Any parts no clause handles are **re-raised** as a smaller group.
+          - You cannot mix `except` and `except*` in the same `try`.
+          - `ExceptionGroup` may only contain `Exception` subclasses; `BaseExceptionGroup` exists for the
+            rare cases that need others.
+          - You will meet groups for real in [asyncio](concept:python.asyncio): `asyncio.TaskGroup` reports
+            the failures of its tasks as an `ExceptionGroup`.
+
+          A smaller, related tool: `err.add_note("while reading row 7")` (Python 3.11+) attaches extra lines
+          of context that are printed with the traceback, without changing the exception's type.
+      - type: code
+        runnable: true
+        code: |
+          group = ExceptionGroup("batch failed", [ValueError("row 3"), KeyError("name")])
+          print(group)
+          print(group.exceptions)
+
+          try:
+              try:
+                  raise group
+              except* ValueError:
+                  print("handled the ValueError part")
+          except ExceptionGroup as rest:
+              print("still unhandled:", repr(rest))
+        expectedOutput: |
+          batch failed (2 sub-exceptions)
+          (ValueError('row 3'), KeyError('name'))
+          handled the ValueError part
+          still unhandled: ExceptionGroup('batch failed', [KeyError('name')])
+
+  - id: under-the-hood
+    title: "Under the hood: exception objects"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          - **What raise accepts.** The expression after `raise` must be an exception instance or an
+            exception class (which Python instantiates with no arguments). Anything else — such as a string —
+            raises `TypeError: exceptions must derive from BaseException`.
+          - **`args` and `str()`.** `BaseException` stores the constructor arguments in `err.args`.
+            `str(err)` is `str(args[0])` when there is exactly one argument, `''` when there are none, and
+            `str(args)` otherwise. That is why a custom `__init__` that does not call `super().__init__(message)`
+            prints its raw arguments as the "message".
+          - **The traceback is collected on the way up.** As the exception leaves each frame, that frame is
+            added to `err.__traceback__`. This is how the traceback knows the whole call chain.
+          - **Chaining attributes.** Raising while another exception is being handled sets `__context__`
+            automatically. `from err` sets `__cause__` and `__suppress_context__ = True` (so the traceback
+            shows the cause rather than the context). `from None` sets `__cause__ = None` and also suppresses
+            the context.
+          - **The root of the tree.** `SystemExit`, `KeyboardInterrupt` and `GeneratorExit` inherit directly
+            from `BaseException`, not `Exception`, so `except Exception` does not stop Ctrl+C or `sys.exit()`.
+          - **Cost (CPython 3.11+).** `try` blocks use a table of handlers looked up only when an exception
+            occurs ("zero-cost" exceptions), so entering a `try` is nearly free; creating, raising and
+            unwinding an exception is the expensive part.
+      - type: code
+        runnable: true
+        code: |
+          err = ValueError("bad value", 42)
+          print(err.args, str(err))
+          print(repr(ValueError()), repr(str(ValueError())))
+          print(issubclass(KeyboardInterrupt, Exception), issubclass(KeyboardInterrupt, BaseException))
+
+          class ConfigError(Exception):
+              pass
+
+          try:
+              try:
+                  {}["port"]
+              except KeyError:
+                  raise ConfigError("no port configured") from None
+          except ConfigError as e:
+              print(e.__cause__, repr(e.__context__), e.__suppress_context__)
+        expectedOutput: |
+          ('bad value', 42) ('bad value', 42)
+          ValueError() ''
+          False True
+          None KeyError('port') True
+        caption: "from None does not delete the context; it only tells the traceback not to display it."
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: exceptions must derive from BaseException` | `raise "something went wrong"` — raising a string. | Raise an exception object: `raise ValueError("something went wrong")`. |
+          | The traceback ends with just `ValueError` and no message | `raise ValueError` with no message. | Say what was wrong and include the bad value. |
+          | `str(err)` shows something like `(100, 250)` | A custom `__init__` did not pass a message to `super().__init__`. | Call `super().__init__(message)` in `__init__`. |
+          | `RuntimeError: No active exception to reraise` | A bare `raise` outside an `except` block. | Raise a specific exception, or move `raise` into the handler. |
+          | "During handling of the above exception, another exception occurred" | A new exception raised inside `except` without `from` — deliberately or by a bug in the handler. | If deliberate, write `raise New(...) from err`; otherwise fix the handler. |
+          | A specific `except` clause never runs | A more general clause (e.g. `except Exception`) is listed above it. | Order handlers from most specific to most general. |
+          | Validation works in development but not in production | It was written with `assert`, which `python -O` removes. | Validate with `if ...: raise ValueError(...)`. |
+      - type: code
+        runnable: true
+        code: |
+          def set_discount(percent):
+              if percent > 100:
+                  raise "discount cannot exceed 100"
+              return percent / 100
+
+          set_discount(150)
+        expectError: TypeError
+        caption: "Raising a string is itself an error. Python reports TypeError: exceptions must derive from BaseException."
+      - type: code
+        runnable: true
+        code: |
+          def check(value):
+              if value < 0:
+                  raise
+
+          check(-1)
+        expectError: RuntimeError
+        caption: "A bare raise only works inside an except block: RuntimeError: No active exception to reraise."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks call your functions with many inputs, including bad ones, and inspect the exceptions
+          you raise — their type, message, attributes and cause.
+      - type: item
+        ref: parse-quantity
+      - type: item
+        ref: out-of-stock
+      - type: item
+        ref: debug-chain
+      - type: item
+        ref: parsons-hierarchy
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `raise ExceptionClass("message")` stops the function and sends the exception up the call stack
+            until something handles it.
+          - Validate early with **guard clauses**: `TypeError` for the wrong type, `ValueError` for the right
+            type with a wrong value. Messages name the problem and show the bad value. Never validate with
+            `assert`.
+          - **Custom exceptions** subclass `Exception`, end in `Error`, and carry context as attributes (call
+            `super().__init__(message)`).
+          - Group them in a **hierarchy** under one base class; order `except` clauses specific → general.
+          - `raise New(...) from err` translates an error while keeping its cause (`__cause__`); a bare
+            `raise` re-raises the current exception unchanged.
+          - Raise when the function **cannot** do its job; **return** a value for normal outcomes like "not
+            found".
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "How would you design error handling for a library?" Describe a base exception class with
+          specific subclasses, attributes for context, `raise ... from err` when wrapping lower-level errors,
+          and catching specific exceptions as close as possible to where you can actually handle them. Know
+          the difference between `__cause__` and `__context__` and between `Exception` and `BaseException`.
+
+items:
+  - id: predict-raise-flow
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output (four lines).
+    code: |
+      def check_stock(quantity):
+          print("checking", quantity)
+          if quantity < 0:
+              raise ValueError("negative stock")
+              print("after raise")
+          print("stock ok")
+          return quantity
+
+      try:
+          check_stock(5)
+          check_stock(-1)
+          print("all checked")
+      except ValueError as err:
+          print("problem:", err)
+    answer: |
+      checking 5
+      stock ok
+      checking -1
+      problem: negative stock
+    explanation: >-
+      check_stock(5) runs normally. check_stock(-1) prints "checking -1" and then raises: the rest of the
+      function (including "after raise" and "stock ok") is skipped, and so is "all checked" in the try
+      block. Control jumps straight to the except clause.
+    wrongAnswers:
+      - answer: |
+          checking 5
+          stock ok
+          checking -1
+          after raise
+          problem: negative stock
+        feedback: raise stops the function immediately; the line after it never runs.
+      - answer: |
+          checking 5
+          stock ok
+          checking -1
+          problem: negative stock
+          all checked
+        feedback: When an exception jumps to the except clause, the remaining lines of the try block are skipped.
+      - answer: |
+          checking 5
+          stock ok
+          checking -1
+          stock ok
+          problem: negative stock
+        feedback: After raise, nothing else in check_stock runs — "stock ok" is skipped for -1.
+
+  - id: mcq-value-vs-type
+    type: mcq
+    skill: recognition
+    prompt: |
+      `make_username(name, length)` builds a username. Which call should make it raise **ValueError**
+      (rather than TypeError)?
+    explanation: >-
+      ValueError means the type is right but the value is not acceptable. A negative length is an int —
+      the right type — with an impossible value. Passing a list or None where a str/int is expected is a
+      TypeError.
+    options:
+      - id: a
+        text: '`make_username("ada", -3)` — a negative length'
+        correct: true
+        feedback: Right type (int), inappropriate value → ValueError.
+      - id: b
+        text: '`make_username(["a", "d", "a"], 5)` — a list instead of a string'
+        feedback: The argument has the wrong type entirely, so TypeError is the accurate choice.
+      - id: c
+        text: '`make_username("ada", "five")` — the length is a string'
+        feedback: A str where an int is expected is a type problem → TypeError.
+      - id: d
+        text: '`make_username(None, 5)` — no name at all'
+        feedback: None is a different type from str, so this is a TypeError.
+
+  - id: predict-except-order
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      class AppError(Exception):
+          pass
+
+      class NotFoundError(AppError):
+          pass
+
+      try:
+          raise NotFoundError("user 7")
+      except AppError as err:
+          print("app error:", err)
+      except NotFoundError as err:
+          print("not found:", err)
+    answer: "app error: user 7"
+    explanation: >-
+      except clauses are tried from top to bottom and the first match wins. A NotFoundError is also an
+      AppError (it is a subclass), so the first clause matches and the second can never run. Put the more
+      specific clause first.
+    wrongAnswers:
+      - answer: "not found: user 7"
+        feedback: >-
+          Python does not look for the most specific match — it takes the first clause that matches, in
+          order. NotFoundError is a subclass of AppError, so the first clause catches it.
+      - answer: |
+          app error: user 7
+          not found: user 7
+        feedback: At most one except clause runs for an exception in an ordinary try statement.
+
+  - id: mcq-chaining
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      Inside `except KeyError as err:`, what is the difference between writing
+      `raise ConfigError("missing port")` and `raise ConfigError("missing port") from err`?
+    explanation: >-
+      In both cases Python remembers the KeyError in __context__. from err additionally sets __cause__,
+      which marks the chain as deliberate: the traceback says "The above exception was the direct cause of
+      the following exception" instead of "During handling of the above exception, another exception
+      occurred".
+    options:
+      - id: a
+        text: "With from err, the KeyError is stored as __cause__ and the traceback says it was the direct cause; without it, it is only the implicit __context__ and the traceback suggests an error occurred while handling."
+        correct: true
+        feedback: Exactly. from err documents that you translated the error on purpose.
+      - id: b
+        text: Without from err the original KeyError is lost completely.
+        feedback: It is still kept as __context__ and shown in the traceback, just with wording that suggests an accident.
+      - id: c
+        text: from err makes the KeyError be raised again instead of ConfigError.
+        feedback: The exception raised is still ConfigError; err is only attached as its cause.
+      - id: d
+        text: There is no difference; from is only a comment for readers.
+        feedback: from sets __cause__ and __suppress_context__, which changes the traceback and what handlers can inspect.
+
+  - id: predict-reraise
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      def step():
+          try:
+              raise KeyError("token")
+          except KeyError:
+              print("cleaning up")
+              raise
+
+      try:
+          step()
+      except KeyError as err:
+          print("caught", repr(err))
+    answer: |
+      cleaning up
+      caught KeyError('token')
+    explanation: >-
+      The inner except block runs first (printing "cleaning up"), then the bare raise re-raises the same
+      KeyError, which the outer handler catches.
+    wrongAnswers:
+      - answer: cleaning up
+        feedback: The bare raise sends the same exception on to the caller, so the outer except also runs.
+      - answer: caught KeyError('token')
+        feedback: The exception is first caught inside step(), which prints "cleaning up" before re-raising it.
+      - answer: |
+          cleaning up
+          caught RuntimeError('No active exception to reraise')
+        feedback: Inside an except block there is an active exception, so a bare raise re-raises the KeyError.
+
+  - id: mcq-raise-or-return
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      `find_customer(email)` is used by a "Forgot password?" form. Unknown emails are typed all the time and
+      are not a problem — the form just says "if that account exists, we sent an email". What should the
+      function do when no customer has that email?
+    explanation: >-
+      "Not found" is a normal, expected outcome here, so return a value that represents it and make it
+      visible in the signature (`-> Customer | None`). Raising would force every caller to wrap a routine
+      lookup in try/except.
+    options:
+      - id: a
+        text: Return None (and document it, e.g. with the type hint `-> Customer | None`).
+        correct: true
+        feedback: An expected outcome deserves a normal return value.
+      - id: b
+        text: "raise Exception(\"not found\")"
+        feedback: Raising for an everyday outcome makes callers use try/except for normal flow — and a bare Exception is too generic to catch precisely.
+      - id: c
+        text: Print "Customer not found" and return an empty string.
+        feedback: Printing does not inform the caller, and "" is a confusing stand-in for "no customer".
+      - id: d
+        text: Call sys.exit() so the program stops safely.
+        feedback: Stopping the whole program because someone mistyped an email would be a serious bug.
+
+  - id: parse-quantity
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `parse_quantity(text)`, which turns text from an order form into a positive whole number:
+
+      1. If `text` is not a `str`, raise **TypeError** with a message that includes the type's name
+         (e.g. `int`).
+      2. Strip surrounding spaces and convert with `int()`. If that fails, raise **ValueError** with a
+         message that includes `repr(text)` — and chain it to the original error with `from`.
+      3. If the number is less than 1, raise **ValueError** with a message containing `at least 1`.
+      4. Otherwise return the number.
+    starterCode: |
+      def parse_quantity(text):
+          return int(text)
+
+
+      print(parse_quantity(" 3 "))
+    solution: |
+      def parse_quantity(text):
+          if not isinstance(text, str):
+              raise TypeError(f"quantity must be text, got {type(text).__name__}")
+          try:
+              number = int(text.strip())
+          except ValueError as err:
+              raise ValueError(f"quantity must be a whole number, got {text!r}") from err
+          if number < 1:
+              raise ValueError(f"quantity must be at least 1, got {number}")
+          return number
+
+
+      print(parse_quantity(" 3 "))
+    expectedOutput: |
+      3
+    tests:
+      - name: valid quantities are converted
+        code: |
+          for text, expected in [("3", 3), (" 12 ", 12), ("1", 1)]:
+              got = parse_quantity(text)
+              assert got == expected, f"parse_quantity({text!r}) should return {expected}, got {got!r}."
+      - name: non-text raises TypeError naming the type
+        code: |
+          for bad in [5, None, ["2"]]:
+              try:
+                  parse_quantity(bad)
+              except TypeError as err:
+                  assert type(bad).__name__ in str(err), f"The TypeError message for {bad!r} should mention {type(bad).__name__!r}; it was {str(err)!r}."
+              else:
+                  raise AssertionError(f"parse_quantity({bad!r}) should raise TypeError because it is not a str.")
+      - name: non-numbers raise a chained ValueError
+        code: |
+          for bad in ["ten", "2.5", ""]:
+              try:
+                  parse_quantity(bad)
+              except ValueError as err:
+                  assert repr(bad) in str(err), f"The message for {bad!r} should include {repr(bad)}; it was {str(err)!r}."
+                  assert isinstance(err.__cause__, ValueError), f"Chain the error for {bad!r}: write `raise ValueError(...) from err` inside `except ValueError as err:`."
+              else:
+                  raise AssertionError(f"parse_quantity({bad!r}) should raise ValueError.")
+      - name: numbers below 1 are rejected
+        code: |
+          for bad in ["0", "-4"]:
+              try:
+                  parse_quantity(bad)
+              except ValueError as err:
+                  assert "at least 1" in str(err), f"The message for {bad!r} should contain 'at least 1'; it was {str(err)!r}."
+              else:
+                  raise AssertionError(f"parse_quantity({bad!r}) should raise ValueError: quantities must be at least 1.")
+    hints:
+      - Start with a guard clause using isinstance(text, str) and raise TypeError if it fails.
+      - "Wrap only the conversion in try: `number = int(text.strip())`, and in `except ValueError as err:` raise your own ValueError `from err`."
+      - After the try/except, check `if number < 1:` and raise a ValueError mentioning "at least 1".
+    feedback:
+      - when: { errorType: AttributeError }
+        message: You called a string method (such as strip) before checking the type. Put the isinstance guard first.
+      - when: { codeMatches: "assert\\s" }
+        message: Validate with if ... raise, not assert — asserts are removed when Python runs with -O.
+    explanation: >-
+      The guard clause rejects the wrong type first, so .strip() is safe afterwards. The int() failure is
+      translated into a message about quantities and chained with from err, so the original error is still
+      visible. A final value check enforces the business rule.
+
+  - id: out-of-stock
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Create a custom exception and use it.
+
+      1. Define `OutOfStockError`, a subclass of `Exception`, whose `__init__(self, item, requested,
+         available)` stores those three values as attributes **and** passes this message to
+         `super().__init__`: `only {available} {item} left, cannot reserve {requested}`.
+      2. Write `reserve(stock, item, quantity)`. `stock` is a dict such as `{"tea": 5}`. If there is
+         enough of `item` (a missing item counts as 0), subtract `quantity` from the stock and return the
+         amount left. Otherwise raise `OutOfStockError` **without changing the stock**.
+    starterCode: |
+      class OutOfStockError(Exception):
+          pass
+
+
+      def reserve(stock, item, quantity):
+          stock[item] -= quantity
+          return stock[item]
+
+
+      stock = {"tea": 5}
+      print(reserve(stock, "tea", 2))
+    solution: |
+      class OutOfStockError(Exception):
+          """Raised when a reservation asks for more than is in stock."""
+
+          def __init__(self, item, requested, available):
+              super().__init__(f"only {available} {item} left, cannot reserve {requested}")
+              self.item = item
+              self.requested = requested
+              self.available = available
+
+
+      def reserve(stock, item, quantity):
+          available = stock.get(item, 0)
+          if quantity > available:
+              raise OutOfStockError(item, quantity, available)
+          stock[item] = available - quantity
+          return stock[item]
+
+
+      stock = {"tea": 5}
+      print(reserve(stock, "tea", 2))
+    expectedOutput: |
+      3
+    tests:
+      - name: OutOfStockError is a proper exception class
+        code: |
+          assert isinstance(OutOfStockError, type) and issubclass(OutOfStockError, Exception), "OutOfStockError must be a class that inherits from Exception."
+          err = OutOfStockError("pens", 4, 1)
+          for name in ["item", "requested", "available"]:
+              assert hasattr(err, name), f"OutOfStockError should store {name!r} as an attribute: write `self.{name} = {name}` in __init__."
+          assert (err.item, err.requested, err.available) == ("pens", 4, 1), "Store item, requested and available as attributes in __init__."
+          assert str(err) == "only 1 pens left, cannot reserve 4", f"str(err) should be 'only 1 pens left, cannot reserve 4', got {str(err)!r}. Pass the message to super().__init__."
+      - name: successful reservations update the stock
+        code: |
+          s = {"rice": 10}
+          assert reserve(s, "rice", 4) == 6, "reserve should return the amount left (10 - 4 = 6)."
+          assert s == {"rice": 6}, f"The stock dict should now be {{'rice': 6}}, got {s}."
+      - name: raises OutOfStockError with context
+        code: |
+          s = {"rice": 3}
+          try:
+              reserve(s, "rice", 5)
+          except OutOfStockError as err:
+              assert (err.item, err.requested, err.available) == ("rice", 5, 3), f"Expected item='rice', requested=5, available=3, got {(err.item, err.requested, err.available)}."
+          else:
+              raise AssertionError("Reserving 5 when only 3 are in stock should raise OutOfStockError.")
+          assert s == {"rice": 3}, f"A failed reservation must not change the stock, but it became {s}."
+      - name: missing items count as zero
+        code: |
+          s = {}
+          try:
+              reserve(s, "salt", 1)
+          except OutOfStockError as err:
+              assert err.available == 0, "A missing item has 0 available."
+          except KeyError:
+              raise AssertionError("reserve({}, 'salt', 1) raised KeyError. Look the item up with stock.get(item, 0) so a missing item counts as 0 and raises OutOfStockError.")
+          else:
+              raise AssertionError("Reserving an item that is not in the dict should raise OutOfStockError, not KeyError.")
+          assert s == {}, "A failed reservation must not add the item to the stock."
+    hints:
+      - "In __init__, first call `super().__init__(f\"only {available} {item} left, cannot reserve {requested}\")`, then set self.item, self.requested and self.available."
+      - In reserve, look up the available amount with stock.get(item, 0) before changing anything.
+      - "Guard clause: `if quantity > available: raise OutOfStockError(item, quantity, available)`."
+    feedback:
+      - when: { errorType: KeyError }
+        message: A missing item caused KeyError. Use stock.get(item, 0) to treat it as 0 available.
+    explanation: >-
+      The custom exception names the failure and carries the data a handler needs. reserve checks before it
+      mutates, so a failed reservation leaves the stock untouched — raising early keeps data consistent.
+
+  - id: debug-chain
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `get_setting` translates a missing key into a `ConfigError`, but the program prints
+      `Caused by: None`: the original `KeyError` is not recorded as the cause. Fix it so the output is:
+
+      ```text
+      Error: missing required setting 'port'
+      Caused by: KeyError('port')
+      ```
+    starterCode: |
+      class ConfigError(Exception):
+          """The configuration is missing or invalid."""
+
+
+      def get_setting(config, name):
+          try:
+              return config[name]
+          except KeyError:
+              raise ConfigError(f"missing required setting {name!r}")
+
+
+      try:
+          get_setting({"debug": True}, "port")
+      except ConfigError as err:
+          print("Error:", err)
+          print("Caused by:", repr(err.__cause__))
+    solution: |
+      class ConfigError(Exception):
+          """The configuration is missing or invalid."""
+
+
+      def get_setting(config, name):
+          try:
+              return config[name]
+          except KeyError as err:
+              raise ConfigError(f"missing required setting {name!r}") from err
+
+
+      try:
+          get_setting({"debug": True}, "port")
+      except ConfigError as err:
+          print("Error:", err)
+          print("Caused by:", repr(err.__cause__))
+    expectedOutput: |
+      Error: missing required setting 'port'
+      Caused by: KeyError('port')
+    tests:
+      - name: prints the error and its cause
+        code: |
+          assert output_lines() == ["Error: missing required setting 'port'", "Caused by: KeyError('port')"], f"Your program printed {output()!r}."
+      - name: the cause is set for any missing setting
+        code: |
+          try:
+              get_setting({}, "timeout")
+          except ConfigError as err:
+              assert isinstance(err.__cause__, KeyError), "Use `except KeyError as err:` and `raise ConfigError(...) from err` so __cause__ is the KeyError."
+              assert "'timeout'" in str(err), f"The message should name the missing setting; got {str(err)!r}."
+          else:
+              raise AssertionError("get_setting({}, 'timeout') should raise ConfigError.")
+      - name: existing settings still work
+        code: |
+          assert get_setting({"port": 8080}, "port") == 8080, "get_setting should return the value when the key exists."
+    hints:
+      - Which part of a raise statement records the exception that caused the new one?
+      - You need a name for the original exception — add `as err` to the except clause.
+      - "`raise ConfigError(...) from err`"
+    feedback:
+      - when: { outputContains: "Caused by: None" }
+        message: The KeyError is still only the implicit __context__. Name it with `as err` and add `from err` to the raise.
+    explanation: >-
+      Raising inside except without from leaves the original only in __context__. `from err` sets
+      __cause__, so the chain is explicit in code, in the traceback ("The above exception was the direct
+      cause...") and for handlers that inspect err.__cause__.
+
+  - id: parsons-hierarchy
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so that a small exception hierarchy is defined and the program prints
+      `not found: user 7`. One line is a distractor.
+    solution: |
+      class AppError(Exception):
+          """Base class for this app's errors."""
+      class NotFoundError(AppError):
+          """A requested record does not exist."""
+      try:
+          raise NotFoundError("user 7")
+      except NotFoundError as err:
+          print("not found:", err)
+      except AppError as err:
+          print("other app error:", err)
+    distractors:
+      - "    raise AppError(\"user 7\")"
+    expectedOutput: |
+      not found: user 7
+    explanation: >-
+      The base class inherits from Exception and NotFoundError from AppError. The specific handler must come
+      before the general one, otherwise AppError would catch the NotFoundError first. Raising the base
+      class AppError would skip the NotFoundError handler, because a parent is not an instance of its
+      subclass.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-context
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this print? (Three lines.)
+    code: |
+      class ParseError(Exception):
+          pass
+
+      def parse(text):
+          try:
+              return int(text)
+          except ValueError as err:
+              raise ParseError(f"not a number: {text!r}") from err
+
+      try:
+          parse("x1")
+      except ParseError as err:
+          print(err)
+          print(type(err.__cause__).__name__)
+          print(err.__cause__ is err.__context__)
+    answer: |
+      not a number: 'x1'
+      ValueError
+      True
+    explanation: >-
+      `from err` sets __cause__ to the ValueError. Because ParseError was raised while that ValueError was
+      being handled, __context__ is set to the same object automatically. (from also sets
+      __suppress_context__, so the traceback only shows it once, as the cause.)
+    wrongAnswers:
+      - answer: |
+          not a number: 'x1'
+          ValueError
+          False
+        feedback: >-
+          from does not replace __context__. Raising inside an except block always records the exception
+          being handled as __context__; here that is the same ValueError that from stored in __cause__.
+      - answer: |
+          not a number: 'x1'
+          NoneType
+          False
+        feedback: "`from err` sets __cause__ to the ValueError, so its type name is ValueError."
+
+  - id: m-mcq-catch-level
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A payments library defines:
+
+      ```python
+      class PaymentError(Exception): ...
+      class CardDeclinedError(PaymentError): ...
+      class FraudSuspectedError(CardDeclinedError): ...
+      class GatewayTimeoutError(PaymentError): ...
+      ```
+
+      Which single `except` clause catches `CardDeclinedError` **and** `FraudSuspectedError`, but **not**
+      `GatewayTimeoutError`?
+    explanation: >-
+      An except clause catches the class and all its subclasses. FraudSuspectedError is a subclass of
+      CardDeclinedError; GatewayTimeoutError is not, so `except CardDeclinedError` is exactly right.
+    options:
+      - id: a
+        text: "`except CardDeclinedError:`"
+        correct: true
+        feedback: It matches CardDeclinedError and its subclass FraudSuspectedError, nothing else.
+      - id: b
+        text: "`except PaymentError:`"
+        feedback: PaymentError is the base of all three, so it would also catch GatewayTimeoutError.
+      - id: c
+        text: "`except FraudSuspectedError:`"
+        feedback: A subclass clause does not catch its parent; a plain CardDeclinedError would get through.
+      - id: d
+        text: "`except Exception:`"
+        feedback: Far too broad — it catches every ordinary exception, including GatewayTimeoutError and unrelated bugs.
+
+  - id: m-code-required-fields
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Build a tiny validation module:
+
+      1. `ValidationError` — a subclass of `Exception`, the base class for validation problems.
+      2. `MissingFieldError` — a subclass of `ValidationError` whose `__init__(self, field)` stores
+         `field` as an attribute and passes the message `missing required field: {field}` to
+         `super().__init__`.
+      3. `check_required(record, fields)` — raise `MissingFieldError` for the **first** name in `fields`
+         (in the order given) that is not a key of the dict `record`; return `None` if all are present.
+    starterCode: |
+      class ValidationError(Exception):
+          pass
+
+
+      def check_required(record, fields):
+          pass
+
+
+      try:
+          check_required({"name": "Ada"}, ["name", "email", "age"])
+      except ValidationError as err:
+          print("Invalid:", err)
+    solution: |
+      class ValidationError(Exception):
+          """Base class for validation problems."""
+
+
+      class MissingFieldError(ValidationError):
+          """A required field is absent."""
+
+          def __init__(self, field):
+              super().__init__(f"missing required field: {field}")
+              self.field = field
+
+
+      def check_required(record, fields):
+          for field in fields:
+              if field not in record:
+                  raise MissingFieldError(field)
+          return None
+
+
+      try:
+          check_required({"name": "Ada"}, ["name", "email", "age"])
+      except ValidationError as err:
+          print("Invalid:", err)
+    expectedOutput: |
+      Invalid: missing required field: email
+    tests:
+      - name: the hierarchy is correct
+        code: |
+          assert defined("MissingFieldError"), "Define a class named MissingFieldError."
+          assert issubclass(ValidationError, Exception), "ValidationError must inherit from Exception."
+          assert issubclass(MissingFieldError, ValidationError), "MissingFieldError must inherit from ValidationError."
+      - name: the error carries the field name
+        code: |
+          err = MissingFieldError("phone")
+          assert err.field == "phone", "Store the field name in self.field."
+          assert str(err) == "missing required field: phone", f"str(err) should be 'missing required field: phone', got {str(err)!r}."
+      - name: reports the first missing field in order
+        code: |
+          try:
+              check_required({"b": 1}, ["a", "b", "c"])
+          except MissingFieldError as err:
+              assert err.field == "a", f"The first missing field in ['a', 'b', 'c'] is 'a', but the error was for {err.field!r}."
+          else:
+              raise AssertionError("check_required({'b': 1}, ['a', 'b', 'c']) should raise MissingFieldError.")
+          try:
+              check_required({"a": 1, "b": 2}, ["a", "b", "c"])
+          except MissingFieldError as err:
+              assert err.field == "c", f"Only 'c' is missing, but the error was for {err.field!r}."
+          else:
+              raise AssertionError("A record missing 'c' should raise MissingFieldError.")
+      - name: complete records pass
+        code: |
+          assert check_required({"a": 1, "b": 2}, ["a", "b"]) is None, "When every field is present, return None without raising."
+      - name: prints the friendly message
+        code: |
+          assert output().strip() == "Invalid: missing required field: email", f"Your program printed {output()!r}."
+    hints:
+      - "class MissingFieldError(ValidationError): with an __init__(self, field) that calls super().__init__(...) and sets self.field."
+      - In check_required, loop over fields in order and test `field not in record`.
+      - Raise as soon as you find the first missing field; after the loop, return None.
+    feedback:
+      - when: { errorType: NameError, errorMessageContains: "MissingFieldError" }
+        message: Define the MissingFieldError class (inheriting from ValidationError) before using it.
+    explanation: >-
+      MissingFieldError is a ValidationError, so callers can catch either the specific problem or any
+      validation problem. Storing the field as an attribute lets handlers react without parsing the
+      message, and raising at the first missing field keeps the check simple.
+
+  - id: m-debug-raise-string
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `Rejected: discount must be between 0 and 100, got 150`, but it crashes
+      with a TypeError instead. Fix `set_discount` so it raises the right kind of exception, with a message
+      that includes the bad value.
+    starterCode: |
+      def set_discount(percent):
+          if percent < 0 or percent > 100:
+              raise "discount must be between 0 and 100"
+          return percent / 100
+
+
+      try:
+          set_discount(150)
+      except ValueError as err:
+          print("Rejected:", err)
+    solution: |
+      def set_discount(percent):
+          if percent < 0 or percent > 100:
+              raise ValueError(f"discount must be between 0 and 100, got {percent}")
+          return percent / 100
+
+
+      try:
+          set_discount(150)
+      except ValueError as err:
+          print("Rejected:", err)
+    expectedOutput: |
+      Rejected: discount must be between 0 and 100, got 150
+    tests:
+      - name: prints the rejection
+        code: |
+          assert output().strip() == "Rejected: discount must be between 0 and 100, got 150", f"Your program printed {output()!r}."
+      - name: rejects other bad values with their value in the message
+        code: |
+          try:
+              set_discount(-5)
+          except ValueError as err:
+              assert "-5" in str(err), f"The message should include the bad value -5; it was {str(err)!r}."
+          else:
+              raise AssertionError("set_discount(-5) should raise ValueError.")
+      - name: valid discounts still work
+        code: |
+          assert set_discount(20) == 0.2, "set_discount(20) should return 0.2."
+          assert set_discount(100) == 1.0, "100 is allowed: set_discount(100) should return 1.0."
+    hints:
+      - Read the error message. What must an exception derive from?
+      - The handler catches ValueError — so raise a ValueError object containing the message.
+      - Use an f-string so the message ends with `, got {percent}`.
+    feedback:
+      - when: { errorMessageContains: "must derive from BaseException" }
+        message: You can only raise exception objects. Write `raise ValueError(f"... got {percent}")`.
+    explanation: >-
+      A string is not an exception, so `raise "..."` itself fails with TypeError — which the except
+      ValueError clause does not catch. Raising ValueError with an f-string message fixes both the type and
+      the missing detail.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-context, predict-reraise, m-mcq-catch-level, m-code-required-fields, m-debug-raise-string]
+
+cheatsheet: |
+  ```python
+  raise ValueError(f"age must be >= 0, got {age}")     # stop: cannot do the job
+  raise TypeError(f"expected str, got {type(x).__name__}")
+
+  class AppError(Exception):                           # base for your package
+      """Base class for this app's errors."""
+
+  class NotFoundError(AppError):                       # specific failure + context
+      def __init__(self, key):
+          super().__init__(f"no record for {key!r}")
+          self.key = key
+
+  try:
+      value = int(text)
+  except ValueError as err:
+      raise ConfigError("bad port") from err           # chain: sets __cause__
+
+  except SomeError:
+      log(...)
+      raise                                            # re-raise unchanged
+  ```
+  - ValueError = right type, wrong value · TypeError = wrong type
+  - except clauses: specific first; subclass instances match parent clauses
+  - Expected outcomes (not found) → return a value; failures → raise
+  - Never validate with assert (removed by `python -O`)

@@ -1,0 +1,223 @@
+id: auth-demo
+title: "Auth demo: password hashing, signed tokens and roles"
+track: backend
+level: advanced
+estimatedHours: 8
+summary: >-
+  Build registration, login and role-based access control for a FastAPI service from first principles:
+  salted scrypt password hashes, constant-time comparison, short-lived HMAC-signed tokens, and the
+  difference between 401 (who are you?) and 403 (you may not).
+problem: |
+  A small team API needs accounts. Anyone can **register**; registered users can **log in** and call
+  `/me`; only **admins** may list all users. Nothing about a password may ever be stored or logged in a
+  form that lets an attacker who steals the database log in as that user.
+
+  You will build the security core yourself with the standard library (`hashlib.scrypt`, `hmac`,
+  `secrets`) so you understand what libraries such as PyJWT or an identity provider do for you.
+
+  **Endpoints**
+
+  | Method and path | Who may call it | Success | Failures |
+  |---|---|---|---|
+  | `POST /register` `{username, password}` | anyone | `201 {"username", "role": "user"}` | `409` taken, `422` invalid or weak |
+  | `POST /login` `{username, password}` | anyone | `200 {"access_token", "token_type": "bearer", "expires_in": 900}` | `401` (same body for unknown user and wrong password) |
+  | `GET /me` | any valid token | `200 {"username", "role"}` | `401` missing, expired or tampered token |
+  | `GET /admin/users` | role `admin` | `200 [{"username", "role"}, ...]` | `401` not authenticated, `403` not an admin |
+
+  **Example session** (with `httpie`-style shorthand):
+
+  ```text
+  POST /register username=ada password="correct horse battery staple"
+  201 {"username": "ada", "role": "user"}
+
+  POST /login username=ada password="correct horse battery staple"
+  200 {"access_token": "eyJleHAiOjE3MDAwMDA5MDAsImlhdCI6...Kx3w", "token_type": "bearer", "expires_in": 900}
+
+  GET /me  Authorization: Bearer eyJleHAi...Kx3w
+  200 {"username": "ada", "role": "user"}
+
+  GET /admin/users  Authorization: Bearer eyJleHAi...Kx3w
+  403 {"detail": "insufficient permissions"}
+
+  (16 minutes later)
+  GET /me  Authorization: Bearer eyJleHAi...Kx3w
+  401 {"detail": "token expired"}   WWW-Authenticate: Bearer error="invalid_token"
+  ```
+
+  A stored password looks like `scrypt$16384$8$1$<salt>$<hash>`: the algorithm, its cost parameters and
+  a random salt travel with the hash, so the parameters can be raised later without breaking old accounts.
+concepts:
+  - backend.authentication
+  - backend.authorization
+  - security.cryptography-basics
+  - backend.dependency-injection
+  - backend.pydantic-validation
+  - networking.http-semantics
+acceptanceCriteria:
+  - "`hash_password` returns `scrypt$n$r$p$salt$hash` with a fresh 16-byte random salt, so hashing the same password twice gives different strings, and the password never appears in the output."
+  - "`verify_password` recomputes scrypt with the stored salt and parameters and compares with `hmac.compare_digest`; malformed hashes raise `ValueError`."
+  - "Tokens are `<payload>.<signature>` with an HMAC-SHA256 signature over the payload; changing either part, or signing with another key, raises `InvalidTokenError`; a token is valid until `exp` and raises `ExpiredTokenError` from then on (tested with an injected clock, no sleeping)."
+  - "`POST /register` returns 201 with only public fields, 409 for a taken username, and 422 for weak passwords, invalid usernames or extra fields such as `role`; 422 bodies never echo the submitted password."
+  - "`POST /login` returns the same 401 body for an unknown username and a wrong password, and still verifies a dummy hash for unknown users."
+  - "Protected routes return 401 with a `WWW-Authenticate: Bearer` header when the token is missing, malformed, expired or tampered, and 403 when a correctly authenticated user lacks the required role."
+  - "The signing key comes from the `AUTH_SECRET_KEY` environment variable; the app refuses to start if it is missing, not hex, or shorter than 32 bytes."
+architecture: |
+  ```text
+             +------------------- FastAPI app (create_app) --------------------+
+  request -> | HTTPBearer --> get_current_user --> require_role("admin") --> route |
+             |                   |  TokenSigner.verify      |  403 if role wrong |
+             |                   v  401 if missing/invalid   v                    |
+             |  /register, /login --> create_user / authenticate --> UserStore    |
+             |                          | hash_password / verify_password (scrypt)|
+             +----------------------------------------------------------------------+
+  ```
+
+  * **Password hashing** (milestone 1): pure functions. `hash_password` produces a self-describing
+    string; `verify_password` parses it, recomputes, and compares in constant time.
+  * **TokenSigner** (milestone 2): holds the secret key, the token lifetime and an injected `clock`.
+    `issue()` builds `base64url(json claims) + "." + base64url(hmac_sha256(key, payload))`; `verify()`
+    checks the signature *before* trusting any of the payload, then checks expiry.
+  * **UserStore** (provided): an in-memory dictionary, one per app instance, guarded by a lock. Swap
+    for a database-backed repository (as in the `crud-database-app` project) later.
+  * **Dependencies** (milestone 4): `get_current_user` turns the `Authorization` header into
+    verified `TokenClaims` or a 401; `require_role(*roles)` is a dependency *factory* that wraps it and
+    raises 403. Routes declare what they need with `Annotated[TokenClaims, Depends(...)]`.
+  * **create_app(secret_key, store=..., clock=..., token_ttl_seconds=...)**: everything stateful is
+    injected, which is what makes expiry and tampering testable. `app_from_env()` is the uvicorn
+    factory that reads the key from the environment.
+environment: local
+starterKit: projects/auth-demo
+setup: |
+  You need Python 3.11 or newer. From the repository root:
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\auth-demo
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/auth-demo
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  To run the API, generate a key and start uvicorn with the factory:
+
+  ```powershell
+  $env:AUTH_SECRET_KEY = python -c "import secrets; print(secrets.token_hex(32))"
+  python -m uvicorn --factory auth_service:app_from_env --app-dir starter --reload
+  ```
+
+  ```bash
+  export AUTH_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+  python -m uvicorn --factory auth_service:app_from_env --app-dir starter --reload
+  ```
+
+  Then open `http://127.0.0.1:8000/docs`. No accounts, paid services or network access are needed.
+milestones:
+  - id: m1-password-hashing
+    title: Salted password hashing with scrypt
+    description: |
+      Implement `hash_password`, `parse_password_hash`, `verify_password` and `needs_rehash`. Use
+      `secrets.token_bytes(16)` for the salt, `hashlib.scrypt` with the `ScryptParams` you are given, and
+      `hmac.compare_digest` to compare. Encode the result as `scrypt$n$r$p$salt$hash`.
+
+      **Tests (`TestMilestone1PasswordHashing`)** check the format and that parameters are stored, that
+      the right password verifies and wrong ones (including a different case) do not, that two hashes of
+      the same password have different salts, that old parameters still verify, that `compare_digest`
+      is used, that malformed hashes raise `ValueError`, and that `needs_rehash` spots outdated parameters.
+  - id: m2-signed-tokens
+    title: Short-lived HMAC-signed tokens
+    description: |
+      Implement `TokenSigner.issue`, `TokenSigner.verify` and a `__repr__` that hides the key. The payload
+      is compact, sorted JSON with `sub`, `role`, `iat` and `exp`; the signature is HMAC-SHA256 of the
+      encoded payload. Verify the signature first, then parse, then check expiry with the injected clock.
+
+      **Tests (`TestMilestone2SignedTokens`)** round-trip a token, move a fake clock to one second before
+      and exactly at expiry, rewrite the role inside the payload, flip a signature character, sign with a
+      different key, feed malformed tokens (`""`, `"a.b.c"`, non-ASCII), and check the key is never shown.
+  - id: m3-register-login
+    title: Registration and login endpoints
+    description: |
+      Implement `create_user`, `authenticate` (with the dummy-hash trick for unknown users), the
+      `RegisterRequest` constraints (`extra="forbid"`, username pattern, 12-128 character password that
+      does not contain the username), the `/register` and `/login` routes, and a 422 handler that drops
+      the echoed `input` from validation errors.
+
+      **Tests (`TestMilestone3RegisterAndLogin`)** use FastAPI's `TestClient` to check 201/409/422, that
+      the store holds a hash rather than the password, that clients cannot set their own role, that login
+      returns a verifiable bearer token, and that wrong-password and unknown-user responses are identical.
+  - id: m4-authorisation
+    title: "Authentication (401) vs authorisation (403)"
+    description: |
+      Implement the `get_current_user` dependency, the `require_role(*roles)` dependency factory, the
+      admin-only `GET /admin/users` route, and `load_secret_key` (fail fast on a missing, non-hex or short
+      `AUTH_SECRET_KEY`).
+
+      **Tests (`TestMilestone4Authorisation`)** check that missing, wrong-scheme, expired and tampered
+      tokens get 401 with a `WWW-Authenticate` header, that a plain user gets 403 on the admin route
+      while an unauthenticated caller gets 401, that a forged admin claim is a 401 (not a 403), and that
+      an admin can list users.
+testing: |
+  Run the tests from `projects/auth-demo` (they target `starter/` by default):
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone2   # one milestone
+  python -m pytest -x -q           # stop at the first failure
+  ```
+
+  Compare against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Time-dependent behaviour is tested with a `FakeClock` passed to `create_app(..., clock=clock)`; tests
+  call `clock.advance(901)` instead of sleeping, so the suite is fast and deterministic. A spy on
+  `hmac.compare_digest` checks that comparisons are constant-time. Tests that only inspect the hash
+  format use cheaper scrypt parameters to keep the suite quick.
+security:
+  - "Plaintext or fast-hash passwords: a stolen database must not reveal passwords. Use a slow, salted, memory-hard KDF (scrypt here; Argon2id via argon2-cffi is the current first choice) and store the parameters with the hash so they can be raised later."
+  - "Timing attacks: comparing secrets with `==` can stop at the first differing byte. Use `hmac.compare_digest` for hashes and signatures, and verify a dummy hash for unknown users so login time does not reveal which usernames exist."
+  - "Token tampering and algorithm confusion: verify the HMAC signature before parsing the payload, accept exactly one format, and never let the token choose its own algorithm (with PyJWT, always pass `algorithms=[\"HS256\"]`)."
+  - "Long-lived or leaked tokens: keep access tokens short-lived (15 minutes here), send them only over HTTPS, and never log them. Stateless tokens cannot be revoked before expiry without extra state (a deny-list or token version per user)."
+  - "Hard-coded or weak signing keys: the key comes from `AUTH_SECRET_KEY`, must be at least 32 random bytes, and the app refuses to start without it. Rotating the key logs everyone out, which is the intended emergency response."
+  - "Leaking secrets in errors: FastAPI's default 422 response echoes the submitted input, including passwords. The custom handler removes it; login failures use one generic message."
+  - "Mass assignment: `extra=\"forbid\"` on the request model stops clients from sending `role: admin` at registration. Username enumeration via the 409 on `/register` remains; mitigate with rate limiting or email-based sign-up."
+extensions:
+  - "Add login rate limiting per username and per client IP (a token bucket with the injected clock) and return 429 with `Retry-After`; see [rate limiting](concept:backend.rate-limiting)."
+  - "Transparently upgrade hashes: on successful login, if `needs_rehash(user.password_hash)` is true, store a new hash made with the current parameters."
+  - "Add refresh tokens: a long-lived, random, server-stored token that can be revoked, exchanged at `POST /token/refresh` for a new short-lived access token."
+  - "Support key rotation: give each key an id (`kid`), put it in the token, keep the previous key for verification only, and test that old tokens still verify until they expire."
+  - "Replace `TokenSigner` with PyJWT (`jwt.encode` / `jwt.decode` with `algorithms=[\"HS256\"]`, `options={\"require\": [\"exp\", \"sub\"]}`) and keep every test passing."
+rubric:
+  - criterion: Password storage
+    needsWork: Passwords are stored in plaintext or with a fast hash (SHA-256), or the salt is fixed or reused.
+    meets: Salted scrypt hashes with parameters stored in the hash; verification uses `hmac.compare_digest`.
+    exceeds: Also upgrades outdated hashes on login, explains the chosen cost parameters, and equalises timing for unknown users.
+  - criterion: Token design
+    needsWork: Tokens are unsigned, never expire, or the payload is trusted before the signature is checked.
+    meets: HMAC-SHA256 signed, short-lived tokens; tampering, wrong key and expiry are all rejected and tested with a fake clock.
+    exceeds: Adds key ids for rotation or refresh tokens with revocation, and documents what stateless tokens cannot do.
+  - criterion: "Authentication vs authorisation"
+    needsWork: Missing tokens and insufficient roles return the same status, or roles are checked inside each route by hand.
+    meets: 401 with `WWW-Authenticate` for identity problems and 403 for permission problems, via reusable dependencies.
+    exceeds: Role checks are declarative on every protected route and covered by tests for forged claims and every status code.
+  - criterion: Secret handling and error messages
+    needsWork: The signing key is hard-coded, or errors and logs reveal passwords, hashes or tokens.
+    meets: Key from the environment with fail-fast validation; generic login errors; 422 responses do not echo input.
+    exceeds: Adds key rotation or a secrets manager, and a test that scans logs for secret values.

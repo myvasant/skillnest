@@ -1,0 +1,732 @@
+id: text-utility
+title: Text Utility Toolkit
+track: python-beginner
+level: beginner
+estimatedHours: 3
+environment: browser
+summary: >-
+  Build a toolkit of string functions (word, character and line counts, most common words with
+  ties broken alphabetically, proper title-casing and a palindrome checker), then combine them
+  into a text report.
+concepts:
+  - python.strings
+  - python.for-loops
+  - python.lists
+  - python.dictionaries
+  - python.functions
+  - python.input-output
+  - python.exceptions
+problem: |
+  Writers, students and programmers constantly ask small questions about text: *how long is
+  this? Which words do I overuse? Is this a palindrome?* Word processors answer them with built-in
+  tools. You will build your own toolkit of [string](concept:python.strings) functions, each one
+  small, precise and tested, and then a program that turns any pasted text into a report.
+
+  The rules your functions follow:
+
+  * a **word** is a whitespace-separated piece of text with punctuation such as `.,;:!?"'()[]{}-`
+    removed from both ends and the rest lower-cased: `"Hello,"` → `hello`, `"don't"` stays
+    `don't`, `"well-known"` stays `well-known`, and `"--"` is not a word at all;
+  * the **most common words** are sorted by count (highest first) and, when counts are equal,
+    alphabetically, so the answer never depends on the order the words appeared in;
+  * **title case** capitalises every word except small words such as *of*, *the* and *and*,
+    which stay lower case unless they come first: `the lord of the rings` → `The Lord of the Rings`.
+    (Python's own `str.title()` gets `don't` wrong: it gives `Don'T`.)
+  * a **palindrome** reads the same backwards once you ignore case, spaces and punctuation:
+    `Never odd or even`. Text without any letters or digits is not a palindrome.
+
+  Example session (the user pastes three lines, then types `END`):
+
+  ```text
+  Type or paste your text, then a line with only END.
+  The cat sat on the mat.
+  Never odd or even
+  the end
+  END
+  === Text report ===
+  Lines: 3
+  Words: 12
+  Characters: 49
+  Letters: 37
+  Top words: the (3), cat (1), end (1)
+  Title: The Cat Sat on the Mat.
+  Palindrome lines: 1
+    Never odd or even
+  ```
+acceptanceCriteria:
+  - "`words(text)` returns lower-case words with punctuation stripped from both ends and empty pieces dropped; `count_words` uses it."
+  - "`count_characters`, `count_letters` and `count_lines` count every character, only letters (`str.isalpha`), and lines (a trailing newline does not add a line; empty text has 0 lines)."
+  - "`word_frequencies(text)` returns a dictionary of word counts and `most_common_words(text, n)` returns at most `n` `[word, count]` pairs, highest count first, ties in alphabetical order."
+  - "`title_case(text)` capitalises each word except the small words in `SMALL_WORDS` (unless first), handles apostrophes correctly and collapses repeated spaces."
+  - "`is_palindrome(text)` ignores case, spaces and punctuation, and returns `False` for text with no letters or digits."
+  - "The program reads lines until `END` or the end of input and prints the report in the exact format shown, or `No text to analyse.` for empty input."
+architecture: |
+  Every tool is a **pure function**: text in, value out, no `input()` or `print()`. The report
+  combines them, and only `read_text` and `main` talk to the user.
+
+  ```text
+   input() lines ──► read_text() ──► text ──► build_report(text) ──► print()
+                                                │
+          ┌──────────────┬──────────────┬───────┴──────┬────────────────┬──────────────┐
+          ▼              ▼              ▼              ▼                ▼              ▼
+     count_lines   count_words   count_characters  count_letters  most_common_words  title_case
+                        │                                               │          is_palindrome
+                        └────────────── words(text) ◄── word_frequencies┘
+  ```
+
+  * `words(text)` is the single definition of "a word". Counting and frequencies both reuse it,
+    so they can never disagree.
+  * `word_frequencies` builds a [dictionary](concept:python.dictionaries) with
+    `counts[word] = counts.get(word, 0) + 1`.
+  * `most_common_words` turns the dictionary into a [list](concept:python.lists) of
+    `[-count, word]` pairs and sorts it. Lists compare item by item, so sorting puts the largest
+    count first (it is the most negative) and breaks ties alphabetically by the word.
+  * `read_text` reads with `input()` until a line `END` or an `EOFError` (no more input).
+setup: |
+  Nothing to install. This project runs in the editor on this page with Python 3.14 in your
+  browser (Pyodide). All milestones share **one code file**: keep your earlier functions as you
+  add new ones, and click **Run milestone tests** to check the milestone you are working on.
+
+  To use the toolkit on your own computer, save the code as `text_utility.py` and run it from a
+  terminal in the same folder (only built-in Python is used; no packages or virtual environment
+  needed). Paste or type your text, then a line with `END`:
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  python text_utility.py
+  Get-Content notes.txt | python text_utility.py   # analyse a whole file
+  ```
+
+  (If `python` is not found, try `py text_utility.py`.)
+
+  **macOS / Linux**
+
+  ```bash
+  python3 text_utility.py
+  python3 text_utility.py < notes.txt   # analyse a whole file
+  ```
+milestones:
+  - id: counts
+    title: Count words, characters and lines
+    description: |
+      Write five functions. Each takes a string and **returns** a value:
+
+      * `words(text)`: split on whitespace with `text.split()`, strip `PUNCTUATION` from both
+        ends of each piece with `piece.strip(PUNCTUATION)`, lower-case it, and keep it only if
+        something is left. `words("Hello, world -- hello!")` is `["hello", "world", "hello"]`;
+      * `count_words(text)`: the number of words, using `words`;
+      * `count_characters(text)`: every character, including spaces and newlines;
+      * `count_letters(text)`: only letters, checked with `ch.isalpha()` (so `é` counts, `3` and
+        `!` do not);
+      * `count_lines(text)`: the number of lines. Use `text.splitlines()`: it gives no lines for
+        `""` and does not count a final newline as an extra line.
+
+      The tests use punctuation, tabs, several spaces, accented letters and empty text.
+    starterCode: |
+      # Text utility toolkit
+      # One file for the whole project: keep your earlier functions as you add new ones.
+
+      PUNCTUATION = ".,;:!?\"'()[]{}-"
+      SMALL_WORDS = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]
+
+
+      # --- Milestone 1: words, count_words, count_characters, count_letters, count_lines
+
+      def words(text):
+          """Return the lower-case words in text, with punctuation stripped from both ends."""
+          # TODO
+          pass
+
+
+      def count_words(text):
+          """Return the number of words in text."""
+          # TODO: reuse words(text)
+          pass
+
+
+      # TODO: count_characters(text), count_letters(text), count_lines(text)
+
+
+      # --- Milestone 2: word_frequencies(text), most_common_words(text, n) -----
+      # --- Milestone 3: title_case(text), is_palindrome(text) -----------------
+      # --- Milestone 4: build_report(text), read_text(), main() ---------------
+
+
+      def main():
+          """Read text from the user and print a report about it."""
+          print("Type or paste your text, then a line with only END.")
+          # TODO (milestone 4)
+
+
+      if __name__ == "__main__":
+          main()
+    hints:
+      - "Start `words` with an empty list `result = []`, loop `for piece in text.split():`, and `append` each cleaned piece that is not empty."
+      - "`\"--wow!\".strip(PUNCTUATION)` is `\"wow\"`: strip removes any of the given characters from both ends, but never from the middle."
+      - "For `count_letters`, keep a counter and add 1 for each `ch` in `text` where `ch.isalpha()` is True."
+    tests:
+      - name: words cleans and lower-cases words
+        code: |
+          assert defined("words"), "Define a function called words(text)."
+          cases = [
+              ("Hello, world! Hello again.", ["hello", "world", "hello", "again"]),
+              ("  It's a well-known fact -- really?  ", ["it's", "a", "well-known", "fact", "really"]),
+              ("one\ttwo\nthree", ["one", "two", "three"]),
+              ("(Wow!) \"Quotes\"", ["wow", "quotes"]),
+              ("", []),
+          ]
+          for text, expected in cases:
+              got = words(text)
+              assert got == expected, f"words({text!r}) should be {expected!r}, but it returned {got!r}."
+      - name: count_words and count_characters
+        code: |
+          assert defined("count_words") and defined("count_characters"), "Define count_words(text) and count_characters(text)."
+          for text, expected in [("The cat sat.", 3), ("", 0), ("one\ntwo  three\tfour", 4), ("wait - what?", 2), ("   ", 0)]:
+              got = count_words(text)
+              assert got == expected, f"count_words({text!r}) should be {expected}, but it returned {got!r}."
+          for text, expected in [("héllo wörld", 11), ("", 0), ("a\nb", 3), ("  ", 2)]:
+              got = count_characters(text)
+              assert got == expected, f"count_characters({text!r}) should be {expected}, but it returned {got!r}."
+      - name: count_letters and count_lines
+        code: |
+          assert defined("count_letters") and defined("count_lines"), "Define count_letters(text) and count_lines(text)."
+          for text, expected in [("Hello, World! 123", 10), ("", 0), ("café", 4), ("2 + 2 = 4", 0)]:
+              got = count_letters(text)
+              assert got == expected, f"count_letters({text!r}) should be {expected}, but it returned {got!r}."
+          for text, expected in [("", 0), ("one line", 1), ("a\nb\nc", 3), ("a\nb\n", 2), ("a\n\nb", 3)]:
+              got = count_lines(text)
+              assert got == expected, f"count_lines({text!r}) should be {expected}, but it returned {got!r}."
+    solution: |
+      # Text utility toolkit: milestone 1
+
+      PUNCTUATION = ".,;:!?\"'()[]{}-"
+      SMALL_WORDS = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]
+
+
+      def words(text):
+          """Return the lower-case words in text, with punctuation stripped from both ends."""
+          result = []
+          for piece in text.split():
+              word = piece.strip(PUNCTUATION).lower()
+              if word != "":
+                  result.append(word)
+          return result
+
+
+      def count_words(text):
+          """Return the number of words in text."""
+          return len(words(text))
+
+
+      def count_characters(text):
+          """Return the number of characters, including spaces and newlines."""
+          return len(text)
+
+
+      def count_letters(text):
+          """Return the number of letters (not digits, spaces or punctuation)."""
+          total = 0
+          for ch in text:
+              if ch.isalpha():
+                  total = total + 1
+          return total
+
+
+      def count_lines(text):
+          """Return the number of lines; a final newline does not start a new line."""
+          return len(text.splitlines())
+  - id: frequencies
+    title: Most common words
+    description: |
+      Add two functions:
+
+      * `word_frequencies(text)`: a dictionary mapping each word (from `words(text)`) to how many
+        times it appears. `word_frequencies("Hi! hi, HI.")` is `{"hi": 3}`.
+      * `most_common_words(text, n)`: a list of at most `n` pairs `[word, count]`, highest count
+        first. Words with the **same count are in alphabetical order**, so
+        `most_common_words("the cat and the hat", 2)` is `[["the", 2], ["and", 1]]`: `and`, `cat`
+        and `hat` all appear once, and `and` comes first alphabetically.
+
+      Sorting by two things at once has a neat trick: build a list of `[-count, word]` pairs and
+      call `.sort()`. Lists are compared item by item, so the most negative count (the biggest
+      count) comes first, and equal counts are then ordered by the word. Convert back to
+      `[word, count]` afterwards.
+
+      The tests check counting across case and punctuation, ties, asking for more words than
+      exist, and empty text.
+    hints:
+      - "Count with a dictionary: `counts[word] = counts.get(word, 0) + 1`. `get` returns 0 for a word you have not seen yet."
+      - "`for word, count in counts.items():` gives you each word with its count. Append `[-count, word]` to a list, then sort it."
+      - "`pairs[:n]` keeps the first n pairs. Loop over them and append `[word, -negative_count]` to the result."
+    tests:
+      - name: word_frequencies counts words
+        code: |
+          assert defined("word_frequencies"), "Define a function called word_frequencies(text)."
+          for text, expected in [("the cat and the hat", {"the": 2, "cat": 1, "and": 1, "hat": 1}), ("Hi! hi, HI.", {"hi": 3}), ("", {})]:
+              got = word_frequencies(text)
+              assert got == expected, f"word_frequencies({text!r}) should be {expected!r}, but it returned {got!r}."
+      - name: most_common_words sorts by count, then alphabetically
+        code: |
+          assert defined("most_common_words"), "Define a function called most_common_words(text, n)."
+          cases = [
+              ("the cat and the hat", 2, [["the", 2], ["and", 1]]),
+              ("b a c b a", 3, [["a", 2], ["b", 2], ["c", 1]]),
+              ("zebra apple zebra apple mango", 3, [["apple", 2], ["zebra", 2], ["mango", 1]]),
+              ("one two", 5, [["one", 1], ["two", 1]]),
+              ("", 3, []),
+              ("Red red RED blue", 1, [["red", 3]]),
+          ]
+          for text, n, expected in cases:
+              got = most_common_words(text, n)
+              assert got is not None, "most_common_words returned None. Build the list and return it."
+              normalised = [list(pair) for pair in got]
+              assert normalised == expected, f"most_common_words({text!r}, {n}) should be {expected!r}, but it returned {got!r}."
+    solution: |
+      # Text utility toolkit: milestones 1-2
+
+      PUNCTUATION = ".,;:!?\"'()[]{}-"
+      SMALL_WORDS = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]
+
+
+      def words(text):
+          """Return the lower-case words in text, with punctuation stripped from both ends."""
+          result = []
+          for piece in text.split():
+              word = piece.strip(PUNCTUATION).lower()
+              if word != "":
+                  result.append(word)
+          return result
+
+
+      def count_words(text):
+          """Return the number of words in text."""
+          return len(words(text))
+
+
+      def count_characters(text):
+          """Return the number of characters, including spaces and newlines."""
+          return len(text)
+
+
+      def count_letters(text):
+          """Return the number of letters (not digits, spaces or punctuation)."""
+          total = 0
+          for ch in text:
+              if ch.isalpha():
+                  total = total + 1
+          return total
+
+
+      def count_lines(text):
+          """Return the number of lines; a final newline does not start a new line."""
+          return len(text.splitlines())
+
+
+      def word_frequencies(text):
+          """Return a dictionary mapping each word to the number of times it appears."""
+          counts = {}
+          for word in words(text):
+              counts[word] = counts.get(word, 0) + 1
+          return counts
+
+
+      def most_common_words(text, n):
+          """Return up to n [word, count] pairs: highest count first, ties alphabetical."""
+          pairs = []
+          for word, count in word_frequencies(text).items():
+              pairs.append([-count, word])
+          pairs.sort()
+          result = []
+          for negative_count, word in pairs[:n]:
+              result.append([word, -negative_count])
+          return result
+  - id: transforms
+    title: Title case and palindromes
+    description: |
+      Add two text transformations:
+
+      * `title_case(text)`: split into words with `text.split()`, then for each word: if it is in
+        `SMALL_WORDS` (compare in lower case) and it is **not the first** word, keep it lower case;
+        otherwise make the first letter upper case and the rest lower case. Join with single
+        spaces. `"the LORD of the rings"` → `"The Lord of the Rings"`, `"don't stop"` →
+        `"Don't Stop"`.
+      * `is_palindrome(text)`: keep only the letters and digits (`ch.isalnum()`), lower-cased,
+        and compare them with the same text reversed (`cleaned[::-1]`). If nothing is left, return
+        `False`. `"A man, a plan, a canal: Panama!"` is a palindrome.
+
+      The tests include small words in first position, shouting capitals, apostrophes, extra
+      spaces, punctuation, digits and text with nothing to check.
+    hints:
+      - "`word[0].upper() + word[1:].lower()` capitalises one word (or use `word.capitalize()`). Avoid `str.title()`: it treats the apostrophe as a word break."
+      - "To know whether a word is first, check whether your result list is still empty: `len(result) == 0`."
+      - "Build `cleaned` with a loop: start from `\"\"` and add `ch.lower()` for every `ch` where `ch.isalnum()` is True."
+    tests:
+      - name: title_case capitalises words but not small words
+        code: |
+          assert defined("title_case"), "Define a function called title_case(text)."
+          cases = [
+              ("the lord of the rings", "The Lord of the Rings"),
+              ("HELLO WORLD", "Hello World"),
+              ("don't stop believing", "Don't Stop Believing"),
+              ("a tale of two cities", "A Tale of Two Cities"),
+              ("of mice and men", "Of Mice and Men"),
+              ("  extra   spaces here ", "Extra Spaces Here"),
+              ("", ""),
+          ]
+          for text, expected in cases:
+              got = title_case(text)
+              assert got == expected, f"title_case({text!r}) should be {expected!r}, but it returned {got!r}."
+      - name: is_palindrome ignores case, spaces and punctuation
+        code: |
+          assert defined("is_palindrome"), "Define a function called is_palindrome(text)."
+          for text in ["racecar", "Never odd or even", "A man, a plan, a canal: Panama!", "12321", "No 'x' in Nixon", "a"]:
+              assert is_palindrome(text) is True, f"is_palindrome({text!r}) should be True."
+          for text in ["hello", "ab", "", "!!!", "   ", "palindrome"]:
+              assert is_palindrome(text) is False, f"is_palindrome({text!r}) should be False."
+    solution: |
+      # Text utility toolkit: milestones 1-3
+
+      PUNCTUATION = ".,;:!?\"'()[]{}-"
+      SMALL_WORDS = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]
+
+
+      def words(text):
+          """Return the lower-case words in text, with punctuation stripped from both ends."""
+          result = []
+          for piece in text.split():
+              word = piece.strip(PUNCTUATION).lower()
+              if word != "":
+                  result.append(word)
+          return result
+
+
+      def count_words(text):
+          """Return the number of words in text."""
+          return len(words(text))
+
+
+      def count_characters(text):
+          """Return the number of characters, including spaces and newlines."""
+          return len(text)
+
+
+      def count_letters(text):
+          """Return the number of letters (not digits, spaces or punctuation)."""
+          total = 0
+          for ch in text:
+              if ch.isalpha():
+                  total = total + 1
+          return total
+
+
+      def count_lines(text):
+          """Return the number of lines; a final newline does not start a new line."""
+          return len(text.splitlines())
+
+
+      def word_frequencies(text):
+          """Return a dictionary mapping each word to the number of times it appears."""
+          counts = {}
+          for word in words(text):
+              counts[word] = counts.get(word, 0) + 1
+          return counts
+
+
+      def most_common_words(text, n):
+          """Return up to n [word, count] pairs: highest count first, ties alphabetical."""
+          pairs = []
+          for word, count in word_frequencies(text).items():
+              pairs.append([-count, word])
+          pairs.sort()
+          result = []
+          for negative_count, word in pairs[:n]:
+              result.append([word, -negative_count])
+          return result
+
+
+      def title_case(text):
+          """Capitalise each word, keeping SMALL_WORDS lower case unless they come first."""
+          result = []
+          for word in text.split():
+              lower = word.lower()
+              if len(result) > 0 and lower in SMALL_WORDS:
+                  result.append(lower)
+              else:
+                  result.append(lower[0].upper() + lower[1:])
+          return " ".join(result)
+
+
+      def is_palindrome(text):
+          """Return True if text reads the same backwards, ignoring case, spaces and punctuation."""
+          cleaned = ""
+          for ch in text:
+              if ch.isalnum():
+                  cleaned = cleaned + ch.lower()
+          if cleaned == "":
+              return False
+          return cleaned == cleaned[::-1]
+  - id: report
+    title: The text report
+    description: |
+      Combine the tools. Add:
+
+      * `build_report(text)`: returns these lines joined with `"\n"` (values for the example
+        text from the problem):
+
+        ```text
+        === Text report ===
+        Lines: 3
+        Words: 12
+        Characters: 49
+        Letters: 37
+        Top words: the (3), cat (1), end (1)
+        Title: The Cat Sat on the Mat.
+        Palindrome lines: 1
+          Never odd or even
+        ```
+
+        `Top words` shows the 3 most common words as `word (count)` separated by `, ` (or `none`).
+        `Title` is the first line in title case (empty if there are no lines). After
+        `Palindrome lines: N` comes one line per palindrome line: two spaces, then the line with
+        spaces stripped from its ends.
+      * `read_text()`: read lines with `input()` until a line that is exactly `END` (ignoring
+        spaces around it) or until `input()` raises `EOFError`; return the lines joined with
+        `"\n"`;
+      * `main()`: print `Type or paste your text, then a line with only END.`, read the text, and
+        print the report, or `No text to analyse.` if the text is empty or only spaces.
+
+      The tests compare `build_report` with an exact expected report and run your program with
+      text that ends with `END`, text that does not, lines after `END` that must be ignored, and
+      no text at all.
+    hints:
+      - "Build the report as a list: `lines = [\"=== Text report ===\", f\"Lines: {count_lines(text)}\", ...]`, then `return \"\\n\".join(lines)`."
+      - "For Top words, collect `f\"{word} ({count})\"` strings from `most_common_words(text, 3)` in a list and join them with `\", \"`."
+      - "`read_text` is a `while True:` loop with `try: line = input()` and `except EOFError: break`. Check for `END` before appending the line."
+    tests:
+      - name: build_report produces the exact report
+        code: |
+          assert defined("build_report"), "Define a function called build_report(text)."
+          text = "The cat sat on the mat.\nNever odd or even\nthe end"
+          expected = (
+              "=== Text report ===\nLines: 3\nWords: 12\nCharacters: 49\nLetters: 37\n"
+              "Top words: the (3), cat (1), end (1)\nTitle: The Cat Sat on the Mat.\n"
+              "Palindrome lines: 1\n  Never odd or even"
+          )
+          got = build_report(text)
+          assert got == expected, f"build_report should return:\n{expected}\n\nbut it returned:\n{got}"
+          other = build_report("Racecar\n  Step on no pets  \nbanana")
+          assert "Palindrome lines: 2\n  Racecar\n  Step on no pets" in other, (
+              f"Each palindrome line should be listed after 'Palindrome lines: 2', indented by two spaces. Got:\n{other}"
+          )
+      - name: the program reads until END and prints the report
+        code: |
+          out = run_program("The cat sat on the mat.\nNever odd or even\nthe end\nEND\nthis line comes after END\n")
+          lines = [line.strip() for line in out.splitlines()]
+          for expected in ["Lines: 3", "Words: 12", "Top words: the (3), cat (1), end (1)", "Palindrome lines: 1"]:
+              assert expected in lines, f"The report should contain the line {expected!r}. The program printed:\n{out}"
+          assert "after" not in out, "Lines after END must not be read."
+      - name: the end of input also ends the text
+        code: |
+          try:
+              out = run_program("racecar\nhello world")
+          except RuntimeError as err:
+              raise AssertionError(f"When the input runs out without END, stop reading and print the report. {err}")
+          lines = [line.strip() for line in out.splitlines()]
+          for expected in ["Lines: 2", "Words: 3", "Palindrome lines: 1"]:
+              assert expected in lines, f"The report should contain the line {expected!r}. The program printed:\n{out}"
+      - name: empty input is reported politely
+        code: |
+          for script in ["", "END\n", "   \nEND\n"]:
+              try:
+                  out = run_program(script)
+              except RuntimeError as err:
+                  raise AssertionError(f"With no text the program should not crash. {err}")
+              assert "No text to analyse." in out, f"With the input {script!r} the program should print 'No text to analyse.'"
+              assert "=== Text report ===" not in out, "Do not print a report when there is no text."
+    solution: |
+      # Text utility toolkit: complete program (milestones 1-4)
+
+      PUNCTUATION = ".,;:!?\"'()[]{}-"
+      SMALL_WORDS = ["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to"]
+
+
+      def words(text):
+          """Return the lower-case words in text, with punctuation stripped from both ends."""
+          result = []
+          for piece in text.split():
+              word = piece.strip(PUNCTUATION).lower()
+              if word != "":
+                  result.append(word)
+          return result
+
+
+      def count_words(text):
+          """Return the number of words in text."""
+          return len(words(text))
+
+
+      def count_characters(text):
+          """Return the number of characters, including spaces and newlines."""
+          return len(text)
+
+
+      def count_letters(text):
+          """Return the number of letters (not digits, spaces or punctuation)."""
+          total = 0
+          for ch in text:
+              if ch.isalpha():
+                  total = total + 1
+          return total
+
+
+      def count_lines(text):
+          """Return the number of lines; a final newline does not start a new line."""
+          return len(text.splitlines())
+
+
+      def word_frequencies(text):
+          """Return a dictionary mapping each word to the number of times it appears."""
+          counts = {}
+          for word in words(text):
+              counts[word] = counts.get(word, 0) + 1
+          return counts
+
+
+      def most_common_words(text, n):
+          """Return up to n [word, count] pairs: highest count first, ties alphabetical."""
+          pairs = []
+          for word, count in word_frequencies(text).items():
+              pairs.append([-count, word])
+          pairs.sort()
+          result = []
+          for negative_count, word in pairs[:n]:
+              result.append([word, -negative_count])
+          return result
+
+
+      def title_case(text):
+          """Capitalise each word, keeping SMALL_WORDS lower case unless they come first."""
+          result = []
+          for word in text.split():
+              lower = word.lower()
+              if len(result) > 0 and lower in SMALL_WORDS:
+                  result.append(lower)
+              else:
+                  result.append(lower[0].upper() + lower[1:])
+          return " ".join(result)
+
+
+      def is_palindrome(text):
+          """Return True if text reads the same backwards, ignoring case, spaces and punctuation."""
+          cleaned = ""
+          for ch in text:
+              if ch.isalnum():
+                  cleaned = cleaned + ch.lower()
+          if cleaned == "":
+              return False
+          return cleaned == cleaned[::-1]
+
+
+      def build_report(text):
+          """Return a multi-line report about text."""
+          all_lines = text.splitlines()
+          report = [
+              "=== Text report ===",
+              f"Lines: {count_lines(text)}",
+              f"Words: {count_words(text)}",
+              f"Characters: {count_characters(text)}",
+              f"Letters: {count_letters(text)}",
+          ]
+          top = []
+          for word, count in most_common_words(text, 3):
+              top.append(f"{word} ({count})")
+          if len(top) == 0:
+              top.append("none")
+          report.append("Top words: " + ", ".join(top))
+          first_line = ""
+          if len(all_lines) > 0:
+              first_line = all_lines[0]
+          report.append(f"Title: {title_case(first_line)}")
+          palindromes = []
+          for line in all_lines:
+              if is_palindrome(line):
+                  palindromes.append("  " + line.strip())
+          report.append(f"Palindrome lines: {len(palindromes)}")
+          for line in palindromes:
+              report.append(line)
+          return "\n".join(report)
+
+
+      def read_text():
+          """Read lines until a line END (or the end of input); return them joined by newlines."""
+          lines = []
+          while True:
+              try:
+                  line = input()
+              except EOFError:
+                  break
+              if line.strip() == "END":
+                  break
+              lines.append(line)
+          return "\n".join(lines)
+
+
+      def main():
+          """Read text from the user and print a report about it."""
+          print("Type or paste your text, then a line with only END.")
+          text = read_text()
+          if text.strip() == "":
+              print("No text to analyse.")
+          else:
+              print(build_report(text))
+
+
+      if __name__ == "__main__":
+          main()
+testing: |
+  Click **Run milestone tests** under a milestone. The tests run against your **whole program**
+  (all milestones share one file), so earlier functions must keep working as you add new ones.
+
+  * **Function checks** call each tool with tricky text (punctuation, tabs, accents, ties,
+    apostrophes, empty strings) and compare the result exactly, for example
+    `assert most_common_words("b a c b a", 3) == [["a", 2], ["b", 2], ["c", 1]]`. Pairs may be
+    lists or tuples.
+  * **Program checks** re-run your whole program with `run_program("...")`: each line of the script
+    is one line the user typed, and the last line may or may not be `END`.
+
+  Every failed check shows the input, the expected value and what your function returned. After
+  your first test run you can open the **reference solution** for the milestone to compare
+  approaches.
+
+  On your own computer, run the program on a real text file (see Setup) and compare its counts
+  with your word processor's word count. Expect small differences: each program defines "word"
+  slightly differently, which is exactly why your `words` function documents its rule.
+security:
+  - Text from users or files is untrusted. These functions only read and count it and never execute it; keep it that way (no eval() or exec()).
+  - Very large inputs can make a program slow or use a lot of memory. The functions here are single passes over the text; for huge files, process one line at a time instead of building one giant string.
+  - Text can contain invisible or look-alike Unicode characters (for example a non-breaking space or a Cyrillic letter that looks Latin), so "the same" word may count as two. If that matters, normalise text first with the unicodedata module.
+  - When you print text that came from someone else into a terminal, control characters (such as escape sequences) can change how the terminal behaves. Strip characters that are not printable before showing untrusted text.
+extensions:
+  - Add an average word length and the longest word (ties broken alphabetically) to the report.
+  - Add a reading-time estimate assuming 200 words per minute, rounded up to whole minutes.
+  - Let the user pass a list of stop words (such as the, a, of) that most_common_words should ignore.
+  - Find every palindrome word of at least 3 letters in the text, not just whole palindrome lines.
+  - Read a text file instead of typed input (see the file-processor project) and write the report to a new file.
+rubric:
+  - criterion: Correctness on edge cases
+    needsWork: Empty text, punctuation-only words or ties give wrong results or crash.
+    meets: Every tool passes the tests, including empty text, ties, apostrophes and punctuation.
+    exceeds: You found and tested further edge cases yourself, such as tabs between words or numbers in the text.
+  - criterion: Reuse and single definitions
+    needsWork: Each function splits and cleans words in its own slightly different way.
+    meets: words() is the only definition of a word, and count_words, word_frequencies and the report reuse it.
+    exceeds: Constants such as PUNCTUATION and SMALL_WORDS make the rules easy to change in one place.
+  - criterion: Function design
+    needsWork: Functions print results or read input themselves.
+    meets: All tools are pure functions that return values; only read_text and main use input() or print().
+    exceeds: Every function has a clear docstring that states its rule, such as how ties are ordered.
+  - criterion: Report quality
+    needsWork: The report is missing values or does not match the specified layout.
+    meets: The report matches the exact format, and empty input prints No text to analyse.
+    exceeds: The report stays readable for long texts and you added a useful extra statistic.

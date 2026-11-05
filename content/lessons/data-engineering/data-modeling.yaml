@@ -1,0 +1,215 @@
+id: de.data-modeling
+concept: de.data-modeling
+title: Dimensional data modelling
+subtitle: Fact and dimension tables, star schemas, grain and slowly changing dimensions organise data for analysis
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: Fact and dimension tables, star schemas, grain and slowly changing dimensions organise data for analysis.
+objectives:
+- Explain the role of dimensional data modelling in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: Dimensional modeling techniques
+  url: https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/
+  publisher: Kimball Group
+- title: Understand star schema and the importance for Power BI
+  url: https://learn.microsoft.com/en-us/power-bi/guidance/star-schema
+  publisher: Microsoft Learn
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Fact and dimension tables, star schemas, grain and slowly changing dimensions organise data for analysis.
+      Operational tables are normalised for fast writes; analysts need tables that make business questions easy
+      to ask and give the same answer every time.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign keys;
+      dimension tables describe the who, what, where and when.
+
+      - Declare the grain first — exactly what one fact row represents, such as "one row per order line" — and keep
+      every measure consistent with it.
+
+      - A star schema joins one fact table directly to denormalised dimensions; a snowflake schema normalises dimensions
+      into further tables.
+
+      - Slowly changing dimensions — Type 1 overwrites the old value; Type 2 adds a new row with `valid_from`, `valid_to`
+      and `is_current` so history is preserved.
+
+      - Use surrogate keys for dimensions so source-key changes and Type 2 history are handled cleanly; conformed
+      dimensions are shared across fact tables.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Mixing grains in one fact table (order totals next to order lines) silently double-counts when users
+      sum a measure.
+
+      - Cheap storage has not made modelling obsolete; wide denormalised tables still need a defined grain and consistent
+      dimensions.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def star_schema_components():\n    return {\"fact\": [\"order_id\", \"customer_id\", \"product_id\",\
+      \ \"date_id\", \"amount\"],\n            \"dimensions\": {\"customer\": [\"customer_id\", \"segment\"], \"\
+      product\": [\"product_id\", \"category\"], \"date\": [\"date_id\", \"day\", \"month\"]}}\n\nprint(star_schema_components()[\"\
+      fact\"])"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: data-modeling-code
+  - type: item
+    ref: data-modeling-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign keys;
+      dimension tables describe the who, what, where and when.
+
+      - Declare the grain first — exactly what one fact row represents, such as "one row per order line" — and keep
+      every measure consistent with it.
+
+      - A star schema joins one fact table directly to denormalised dimensions; a snowflake schema normalises dimensions
+      into further tables.
+
+      - Slowly changing dimensions — Type 1 overwrites the old value; Type 2 adds a new row with `valid_from`, `valid_to`
+      and `is_current` so history is preserved.
+
+      - Use surrogate keys for dimensions so source-key changes and Type 2 history are handled cleanly; conformed
+      dimensions are shared across fact tables.
+
+
+      **Watch for**
+
+      - Mixing grains in one fact table (order totals next to order lines) silently double-counts when users sum
+      a measure.
+
+      - Cheap storage has not made modelling obsolete; wide denormalised tables still need a defined grain and consistent
+      dimensions.'
+  - type: item
+    ref: data-modeling-mcq
+  - type: item
+    ref: data-modeling-tf
+  - type: item
+    ref: data-modeling-code
+items:
+- id: data-modeling-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of dimensional data modelling?
+  explanation: Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign
+    keys; dimension tables describe the who, what, where and when.
+  options:
+  - id: a
+    text: Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign keys;
+      dimension tables describe the who, what, where and when.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: Mixing grains in one fact table (order totals next to order lines) silently double-counts when users sum
+      a measure.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: data-modeling-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Mixing grains in one fact table (order totals next to order lines) silently double-counts when users sum
+    a measure.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: data-modeling-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying dimensional data modelling to a dataset that may contain missing, duplicate or malformed
+    records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: data-modeling-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for dimensional data modelling. The assertions test the main behaviour and an important
+    edge case.
+  starterCode: "def star_schema_components():\n    raise NotImplementedError('Complete this function')"
+  solution: "def star_schema_components():\n    return {\"fact\": [\"order_id\", \"customer_id\", \"product_id\"\
+    , \"date_id\", \"amount\"],\n            \"dimensions\": {\"customer\": [\"customer_id\", \"segment\"], \"product\"\
+    : [\"product_id\", \"category\"], \"date\": [\"date_id\", \"day\", \"month\"]}}"
+  tests:
+  - name: Core transformation
+    code: schema = star_schema_components()
+  - name: Edge case
+    code: 'assert "amount" in schema["fact"]
+
+      assert "customer" in schema["dimensions"]'
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - data-modeling-mcq
+  - data-modeling-tf
+  - data-modeling-code
+cheatsheet: '**Key ideas**
+
+  - Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign keys; dimension
+  tables describe the who, what, where and when.
+
+  - Declare the grain first — exactly what one fact row represents, such as "one row per order line" — and keep
+  every measure consistent with it.
+
+  - A star schema joins one fact table directly to denormalised dimensions; a snowflake schema normalises dimensions
+  into further tables.
+
+  - Slowly changing dimensions — Type 1 overwrites the old value; Type 2 adds a new row with `valid_from`, `valid_to`
+  and `is_current` so history is preserved.
+
+  - Use surrogate keys for dimensions so source-key changes and Type 2 history are handled cleanly; conformed dimensions
+  are shared across fact tables.
+
+
+  **Data quality risks**
+
+  - Mixing grains in one fact table (order totals next to order lines) silently double-counts when users sum a measure.
+
+  - Cheap storage has not made modelling obsolete; wide denormalised tables still need a defined grain and consistent
+  dimensions.'

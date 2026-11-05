@@ -1,0 +1,230 @@
+id: human-approved-workflow
+title: Human-Approved Refund Workflow
+track: agentic
+level: intermediate
+estimatedHours: 9
+environment: local
+starterKit: projects/human-approved-workflow
+summary: >-
+  Build a deterministic workflow — not an agent — that validates a refund request, drafts the customer
+  email, pauses at an approval gate where a person can edit or reject it, then refunds and emails exactly
+  once, with a hash-chained audit log and JSON checkpoints you can resume after a crash.
+concepts:
+  - agents.workflows-vs-agents
+  - agents.human-in-the-loop
+  - agents.state-memory
+  - python.dataclasses
+  - python.csv-json
+  - python.exceptions
+  - security.input-handling
+  - python.testing
+problem: |
+  A support agent submits a refund request: order `ORD-1001`, 12.50, "arrived damaged". Before money
+  moves and the customer is emailed, the request must pass validation and policy checks, an email must
+  be drafted, and a **person** must approve it — possibly editing the text first. Then the refund is
+  issued and the email sent, **exactly once**, even if the process crashes in between. Every decision
+  must be traceable to a person and a time.
+
+  You will build `approval_workflow.py`, a small workflow engine for this one process:
+
+  ```text
+   validate ─► check_policy ─► draft ─► [approval gate] ─► issue_refund ─► send_email ─► done
+       └──── rejected ◄────┘                 │  reject / approve (+ edits)
+  ```
+
+  **Input:** a `RefundRequest` plus injected services (order lookup, payment gateway, mailer, drafter,
+  clock, allowed approvers). **Output:** a `WorkflowState` (status, next step, draft, approval, refund
+  and message ids, audit log) that is saved to a JSON checkpoint after every step.
+
+  This is deliberately **not an agent**: the path is known, so code — not a model — chooses the next
+  step ([workflows vs agents](concept:agents.workflows-vs-agents)). A model may *draft* the email, but
+  its text is validated and reviewed like anyone else's.
+
+  Example session (the demo, with fake services):
+
+  ```text
+  >>> wf = RefundWorkflow.start(request, "wf-1", services, Path("wf-1.json"))
+  >>> wf.run().status
+  'awaiting_approval'
+  >>> _ = wf.approve("maria", body=wf.state.draft.body + "\n\nSorry again for the trouble.")
+  >>> wf.run().status, wf.state.refund_id, wf.state.message_id
+  ('completed', 're_0001', 'msg_0001')
+  >>> [e.event for e in wf.state.audit]
+  ['received', 'validated', 'policy_passed', 'drafted', 'approval_requested',
+   'draft_edited', 'approved', 'refund_issued', 'email_sent', 'completed']
+  >>> wf.approve("mallory")
+  Traceback (most recent call last):
+    ...
+  approval_workflow.WorkflowError: nothing to decide: the workflow is completed
+  ```
+acceptanceCriteria:
+  - "Invalid requests (bad order id, email, amount, name or reason) and out-of-policy refunds (unknown order, another customer's order, more than paid, outside the window, over the cap) end as `rejected` with the reason, before any draft is written."
+  - "`run()` stops at the approval gate with status `awaiting_approval`; calling it again changes nothing, and no refund or email happens before an approval."
+  - "`approve()` accepts optional subject/body edits, re-validates them (amount, order id, single-line subject), records the approver, time, note, edited fields and a SHA-256 fingerprint; only listed approvers may decide, only at the gate. `reject()` requires a reason."
+  - "Side-effect steps run only if the current draft's fingerprint equals the approved one, use idempotency keys, and never refund or email twice — including after a failure, a resume, or a send that succeeded but timed out."
+  - "A failing step raises `StepFailedError`, records `last_error` and a `step_failed` audit entry, leaves `next_step` unchanged and can be run again."
+  - "The audit log is append-only and hash-chained; `verify_audit` reports modified, reordered and missing entries."
+  - "Checkpoints are written atomically after every step and verified on load (version, shape, audit chain, request and approval consistency); `RefundWorkflow.resume` continues in a new process."
+  - "All 48 tests pass with `GW_TARGET=solution`; the code is typed, documented and ruff-clean."
+architecture: |
+  One module, `approval_workflow.py`:
+
+  ```text
+   RefundRequest ──► RefundWorkflow.start ──► WorkflowState ──► save_checkpoint (tmp + os.replace)
+                         │ run(): next_step → step method → audit → save, until gate / done
+                         │   validate      validate_request()
+                         │   check_policy  check_refund_policy(request, orders[id], policy)
+                         │   draft         services.drafter.draft() → validate_draft() (else template)
+                         │   approval      ⏸ status awaiting_approval → approve()/reject() by a person
+                         │   issue_refund  payments.refund(key="{id}:refund")   ┐ only if fingerprint
+                         │   send_email    mailer.send(key="{id}:email")        ┘ == approved fingerprint
+                         ▼
+   load_checkpoint ◄── verify_audit + check_consistency ◄── RefundWorkflow.resume(path, services)
+  ```
+
+  * **State** ([state and memory](concept:agents.state-memory)): `WorkflowState` holds everything,
+    including `status` and `next_step`; `to_dict`/`from_dict` make it a JSON document
+    ([JSON](concept:python.csv-json)).
+  * **Gate** ([human-in-the-loop](concept:agents.human-in-the-loop)): approval is a recorded fact with
+    a fingerprint of the exact text, not a flag; side-effect steps check it themselves.
+  * **Services** are injected (`Services` dataclass): fakes in tests (`FakePaymentGateway`,
+    `FakeMailer`, `FakeClock`), real adapters in production. The fakes honour idempotency keys, as
+    real payment and email APIs do.
+  * **Audit log**: `AuditEntry(seq, at, actor, event, details, prev_hash, hash)`, appended for every
+    transition and decision.
+setup: |
+  You need Python 3.11 or newer; only `pytest` is installed. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\human-approved-workflow
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/human-approved-workflow
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/approval_workflow.py`. Run the finished demo with `python solution/approval_workflow.py
+  --folder out` and open `out/wf-1.json`. **Optional:** with [Ollama](https://ollama.com) running and
+  `ollama pull llama3.2` (about 8 GB RAM is comfortable), `--ollama llama3.2` drafts with a local model.
+milestones:
+  - id: validation-and-policy
+    title: Validate the request and apply the policy
+    description: |
+      Implement `format_money` (integer cents to `"12.50"`), `validate_request` (one message per bad
+      field: order id pattern, one-line name, email, positive integer cents, reason length) and
+      `check_refund_policy` (order exists, belongs to the same customer, refund not above the order
+      total, inside the refund window, under the hard cap).
+
+      The tests check twelve invalid requests, case-insensitive email matching and the exact policy
+      messages. Run `python -m pytest -k Milestone1`.
+  - id: state-and-gate
+    title: Drafts, audit log, state, and running to the gate
+    description: |
+      Implement `Draft.fingerprint`, `TemplateDrafter.draft`, `validate_draft`, the hash-chained audit
+      log (`audit_hash`, `append_audit`, `verify_audit`), `WorkflowState.to_dict/from_dict`, and the
+      first part of the workflow: `start` (audit `received`), `run` and the `validate`, `check_policy`
+      and `draft` steps, stopping at the approval gate.
+
+      The tests check the audit chain against edits, deletions and reordering; the exact event sequence
+      and timestamps up to `approval_requested`; that nothing is refunded or sent; rejections for invalid
+      and out-of-policy requests; replacement of an unusable model draft; and a JSON round trip.
+      Run `python -m pytest -k Milestone2`.
+  - id: approval-gate
+    title: The approval gate
+    description: |
+      Implement `approve` (optional subject/body edits, re-validated; `draft_edited` and `approved`
+      audit entries; an `Approval` with the final fingerprint) and `reject` (a reason is required), with
+      the guard that decisions happen only at the gate and only by listed approvers.
+
+      The tests approve with and without edits, try invalid edits (missing amount, CR/LF in the subject,
+      empty subject) and check that they change nothing, try unlisted approvers, and decide at the wrong
+      time. Run `python -m pytest -k Milestone3`.
+  - id: side-effects
+    title: Refund and email exactly once
+    description: |
+      Implement the `issue_refund` and `send_email` steps and the approved-draft check. Use the
+      idempotency keys `"{workflow_id}:refund"` and `"{workflow_id}:email"`; skip the refund if a refund
+      id is already recorded. In `run`, a failing step records `last_error` and `step_failed`, saves the
+      state and raises `StepFailedError`; running again retries that step.
+
+      The tests check the exact refund and email sent (including an edited body), a mail server that
+      fails once, a payment service that fails once, repeated calls with the same keys, and a draft
+      changed after approval (nothing may happen). Run `python -m pytest -k Milestone4`.
+  - id: checkpoints
+    title: Checkpoints, verification and resume
+    description: |
+      Implement `save_checkpoint` (temporary file in the same folder, then `os.replace`),
+      `check_consistency`, `load_checkpoint` (missing, unreadable, wrong version, bad shape, failed
+      verification) and `RefundWorkflow.resume`.
+
+      The tests save after every step, tamper with the amount, an audit entry, the draft and the approval
+      in the JSON file, resume in a "new process" with new services and a later clock, and simulate the
+      email leaving while the call times out — the resumed workflow must not send it twice.
+      Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 48 pytest tests in `tests/test_approval_workflow.py`, one class per milestone
+  (`TestMilestone1ValidationAndPolicy` … `TestMilestone5Checkpoints`). By default they import
+  `starter/`:
+
+  ```bash
+  python -m pytest                  # everything
+  python -m pytest -k Milestone4    # one milestone
+  python -m pytest -x -q            # stop at the first failure
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The tests are deterministic: services are in-memory fakes that can fail on demand, the clock is a
+  `FakeClock` that advances one minute per call, and checkpoints are written to pytest's `tmp_path`.
+  The only test that uses the real clock runs the demo and checks its outcome, not its timestamps.
+security:
+  - Never let the side-effecting steps trust a flag. They re-check that the current draft's SHA-256 fingerprint equals the approved one, so unapproved text can never be sent.
+  - Idempotency keys derived from the workflow id make retries and resumes safe; without them a timeout after a successful send leads to a duplicate refund or email.
+  - Email subjects must be a single line - CR or LF in a header allows header injection (for example adding Bcc recipients).
+  - The amount, order and customer come from the request and the order system, never from model output; drafts must state the exact amount and order id.
+  - A hash-chained audit log detects edits but not a full rewrite by someone with write access. In production, sign entries with a server-side key (HMAC) or ship them to append-only storage.
+  - Checkpoints and audit logs contain personal data. Keep them out of version control, restrict who can read them, and define a retention period.
+extensions:
+  - Add a two-person rule - refunds above a threshold need approvals from two different approvers, and the requester may never approve their own request.
+  - Sign audit entries with HMAC-SHA256 using a key from an environment variable, and show that rewriting the whole chain is now detected.
+  - Add an approval timeout - if nobody decides within N hours (injected clock), escalate to a manager queue and audit the escalation.
+  - Store many workflows in SQLite instead of one JSON file each, with a status index so a dashboard can list everything awaiting approval.
+  - Add a small FastAPI front end with GET /workflows/{id} and POST /workflows/{id}/approve, authenticating the approver.
+rubric:
+  - criterion: Workflow design
+    needsWork: Steps and state are tangled together, or the code relies on call order rather than recorded state.
+    meets: Explicit status and next_step, one small method per step, and invalid operations raise clear WorkflowErrors.
+    exceeds: The README argues clearly when an agent would be appropriate instead, and new steps can be added without touching the others.
+  - criterion: Human-in-the-loop safety
+    needsWork: Side effects can happen without an approval, or approved text can change before sending.
+    meets: The gate stops the run; approvals record approver, time, edits and a fingerprint that the side-effect steps verify.
+    exceeds: Edits are re-validated with actionable messages, and the audit log makes every decision reconstructable.
+  - criterion: Reliability
+    needsWork: A crash or retry can refund or email twice, or leaves the workflow stuck.
+    meets: Idempotency keys, atomic checkpoints and StepFailedError make every failure recoverable by running again.
+    exceeds: The crash-after-send case is explained and tested, and checkpoint verification catches tampering.
+  - criterion: Testing and code quality
+    needsWork: Tests depend on the real clock, the network or shared files.
+    meets: All provided tests pass; code is typed, documented and ruff-clean.
+    exceeds: You added tests for your own edge cases or extensions with fakes and tmp_path.

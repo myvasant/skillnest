@@ -1,0 +1,212 @@
+id: backend.dependency-injection
+concept: backend.dependency-injection
+title: Dependency injection
+subtitle: Endpoints declare what they need (database sessions, current user, settings) and the framework provides
+  it, which keeps code testable
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Endpoints declare what they need (database sessions, current user, settings) and the framework provides
+  it, which keeps code testable.
+objectives:
+- Explain the core model behind dependency injection.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Dependencies
+  url: https://fastapi.tiangolo.com/tutorial/dependencies/
+  publisher: FastAPI
+- title: Dependencies with yield
+  url: https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+  publisher: FastAPI
+- title: Lifespan Events
+  url: https://fastapi.tiangolo.com/advanced/events/
+  publisher: FastAPI
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Endpoints declare what they need (database sessions, current user, settings) and the framework provides
+      it, which keeps code testable. Hard-coding database connections or user lookup inside handlers repeats setup
+      code and makes handlers impossible to test in isolation; declared dependencies centralise setup and let tests
+      swap it.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session
+      = Depends(get_db)` form also works).
+
+      - Dependencies can depend on other dependencies; FastAPI resolves the whole graph and, by default, calls each
+      dependency once per request and reuses the result.
+
+      - A dependency that uses `yield` runs its set-up before the handler and its teardown after it, which suits
+      opening and closing a database session.
+
+      - Tests replace any dependency with `app.dependency_overrides[get_db] = fake_db`.
+
+      - Attach dependencies to a router or the whole app (`dependencies=[Depends(verify_key)]`) for checks that
+      must run on every route.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Dependency injection does not need a container framework; in FastAPI it is just functions declared
+      as parameters.
+
+      - Creating an engine or connection pool inside a per-request dependency defeats pooling; create shared resources
+      once (for example in the lifespan handler) and hand out per-request sessions.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def list_users(repository):\n    return repository.list_active()\n\nclass FakeRepository:\n    def list_active(self):\
+      \ return [\"Ada\", \"Grace\"]\n\nprint(list_users(FakeRepository()))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: dependency-injection-code
+  - type: item
+    ref: dependency-injection-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session =
+      Depends(get_db)` form also works).
+
+      - Dependencies can depend on other dependencies; FastAPI resolves the whole graph and, by default, calls each
+      dependency once per request and reuses the result.
+
+      - A dependency that uses `yield` runs its set-up before the handler and its teardown after it, which suits
+      opening and closing a database session.
+
+      - Tests replace any dependency with `app.dependency_overrides[get_db] = fake_db`.
+
+      - Attach dependencies to a router or the whole app (`dependencies=[Depends(verify_key)]`) for checks that
+      must run on every route.
+
+
+      **Avoid**
+
+      - Dependency injection does not need a container framework; in FastAPI it is just functions declared as parameters.
+
+      - Creating an engine or connection pool inside a per-request dependency defeats pooling; create shared resources
+      once (for example in the lifespan handler) and hand out per-request sessions.'
+  - type: item
+    ref: dependency-injection-mcq
+  - type: item
+    ref: dependency-injection-tf
+  - type: item
+    ref: dependency-injection-code
+items:
+- id: dependency-injection-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of dependency injection?
+  explanation: 'Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session
+    = Depends(get_db)` form also works).'
+  options:
+  - id: a
+    text: 'Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session
+      = Depends(get_db)` form also works).'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Dependency injection does not need a container framework; in FastAPI it is just functions declared as
+      parameters.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: dependency-injection-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Dependency injection does not need a container framework; in FastAPI it is just functions declared as
+    parameters.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: dependency-injection-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing dependency injection in a real application. What design decisions would you make,
+    what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: dependency-injection-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for dependency injection. Implement the stated rule and make sure both ordinary
+    and edge-case tests pass.
+  starterCode: "def list_users(repository):\n    raise NotImplementedError('Complete this function')\n\nclass FakeRepository:\n\
+    \n    def list_active(self):\n        raise NotImplementedError('Complete this function')"
+  solution: "def list_users(repository):\n    return repository.list_active()\n\nclass FakeRepository:\n    def\
+    \ list_active(self): return [\"Ada\", \"Grace\"]"
+  tests:
+  - name: Core behaviour
+    code: assert list_users(FakeRepository()) == ["Ada", "Grace"]
+  - name: Edge cases
+    code: "class EmptyRepository:\n    def list_active(self): return []\nassert list_users(EmptyRepository()) ==\
+      \ []"
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - dependency-injection-mcq
+  - dependency-injection-tf
+  - dependency-injection-code
+cheatsheet: '**Core model**
+
+  - Declare a dependency as a parameter: `db: Annotated[Session, Depends(get_db)]` (the older `db: Session = Depends(get_db)`
+  form also works).
+
+  - Dependencies can depend on other dependencies; FastAPI resolves the whole graph and, by default, calls each
+  dependency once per request and reuses the result.
+
+  - A dependency that uses `yield` runs its set-up before the handler and its teardown after it, which suits opening
+  and closing a database session.
+
+  - Tests replace any dependency with `app.dependency_overrides[get_db] = fake_db`.
+
+  - Attach dependencies to a router or the whole app (`dependencies=[Depends(verify_key)]`) for checks that must
+  run on every route.
+
+
+  **Common mistakes**
+
+  - Dependency injection does not need a container framework; in FastAPI it is just functions declared as parameters.
+
+  - Creating an engine or connection pool inside a per-request dependency defeats pooling; create shared resources
+  once (for example in the lifespan handler) and hand out per-request sessions.'

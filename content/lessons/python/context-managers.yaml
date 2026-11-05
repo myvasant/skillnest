@@ -1,0 +1,1414 @@
+id: python.context-managers
+concept: python.context-managers
+title: Context Managers and the with Statement
+subtitle: Guaranteed cleanup, even when things go wrong
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  The with statement guarantees that cleanup code — closing a file, releasing a lock, restoring a
+  setting — runs no matter how a block ends. Learn the exact protocol (__enter__ and __exit__), how
+  exceptions flow through it, how to write context managers as classes or with @contextmanager, and the
+  everyday tools in contextlib.
+objectives:
+  - Explain what the with statement guarantees and the exact order in which __enter__, the block and __exit__ run.
+  - Predict what is bound by `as`, and what happens when the block raises, returns or completes normally.
+  - Write a class-based context manager whose __exit__ handles exceptions correctly and does not swallow them by accident.
+  - Write a generator-based context manager with @contextmanager and try/finally.
+  - Apply context managers to files, timing with an injected clock, temporary state changes and suppressing a specific exception.
+sources:
+  - title: "Python Language Reference: The with statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: With Statement Context Managers"
+    url: https://docs.python.org/3/reference/datamodel.html#with-statement-context-managers
+    publisher: Python Software Foundation
+  - title: contextlib — Utilities for with-statement contexts
+    url: https://docs.python.org/3/library/contextlib.html
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Context Manager Types"
+    url: https://docs.python.org/3/library/stdtypes.html#context-manager-types
+    publisher: Python Software Foundation
+  - title: "PEP 343: The with Statement"
+    url: https://peps.python.org/pep-0343/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why cleanup needs a guarantee
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Many resources must be **given back** after use: an open file, a network connection, a lock, a
+          temporary setting. The obvious code — open, use, close — has a hole in it. If anything fails in
+          the middle, the closing line never runs:
+      - type: code
+        runnable: true
+        code: |
+          f = open("notes.txt", "w")
+          try:
+              f.write("first line\n")
+              count = int("ten")          # fails before close() is reached
+              f.close()
+          except ValueError:
+              print("something went wrong")
+          print("file closed?", f.closed)
+        expectedOutput: |
+          something went wrong
+          file closed? False
+        caption: The error skipped f.close(). The file stays open — and text written to it may not have been saved yet.
+      - type: markdown
+        body: |
+          One leaked file is harmless in a tiny script. In a server that runs for weeks, leaked files,
+          connections and locks pile up until the program fails with errors like "too many open files", or
+          freezes waiting for a lock nobody released.
+
+          You could write `try`/`finally` around every use — and must remember to, every time. The `with`
+          statement packages that guarantee so you can't forget it:
+      - type: code
+        runnable: true
+        code: |
+          try:
+              with open("notes.txt", "w") as f:
+                  f.write("first line\n")
+                  count = int("ten")      # fails inside the block
+          except ValueError:
+              print("something went wrong")
+          print("file closed?", f.closed)
+        expectedOutput: |
+          something went wrong
+          file closed? True
+        annotations:
+          - line: 2
+            text: The file object is a context manager. with promises to close it when the block ends — however it ends.
+          - line: 4
+            text: The block is interrupted by the error, but the file is closed before the exception reaches except.
+
+  - id: with-statement
+    title: What the with statement does
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [context manager](glossary:context-manager) is an object that knows how to set something up and
+          how to clean it up. The [with statement](glossary:with-statement) uses one like this:
+
+          ```text
+          with EXPRESSION as NAME:
+              BLOCK
+          ```
+
+          1. **Evaluate** `EXPRESSION` to get the context manager.
+          2. **Enter:** call its `__enter__()` method, and bind **whatever it returns** to `NAME` (the
+             `as NAME` part is optional).
+          3. **Run** the block.
+          4. **Exit:** call its `__exit__()` method — **always**, whether the block finished normally, raised
+             an exception, or left early with `return`, `break` or `continue`.
+
+          You can manage several resources in one statement. They are entered left to right and exited in
+          the **reverse** order, like nested `with` blocks:
+      - type: code
+        runnable: true
+        code: |
+          with open("source.txt", "w") as f:
+              f.write("alpha\nbeta\n")
+
+          with open("source.txt") as src, open("copy.txt", "w") as dst:
+              for line in src:
+                  dst.write(line.upper())
+
+          with open("copy.txt") as f:
+              print(f.read(), end="")
+          print(src.closed, dst.closed)
+        expectedOutput: |
+          ALPHA
+          BETA
+          True True
+        annotations:
+          - line: 4
+            text: Two context managers in one with statement. dst is closed first, then src.
+      - type: callout
+        variant: analogy
+        title: "Mental model: a try/finally you cannot forget"
+        body: |
+          Picture `with` as a `try`/`finally` that the *object* brings along: `__enter__` is the code before
+          the `try`, the block is the `try` body, and `__exit__` is the `finally`. That model is accurate for
+          everything in this lesson; the one extra power `__exit__` has — seeing the exception and choosing
+          to swallow it — is covered below, and the exact expansion is in the deep dive.
+          - line: 10
+            text: The names still exist after the block, but both files have been closed.
+      - type: callout
+        variant: tip
+        title: Long with statements
+        body: |
+          Since Python 3.10 you can wrap several managers in parentheses and put each on its own line:
+
+          ```python
+          with (
+              open("source.txt") as src,
+              open("copy.txt", "w") as dst,
+          ):
+              ...
+          ```
+
+  - id: protocol
+    title: "The protocol: __enter__ and __exit__"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Any object becomes a context manager by defining two methods:
+
+          | Method | Called | Its return value |
+          |---|---|---|
+          | `__enter__(self)` | at the start of the `with` | is bound to the `as` name |
+          | `__exit__(self, exc_type, exc_value, traceback)` | at the end, always | true → swallow the exception; false/None → let it continue |
+
+          When the block finishes normally, the three `__exit__` arguments are all `None`. Step through this
+          program and watch the frames appear in order — enter, the block, exit:
+      - type: visualization
+        component: python-tracer
+        title: Enter, block, exit
+        caption: >-
+          The with line calls __enter__; its return value — the string, not the Resource object — is bound
+          to value. After the block, Python calls __exit__ with three None arguments.
+        props:
+          code: |
+            class Resource:
+                def __enter__(self):
+                    print("setup")
+                    return "the resource"
+
+                def __exit__(self, exc_type, exc_value, traceback):
+                    print("cleanup")
+                    return False
+
+                def __repr__(self):
+                    return "Resource()"
+
+            with Resource() as value:
+                print("using", value)
+            print("done")
+      - type: markdown
+        body: |
+          Most context managers return **themselves** from `__enter__`, so `as` gives you the manager.
+          Files do exactly that, which is why `with open(...) as f` gives you the file. Here is the common
+          shape:
+      - type: code
+        runnable: true
+        code: |
+          class Announce:
+              def __init__(self, name):
+                  self.name = name
+
+              def __enter__(self):
+                  print("enter", self.name)
+                  return self
+
+              def __exit__(self, exc_type, exc_value, traceback):
+                  print("exit", self.name, "| exception:", exc_type)
+                  return False
+
+          with Announce("A") as a:
+              print("inside, using", a.name)
+          print("after the block")
+        expectedOutput: |
+          enter A
+          inside, using A
+          exit A | exception: None
+          after the block
+        annotations:
+          - line: 7
+            text: Return self so that `as a` gives you this object.
+          - line: 11
+            text: False means "I did not handle any exception" — the normal choice.
+      - type: item
+        ref: as-target
+
+  - id: exceptions
+    title: Exceptions inside the block
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          If the block raises, Python stops running the block and calls `__exit__` **with details of the
+          exception** — its class, the exception object and the traceback. `__exit__` can do its cleanup,
+          and then its return value decides what happens next:
+
+          - return `False` or `None` (or nothing) → the exception **continues** to propagate, exactly as if
+            there had been no `with` — this is what you want almost always;
+          - return `True` → the exception is **suppressed**: the program carries on after the `with` block.
+            The rest of the block is still skipped.
+      - type: code
+        runnable: true
+        code: |
+          class Guard:
+              def __init__(self, swallow):
+                  self.swallow = swallow
+
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, exc_type, exc_value, traceback):
+                  if exc_type is not None:
+                      print("__exit__ saw:", exc_type.__name__, "-", exc_value)
+                  return self.swallow
+
+          with Guard(swallow=True):
+              raise KeyError("missing")
+          print("suppressed, program continues")
+
+          try:
+              with Guard(swallow=False):
+                  raise ValueError("bad value")
+          except ValueError:
+              print("propagated to the caller")
+        expectedOutput: |
+          __exit__ saw: KeyError - 'missing'
+          suppressed, program continues
+          __exit__ saw: ValueError - bad value
+          propagated to the caller
+        annotations:
+          - line: 9
+            text: exc_type is None when the block finished without an exception.
+          - line: 11
+            text: The return value is the decision. True swallows; False lets it propagate.
+          - line: 19
+            text: __exit__ runs first, and only then does the exception reach this except.
+      - type: callout
+        variant: warning
+        title: Swallowing exceptions is rarely right
+        body: |
+          A context manager that returns `True` hides every error raised in its block — bugs included. Only
+          suppress when that is the manager's documented purpose and the exception type is specific (see
+          `contextlib.suppress` below). Watch out for accidentally truthy returns: an `__exit__` that ends
+          with `return self` swallows everything.
+      - type: item
+        ref: predict-exit-exception
+      - type: markdown
+        body: |
+          **Every way out of the block counts.** `return`, `break` and `continue` also trigger `__exit__`.
+          Here the function returns from *inside* the block, and the cleanup still runs first:
+      - type: code
+        runnable: true
+        code: |
+          class Announce:
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, exc_type, exc_value, traceback):
+                  print("exit runs")
+                  return False
+
+          def find(items, target):
+              with Announce():
+                  for item in items:
+                      if item == target:
+                          return "found " + item
+              return "not found"
+
+          print(find(["a", "b"], "b"))
+        expectedOutput: |
+          exit runs
+          found b
+        caption: "__exit__ runs on the way out of the function, before the caller receives the return value."
+
+  - id: contextmanager
+    title: Writing context managers with @contextmanager
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Writing a class with two special methods is a lot of ceremony for "do X before, Y after".
+          [`contextlib.contextmanager`](glossary:contextmanager-decorator) turns a
+          [generator](glossary:generator) function into a context manager instead:
+
+          - code **before** the `yield` is the setup (`__enter__`);
+          - the **yielded value** is what `as` receives;
+          - code **after** the `yield` is the cleanup (`__exit__`).
+
+          The generator must yield exactly once. And there is one rule you must not skip — watch what happens
+          without it:
+      - type: code
+        runnable: true
+        code: |
+          from contextlib import contextmanager
+
+          @contextmanager
+          def tag(name):
+              print(f"<{name}>")
+              yield
+              print(f"</{name}>")
+
+          with tag("p"):
+              print("hello")
+
+          try:
+              with tag("p"):
+                  raise ValueError("oops")
+          except ValueError:
+              print("caught")
+        expectedOutput: |
+          <p>
+          hello
+          </p>
+          <p>
+          caught
+        caption: The second time, the closing tag never appears — cleanup was skipped.
+      - type: markdown
+        body: |
+          When the block raises, `contextmanager` re-raises the exception **inside the generator, at the
+          `yield` line**. Nothing catches it there, so the generator stops and the lines after `yield` never
+          run. The fix is the same tool that guarantees cleanup anywhere: `try`/`finally` around the `yield`.
+      - type: code
+        runnable: true
+        code: |
+          from contextlib import contextmanager
+
+          @contextmanager
+          def tag(name):
+              print(f"<{name}>")
+              try:
+                  yield
+              finally:
+                  print(f"</{name}>")
+
+          try:
+              with tag("p"):
+                  raise ValueError("oops")
+          except ValueError:
+              print("caught")
+        expectedOutput: |
+          <p>
+          </p>
+          caught
+        annotations:
+          - line: 7
+            text: An exception from the with block appears here...
+          - line: 9
+            text: "...and finally runs the cleanup before the exception continues to the caller."
+      - type: visualization
+        component: python-tracer
+        title: The generator pauses at yield
+        caption: >-
+          The generator runs up to yield and pauses (the step marked return), the block runs in the global
+          frame, then the generator resumes after yield for the cleanup. While the generator runs, only its
+          own frame is shown, because it is being driven by contextlib's (untraced) code.
+        props:
+          code: |
+            from contextlib import contextmanager
+
+            @contextmanager
+            def opened(name):
+                print("open", name)
+                try:
+                    yield name.upper()
+                finally:
+                    print("close", name)
+
+            with opened("report") as handle:
+                print("writing to", handle)
+            print("done")
+      - type: item
+        ref: explain-finally
+
+  - id: uses
+    title: Practical uses
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          The pattern "set up, run the block, always undo" appears everywhere. A few you will meet often:
+
+          ### Timing a block — with a clock you can replace
+
+          A timer reads a clock on enter and on exit. Passing the clock **in** (instead of calling
+          `time.perf_counter()` directly) means tests can use a fake clock and get exact, repeatable results:
+      - type: code
+        runnable: true
+        code: |
+          class Timer:
+              def __init__(self, clock):
+                  self.clock = clock
+                  self.elapsed = None
+
+              def __enter__(self):
+                  self.start = self.clock()
+                  return self
+
+              def __exit__(self, exc_type, exc_value, traceback):
+                  self.elapsed = self.clock() - self.start
+                  return False
+
+          readings = iter([100.0, 102.5])
+
+          def fake_clock():
+              return next(readings)
+
+          with Timer(fake_clock) as t:
+              total = sum(range(1000))
+          print(total, t.elapsed)
+        expectedOutput: |
+          499500 2.5
+        annotations:
+          - line: 14
+            text: A fake clock that returns 100.0, then 102.5.
+          - line: 19
+            text: In real code you would pass time.perf_counter instead of fake_clock.
+          - line: 11
+            text: Recorded in __exit__, so elapsed is set even if the block raises.
+      - type: markdown
+        body: |
+          ### Temporary changes that are always undone
+
+          The standard library includes managers that change some global state for the duration of a block
+          and restore it afterwards. `redirect_stdout` captures everything printed; `chdir` (Python 3.11+)
+          changes the current working directory:
+      - type: code
+        runnable: true
+        code: |
+          import io
+          import os
+          from contextlib import chdir, redirect_stdout
+
+          buffer = io.StringIO()
+          with redirect_stdout(buffer):
+              print("this goes into the buffer")
+          print("captured:", buffer.getvalue().strip())
+
+          os.makedirs("reports", exist_ok=True)
+          start = os.getcwd()
+          with chdir("reports"):
+              print("now in", os.path.basename(os.getcwd()))
+          print("back where we started:", os.getcwd() == start)
+        expectedOutput: |
+          captured: this goes into the buffer
+          now in reports
+          back where we started: True
+        annotations:
+          - line: 6
+            text: Inside the block, print writes to the StringIO object instead of the screen.
+          - line: 12
+            text: The working directory is restored on exit, even if the block fails.
+      - type: markdown
+        body: |
+          ### Locks, connections and transactions
+
+          In [threaded code](concept:python.threading), a lock must be released even if the protected code
+          raises — otherwise every other thread waits forever. Locks are context managers, so you write:
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import threading
+
+          lock = threading.Lock()
+          balance = 0
+
+          def deposit(amount):
+              global balance
+              with lock:                # acquire; released automatically, even on error
+                  balance += amount
+        caption: Illustrative only — threads are not available in the browser runtime.
+      - type: markdown
+        body: |
+          Database libraries use the same idea for transactions: `with connection:` commits if the block
+          succeeds and rolls back if it raises. Whenever an API gives you something you must "close",
+          "release" or "undo", look for a context manager.
+
+  - id: suppress
+    title: Ignoring one expected exception with suppress
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Sometimes an exception is genuinely expected and harmless: deleting a cache file that might not
+          exist, for example. `contextlib.suppress(ExceptionType)` is a ready-made context manager whose
+          `__exit__` returns True for exactly that exception type — a shorter, clearer form of
+          `try: ... except FileNotFoundError: pass`:
+      - type: code
+        runnable: true
+        code: |
+          import os
+          from contextlib import suppress
+
+          with suppress(FileNotFoundError):
+              os.remove("old-cache.txt")      # fine if the file doesn't exist
+          print("carried on")
+        expectedOutput: |
+          carried on
+      - type: callout
+        variant: warning
+        title: Suppress narrowly
+        body: |
+          Name the most specific exception that you really expect, and keep the block to the one statement
+          that may raise it. `suppress(Exception)` around many lines hides real bugs, just like a bare
+          `except: pass`.
+      - type: item
+        ref: predict-suppress
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: 'Timer' object does not support the context manager protocol (missed __exit__ method)` | The class lacks `__exit__` (or `__enter__`, as the message says) | Define both methods |
+          | Same message but about a `'function' object` | `with timer:` instead of `with timer():` — you passed the function, not the manager it returns | Call it: `with timer():` |
+          | `AttributeError: 'NoneType' object has no attribute 'write'` | `__enter__` forgot `return self`, so `as` received None | `return self` (or whatever `as` should receive) |
+          | `TypeError: Timer.__exit__() takes 1 positional argument but 4 were given` | `__exit__` must accept the three exception arguments | `def __exit__(self, exc_type, exc_value, traceback):` |
+          | `ValueError: I/O operation on closed file.` | Using a file after its `with` block ended | Do all the work inside the block |
+          | Cleanup is skipped when the block fails | `@contextmanager` generator without `try`/`finally` around `yield` | Wrap the `yield` in `try:` … `finally:` |
+          | Errors silently disappear | `__exit__` returns True or another truthy value | Return False/None unless suppression is the purpose |
+          | `RuntimeError: generator didn't stop` | The generator yields more than once | Yield exactly once |
+          | `RuntimeError: generator didn't yield` | The generator returns before reaching `yield` | Make sure every path reaches the single `yield` |
+      - type: code
+        runnable: true
+        code: |
+          class Timer:
+              def __enter__(self):
+                  return self
+
+          with Timer():
+              print("working")
+        expectError: TypeError
+        caption: Python checks for both methods before running the block, so "working" is never printed.
+      - type: code
+        runnable: true
+        code: |
+          with open("log.txt", "w") as log:
+              log.write("started\n")
+          log.write("finished\n")
+        expectError: ValueError
+        caption: The second write happens after the block — the file has already been closed.
+      - type: item
+        ref: mcq-protocol-error
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise is checked on both paths: when the block succeeds and when it raises. Cleanup must
+          happen in both, and exceptions must not disappear.
+      - type: item
+        ref: section-logger
+      - type: item
+        ref: debug-enter-return
+      - type: item
+        ref: temporarily
+      - type: item
+        ref: parsons-contextmanager
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **What `with` expands to.** The language reference defines `with EXPR as TARGET: SUITE` as
+          semantically equivalent to this code (simplified slightly):
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          manager = (EXPR)
+          enter = type(manager).__enter__
+          exit = type(manager).__exit__
+          value = enter(manager)
+          hit_except = False
+
+          try:
+              TARGET = value
+              SUITE
+          except:
+              hit_except = True
+              if not exit(manager, *sys.exc_info()):
+                  raise
+          finally:
+              if not hit_except:
+                  exit(manager, None, None, None)
+        caption: From the language reference. Not runnable as written — EXPR, TARGET and SUITE are placeholders.
+      - type: markdown
+        body: |
+          Three consequences:
+
+          1. **The methods are looked up on the type**, not the instance (like all special methods). Setting
+             `obj.__exit__ = ...` on one instance has no effect.
+          2. **`__enter__` runs before the `try`.** If `__enter__` raises, the block never runs and
+             `__exit__` is **not** called — there is nothing to clean up yet.
+          3. **`__exit__` sees the exception before any outer `except`**, so cleanup always happens before
+             the error is handled elsewhere.
+      - type: code
+        runnable: true
+        code: |
+          class Fragile:
+              def __enter__(self):
+                  raise RuntimeError("could not acquire")
+
+              def __exit__(self, exc_type, exc_value, traceback):
+                  print("exit called")
+                  return False
+
+          try:
+              with Fragile():
+                  print("body")
+          except RuntimeError as error:
+              print("caught:", error)
+        expectedOutput: |
+          caught: could not acquire
+        caption: Neither the body nor __exit__ ran, because entering failed.
+      - type: markdown
+        body: |
+          **How `@contextmanager` works.** It wraps your generator in an object whose `__enter__` calls
+          `next(generator)` and returns the yielded value. On a normal exit, `__exit__` calls `next()` again
+          and expects the generator to finish (if it yields again: `RuntimeError: generator didn't stop`). On
+          an exception, `__exit__` calls `generator.throw(exception)`, which raises it at the `yield`. If the
+          generator catches it and finishes, the exception counts as **handled** and is suppressed; if it
+          re-raises or lets it escape, it propagates. A `@contextmanager` object is single-use — each call
+          of the function creates a fresh one.
+
+          **More of contextlib.** `ExitStack` manages a dynamic number of context managers (for example,
+          opening every file in a list) and unwinds them all; `closing(obj)` calls `obj.close()` on exit for
+          objects that have `close` but no `with` support; `nullcontext()` is a do-nothing manager for when
+          a `with` is required but nothing needs managing. `async with`, used in
+          [asyncio](concept:python.asyncio), follows the same protocol with `__aenter__` and `__aexit__`.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `with manager as name:` → `__enter__()` (its return value is bound to `name`), run the block,
+            then **always** `__exit__()` — on normal exit, exception, `return`, `break` or `continue`.
+          - `__exit__(self, exc_type, exc_value, traceback)`: all `None` if no exception. Return
+            False/None to let an exception propagate (normal); True suppresses it.
+          - If `__enter__` raises, `__exit__` is not called.
+          - `@contextmanager`: setup, `yield value`, cleanup — and wrap the `yield` in `try`/`finally`.
+          - Use them for files, locks, connections, timers (inject the clock), temporary state
+            (`redirect_stdout`, `chdir`) and `suppress(SpecificError)`.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What does `with` do, and how would you write your own context manager?" Describe the protocol
+          and the guarantee, write a small class with `__enter__`/`__exit__`, then the `@contextmanager`
+          version — and point out the `try`/`finally` around `yield`. Mentioning that a truthy `__exit__`
+          return suppresses exceptions shows you understand the details.
+
+items:
+  - id: as-target
+    type: mcq
+    skill: recognition
+    prompt: "In `with Manager() as m:`, what is bound to the name `m`?"
+    explanation: >-
+      Python binds the return value of the manager's __enter__ method to the as name. It is often the manager
+      itself (when __enter__ returns self, as files do), but it does not have to be.
+    options:
+      - id: a
+        text: The value returned by Manager()'s __enter__ method.
+        correct: true
+        feedback: Right — that is why a forgotten `return self` gives you None.
+      - id: b
+        text: Always the Manager object itself.
+        feedback: Only when __enter__ returns self. In the Resource example, __enter__ returned a string and m was that string.
+      - id: c
+        text: The value returned by __exit__.
+        feedback: __exit__ runs after the block, and its return value decides whether an exception is suppressed.
+      - id: d
+        text: True if setup succeeded, False otherwise.
+        feedback: If setup fails, __enter__ raises and the block doesn't run at all; nothing is bound.
+
+  - id: predict-exit-exception
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      class Logger:
+          def __enter__(self):
+              print("start")
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              print("stop")
+
+      try:
+          with Logger():
+              print("working")
+              1 / 0
+              print("unreachable")
+      except ZeroDivisionError:
+          print("caught")
+    answer: |
+      start
+      working
+      stop
+      caught
+    explanation: >-
+      The block stops at 1 / 0. Python then calls __exit__ (printing stop). __exit__ returns None — falsy —
+      so the ZeroDivisionError continues to the except clause, which prints caught.
+    wrongAnswers:
+      - answer: |
+          start
+          working
+          caught
+        feedback: __exit__ is called even when the block raises — that is the whole point of with.
+      - answer: |
+          start
+          working
+          caught
+          stop
+        feedback: __exit__ runs as the exception leaves the with block, before any outer except clause sees it.
+      - answer: |
+          start
+          working
+          stop
+        feedback: >-
+          __exit__ returns None (it has no return statement), which is falsy, so the exception is not
+          suppressed and reaches the except clause.
+      - answer: |
+          start
+          working
+          unreachable
+          stop
+          caught
+        feedback: The rest of the block is skipped once 1 / 0 raises.
+
+  - id: explain-finally
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: >-
+      In the first tag() example, the closing tag disappeared when the block raised. Explain why, and why
+      wrapping the yield in try/finally fixes it.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that the code before yield runs on enter and the code after yield runs on exit.
+      - Explains that when the with block raises, contextmanager re-raises the exception inside the generator at the yield line.
+      - Explains that without try/finally nothing catches it there, so the generator stops and the lines after yield are skipped.
+      - Explains that a finally block runs whether or not an exception occurred, so the cleanup always happens and the exception still propagates.
+    modelAnswer: |
+      With @contextmanager, the generator's code up to yield is the setup and the code after yield is the
+      cleanup. When the with block raises, the context manager does not simply resume the generator; it
+      raises the same exception inside the generator, at the yield. In the first version nothing catches it
+      there, so the generator stops at that line and the closing print never runs. Wrapping yield in
+      try/finally means the finally block runs on both paths — after a normal block and when the exception
+      arrives — so the cleanup always happens, and because finally does not catch the exception, it still
+      propagates to the caller.
+
+  - id: predict-suppress
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      from contextlib import suppress
+
+      data = {"a": 1}
+      with suppress(KeyError):
+          print("before")
+          print(data["b"])
+          print("after")
+      print("end")
+    answer: |
+      before
+      end
+    explanation: >-
+      data["b"] raises KeyError, which ends the with block immediately. suppress's __exit__ returns True for
+      KeyError, so the exception disappears and execution continues after the block. The rest of the block
+      ("after") is still skipped.
+    wrongAnswers:
+      - answer: |
+          before
+          after
+          end
+        feedback: >-
+          suppress does not skip just the failing line. The exception ends the whole block; suppress only
+          decides that it does not propagate further.
+      - answer: |
+          before
+          None
+          after
+          end
+        feedback: Indexing a missing key raises KeyError; it never produces None (that is what .get() does).
+
+  - id: mcq-protocol-error
+    type: mcq
+    skill: debugging
+    prompt: |
+      This code fails with `TypeError: 'function' object does not support the context manager protocol (missed __exit__ method)`. What is wrong?
+
+      ```python
+      from contextlib import contextmanager
+
+      @contextmanager
+      def timer():
+          yield
+
+      with timer:
+          print("working")
+      ```
+    explanation: >-
+      timer is a function that returns a context manager when it is called. `with timer:` passes the
+      function object itself, which has no __enter__ or __exit__. Writing `with timer():` calls it.
+    options:
+      - id: a
+        text: The parentheses are missing — the with statement needs timer(), the manager returned by calling the function.
+        correct: true
+        feedback: Right. @contextmanager functions must be called, just like open().
+      - id: b
+        text: Generator-based context managers must define __exit__ themselves.
+        feedback: "@contextmanager provides __enter__ and __exit__ for you — on the object returned when you call timer()."
+      - id: c
+        text: The generator must yield a value, e.g. yield None.
+        feedback: A bare yield already yields None; that is not the problem.
+      - id: d
+        text: You must write `with timer as t:`.
+        feedback: Adding as t still passes the function itself; the call is what is missing.
+
+  - id: section-logger
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a class-based context manager `Section(title, log)` that records what happens in a shared list
+      `log`:
+
+      - `__enter__` appends `"start <title>"` and returns the Section itself;
+      - `__exit__` appends `"end <title>"` if the block finished normally, or
+        `"error <title>: <ExceptionClassName>"` if it raised;
+      - it must **never** suppress exceptions.
+
+      The program should print:
+
+      ```text
+      ['start load', 'working', 'end load', 'start save', 'error save: OSError', 'handled']
+      ```
+    starterCode: |
+      class Section:
+          def __init__(self, title, log):
+              self.title = title
+              self.log = log
+
+          def __enter__(self):
+              pass
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              pass
+
+
+      log = []
+      with Section("load", log):
+          log.append("working")
+      try:
+          with Section("save", log):
+              raise OSError("disk full")
+      except OSError:
+          log.append("handled")
+      print(log)
+    solution: |
+      class Section:
+          def __init__(self, title, log):
+              self.title = title
+              self.log = log
+
+          def __enter__(self):
+              self.log.append(f"start {self.title}")
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              if exc_type is None:
+                  self.log.append(f"end {self.title}")
+              else:
+                  self.log.append(f"error {self.title}: {exc_type.__name__}")
+              return False
+
+
+      log = []
+      with Section("load", log):
+          log.append("working")
+      try:
+          with Section("save", log):
+              raise OSError("disk full")
+      except OSError:
+          log.append("handled")
+      print(log)
+    expectedOutput: |
+      ['start load', 'working', 'end load', 'start save', 'error save: OSError', 'handled']
+    tests:
+      - name: normal block is logged
+        code: |
+          events = []
+          with Section("x", events):
+              events.append("body")
+          assert events == ["start x", "body", "end x"], f"Expected ['start x', 'body', 'end x'], got {events}."
+      - name: as receives the Section itself
+        code: |
+          with Section("y", []) as s:
+              pass
+          assert isinstance(s, Section), f"`as` received {s!r}. __enter__ should return self."
+      - name: failing block is logged and the exception still propagates
+        code: |
+          events = []
+          try:
+              with Section("z", events):
+                  raise ValueError("boom")
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("The ValueError disappeared. __exit__ must return False (or None) so exceptions propagate.")
+          assert events == ["start z", "error z: ValueError"], f"Expected ['start z', 'error z: ValueError'], got {events}."
+      - name: prints the log
+        code: |
+          assert output().strip() == "['start load', 'working', 'end load', 'start save', 'error save: OSError', 'handled']", f"Your program printed {output()!r}."
+    hints:
+      - "`__enter__` appends `f\"start {self.title}\"` and ends with `return self`."
+      - "`exc_type` is None when the block finished normally; otherwise `exc_type.__name__` is the class name, e.g. 'OSError'."
+      - End __exit__ with `return False` so exceptions are never swallowed.
+    feedback:
+      - when: { outputContains: "'end save'" }
+        message: 'When the block raises, __exit__ should record "error <title>: <ExceptionClassName>" instead of "end <title>". Check exc_type.'
+      - when: { errorMessageContains: "NoneType" }
+        message: Something received None — make __enter__ return self.
+    explanation: >-
+      __enter__ records the start and returns self. __exit__ distinguishes the two paths through exc_type,
+      records the right line, and returns False so the OSError still reaches the except clause that logs
+      "handled".
+
+  - id: debug-enter-return
+    type: debug
+    skill: debugging
+    prompt: |
+      This program crashes with `AttributeError: 'NoneType' object has no attribute 'write'`. Fix the
+      context manager so it prints:
+
+      ```text
+      ['header', 'sales: 42', 'footer'] True
+      ```
+    starterCode: |
+      class Report:
+          def __init__(self):
+              self.lines = []
+              self.closed = False
+
+          def __enter__(self):
+              self.lines.append("header")
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              self.lines.append("footer")
+              self.closed = True
+              return False
+
+          def write(self, text):
+              self.lines.append(text)
+
+
+      with Report() as report:
+          report.write("sales: 42")
+      print(report.lines, report.closed)
+    solution: |
+      class Report:
+          def __init__(self):
+              self.lines = []
+              self.closed = False
+
+          def __enter__(self):
+              self.lines.append("header")
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              self.lines.append("footer")
+              self.closed = True
+              return False
+
+          def write(self, text):
+              self.lines.append(text)
+
+
+      with Report() as report:
+          report.write("sales: 42")
+      print(report.lines, report.closed)
+    expectedOutput: |
+      ['header', 'sales: 42', 'footer'] True
+    tests:
+      - name: prints the finished report
+        code: |
+          assert output().strip() == "['header', 'sales: 42', 'footer'] True", f"Your program printed {output()!r}."
+      - name: as gives you the Report
+        code: |
+          with Report() as r:
+              r.write("x")
+          assert r.lines == ["header", "x", "footer"] and r.closed, f"Got lines={r.lines!r}, closed={r.closed!r}."
+    hints:
+      - "The error says report is None. Where does the value of `report` in `with Report() as report` come from?"
+      - It is whatever __enter__ returns. What does a method without a return statement return?
+    feedback:
+      - when: { errorMessageContains: "'NoneType' object has no attribute" }
+        message: "`as report` receives the return value of __enter__, which is currently None. Add return self."
+    explanation: >-
+      The as name is bound to __enter__'s return value. Without return self, __enter__ returned None, so
+      report.write failed. (Notice that __exit__ still ran and appended the footer while the error was on its
+      way out.)
+
+  - id: temporarily
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write a generator-based context manager `temporarily(config, key, value)` using `@contextmanager`. For
+      the duration of the block it sets `config[key] = value`; afterwards it restores the original value —
+      **even if the block raises** — and lets any exception propagate. If `key` was not in `config` before,
+      remove it afterwards.
+
+      The program should print `inside: True` and then `after: False`.
+    starterCode: |
+      from contextlib import contextmanager
+
+
+      # Write temporarily here.
+
+
+      settings = {"debug": False}
+      with temporarily(settings, "debug", True):
+          print("inside:", settings["debug"])
+      print("after:", settings["debug"])
+    solution: |
+      from contextlib import contextmanager
+
+
+      @contextmanager
+      def temporarily(config, key, value):
+          had_key = key in config
+          old = config.get(key)
+          config[key] = value
+          try:
+              yield config
+          finally:
+              if had_key:
+                  config[key] = old
+              else:
+                  del config[key]
+
+
+      settings = {"debug": False}
+      with temporarily(settings, "debug", True):
+          print("inside:", settings["debug"])
+      print("after:", settings["debug"])
+    expectedOutput: |
+      inside: True
+      after: False
+    tests:
+      - name: sets the value inside and restores it after
+        code: |
+          cfg = {"level": 1}
+          with temporarily(cfg, "level", 5):
+              assert cfg["level"] == 5, "Inside the block config[key] should be the temporary value."
+          assert cfg == {"level": 1}, f"After the block the dict should be back to {{'level': 1}}, got {cfg}."
+      - name: restores even when the block raises, and does not swallow the error
+        code: |
+          cfg = {"level": 1}
+          try:
+              with temporarily(cfg, "level", 9):
+                  raise RuntimeError("boom")
+          except RuntimeError:
+              pass
+          else:
+              raise AssertionError("The RuntimeError disappeared — the exception must propagate.")
+          assert cfg == {"level": 1}, f"After an error the original value must be restored, got {cfg}."
+      - name: removes a key that did not exist before
+        code: |
+          cfg = {}
+          with temporarily(cfg, "verbose", True):
+              assert cfg.get("verbose") is True, "Inside the block the new key should exist."
+          assert cfg == {}, f"A key that was not there before should be removed afterwards, got {cfg}."
+      - name: built with @contextmanager and try/finally
+        code: |
+          import ast
+          func = next(n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "temporarily")
+          names = [d.id if isinstance(d, ast.Name) else getattr(d, "attr", "") for d in func.decorator_list]
+          assert "contextmanager" in names, "Decorate temporarily with @contextmanager."
+          assert any(isinstance(n, ast.Try) and n.finalbody for n in ast.walk(func)), "Put the yield inside try: ... finally: so the restore always runs."
+      - name: prints the two lines
+        code: |
+          assert output_lines() == ["inside: True", "after: False"], f"Your program printed {output()!r}."
+    hints:
+      - "Before yielding, remember whether the key existed (`key in config`) and its old value."
+      - "Set the new value, then `try: yield` … `finally:` restore — the finally block runs on both paths."
+      - "To remove a key that was new: `del config[key]`."
+    feedback:
+      - when: { errorMessageContains: "does not support the context manager protocol" }
+        message: Decorate the function with @contextmanager so calling it returns a context manager.
+      - when: { errorMessageContains: "generator didn't yield" }
+        message: The generator must reach a yield — the block runs at that point.
+      - when: { errorType: KeyError }
+        message: Reading config[key] fails for a key that doesn't exist yet. Use key in config and config.get(key) first.
+    explanation: >-
+      The setup records the original state, applies the change and yields. Because the yield sits inside
+      try/finally, the restore runs after a normal block and also when an exception is thrown in at the
+      yield; finally does not catch the exception, so it still propagates.
+
+  - id: parsons-contextmanager
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a generator-based context manager that prints a banner before and after a
+      block — even if the block fails — and use it. Two lines are distractors.
+    solution: |
+      from contextlib import contextmanager
+      @contextmanager
+      def banner(title):
+          print("==", title, "==")
+          try:
+              yield
+          finally:
+              print("== end ==")
+      with banner("Report"):
+          print("body")
+    distractors:
+      - "@contextmanager()"
+      - "with banner:"
+    expectedOutput: |
+      == Report ==
+      body
+      == end ==
+    explanation: >-
+      The decorator is used without parentheses, the yield sits inside try/finally so the closing banner
+      always prints, and the with statement must call banner("Report") to get a context manager.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-nested
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      class Step:
+          def __init__(self, name):
+              self.name = name
+
+          def __enter__(self):
+              print("enter", self.name)
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              print("exit", self.name)
+              return False
+
+      with Step("outer"), Step("inner"):
+          print("body")
+    answer: |
+      enter outer
+      enter inner
+      body
+      exit inner
+      exit outer
+    explanation: >-
+      Managers in one with statement are entered left to right and exited in reverse order, exactly like
+      nested with blocks: the last resource acquired is the first released.
+    wrongAnswers:
+      - answer: |
+          enter outer
+          enter inner
+          body
+          exit outer
+          exit inner
+        feedback: Exit happens in reverse order — inner was entered last, so it is exited first.
+      - answer: |
+          enter outer
+          exit outer
+          enter inner
+          body
+          exit inner
+        feedback: Both managers stay active for the whole block; neither exits until the block is finished.
+
+  - id: m-predict-generator-handles
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      from contextlib import contextmanager
+
+      @contextmanager
+      def safe():
+          try:
+              yield
+          except ZeroDivisionError:
+              print("handled inside")
+
+      with safe():
+          print(1 / 0)
+      print("still running")
+    answer: |
+      handled inside
+      still running
+    explanation: >-
+      The ZeroDivisionError is thrown into the generator at the yield. The generator's except clause catches
+      it and the generator then finishes normally, which @contextmanager treats as "exception handled", so it
+      is suppressed and the program continues after the with block.
+    wrongAnswers:
+      - answer: "handled inside"
+        feedback: >-
+          The generator caught the exception and did not re-raise it, so the with statement treats it as handled
+          and execution continues after the block.
+      - answer: "still running"
+        feedback: The exception from the block is raised inside the generator at the yield line, where the except clause catches it and prints.
+
+  - id: m-mcq-truthy-exit
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A colleague's context manager ends `__exit__` with `return self` "so callers can chain calls". Since
+      then, bugs inside `with` blocks seem to vanish without any traceback. Why?
+    explanation: >-
+      __exit__'s return value is interpreted as "was the exception handled?". Any object (including self) is
+      truthy by default, so every exception raised in the block is suppressed. __exit__ should return False
+      or None.
+    options:
+      - id: a
+        text: A truthy return value from __exit__ tells Python the exception was handled, so every exception is suppressed.
+        correct: true
+        feedback: Exactly. Return False (or None) unless suppression is the manager's purpose.
+      - id: b
+        text: Returning self from __exit__ re-runs the block, which hides the original error.
+        feedback: The block never re-runs. The problem is how the return value is interpreted.
+      - id: c
+        text: __exit__ is not called when it returns a value.
+        feedback: __exit__ is always called; its return value is only used afterwards.
+      - id: d
+        text: Exceptions are only shown when __enter__ returns None.
+        feedback: __enter__'s return value only affects what as binds.
+
+  - id: m-tf-enter-raises
+    type: true-false
+    skill: recognition
+    prompt: "True or false: if `__enter__` raises an exception, Python still calls `__exit__` so the manager can clean up."
+    answer: false
+    explanation: >-
+      __enter__ is called before the protected region starts. If it raises, the block does not run and
+      __exit__ is not called, so __enter__ must clean up any partial work itself before raising.
+
+  - id: m-code-stopwatch
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a class-based context manager `Stopwatch(clock)`. `clock` is a function returning the current
+      time in seconds.
+
+      - `__enter__` reads the clock, stores the start time and returns the Stopwatch;
+      - `__exit__` sets the attribute `elapsed` to the time since the start — **even if the block raised** —
+        and never suppresses exceptions.
+
+      With the fake clock in the starter, the program prints `elapsed: 1.5`.
+    starterCode: |
+      # Write Stopwatch here.
+
+
+      ticks = iter([10.0, 11.5])
+
+      def fake_clock():
+          return next(ticks)
+
+      with Stopwatch(fake_clock) as sw:
+          pass
+      print("elapsed:", sw.elapsed)
+    solution: |
+      class Stopwatch:
+          def __init__(self, clock):
+              self.clock = clock
+              self.elapsed = None
+
+          def __enter__(self):
+              self.start = self.clock()
+              return self
+
+          def __exit__(self, exc_type, exc_value, traceback):
+              self.elapsed = self.clock() - self.start
+              return False
+
+
+      ticks = iter([10.0, 11.5])
+
+      def fake_clock():
+          return next(ticks)
+
+      with Stopwatch(fake_clock) as sw:
+          pass
+      print("elapsed:", sw.elapsed)
+    expectedOutput: |
+      elapsed: 1.5
+    tests:
+      - name: measures any interval
+        code: |
+          readings = iter([3.0, 7.25])
+          with Stopwatch(lambda: next(readings)) as s:
+              pass
+          assert isinstance(s, Stopwatch), "__enter__ should return the Stopwatch itself."
+          assert s.elapsed == 4.25, f"Clock read 3.0 then 7.25, so elapsed should be 4.25, got {s.elapsed!r}."
+      - name: records elapsed even when the block raises, without swallowing it
+        code: |
+          readings = iter([1.0, 2.0])
+          watch = Stopwatch(lambda: next(readings))
+          try:
+              with watch:
+                  raise KeyError("oops")
+          except KeyError:
+              pass
+          else:
+              raise AssertionError("The KeyError disappeared — __exit__ must not suppress exceptions.")
+          assert watch.elapsed == 1.0, f"elapsed should be recorded even after an error (1.0), got {watch.elapsed!r}."
+      - name: prints the result
+        code: |
+          assert output().strip() == "elapsed: 1.5", f"Your program printed {output()!r}."
+    hints:
+      - Store the clock function in __init__ — don't call it yet.
+      - "`__enter__`: `self.start = self.clock()` then `return self`."
+      - "`__exit__(self, exc_type, exc_value, traceback)`: compute `self.clock() - self.start`, then `return False`."
+    feedback:
+      - when: { errorMessageContains: "takes 1 positional argument but 4 were given" }
+        message: __exit__ receives three extra arguments — define it as __exit__(self, exc_type, exc_value, traceback).
+      - when: { errorType: StopIteration }
+        message: The fake clock only has two readings. Read the clock exactly once in __enter__ and once in __exit__.
+    explanation: >-
+      Taking the clock as a parameter makes the stopwatch deterministic to test. Recording elapsed in
+      __exit__ means it happens on every path out of the block, and returning False lets exceptions
+      continue to the caller.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-nested, m-predict-generator-handles, m-mcq-truthy-exit, m-tf-enter-raises, m-code-stopwatch]
+
+cheatsheet: |
+  ```python
+  with open("data.txt") as f:            # __enter__ -> f; __exit__ always closes
+      text = f.read()
+
+  class Managed:
+      def __enter__(self):
+          # setup
+          return self                    # bound by `as`
+      def __exit__(self, exc_type, exc_value, traceback):
+          # cleanup; args are None if no exception
+          return False                   # True would SUPPRESS the exception
+
+  from contextlib import contextmanager, suppress, redirect_stdout, chdir
+  @contextmanager
+  def managed():
+      # setup
+      try:
+          yield "value"                  # bound by `as`
+      finally:
+          ...                            # cleanup, runs on every path
+
+  with suppress(FileNotFoundError):      # ignore ONE specific, expected error
+      os.remove("cache.tmp")
+  ```
+  - `with a(), b():` → enter a, enter b … exit b, exit a
+  - `__enter__` raises → block and `__exit__` do not run
+  - `with timer:` (no call) → "'function' object does not support the context manager protocol"

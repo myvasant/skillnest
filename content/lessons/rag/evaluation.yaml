@@ -1,0 +1,209 @@
+id: rag.evaluation
+concept: rag.evaluation
+title: Evaluating RAG
+subtitle: Measure retrieval (recall@k, MRR, nDCG) separately from generation (faithfulness, relevance, correctness)
+  on a labelled question set
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Measure retrieval (recall@k, MRR, nDCG) separately from generation (faithfulness, relevance, correctness)
+  on a labelled question set.
+objectives:
+- Explain the role of evaluating rag in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: 'BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models'
+  url: https://arxiv.org/abs/2104.08663
+  publisher: arXiv
+- title: 'Ragas: Automated Evaluation of Retrieval Augmented Generation'
+  url: https://arxiv.org/abs/2309.15217
+  publisher: arXiv
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Measure retrieval (recall@k, MRR, nDCG) separately from generation (faithfulness, relevance, correctness)
+      on a labelled question set. RAG systems have many tunable parts and fail quietly. Without a labelled question
+      set and separate retrieval and generation metrics you cannot tell whether a change helped or where a failure
+      came from.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Build an evaluation set of realistic questions labelled with the chunks or documents that answer them
+      (and reference answers where possible); start with 50-200 and grow it from real failures.
+
+      - Retrieval metrics: recall@k (was a relevant chunk in the top k?), MRR (mean of 1 / rank of the first relevant
+      result), nDCG@k (rewards relevant results near the top and supports graded relevance).
+
+      - Generation metrics: faithfulness (supported by the context), answer relevance and correctness against a
+      reference — judged by people or by an LLM judge you have checked against human labels.
+
+      - Evaluate components separately and end to end; a fixed set run on every change works like a regression test
+      suite.
+
+      - Report cost and latency alongside quality.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference)
+      and must be spot-checked against human labels.
+
+      - Good results on a few hand-picked questions do not show the system works; use a representative, versioned
+      set.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def retrieval_recall(relevant, retrieved):\n    if not relevant: raise ValueError(\"relevant set cannot\
+      \ be empty\")\n    return len(set(relevant)&set(retrieved))/len(set(relevant))\n\nprint(retrieval_recall({\"\
+      a\",\"b\",\"c\"}, [\"a\",\"c\"]))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: evaluation-code
+  - type: item
+    ref: evaluation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Build an evaluation set of realistic questions labelled with the chunks or documents that answer them (and
+      reference answers where possible); start with 50-200 and grow it from real failures.
+
+      - Retrieval metrics: recall@k (was a relevant chunk in the top k?), MRR (mean of 1 / rank of the first relevant
+      result), nDCG@k (rewards relevant results near the top and supports graded relevance).
+
+      - Generation metrics: faithfulness (supported by the context), answer relevance and correctness against a
+      reference — judged by people or by an LLM judge you have checked against human labels.
+
+      - Evaluate components separately and end to end; a fixed set run on every change works like a regression test
+      suite.
+
+      - Report cost and latency alongside quality.
+
+
+      **Limitations**
+
+      - LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference) and
+      must be spot-checked against human labels.
+
+      - Good results on a few hand-picked questions do not show the system works; use a representative, versioned
+      set.'
+  - type: item
+    ref: evaluation-mcq
+  - type: item
+    ref: evaluation-tf
+  - type: item
+    ref: evaluation-code
+items:
+- id: evaluation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of evaluating rag?
+  explanation: Build an evaluation set of realistic questions labelled with the chunks or documents that answer
+    them (and reference answers where possible); start with 50-200 and grow it from real failures.
+  options:
+  - id: a
+    text: Build an evaluation set of realistic questions labelled with the chunks or documents that answer them
+      (and reference answers where possible); start with 50-200 and grow it from real failures.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference) and
+      must be spot-checked against human labels.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: evaluation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference) and
+    must be spot-checked against human labels.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: evaluation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding evaluating rag to an application. Describe the design, one failure mode, and how you would
+    evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: evaluation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for evaluating rag. The assertions include the normal path and a meaningful
+    edge case.
+  starterCode: "def retrieval_recall(relevant, retrieved):\n    raise NotImplementedError('Complete this function')"
+  solution: "def retrieval_recall(relevant, retrieved):\n    if not relevant: raise ValueError(\"relevant set cannot\
+    \ be empty\")\n    return len(set(relevant)&set(retrieved))/len(set(relevant))"
+  tests:
+  - name: Core behaviour
+    code: assert abs(retrieval_recall({"a","b","c"}, ["a","c"])-2/3)<1e-12
+  - name: Edge case
+    code: assert retrieval_recall({"a"}, ["a","a"]) == 1
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - evaluation-mcq
+  - evaluation-tf
+  - evaluation-code
+cheatsheet: '**Key ideas**
+
+  - Build an evaluation set of realistic questions labelled with the chunks or documents that answer them (and reference
+  answers where possible); start with 50-200 and grow it from real failures.
+
+  - Retrieval metrics: recall@k (was a relevant chunk in the top k?), MRR (mean of 1 / rank of the first relevant
+  result), nDCG@k (rewards relevant results near the top and supports graded relevance).
+
+  - Generation metrics: faithfulness (supported by the context), answer relevance and correctness against a reference
+  — judged by people or by an LLM judge you have checked against human labels.
+
+  - Evaluate components separately and end to end; a fixed set run on every change works like a regression test
+  suite.
+
+  - Report cost and latency alongside quality.
+
+
+  **Failure modes**
+
+  - LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference) and must
+  be spot-checked against human labels.
+
+  - Good results on a few hand-picked questions do not show the system works; use a representative, versioned set.'

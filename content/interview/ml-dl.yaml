@@ -1,0 +1,617 @@
+category:
+  id: ml
+  title: Machine learning and deep learning
+  summary: Models, evaluation, neural networks and Transformers.
+questions:
+  # ------------------------------------------------------------------ ml.what-is-ml
+  - id: ml.what-is-ml.when-not-to-use-ml
+    level: junior
+    kind: conceptual
+    concepts: [ml.what-is-ml]
+    question: |
+      When would you choose **not** to use machine learning for a problem? Give concrete examples.
+    answer: |
+      Machine learning learns a rule from labelled examples, so it is worth its cost (data, labelling,
+      training, evaluation, monitoring, retraining) only when the rule is hard to write by hand. I would not
+      use it when:
+
+      - **The rule is known and exact** — tax calculation, unit conversion, sorting, a published price
+        table. A model could only approximate it and would sometimes be wrong.
+      - **It is a lookup** — a customer's plan or today's exchange rate belongs in a database query.
+      - **A few clear conditions cover almost all cases** — a short, tested rule is cheaper and easier to
+        explain.
+      - **There are no reliable examples or labels** — collect data first, start with rules.
+      - **Every answer must be correct and auditable** and occasional unexplained errors are unacceptable,
+        with no human review possible.
+
+      Even when ML is plausible, I first build a baseline (a rule, the majority class, the mean) so I can
+      tell whether the model adds enough value to justify itself. Google's Rules of ML puts it as "Don't be
+      afraid to launch a product without machine learning."
+    keyPoints:
+      - ML fits when rules are hard to write, examples are plentiful and representative, errors are tolerable and the target is measurable.
+      - Known exact rules, lookups and simple condition sets are better served by ordinary code or queries.
+      - No reliable labels or zero tolerance for unexplained errors are strong reasons to avoid ML.
+      - Always compare against a simple baseline before committing to a model.
+    followUps:
+      - How would you decide whether a model beats a rule-based system by enough to replace it?
+      - What ongoing costs does an ML system have after launch that a rule does not?
+    pitfalls:
+      - Answering only "when there is not enough data" without mentioning exact rules or lookups.
+      - Treating ML as automatically better than a well-designed heuristic.
+
+  - id: ml.what-is-ml.frame-business-problem
+    level: mid
+    kind: scenario
+    concepts: [ml.what-is-ml, ml.evaluation-metrics]
+    question: |
+      A product manager asks you to "use AI to reduce customer churn". How would you turn this into a
+      well-defined machine learning problem?
+    answer: |
+      I would pin down five things before thinking about models:
+
+      1. **The prediction and its timing** — for example, "for each active subscriber, on the first day of
+         each month, predict whether they will cancel within the next 30 days". Timing defines which data is
+         available when the prediction is made.
+      2. **The label** — cancellation within 30 days, taken from billing records, with a clear definition
+         (do downgrades count? paused accounts?).
+      3. **The decision it drives** — who receives a retention offer, given a fixed budget or team capacity.
+         This determines the metric.
+      4. **The metric** — precision at the number of customers we can contact, or expected saved revenue
+         minus offer cost, measured on a time-based held-out period; plus a business metric in an A/B test.
+      5. **The baseline** — a simple rule such as "no login in 30 days" or a logistic regression on a few
+         features. The model must beat it to be worth deploying.
+
+      I would also check that every feature is known at prediction time (no leakage from the future), that
+      enough historical churners exist, and whether a rule alone already solves most of the problem.
+    keyPoints:
+      - Defines the prediction target precisely, including the prediction moment and horizon.
+      - Ties the model to a concrete decision and capacity, which determines the evaluation metric.
+      - Uses a time-based evaluation and checks that features are available at prediction time.
+      - Builds a simple baseline first and measures real impact with an experiment.
+    followUps:
+      - Why might a model with excellent AUC still fail to reduce churn?
+      - How would you measure whether the retention offers actually caused fewer cancellations?
+    pitfalls:
+      - Jumping straight to model choice (for example "use XGBoost") without defining the label.
+      - Using features recorded after the prediction moment, such as "cancellation reason".
+
+  - id: ml.what-is-ml.ai-ml-dl-genai
+    level: junior
+    kind: conceptual
+    concepts: [ml.what-is-ml]
+    question: |
+      Explain the relationship between AI, machine learning, deep learning and generative AI, with an
+      example of each.
+    answer: |
+      They are nested rather than synonyms. **AI** is the broad goal of making computers do tasks we
+      associate with intelligence; it includes non-learning methods such as a route planner searching a
+      road graph or an expert system of hand-written rules. **Machine learning** is the part of AI where
+      behaviour is learned from data — for example a spam filter or a credit-risk model trained on labelled
+      examples. **Deep learning** is ML with neural networks of many layers that learn features from raw
+      data — image classifiers, speech recognition, Transformers. **Generative AI** describes models that
+      produce new content (text, images, audio, code) rather than a label or a number; today's generative
+      systems such as large language models and diffusion image models are deep-learning models, although
+      simple generative models without deep learning (n-gram text generators) also exist.
+    keyPoints:
+      - AI contains ML, which contains deep learning.
+      - Much classic AI (search, planning, rule-based systems) involves no learning.
+      - Deep learning means many-layered neural networks that learn their own features.
+      - Generative AI is defined by producing content; modern generative systems are deep-learning models.
+    followUps:
+      - Is a logistic regression model AI? Is it deep learning?
+    pitfalls:
+      - Using "AI" to mean only chatbots or LLMs.
+      - Claiming all machine learning is deep learning.
+
+  # -------------------------------------------------------------- ml.train-val-test
+  - id: ml.train-val-test.why-three-sets
+    level: junior
+    kind: conceptual
+    concepts: [ml.train-val-test]
+    question: |
+      Why do we usually split data into training, validation and test sets instead of just training and
+      test?
+    answer: |
+      Each set has a different job. The **training set** fits the model's parameters. The **validation
+      set** is used to make choices — which model, which features, which hyperparameters, when to stop
+      training. The **test set** gives one final estimate of performance on new data.
+
+      Choosing is itself a form of fitting: if you try many candidates and keep the one with the best
+      validation score, that score is optimistic, because the winner was partly selected for its luck on
+      those particular examples. If you also made those choices on the test set, you would have no unbiased
+      estimate left. Keeping the test set untouched until the end, and using it once, preserves an honest
+      number. With little data, k-fold cross-validation can replace the fixed validation set, ideally
+      still with a final held-out test set.
+    keyPoints:
+      - Training fits parameters; validation selects models, features and hyperparameters; test reports once.
+      - Selecting on a set makes its score optimistically biased.
+      - Repeatedly checking and tuning on the test set turns it into a validation set.
+      - Cross-validation is an alternative to a single validation split for small datasets.
+    followUps:
+      - After choosing a model on validation data, should you retrain on training plus validation data?
+      - What would you do if you have already looked at the test set many times?
+    pitfalls:
+      - Saying the validation set is "just a second test set".
+      - Tuning hyperparameters by looking at test scores.
+
+  - id: ml.train-val-test.split-time-and-groups
+    level: mid
+    kind: scenario
+    concepts: [ml.train-val-test, ml.data-leakage]
+    question: |
+      You have two datasets: (a) three years of daily sales for a demand forecast, and (b) clickstream rows
+      from 50,000 users for a "will this user purchase?" model. How would you split each, and why?
+    answer: |
+      The split must mirror how the model will be used.
+
+      **(a) Forecasting: split by time.** Train on the earliest period, validate on the next period, test on
+      the most recent one (or use rolling-origin / `TimeSeriesSplit` validation). In deployment the model
+      always predicts days after everything it has seen; a random split would put test days between training
+      days, letting the model interpolate with knowledge of the future and inflating its score. Any rolling
+      features must use only data before each prediction date.
+
+      **(b) Per-user data: split by user (grouped split).** Many rows come from the same user and are
+      strongly correlated. A random row split puts some of a user's rows in training and others in test, so
+      the model can recognise the user rather than learn general behaviour. Assign whole users to one set
+      (`GroupShuffleSplit` / `GroupKFold`). If the model will be applied to future sessions of known users,
+      a time-based split within users may be the right mirror instead — the question to ask is "what will
+      the model see at prediction time?". For classification I would also stratify (or check) the class
+      balance in each set.
+    keyPoints:
+      - Splits must mirror deployment conditions.
+      - Time-ordered data is split chronologically; random splits leak future information.
+      - Repeated entities (users, patients) are split by group to avoid memorising the entity.
+      - Preprocessing and features must be computed only from data available at prediction time.
+    followUps:
+      - How does `TimeSeriesSplit` differ from k-fold?
+      - How would you detect near-duplicate rows across your splits?
+    pitfalls:
+      - Defaulting to a shuffled 80/20 split for every dataset.
+      - Computing rolling averages or scalers on the full dataset before splitting.
+
+  - id: ml.train-val-test.too-good-to-be-true
+    level: senior
+    kind: debugging
+    concepts: [ml.train-val-test, ml.data-leakage]
+    question: |
+      A model scores 0.98 accuracy on its test set, but only about 0.70 after deployment. What would you
+      investigate, in what order?
+    answer: |
+      A large gap usually means the offline evaluation did not mirror production. I would check:
+
+      1. **What the 0.98 measured** — was it really held-out data, and how does it compare with the
+         majority-class baseline? On imbalanced data, accuracy can look excellent while the model is weak.
+      2. **The split** — random splits of time-ordered or grouped data (the same customer, device or
+         near-duplicate records on both sides) inflate scores. Re-evaluate with a time-based or grouped
+         split.
+      3. **Leakage in features** — any feature not known at prediction time (computed after the outcome,
+         derived from the label, or aggregated over future data), and preprocessing (scalers, encoders,
+         imputers, feature selection) fitted on the full dataset before splitting. A single feature with
+         suspiciously high importance is a red flag.
+      4. **Selection on the test set** — many decisions made by looking at test scores make it optimistic.
+      5. **Train–serve skew and drift** — features computed differently in the serving code, missing
+         values handled differently, or production data that has shifted since training (new users,
+         seasonality). Compare feature distributions between training data and live traffic.
+
+      Then I would rebuild the evaluation to match production (point-in-time features, chronological or
+      grouped split, preprocessing inside a pipeline) and report the honest number.
+    keyPoints:
+      - Compares the headline metric with a baseline and checks the metric suits the class balance.
+      - Checks that the split mirrors deployment (time, groups, duplicates).
+      - Looks for target leakage and preprocessing fitted before the split.
+      - Considers test-set overuse, train–serve skew and data drift.
+    followUps:
+      - How would a pipeline object help prevent some of these problems?
+      - How would you monitor for drift after fixing the evaluation?
+    pitfalls:
+      - Assuming the production data is simply "noisier" without investigating the evaluation.
+      - Retraining a bigger model before understanding the gap.
+
+  # ---------------------------------------------------------- ml.linear-regression
+  - id: ml.linear-regression.mse-gradient
+    level: mid
+    kind: coding
+    concepts: [ml.linear-regression, math.optimization]
+    question: |
+      For the model `y_hat = w * x + b` with mean squared error loss, derive the gradients with respect to
+      `w` and `b`, and write one gradient-descent update step in plain Python.
+    answer: |
+      The loss is `MSE = (1/n) Σ (w·x_i + b − y_i)²`. Let `e_i = w·x_i + b − y_i` (prediction minus target).
+      By the chain rule, the derivative of `e_i²` is `2·e_i` times the derivative of `e_i`, which is `x_i`
+      with respect to `w` and `1` with respect to `b`:
+
+      ```text
+      ∂MSE/∂w = (2/n) Σ e_i · x_i        ∂MSE/∂b = (2/n) Σ e_i
+      ```
+
+      Gradient descent moves against the gradient, computing both gradients from the same old values:
+
+      ```python
+      def gd_step(w, b, xs, ys, lr):
+          n = len(xs)
+          errors = [w * x + b - y for x, y in zip(xs, ys)]
+          dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+          db = 2 / n * sum(errors)
+          return w - lr * dw, b - lr * db
+      ```
+
+      Repeating the step until the loss stops falling converges to the least-squares solution when the
+      learning rate is small enough; too large a rate makes the loss grow every step.
+    keyPoints:
+      - Correct gradients (2/n) Σ e·x and (2/n) Σ e with e = prediction − target.
+      - Uses the chain rule to justify the factor 2 and the x term.
+      - Subtracts the gradient times the learning rate.
+      - Updates both parameters from the same old values.
+    followUps:
+      - How does the update change with several features?
+      - What happens if the features are on very different scales?
+    pitfalls:
+      - Adding the gradient (gradient ascent).
+      - Updating w first and then using the new w to compute the gradient for b.
+
+  - id: ml.linear-regression.closed-form-vs-gd
+    level: mid
+    kind: conceptual
+    concepts: [ml.linear-regression]
+    question: |
+      Linear regression has a closed-form solution. Why would anyone fit it with gradient descent instead?
+    answer: |
+      For one feature the least-squares solution is `w = Σ(x − x̄)(y − ȳ) / Σ(x − x̄)²` and `b = ȳ − w·x̄`;
+      in general it solves the normal equations `XᵀX w = Xᵀy`. That is exact and fast for modest numbers
+      of features — libraries use a stable factorisation (scikit-learn's `LinearRegression` calls
+      `scipy.linalg.lstsq`) rather than inverting `XᵀX`, which is slow and numerically fragile.
+
+      Gradient descent is preferred when the closed form becomes impractical: the solve cost grows roughly
+      cubically with the number of features and needs the whole dataset at once, while (mini-batch)
+      gradient descent processes data in pieces, streams huge datasets and supports online updates. It also
+      generalises to models without a closed form — logistic regression, regularised variants such as
+      lasso, and neural networks. For ordinary least squares both methods reach the same unique minimum,
+      because the MSE of a linear model is convex.
+    keyPoints:
+      - States the closed form (normal equations or the one-feature formulas).
+      - Libraries use stable least-squares solvers instead of explicit inverses.
+      - Gradient descent scales to many features and huge or streaming data.
+      - Gradient descent generalises to models without a closed form; both agree for OLS because the loss is convex.
+    followUps:
+      - What goes wrong with the normal equation when two features are almost perfectly correlated?
+    pitfalls:
+      - Claiming gradient descent finds a better solution than the closed form for OLS.
+      - Recommending computing inv(X.T @ X) directly in production code.
+
+  - id: ml.linear-regression.interpret-coefficients
+    level: junior
+    kind: conceptual
+    concepts: [ml.linear-regression]
+    question: |
+      A model predicts house price as `price = 1,200 × area_m2 + 15,000 × bedrooms + 50,000`. How do you
+      interpret the coefficients, and what cautions apply?
+    answer: |
+      Each coefficient is the change in the predicted price for a one-unit increase in that feature, holding
+      the other features fixed, **in the data the model was fitted on**: about 1,200 more per extra square
+      metre at the same number of bedrooms, and 15,000 more per extra bedroom at the same area. The
+      intercept, 50,000, is the prediction when every feature is 0 — a house with no area and no bedrooms —
+      which lies outside the data and has no real meaning.
+
+      Cautions: coefficients are associations, not causal effects (adding a bedroom by splitting a room
+      need not add 15,000); their size depends on units, so 1,200 vs 15,000 says nothing about importance
+      until features are on a common scale; correlated features (area and bedrooms) make individual
+      coefficients unstable and can even flip their signs; and predictions outside the observed range are
+      extrapolations. Check residuals for patterns before trusting the model at all.
+    keyPoints:
+      - Per-unit change in prediction with other features held fixed.
+      - The intercept is often outside the data and not meaningful.
+      - Coefficients are not causal and their magnitude depends on units.
+      - Correlated features make coefficients unstable; avoid extrapolation; check residuals.
+    followUps:
+      - How would you compare the importance of the two features fairly?
+    pitfalls:
+      - Saying bedrooms matter more because 15,000 > 1,200.
+      - Treating the coefficients as the effect of renovating a house.
+
+  # --------------------------------------------------------- ml.evaluation-metrics
+  - id: ml.evaluation-metrics.precision-recall-from-matrix
+    level: junior
+    kind: coding
+    concepts: [ml.evaluation-metrics]
+    question: |
+      A fraud model on 1,000 transactions has TP = 40, FP = 10, FN = 20, TN = 930. Compute accuracy,
+      precision, recall and F1, and comment on what they tell you.
+    answer: |
+      - Accuracy = (40 + 930) / 1000 = **0.97**
+      - Precision = 40 / (40 + 10) = **0.80** — four out of five alerts are real fraud.
+      - Recall = 40 / (40 + 20) ≈ **0.667** — the model catches two thirds of the fraud.
+      - F1 = 2 × 0.8 × 0.667 / (0.8 + 0.667) ≈ **0.727**
+
+      Fraud is 6% of transactions (60 of 1,000), so a model that never flags fraud would already score 0.94
+      accuracy; the 0.97 sounds better than it is. Precision and recall describe the fraud class directly:
+      alerts are mostly trustworthy, but a third of fraud goes through. Whether that is acceptable depends on
+      the cost of a missed fraud versus an analyst review, which would guide moving the threshold.
+
+      ```python
+      tp, fp, fn, tn = 40, 10, 20, 930
+      precision = tp / (tp + fp)
+      recall = tp / (tp + fn)
+      f1 = 2 * precision * recall / (precision + recall)
+      ```
+    keyPoints:
+      - Correct values — accuracy 0.97, precision 0.8, recall about 0.667, F1 about 0.727.
+      - Compares accuracy with the 0.94 majority baseline.
+      - Interprets precision as trust in alerts and recall as the share of fraud caught.
+      - Links the trade-off to error costs and the threshold.
+    followUps:
+      - What happens to these numbers if you lower the threshold?
+      - How would you handle precision when the model flags nothing?
+    pitfalls:
+      - Swapping precision and recall.
+      - Presenting 0.97 accuracy as strong without a baseline.
+
+  - id: ml.evaluation-metrics.choose-metric-scenario
+    level: mid
+    kind: scenario
+    concepts: [ml.evaluation-metrics]
+    question: |
+      Which metric would you optimise for (a) a cancer screening test whose positives get a follow-up
+      biopsy, (b) a spam filter that moves mail out of the inbox, and (c) a model that predicts delivery
+      times shown to customers? Explain each choice.
+    answer: |
+      Start from the cost of each kind of mistake:
+
+      - **(a) Screening:** a missed cancer (false negative) is far worse than an unnecessary follow-up
+        (false positive). Prioritise **recall** (sensitivity), choosing a low threshold, subject to a
+        precision or follow-up volume the clinic can handle. Report both, plus the confusion matrix.
+      - **(b) Spam filter:** hiding a real email (false positive) is worse than letting some spam through.
+        Require **high precision** on the spam class and then maximise recall at that precision.
+      - **(c) Delivery times:** a regression problem. If every minute of error costs about the same, **MAE**
+        (in minutes, easy to explain); if big misses are disproportionately harmful, **RMSE** or a high
+        percentile of absolute error. Compare against a baseline such as the average time for the distance
+        band.
+
+      In every case I would tune the threshold (or model) on validation data, report the chosen metric with
+      its uncertainty, and keep accuracy or R² as secondary context only.
+    keyPoints:
+      - Chooses metrics from the cost of false positives versus false negatives.
+      - Recall for screening, precision for the spam filter, MAE or RMSE for regression.
+      - Mentions the decision threshold and choosing it on validation data.
+      - Compares against baselines rather than reporting a metric alone.
+    followUps:
+      - How would you choose the threshold if you knew the cost of each error in money?
+    pitfalls:
+      - Recommending accuracy for all three.
+      - Forgetting that the delivery-time problem is regression.
+
+  - id: ml.evaluation-metrics.auc-vs-threshold
+    level: senior
+    kind: conceptual
+    concepts: [ml.evaluation-metrics, ml.imbalanced-data]
+    question: |
+      Your new model has a higher ROC AUC than the old one, but after deployment the operations team says
+      its alerts are worse. How can both be true?
+    answer: |
+      ROC AUC measures how well the scores **rank** positives above negatives, averaged over all thresholds.
+      The team experiences the model at **one** threshold, with **real** class balance and capacity. Several
+      things can make the two disagree:
+
+      - **The operating threshold was not re-tuned.** A new model's scores have a different distribution;
+        keeping the old threshold (or 0.5) can produce far more or fewer alerts and worse precision there.
+      - **AUC improvements can come from the wrong region of the curve.** Better ranking among
+        low-scoring cases changes AUC but not the top of the list the team actually reviews; precision at
+        the alert volume (or precision–recall AUC) is the relevant number.
+      - **Rare positives.** With 0.5% positives, a small false positive rate still means many false alarms;
+        ROC curves look good while precision is poor.
+      - **Calibration.** If downstream logic uses scores as probabilities, a better-ranked but worse-calibrated
+        model leads to worse decisions.
+      - **Different evaluation data**, such as a split that does not match production or drift since
+        training.
+
+      I would evaluate both models on recent held-out data at the operational alert volume (precision@k or
+      cost-weighted metrics), re-tune the threshold, and check calibration.
+    keyPoints:
+      - AUC is threshold-free ranking quality; operations use one threshold.
+      - The threshold must be re-tuned for a new model's score distribution.
+      - Precision at the alert volume or PR-AUC matters with rare positives.
+      - Calibration and evaluation data that does not match production can also explain the gap.
+    followUps:
+      - How would you check and fix calibration?
+    pitfalls:
+      - Assuming a higher AUC means better results at every threshold.
+      - Ignoring the alert volume the team can handle.
+
+  # ------------------------------------------------------------- dl.neurons-layers
+  - id: dl.neurons-layers.count-parameters
+    level: junior
+    kind: coding
+    concepts: [dl.neurons-layers]
+    question: |
+      How many trainable parameters does a fully connected network with layer sizes 784 → 256 → 10 have?
+      Write a function that computes this for any list of layer sizes.
+    answer: |
+      A dense layer from `n_in` inputs to `n_out` outputs has `n_in × n_out` weights plus `n_out` biases.
+
+      - 784 → 256: 784 × 256 + 256 = 200,704 + 256 = 200,960
+      - 256 → 10: 256 × 10 + 10 = 2,570
+
+      Total: **203,530** parameters.
+
+      ```python
+      def count_params(sizes):
+          return sum(n_in * n_out + n_out for n_in, n_out in zip(sizes, sizes[1:]))
+
+      count_params([784, 256, 10])   # 203530
+      ```
+
+      Activation functions such as ReLU add no parameters. In PyTorch you can check with
+      `sum(p.numel() for p in model.parameters())`.
+    keyPoints:
+      - Per layer, n_in × n_out weights plus n_out biases.
+      - Correct total of 203,530.
+      - Sums over consecutive pairs of layer sizes.
+      - Activations have no parameters.
+    followUps:
+      - Where do most of the parameters sit, and what does that suggest about the input layer?
+    pitfalls:
+      - Forgetting the biases.
+      - Counting the input layer as having parameters of its own.
+
+  - id: dl.neurons-layers.why-nonlinearity
+    level: mid
+    kind: conceptual
+    concepts: [dl.neurons-layers, dl.activation-functions]
+    question: |
+      Why do neural networks need non-linear activation functions between layers? Show what happens
+      without them.
+    answer: |
+      Without activations, two layers compute `y = W2 (W1 x + b1) + b2`. Multiplying out gives
+      `y = (W2 W1) x + (W2 b1 + b2)`, and `W2 W1` is just another matrix and `W2 b1 + b2` another vector — a
+      single linear layer. By induction, any stack of linear layers collapses into one, so extra depth adds
+      no expressive power: the network can only represent linear functions and draw linear decision
+      boundaries, like logistic regression. It cannot even compute XOR.
+
+      A non-linear activation such as ReLU between layers prevents the collapse: `W2 · relu(W1 x + b1)`
+      cannot be folded into one matrix. Each layer can then re-represent the data — for XOR, a hidden ReLU
+      layer maps the inputs so that the classes become linearly separable for the output neuron — and stacks
+      of such layers can approximate very complex functions.
+    keyPoints:
+      - Shows the algebra W2(W1x + b1) + b2 = (W2W1)x + (W2b1 + b2).
+      - Concludes that stacked linear layers equal one linear layer.
+      - Gives a consequence, such as being unable to represent XOR or any non-linear boundary.
+      - Explains that non-linearities let hidden layers build new representations.
+    followUps:
+      - Why is ReLU usually preferred to sigmoid in hidden layers?
+    pitfalls:
+      - Saying non-linearity is needed "to make values between 0 and 1".
+      - Forgetting the bias terms in the algebra.
+
+  - id: dl.neurons-layers.zero-init
+    level: mid
+    kind: conceptual
+    concepts: [dl.neurons-layers]
+    question: |
+      What goes wrong if you initialise every weight of a neural network to zero (or to the same constant)?
+    answer: |
+      All neurons in a layer then compute the same output for every input, so during backpropagation they
+      receive the same gradient and make the same update. They stay identical forever — a layer of 256 units
+      behaves like one unit repeated 256 times. This is the **symmetry problem**. (With all-zero weights and
+      ReLU, many gradients are exactly zero as well, so parts of the network may not learn at all.)
+
+      Random initialisation breaks the symmetry. Schemes such as Xavier/Glorot (for tanh/sigmoid) and He
+      (for ReLU) also scale the random values by the number of inputs so that activations and gradients
+      neither explode nor vanish as they pass through many layers. Frameworks do this by default; PyTorch's
+      `nn.Linear` samples weights uniformly from ±1/√in_features. Biases can safely start at zero, because
+      the random weights already break the symmetry.
+    keyPoints:
+      - Identical weights give identical outputs and identical gradients.
+      - Neurons remain identical, wasting the layer's capacity (symmetry problem).
+      - Random initialisation breaks symmetry; Xavier/He scaling keeps signals stable.
+      - Biases may be initialised to zero.
+    followUps:
+      - Why does the scale of the initial weights matter in very deep networks?
+    pitfalls:
+      - Saying the network "cannot train because of division by zero".
+      - Claiming any random values work regardless of scale.
+
+  # ------------------------------------------------------------------ dl.attention
+  - id: dl.attention.implement-sdpa
+    level: senior
+    kind: coding
+    concepts: [dl.attention]
+    question: |
+      Implement scaled dot-product attention for one sequence in plain Python (lists of row vectors for
+      Q, K and V), with an optional causal mask. State the shapes involved.
+    answer: |
+      ```python
+      import math
+
+      def softmax(scores):
+          m = max(scores)                                  # stability: subtract the max
+          exps = [math.exp(s - m) for s in scores]         # exp(-inf) = 0 for masked positions
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      def attention(Q, K, V, causal=False):
+          d_k = len(K[0])
+          out = []
+          for i, q in enumerate(Q):
+              scores = [sum(a * b for a, b in zip(q, k)) / math.sqrt(d_k)
+                        if not (causal and j > i) else float("-inf")
+                        for j, k in enumerate(K)]
+              w = softmax(scores)                          # one distribution over keys per query
+              out.append([sum(wj * v[c] for wj, v in zip(w, V)) for c in range(len(V[0]))])
+          return out
+      ```
+
+      Shapes for `n` tokens: `Q` and `K` are `n × d_k`, `V` is `n × d_v`; the score and weight matrices are
+      `n × n` (each row sums to 1); the output is `n × d_v`. This is `softmax(Q Kᵀ / √d_k) V` from
+      "Attention Is All You Need". The causal mask sets scores for later positions to −∞ **before** the
+      softmax so they get zero weight; the diagonal is always visible, so every row has a finite maximum.
+    keyPoints:
+      - Dot-product scores divided by sqrt(d_k).
+      - Numerically stable softmax over the keys for each query.
+      - Output is the weights times V, with correct shapes (n × n weights, n × d_v output).
+      - Causal mask applied as −∞ to j > i before the softmax.
+    followUps:
+      - How would you vectorise this with matrices, and with a batch and head dimension?
+      - What changes for cross-attention, where queries come from a different sequence?
+    pitfalls:
+      - Applying softmax over the query axis instead of the key axis.
+      - Masking with 0 instead of −∞, or masking after the softmax.
+
+  - id: dl.attention.why-scale
+    level: mid
+    kind: conceptual
+    concepts: [dl.attention]
+    question: |
+      Why are attention scores divided by √d_k? What would happen without the scaling?
+    answer: |
+      If the components of a query and a key are independent with mean 0 and variance 1, their dot product
+      `Σ q_i k_i` is a sum of `d_k` terms with variance 1, so it has mean 0 and variance `d_k` — its typical
+      magnitude grows like √d_k. With `d_k = 64` or `128`, raw scores are large, and softmax of large
+      scores is nearly one-hot: one key gets almost all the weight. In that saturated regime the softmax's
+      gradients are tiny ("extremely small gradients", in the words of the Transformer paper, section
+      3.2.1), so learning the attention patterns becomes slow and unstable. Dividing by √d_k brings the
+      score variance back to about 1 regardless of the head dimension. It is a fixed rescaling, not a
+      learned parameter, and it is separate from the max-subtraction trick, which only prevents numerical
+      overflow and does not change the softmax output.
+    keyPoints:
+      - Dot products of d_k-dimensional vectors have variance d_k under the stated assumptions.
+      - Large scores saturate softmax towards one-hot weights.
+      - Saturated softmax has tiny gradients, which hurts training.
+      - Scaling by 1/sqrt(d_k) keeps the variance around 1; it is different from overflow protection.
+    followUps:
+      - Why sqrt(d_k) rather than d_k?
+    pitfalls:
+      - Saying the scaling makes rows sum to 1 (softmax does that).
+      - Confusing it with subtracting the maximum for numerical stability.
+
+  - id: dl.attention.causal-mask-and-cost
+    level: senior
+    kind: conceptual
+    concepts: [dl.attention, dl.inference-performance]
+    question: |
+      Explain why decoder-only language models use causal masking, and how attention's cost grows with the
+      sequence length during training and generation.
+    answer: |
+      A decoder language model is trained to predict the next token at **every** position in one parallel
+      pass. Without a mask, position `i` could attend to token `i + 1` and simply copy the answer. The
+      causal mask sets the scores of all later positions to −∞ before the softmax, so each position uses
+      only itself and earlier tokens — exactly the information available when generating.
+
+      **Cost.** Every query is compared with every allowed key, so the score matrix has `n²` entries per head
+      per layer (about half are masked in causal attention, which is still quadratic): doubling the context
+      quadruples the work. A naive implementation also stores that matrix; FlashAttention computes the exact
+      same result in tiles with an online softmax, so the `n × n` matrix is never materialised and memory
+      traffic drops sharply, though the arithmetic is still quadratic.
+
+      **Generation.** Because of the mask, earlier tokens' keys and values never change when a new token is
+      appended, so inference engines keep them in a **KV cache**. Each new token then needs one query
+      against the `t` cached keys — linear work per step — but the cache grows with sequence length, batch
+      size and layer count and often dominates memory for long contexts.
+    keyPoints:
+      - The mask prevents positions from seeing future tokens during parallel next-token training.
+      - Masking uses −∞ before softmax.
+      - Attention cost is quadratic in sequence length; FlashAttention reduces memory traffic, not the n² arithmetic.
+      - The KV cache reuses earlier keys and values during generation; it costs memory.
+    followUps:
+      - How does grouped-query attention reduce KV-cache size?
+    pitfalls:
+      - Claiming FlashAttention is an approximation.
+      - Saying the mask is only needed at inference time.

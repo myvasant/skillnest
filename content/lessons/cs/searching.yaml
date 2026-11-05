@@ -1,0 +1,1335 @@
+id: cs.searching
+concept: cs.searching
+title: Linear and Binary Search
+subtitle: From checking everything to halving the problem
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Linear search checks items one by one and works on any data in O(n). Binary search needs sorted data
+  and halves the remaining range at every step, finding an item among a million in about 20 comparisons —
+  if you get its loop invariant exactly right. Learn both, the off-by-one traps, the bisect module, and
+  when sorting first pays off.
+objectives:
+  - Implement linear search and state its best-case and worst-case cost.
+  - Implement iterative binary search on a sorted list and trace lo, hi and mid through it.
+  - State a loop invariant for binary search and keep the loop condition and updates consistent with it.
+  - Use bisect_left, bisect_right and insort for lookups, insertion points and range counts.
+  - Decide, with numbers, whether sorting first, a set, or a single linear scan is the right choice.
+  - Apply binary search to a monotonic yes/no question, not only to a list.
+sources:
+  - title: bisect — Array bisection algorithm
+    url: https://docs.python.org/3/library/bisect.html
+    publisher: Python Software Foundation
+  - title: "MIT 6.006 Introduction to Algorithms (Spring 2020)"
+    url: https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/
+    publisher: MIT OpenCourseWare
+  - title: "Extra, Extra - Read All About It: Nearly All Binary Searches and Mergesorts are Broken"
+    url: https://research.google/blog/extra-extra-read-all-about-it-nearly-all-binary-searches-and-mergesorts-are-broken/
+    publisher: Joshua Bloch (Google Research, 2006)
+  - title: Sorting Techniques
+    url: https://docs.python.org/3/howto/sorting.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why the way you search matters
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Looking someone up in a printed phone book, you never start at page one and read every name. You
+          open near the middle, see whether the name you want comes before or after, and throw away half the
+          book. A few flips later you are there. That only works because the book is **sorted**.
+
+          The same difference shows up in code. Below, both functions search one million sorted numbers for
+          the very last one and count how many items they look at. (You will write the second one yourself
+          later in this lesson.)
+      - type: code
+        runnable: true
+        code: |
+          def linear_comparisons(items, target):
+              count = 0
+              for item in items:
+                  count += 1
+                  if item == target:
+                      break
+              return count
+
+          def binary_comparisons(items, target):
+              lo, hi = 0, len(items) - 1
+              count = 0
+              while lo <= hi:
+                  mid = (lo + hi) // 2
+                  count += 1
+                  if items[mid] == target:
+                      break
+                  elif items[mid] < target:
+                      lo = mid + 1
+                  else:
+                      hi = mid - 1
+              return count
+
+          numbers = list(range(0, 2_000_000, 2))    # one million sorted even numbers
+          print("linear search looked at", linear_comparisons(numbers, 1_999_998), "items")
+          print("binary search looked at", binary_comparisons(numbers, 1_999_998), "items")
+        expectedOutput: |
+          linear search looked at 1000000 items
+          binary search looked at 20 items
+        caption: A million checks against twenty. Lookups are among the most common operations in software, so this difference decides whether a system scales.
+
+  - id: linear-search
+    title: Linear search
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Linear search](glossary:linear-search) is the obvious method: look at each item in turn until you
+          find the target or run out of items.
+      - type: code
+        runnable: true
+        code: |
+          def linear_search(items, target):
+              """Return the index of the first match, or -1 if target is absent."""
+              for i, item in enumerate(items):
+                  if item == target:
+                      return i
+              return -1
+
+          pets = ["cat", "dog", "fish", "dog"]
+          print(linear_search(pets, "dog"))
+          print(linear_search(pets, "owl"))
+          print("fish" in pets, pets.index("fish"))
+        expectedOutput: |
+          1
+          -1
+          True 2
+        annotations:
+          - line: 5
+            text: Returning as soon as we find a match makes the best case one comparison.
+          - line: 6
+            text: Only after checking every item can we conclude the target is absent.
+      - type: markdown
+        body: |
+          - **Best case:** the target is first — 1 comparison, O(1).
+          - **Worst case:** the target is last or missing — n comparisons, O(n).
+          - **Average:** if the target is present at a random position, about n/2 comparisons — still O(n).
+
+          Its great strength: it works on **any** sequence, sorted or not, and needs only `==`. Python's
+          `x in my_list`, `my_list.index(x)` and `my_list.count(x)` are all linear searches written in C.
+          Note that `index` raises an error when the item is missing, instead of returning -1:
+      - type: code
+        runnable: true
+        code: |
+          pets = ["cat", "dog"]
+          pets.index("owl")
+        expectError: ValueError
+        caption: "ValueError: list.index(x): x not in list. Check with `in` first, or catch the ValueError."
+      - type: item
+        ref: predict-linear
+
+  - id: binary-idea
+    title: "The idea of binary search: halve the range"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Think of the game "I'm thinking of a number from 1 to 100; I'll tell you higher or lower." The best
+          strategy is always to guess the middle of what is left. Every answer rules out half of the
+          remaining numbers, so you never need more than 7 guesses (2⁷ = 128 ≥ 100).
+
+          [Binary search](glossary:binary-search) plays that game on a **sorted** list:
+
+          1. Keep a range of positions where the target could still be: from `lo` to `hi`.
+          2. Look at the middle position `mid`.
+          3. If `items[mid]` is the target, done. If it is smaller than the target, the target can only be to
+             the right — discard the left half including `mid`. If it is bigger, discard the right half.
+          4. Repeat until found or the range is empty.
+
+          Searching for 64 in `[3, 8, 15, 21, 30, 42, 57, 64, 77]` (positions 0 to 8):
+
+          | Step | lo | hi | mid | items[mid] | Decision |
+          |---|---|---|---|---|---|
+          | 1 | 0 | 8 | 4 | 30 | 30 < 64, so the target is right of mid: lo = 5 |
+          | 2 | 5 | 8 | 6 | 57 | 57 < 64: lo = 7 |
+          | 3 | 7 | 8 | 7 | 64 | found at position 7 |
+
+          Step 1 is only allowed because the list is sorted: knowing that 30 < 64 tells us that **everything**
+          left of position 4 is smaller than 64 too.
+      - type: item
+        ref: binary-precondition
+
+  - id: binary-code
+    title: Binary search in Python, step by step
+    kind: walkthrough
+    blocks:
+      - type: code
+        runnable: true
+        code: |
+          def binary_search(items, target):
+              """Return an index of target in the sorted list items, or -1."""
+              lo, hi = 0, len(items) - 1          # the target, if present, is in items[lo..hi]
+              while lo <= hi:                     # the range is not empty
+                  mid = (lo + hi) // 2
+                  if items[mid] == target:
+                      return mid
+                  elif items[mid] < target:
+                      lo = mid + 1                # target is right of mid
+                  else:
+                      hi = mid - 1                # target is left of mid
+              return -1
+
+          items = [3, 8, 15, 21, 30, 42, 57, 64, 77]
+          print(binary_search(items, 64))
+          print(binary_search(items, 3), binary_search(items, 77))
+          print(binary_search(items, 40))
+          print(binary_search([], 5))
+        expectedOutput: |
+          7
+          0 8
+          -1
+          -1
+        annotations:
+          - line: 3
+            text: hi is the last valid index, so the range lo..hi includes both ends.
+          - line: 5
+            text: "Floor division // keeps mid a whole number; with an even-sized range it picks the left middle."
+          - line: 9
+            text: "mid itself has been ruled out, so the new range starts at mid + 1."
+          - line: 12
+            text: The loop ends when lo passes hi — the range is empty, so the target is not there.
+      - type: markdown
+        body: |
+          Step through a successful search. Watch `lo`, `hi` and `mid` close in on the target:
+      - type: visualization
+        component: python-tracer
+        title: Finding 64
+        caption: Three passes of the loop. Each pass discards everything on one side of mid.
+        props:
+          code: |
+            def binary_search(items, target):
+                lo, hi = 0, len(items) - 1
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    if items[mid] == target:
+                        return mid
+                    elif items[mid] < target:
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                return -1
+
+            print(binary_search([3, 8, 15, 21, 30, 42, 57, 64, 77], 64))
+      - type: markdown
+        body: |
+          Now an unsuccessful search for 40. Notice how the loop ends: `lo` and `hi` cross. At that moment
+          `lo` is exactly the position where 40 **would** be inserted to keep the list sorted — a fact the
+          `bisect` module builds on.
+      - type: visualization
+        component: python-tracer
+        title: Not finding 40
+        caption: The range shrinks to nothing (lo = 5, hi = 4) and the function returns -1.
+        props:
+          code: |
+            def binary_search(items, target):
+                lo, hi = 0, len(items) - 1
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    if items[mid] == target:
+                        return mid
+                    elif items[mid] < target:
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                return -1
+
+            print(binary_search([3, 8, 15, 21, 30, 42, 57, 64, 77], 40))
+      - type: item
+        ref: predict-mids
+
+  - id: invariants
+    title: Invariants and off-by-one errors
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Binary search is famously easy to get *almost* right. The defence is a
+          [loop invariant](glossary:loop-invariant): a statement that is true before the loop and stays true
+          after every pass. For the code above it is:
+
+          > If the target is in the list at all, it is somewhere in `items[lo..hi]`.
+
+          - **Initially** lo..hi is the whole list, so it holds.
+          - **Each pass** keeps it: if `items[mid] < target`, nothing at or before `mid` can be the target, so
+            `lo = mid + 1` loses nothing. The same reasoning justifies `hi = mid - 1`.
+          - **Progress:** mid is always excluded, so the range shrinks every pass and the loop must end.
+          - **At the end** the range is empty (lo > hi), so by the invariant the target is absent.
+
+          There are two common conventions. Each is correct on its own; **mixing them** causes the bugs:
+
+          | | Closed range [lo, hi] | [Half-open](glossary:half-open-interval) range [lo, hi) |
+          |---|---|---|
+          | Start | `lo, hi = 0, len(items) - 1` | `lo, hi = 0, len(items)` |
+          | Loop while | `lo <= hi` | `lo < hi` |
+          | Target is right of mid | `lo = mid + 1` | `lo = mid + 1` |
+          | Target is left of mid | `hi = mid - 1` | `hi = mid` |
+          | Range is empty when | `lo > hi` | `lo == hi` |
+
+          Here is a version that mixes them — a closed range with the half-open loop condition. It stops while
+          one candidate is still left. Testing it against **every** element exposes the bug immediately:
+      - type: code
+        runnable: true
+        code: |
+          def buggy_search(items, target):
+              lo, hi = 0, len(items) - 1
+              while lo < hi:                      # BUG: stops with one candidate left
+                  mid = (lo + hi) // 2
+                  if items[mid] == target:
+                      return mid
+                  elif items[mid] < target:
+                      lo = mid + 1
+                  else:
+                      hi = mid - 1
+              return -1
+
+          items = [3, 8, 15, 21, 30]
+          print([buggy_search(items, x) for x in items])
+        expectedOutput: |
+          [0, -1, 2, 3, -1]
+        caption: Two of the five items are reported missing. Testing only one or two targets could easily miss this.
+      - type: markdown
+        body: |
+          The other classic mistake breaks **progress**: setting `lo = mid` instead of `mid + 1`. When two
+          candidates are left, `(lo + hi) // 2` rounds down to `lo`, so `lo = mid` changes nothing and the loop
+          never ends. This demo has a guard so it cannot hang:
+      - type: code
+        runnable: true
+        code: |
+          def stuck_search(items, target, max_passes=6):
+              lo, hi = 0, len(items) - 1
+              for _ in range(max_passes):               # guard: this demo must not hang
+                  if lo > hi:
+                      return -1
+                  mid = (lo + hi) // 2
+                  print(f"lo={lo} hi={hi} mid={mid}")
+                  if items[mid] == target:
+                      return mid
+                  elif items[mid] < target:
+                      lo = mid                          # BUG: mid was already checked
+                  else:
+                      hi = mid - 1
+              return "gave up: no progress"
+
+          print(stuck_search([3, 8, 15, 21, 30], 30))
+        expectedOutput: |
+          lo=0 hi=4 mid=2
+          lo=2 hi=4 mid=3
+          lo=3 hi=4 mid=3
+          lo=3 hi=4 mid=3
+          lo=3 hi=4 mid=3
+          lo=3 hi=4 mid=3
+          gave up: no progress
+        caption: Without the guard this would loop forever. The rule — every pass must exclude mid — guarantees termination.
+      - type: item
+        ref: loop-condition
+      - type: markdown
+        body: |
+          **Finding the first of several equal items.** Plain binary search returns *some* matching index.
+          With duplicates you often want the **first** one, or the position where a missing value would go.
+          The half-open convention handles this neatly. Its invariant: *everything before `lo` is smaller than
+          the target, and everything from `hi` on is greater than or equal to it.* When `lo == hi`, that
+          position is the boundary:
+      - type: code
+        runnable: true
+        code: |
+          def lower_bound(items, target):
+              """First index i with items[i] >= target (len(items) if there is none)."""
+              lo, hi = 0, len(items)
+              while lo < hi:
+                  mid = (lo + hi) // 2
+                  if items[mid] < target:
+                      lo = mid + 1        # mid and everything before it are too small
+                  else:
+                      hi = mid            # mid might be the answer, so keep it in range
+              return lo
+
+          scores = [10, 20, 20, 20, 30]
+          print(lower_bound(scores, 20))
+          print(lower_bound(scores, 25))
+          print(lower_bound(scores, 99))
+        expectedOutput: |
+          1
+          4
+          5
+        caption: The first 20 is at index 1; 25 would go at index 4; 99 would go at the end (index 5). There is no early return — it always finds the boundary.
+
+  - id: bisect-module
+    title: The bisect module
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `lower_bound` is exactly what the standard library's `bisect.bisect_left` does, in tested C code.
+          Prefer the [bisect module](https://docs.python.org/3/library/bisect.html) to hand-written loops in
+          real code. Both of its search functions return an [insertion point](glossary:insertion-point):
+
+          - `bisect_left(a, x)` — the position **before** any items equal to x (the first x, if present).
+          - `bisect_right(a, x)` (also called `bisect`) — the position **after** any items equal to x.
+          - `insort(a, x)` — insert x at the right place to keep `a` sorted.
+      - type: code
+        runnable: true
+        code: |
+          import bisect
+
+          scores = [10, 20, 20, 20, 30]
+          print(bisect.bisect_left(scores, 20), bisect.bisect_right(scores, 20))
+          print(bisect.bisect_left(scores, 25), bisect.bisect_right(scores, 25))
+          print("how many 20s:", bisect.bisect_right(scores, 20) - bisect.bisect_left(scores, 20))
+
+          bisect.insort(scores, 25)
+          print(scores)
+
+          def contains(sorted_items, x):
+              i = bisect.bisect_left(sorted_items, x)
+              return i < len(sorted_items) and sorted_items[i] == x
+
+          print(contains(scores, 25), contains(scores, 26))
+        expectedOutput: |
+          1 4
+          4 4
+          how many 20s: 3
+          [10, 20, 20, 20, 25, 30]
+          True False
+        annotations:
+          - line: 6
+            text: "The two insertion points bracket the run of equal items, so their difference counts them in O(log n)."
+          - line: 8
+            text: "insort finds the place in O(log n), but inserting still shifts later items: O(n) overall."
+          - line: 12
+            text: "bisect_left alone does not say whether x is present; check the item at that position."
+      - type: markdown
+        body: |
+          Insertion points are useful far beyond "is it there?". Mapping a score to a grade band, adapted from
+          the bisect documentation, is a lookup in a sorted list of boundaries:
+      - type: code
+        runnable: true
+        code: |
+          import bisect
+
+          def grade(score, breakpoints=(60, 70, 80, 90), grades="FDCBA"):
+              return grades[bisect.bisect(breakpoints, score)]
+
+          print([grade(s) for s in [33, 99, 77, 70, 89, 90, 100]])
+
+          people = [("Ana", 19), ("Ben", 25), ("Chen", 31), ("Dee", 40)]   # sorted by age
+          i = bisect.bisect_left(people, 30, key=lambda person: person[1])
+          print("first person aged 30 or more:", people[i])
+        expectedOutput: |
+          ['F', 'A', 'C', 'C', 'B', 'A', 'A']
+          first person aged 30 or more: ('Chen', 31)
+        caption: "Since Python 3.10 the bisect functions accept key=. The key is applied to the list items, not to the value you search for, so we pass the age 30 directly."
+      - type: item
+        ref: predict-bisect
+
+  - id: when-to-sort
+    title: Does sorting first pay off?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Binary search needs sorted data, and sorting costs O(n log n) — more than one linear scan. So the
+          real question is **how many searches** you will do on the same data. Count the comparisons for
+          n = 1,000,000 items and k searches:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          n = 1_000_000
+          for k in [1, 10, 1_000, 100_000]:
+              linear = k * n                                    # k full scans
+              sort_then_binary = n * math.log2(n) + k * math.log2(n)
+              print(f"k={k:,}: linear {linear:,}  sort + binary {sort_then_binary:,.0f}")
+        expectedOutput: |
+          k=1: linear 1,000,000  sort + binary 19,931,589
+          k=10: linear 10,000,000  sort + binary 19,931,768
+          k=1,000: linear 1,000,000,000  sort + binary 19,951,500
+          k=100,000: linear 100,000,000,000  sort + binary 21,924,725
+        caption: "Rough worst-case counts. For one or ten searches, scanning wins; by a thousand searches, sorting first is 50 times cheaper."
+      - type: markdown
+        body: |
+          A practical rule: **sorting pays off once you search the same data more than about log₂ n times**
+          (≈ 20 for a million items). And there is a third option:
+
+          | Situation | Best choice | Cost |
+          |---|---|---|
+          | One or a few lookups in unsorted data | Linear search (`in`, `index`) | O(n) each |
+          | Many "is x present?" lookups | Build a `set` (or `dict`) once | O(n) to build, then O(1) average each — see [hashing](concept:cs.hashing) |
+          | Many lookups that need **order**: nearest value, "first ≥ x", items in a range, k-th smallest | Sort once, then `bisect` | O(n log n) once, then O(log n) each |
+          | Data arrives already sorted (timestamps, database index) | `bisect` directly | O(log n) each |
+
+          Sets answer only "is it there?". Binary search on sorted data also answers **ordered** questions,
+          which is why database indexes keep keys sorted.
+      - type: item
+        ref: when-sort
+
+  - id: search-the-answer
+    title: Binary search on a yes/no question
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Binary search does not need a list. It needs a question whose answers, in order, look like
+          **no, no, …, no, yes, yes, …, yes** — a *monotonic* condition. Then the first "yes" can be found by
+          halving. Examples: the first software version with a bug; the smallest server capacity that
+          handles the load; the largest x with x² ≤ n.
+
+          The half-open `lower_bound` pattern generalises directly:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def first_true(lo, hi, condition):
+              """Smallest x in [lo, hi) where condition(x) is True; hi if there is none.
+              Assumes condition is False ... False, True ... True over that range."""
+              while lo < hi:
+                  mid = (lo + hi) // 2
+                  if condition(mid):
+                      hi = mid            # mid is a "yes": the first yes is mid or earlier
+                  else:
+                      lo = mid + 1        # mid is a "no": the first yes is after mid
+              return lo
+
+          def integer_sqrt(n):
+              """Largest x with x * x <= n."""
+              return first_true(0, n + 1, lambda x: x * x > n) - 1
+
+          print([integer_sqrt(n) for n in [0, 1, 15, 16, 17, 10**12]])
+          print(all(integer_sqrt(n) == math.isqrt(n) for n in range(2000)))
+        expectedOutput: |
+          [0, 1, 3, 4, 4, 1000000]
+          True
+        caption: For 10¹² the search range is a trillion numbers, yet it needs only about 40 checks. The last line verifies the function against the standard library's math.isqrt.
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Why about log₂ n?** After k passes at most n / 2ᵏ candidates remain. The search must stop once
+          fewer than one remains, so it makes at most ⌊log₂ n⌋ + 1 passes:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          for n in [10, 1_000, 1_000_000, 1_000_000_000, 8_000_000_000]:
+              print(f"{n:,} items: at most {math.floor(math.log2(n)) + 1} passes")
+        expectedOutput: |
+          10 items: at most 4 passes
+          1,000 items: at most 10 passes
+          1,000,000 items: at most 20 passes
+          1,000,000,000 items: at most 30 passes
+          8,000,000,000 items: at most 33 passes
+        caption: A sorted list with an entry for every person on Earth needs at most 33 passes.
+      - type: markdown
+        body: |
+          **The overflow bug.** In languages with fixed-size integers, `mid = (lo + hi) / 2` can overflow when
+          lo + hi exceeds the largest int. This bug sat in widely used library code, including Java's, for
+          years before it was
+          [reported in 2006](https://research.google/blog/extra-extra-read-all-about-it-nearly-all-binary-searches-and-mergesorts-are-broken/);
+          the portable fix is `mid = lo + (hi - lo) // 2`. Python integers never overflow, so `(lo + hi) // 2`
+          is safe in Python, but you will see the other form in code ported from C or Java.
+
+          **Comparisons, not just numbers.** Binary search only uses `<` and `==`, so it works for anything
+          with a consistent order: strings (alphabetical by code point), dates, tuples. The list must be
+          sorted by the **same** ordering the search uses — sorting case-insensitively and then searching
+          case-sensitively breaks the invariant.
+
+          **bisect's implementation.** CPython's `bisect` module is written in C (`_bisect`), with an
+          equivalent pure-Python version in `Lib/bisect.py` used as a fallback. It works on any sequence that
+          supports `len()` and indexing, not only lists.
+
+          **Cache effects.** For small lists (a few dozen items) a linear scan can beat binary search in
+          practice, because it reads memory in order. Big-O is about growth; measure when n is small.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Returns -1 for an item that is in the list | The list is not sorted — binary search does not check, it just gives wrong answers | Sort first; in tests, assert `items == sorted(items)` |
+          | Some present items (often the first or last) not found | Loop condition does not match the range convention (`lo < hi` with `hi = len - 1`) | Pick one convention from the table and follow it exactly |
+          | The program hangs | `lo = mid` (or `hi = mid` with `<=`), so the range stops shrinking | Every pass must exclude mid, or use the half-open pattern exactly |
+          | `IndexError: list index out of range` | `hi = len(items)` combined with `while lo <= hi` | Half-open start needs `while lo < hi` |
+          | `TypeError: list indices must be integers or slices, not float` | `mid = (lo + hi) / 2` | Use floor division `//` |
+          | Returns *a* matching index, not the first | Plain binary search stops at any match | Use `bisect_left` (or the lower-bound pattern) |
+
+          The unsorted-input bug is the dangerous one, because nothing crashes:
+      - type: code
+        runnable: true
+        code: |
+          def binary_search(items, target):
+              lo, hi = 0, len(items) - 1
+              while lo <= hi:
+                  mid = (lo + hi) // 2
+                  if items[mid] == target:
+                      return mid
+                  elif items[mid] < target:
+                      lo = mid + 1
+                  else:
+                      hi = mid - 1
+              return -1
+
+          unsorted = [30, 3, 21, 8, 15]
+          print(8 in unsorted, binary_search(unsorted, 8))
+        expectedOutput: |
+          True -1
+        caption: 8 is in the list, but the search compared with 21, went left, compared with 30, went left again, and gave up.
+      - type: code
+        runnable: true
+        code: |
+          def search(items, target):
+              lo, hi = 0, len(items)          # half-open start...
+              while lo <= hi:                 # ...with a closed-range condition
+                  mid = (lo + hi) // 2
+                  if items[mid] == target:
+                      return mid
+                  elif items[mid] < target:
+                      lo = mid + 1
+                  else:
+                      hi = mid - 1
+              return -1
+
+          print(search([3, 8, 15], 99))
+        expectError: IndexError
+        caption: "Searching past the end makes lo reach 3 = len(items), and items[3] does not exist: IndexError: list index out of range."
+      - type: item
+        ref: debug-binary-search
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These tests pass in values that **count their comparisons** (or functions that count their calls),
+          so a linear scan that happens to give the right answer will not pass.
+      - type: item
+        ref: last-index
+      - type: item
+        ref: first-bad-version
+      - type: item
+        ref: explain-halving
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Linear search** checks items one by one: works on anything, O(n) worst case. `in`, `index`
+            and `count` on lists are linear.
+          - **Binary search** needs **sorted** data and halves the range each pass: at most ⌊log₂ n⌋ + 1
+            passes — 20 for a million items.
+          - State the **invariant** ("if present, the target is in `items[lo..hi]`") and keep start values,
+            loop condition and updates consistent: closed `[lo, hi]` with `<=` and `mid ± 1`, or half-open
+            `[lo, hi)` with `<` and `hi = mid`.
+          - Every pass must exclude mid, or the loop can hang. Use `//` for mid.
+          - Prefer `bisect_left` / `bisect_right` / `insort`; `bisect_right − bisect_left` counts equal items.
+          - Sort once only if you search many times; for plain membership use a set; binary search also
+            answers ordered questions and works on any monotonic yes/no condition.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Writing a bug-free binary search is a classic interview task. State your invariant out loud, then
+          test the edge cases: empty list, one item, target smaller than everything, larger than everything,
+          and duplicates (first and last occurrence). Mention `bisect` and that binary search applies to any
+          monotonic condition ("first bad version", "minimum capacity").
+
+items:
+  - id: predict-linear
+    type: predict-output
+    skill: prediction
+    prompt: Predict both lines of output.
+    code: |
+      def linear_search(items, target):
+          checks = 0
+          for i, item in enumerate(items):
+              checks += 1
+              if item == target:
+                  return i, checks
+          return -1, checks
+
+      data = [7, 3, 9, 3, 5]
+      print(linear_search(data, 3))
+      print(linear_search(data, 8))
+    answer: |
+      (1, 2)
+      (-1, 5)
+    explanation: >-
+      The first 3 is at index 1 and is found on the second check; the function returns immediately, so the
+      later 3 is never reached. A missing target forces all five checks — the worst case.
+    wrongAnswers:
+      - answer: |
+          (3, 4)
+          (-1, 5)
+        feedback: "`return` inside the loop stops at the first match. The search never reaches the second 3."
+      - answer: |
+          (1, 2)
+          (-1, 0)
+        feedback: The function must check every item before it can say 8 is absent, so checks reaches 5.
+      - answer: |
+          (2, 2)
+          (-1, 5)
+        feedback: Indexes start at 0. The 3 at the second position has index 1.
+
+  - id: binary-precondition
+    type: mcq
+    skill: recognition
+    prompt: What must be true of a list for binary search to give correct answers?
+    explanation: >-
+      Binary search decides which half to discard by comparing with the middle item. That is only valid if
+      every item to the left is smaller or equal and every item to the right is larger or equal — in other
+      words, the list is sorted (by the same ordering the search uses).
+    options:
+      - id: a
+        text: It must be sorted.
+        correct: true
+        feedback: Right. Sorted order is what lets one comparison rule out half the list.
+      - id: b
+        text: It must not contain duplicates.
+        feedback: Duplicates are fine; plain binary search returns one of the matching positions, and bisect_left finds the first.
+      - id: c
+        text: Its length must be a power of two.
+        feedback: Any length works; mid is rounded down with //.
+      - id: d
+        text: It must contain only numbers.
+        feedback: Anything with a consistent order works — strings, dates, tuples — as long as the list is sorted by that order.
+
+  - id: predict-mids
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: This version prints each mid it checks. What is the output?
+    code: |
+      def search_path(items, target):
+          lo, hi = 0, len(items) - 1
+          while lo <= hi:
+              mid = (lo + hi) // 2
+              print(mid, end=" ")
+              if items[mid] == target:
+                  return mid
+              elif items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid - 1
+          return -1
+
+      print(search_path([2, 4, 6, 8, 10, 12, 14], 4))
+    answer: "3 1 1"
+    explanation: >-
+      First pass: lo = 0, hi = 6, mid = 3, and items[3] = 8 is bigger than 4, so hi = 2. Second pass:
+      mid = (0 + 2) // 2 = 1, and items[1] = 4 is the target. The function has printed "3 1 " and returns 1,
+      which the final print adds.
+    wrongAnswers:
+      - answer: "3 1"
+        feedback: The function prints each mid with end=" ", and then the outer print shows the returned index, 1, as well.
+      - answer: "3 2 1 1"
+        feedback: After the first comparison hi becomes 2, so the next mid is (0 + 2) // 2 = 1, which is already the target.
+      - answer: "1"
+        feedback: The print inside the loop runs before the return, so the checked mids appear on the same line first.
+
+  - id: loop-condition
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A binary search starts with `lo, hi = 0, len(items)` and, when the target is left of mid, sets
+      `hi = mid`. Which loop condition is consistent with these choices?
+    explanation: >-
+      `hi = len(items)` and `hi = mid` mean hi is an exclusive bound: the range is [lo, hi). It is empty when
+      lo == hi, so the loop must run `while lo < hi`. With `<=` the loop would run on an empty range, reading
+      items[len(items)] (IndexError) or failing to make progress.
+    options:
+      - id: a
+        text: "`while lo < hi:`"
+        correct: true
+        feedback: Right. A half-open range [lo, hi) is empty exactly when lo == hi.
+      - id: b
+        text: "`while lo <= hi:`"
+        feedback: That is the closed-range condition. With hi exclusive it keeps looping when the range is already empty and can index past the end.
+      - id: c
+        text: "`while hi - lo > 2:`"
+        feedback: This stops with up to two candidates unchecked, so some present items would be reported missing.
+      - id: d
+        text: Any of them works as long as mid uses //.
+        feedback: The condition must match the meaning of hi. Mixing conventions is the main source of binary-search bugs.
+
+  - id: predict-bisect
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output.
+    code: |
+      import bisect
+
+      data = [1, 3, 3, 3, 7, 9]
+      print(bisect.bisect_left(data, 3), bisect.bisect_right(data, 3), bisect.bisect_left(data, 8))
+    answer: "1 4 5"
+    explanation: >-
+      bisect_left gives the position before the run of 3s (index 1); bisect_right gives the position just
+      after it (index 4, where the 7 is). 8 is not present: it would be inserted between 7 and 9, at index 5.
+    wrongAnswers:
+      - answer: "1 3 5"
+        feedback: >-
+          bisect_right returns the insertion point *after* the last 3, not the index of the last 3. The last 3
+          is at index 3, so the insertion point is 4.
+      - answer: "1 4 -1"
+        feedback: bisect never returns -1. For a missing value it returns where the value would be inserted.
+      - answer: "0 4 5"
+        feedback: "data[0] is 1, which is smaller than 3, so the first 3 — and bisect_left's answer — is at index 1."
+
+  - id: when-sort
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Your program receives an **unsorted** list of one million user IDs and must check **once** whether a
+      particular ID is in it. What is the most efficient approach?
+    explanation: >-
+      A single linear scan costs at most n = 1,000,000 comparisons. Sorting first costs about n log₂ n ≈ 20
+      million comparisons before the search even starts, and building a set is also O(n) with a larger
+      constant. Preparing data only pays off when it is reused for many lookups.
+    options:
+      - id: a
+        text: "A single linear scan (`user_id in ids`)."
+        correct: true
+        feedback: Right. O(n) once is the cheapest way to answer one question about unsorted data.
+      - id: b
+        text: Sort the list, then use bisect.
+        feedback: Sorting is O(n log n) — about 20 times more work than one scan here. It pays off only for many searches.
+      - id: c
+        text: Build a set, then test membership.
+        feedback: Building the set already looks at all n items (plus hashing each one), so for a single lookup it cannot beat one scan.
+      - id: d
+        text: Binary search directly on the unsorted list.
+        feedback: Binary search on unsorted data gives wrong answers silently; it requires sorted input.
+
+  - id: debug-binary-search
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This binary search reports some items as missing. For `[3, 8, 15, 21, 30]` it finds 3, 15 and 21, but
+      returns -1 for 8 and 30. Fix the bug so that every present item is found and absent items give -1.
+      Keep it a binary search — the tests count comparisons.
+    starterCode: |
+      def binary_search(items, target):
+          lo, hi = 0, len(items) - 1
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if items[mid] == target:
+                  return mid
+              elif items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid - 1
+          return -1
+
+      items = [3, 8, 15, 21, 30]
+      print([binary_search(items, x) for x in items])
+    solution: |
+      def binary_search(items, target):
+          lo, hi = 0, len(items) - 1
+          while lo <= hi:
+              mid = (lo + hi) // 2
+              if items[mid] == target:
+                  return mid
+              elif items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid - 1
+          return -1
+
+      items = [3, 8, 15, 21, 30]
+      print([binary_search(items, x) for x in items])
+    expectedOutput: |
+      [0, 1, 2, 3, 4]
+    tests:
+      - name: finds every present item
+        code: |
+          for size in range(0, 12):
+              data = list(range(0, size * 5, 5))
+              for i, x in enumerate(data):
+                  got = binary_search(data, x)
+                  assert got == i, f"binary_search({data}, {x}) should be {i}, got {got}."
+      - name: returns -1 for absent items
+        code: |
+          data = [3, 8, 15, 21, 30]
+          for x in [0, 4, 16, 31]:
+              got = binary_search(data, x)
+              assert got == -1, f"binary_search({data}, {x}) should be -1, got {got}."
+          assert binary_search([], 7) == -1, "Searching an empty list should return -1."
+      - name: still a binary search
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value == other.value
+              def __lt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value < other.value
+              def __le__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value <= other.value
+              def __gt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value > other.value
+              def __ge__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value >= other.value
+
+          data = [Tracked(i) for i in range(1000)]
+          Tracked.comparisons = 0
+          got = binary_search(data, Tracked(999))
+          assert got == 999, f"Searching 1,000 items for the last one should return 999, got {got}."
+          assert Tracked.comparisons <= 40, f"That search made {Tracked.comparisons} comparisons; binary search on 1,000 items needs about 20. Fix the loop condition instead of scanning."
+    hints:
+      - Trace the search for 30. What are lo and hi when the loop stops? Has items[lo] been checked?
+      - "hi = len(items) - 1 means hi is a valid index that might hold the target. When lo == hi, one candidate is still left."
+      - Which loop condition keeps going while lo == hi?
+    feedback:
+      - when: { errorType: IndexError }
+        message: >-
+          You are now reading past the end of the list. Keep `hi = len(items) - 1` (a closed range) and only
+          change the loop condition.
+    explanation: >-
+      The code uses a closed range — hi is the last index that could hold the target — but the half-open
+      condition `lo < hi` stops when one candidate remains, without checking it. `while lo <= hi` matches the
+      closed range: the loop runs until the range is truly empty.
+
+  - id: last-index
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `last_index(items, target)` that returns the index of the **last** occurrence of `target` in the
+      sorted list `items`, or -1 if it is absent. For `[1, 3, 3, 3, 7]` and 3 the answer is 3.
+
+      Use binary search — do not call `bisect`, `index`, or loop over every item. The tests count your
+      comparisons on a list of 1,000 items.
+    starterCode: |
+      def last_index(items, target):
+          # Hint: find the first index whose item is GREATER than target,
+          # then look one position to the left.
+          return -1
+
+      print(last_index([1, 3, 3, 3, 7], 3))
+    solution: |
+      def last_index(items, target):
+          lo, hi = 0, len(items)
+          while lo < hi:                  # first index with items[i] > target
+              mid = (lo + hi) // 2
+              if items[mid] <= target:
+                  lo = mid + 1
+              else:
+                  hi = mid
+          if lo > 0 and items[lo - 1] == target:
+              return lo - 1
+          return -1
+
+      print(last_index([1, 3, 3, 3, 7], 3))
+    expectedOutput: |
+      3
+    tests:
+      - name: finds the last occurrence
+        code: |
+          cases = [([1, 3, 3, 3, 7], 3, 3), ([1, 3, 3, 3, 7], 1, 0), ([1, 3, 3, 3, 7], 7, 4), ([5, 5, 5], 5, 2), ([2], 2, 0)]
+          for items, target, expected in cases:
+              got = last_index(items, target)
+              assert got == expected, f"last_index({items}, {target}) should be {expected}, got {got}."
+      - name: returns -1 when absent
+        code: |
+          for items, target in [([1, 3, 3, 7], 4), ([1, 3, 3, 7], 0), ([1, 3, 3, 7], 9), ([], 1)]:
+              got = last_index(items, target)
+              assert got == -1, f"last_index({items}, {target}) should be -1, got {got}."
+      - name: agrees with a brute-force answer
+        code: |
+          import random
+          rng = random.Random(7)
+          for _ in range(200):
+              items = sorted(rng.randint(0, 9) for _ in range(rng.randint(0, 15)))
+              target = rng.randint(-1, 10)
+              expected = max((i for i, x in enumerate(items) if x == target), default=-1)
+              got = last_index(items, target)
+              assert got == expected, f"last_index({items}, {target}) should be {expected}, got {got}."
+      - name: uses O(log n) comparisons
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value == other.value
+              def __lt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value < other.value
+              def __le__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value <= other.value
+              def __gt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value > other.value
+              def __ge__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value >= other.value
+
+          data = [Tracked(i // 3) for i in range(1000)]
+          Tracked.comparisons = 0
+          got = last_index(data, Tracked(200))
+          assert got == 602, f"In a list where each value appears 3 times, the last 200 is at index 602; got {got}."
+          assert Tracked.comparisons <= 40, f"last_index made {Tracked.comparisons} comparisons on 1,000 items. A binary search needs about 10-25; avoid scanning left or right one item at a time."
+          assert not calls("bisect_right") and not calls("bisect_left") and not calls("bisect"), "Write the binary search yourself for this exercise (no bisect)."
+    hints:
+      - Finding a boundary is easier than finding a specific match. Which boundary sits just after the last 3?
+      - "Use the half-open pattern: `lo, hi = 0, len(items)` and `while lo < hi`. Move right when `items[mid] <= target`, otherwise `hi = mid`."
+      - When the loop ends, lo is the first index with an item greater than target. Check items[lo - 1] — but only if lo > 0.
+    feedback:
+      - when: { errorType: IndexError }
+        message: >-
+          You indexed past the end or before the start. After the loop, lo can be 0 or len(items); check
+          `lo > 0` before reading items[lo - 1].
+    explanation: >-
+      The loop finds the boundary between "≤ target" and "> target" (this is what bisect_right computes).
+      The last occurrence, if any, is just left of that boundary. Searching for a boundary instead of a match
+      handles duplicates naturally and never stops early, so it always costs about log₂ n passes.
+
+  - id: first-bad-version
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Your product has versions 1 to n. At some version a bug was introduced, and **every later version is
+      bad too**. `is_bad(v)` tells you whether version v is bad, but each call runs a slow test suite.
+
+      Write `first_bad_version(n, is_bad)` that returns the first bad version using as few calls as
+      possible. Version n is always bad. The tests count your calls for n = 1,000,000.
+    starterCode: |
+      def first_bad_version(n, is_bad):
+          # versions 1..n look like: good, good, ..., good, bad, bad, ..., bad
+          return n
+
+      print(first_bad_version(100, lambda v: v >= 37))
+    solution: |
+      def first_bad_version(n, is_bad):
+          lo, hi = 1, n                  # the first bad version is in [lo, hi]
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if is_bad(mid):
+                  hi = mid               # mid is bad: the first bad is mid or earlier
+              else:
+                  lo = mid + 1           # mid is good: the first bad is after mid
+          return lo
+
+      print(first_bad_version(100, lambda v: v >= 37))
+    expectedOutput: |
+      37
+    tests:
+      - name: finds the first bad version
+        code: |
+          for n, first in [(100, 37), (1, 1), (2, 1), (2, 2), (10, 10), (10, 1), (999, 500)]:
+              got = first_bad_version(n, lambda v, first=first: v >= first)
+              assert got == first, f"With n={n} and the bug introduced in version {first}, expected {first}, got {got}."
+      - name: makes O(log n) calls
+        code: |
+          for first in [1, 2, 123_456, 999_999, 1_000_000]:
+              calls_made = []
+              def is_bad(v, first=first):
+                  calls_made.append(v)
+                  assert 1 <= v <= 1_000_000, f"is_bad was called with version {v}, which does not exist (versions are 1..n)."
+                  return v >= first
+              got = first_bad_version(1_000_000, is_bad)
+              assert got == first, f"For n=1,000,000 with first bad version {first}, expected {first}, got {got}."
+              assert len(calls_made) <= 25, f"You called is_bad {len(calls_made):,} times for n = 1,000,000. Halving the range needs only about 20 calls."
+    hints:
+      - The answers to is_bad over versions 1..n look like False, False, ..., True, True. That is a monotonic condition.
+      - "Keep the first bad version inside [lo, hi], starting with lo = 1 and hi = n. If is_bad(mid), the answer is mid or earlier."
+      - "Use `while lo < hi`, `hi = mid` for a bad mid and `lo = mid + 1` for a good one; return lo."
+    feedback:
+      - when: { outputEquals: "100\n" }
+        message: You are returning n. Search the range 1..n with binary search, calling is_bad on the middle version.
+    explanation: >-
+      This is binary search on a yes/no question: the condition is monotonic, so each call rules out half the
+      remaining versions. One million versions need about 20 calls instead of up to a million. Tools such as
+      `git bisect` use exactly this idea to find the commit that introduced a bug.
+
+  - id: explain-halving
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain to a colleague why binary search on a sorted list of 1,000,000 items needs at most about 20
+      comparisons, and why it would give wrong answers on an unsorted list.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that each comparison with the middle item discards half of the remaining range.
+      - Connects the number of halvings to log₂ n (2²⁰ ≈ 1,000,000).
+      - Explains that discarding a half is only valid because the list is sorted (everything on one side is smaller, everything on the other larger).
+      - Notes that on unsorted data no error is raised; the search simply discards the wrong half and may miss items.
+    modelAnswer: |
+      Each pass compares the target with the middle item of the remaining range. Because the list is
+      sorted, if the middle item is smaller than the target then every item to its left is smaller too, so
+      the whole left half can be thrown away (and vice versa). The range halves every pass: 1,000,000,
+      500,000, 250,000, … and after 20 halvings it is down to one item, since 2²⁰ is about a million. That is
+      log₂ n. On an unsorted list, "smaller than the middle" says nothing about the other items, so the search
+      may throw away the half that contains the target. It does not crash — it just returns "not found" for
+      items that are present.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-max-passes
+    type: mcq
+    skill: recognition
+    prompt: At most how many passes of the loop does binary search need on a sorted list of 1,000 items?
+    explanation: >-
+      Each pass halves the range: 1000 → 500 → 250 → 125 → 62 → 31 → 15 → 7 → 3 → 1. That is at most
+      ⌊log₂ 1000⌋ + 1 = 10 passes.
+    options:
+      - id: a
+        text: About 10
+        correct: true
+        feedback: Right — 2¹⁰ = 1024 ≥ 1000.
+      - id: b
+        text: About 500
+        feedback: That is the average for linear search. Binary search halves the range every pass.
+      - id: c
+        text: About 32
+        feedback: "32 is roughly √1000. Binary search grows with log₂ n, which is much smaller: about 10."
+      - id: d
+        text: "1000"
+        feedback: That is linear search's worst case.
+
+  - id: m-predict-trace
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output of this trace of a search for a missing value.
+    code: |
+      items = [5, 10, 15, 20, 25, 30, 35]
+      target = 12
+      lo, hi = 0, len(items) - 1
+      while lo <= hi:
+          mid = (lo + hi) // 2
+          print(lo, hi, mid)
+          if items[mid] == target:
+              break
+          elif items[mid] < target:
+              lo = mid + 1
+          else:
+              hi = mid - 1
+      print("lo ends at", lo)
+    answer: |
+      0 6 3
+      0 2 1
+      2 2 2
+      lo ends at 2
+    explanation: >-
+      mid = 3 holds 20 > 12, so hi = 2. mid = 1 holds 10 < 12, so lo = 2. With lo = hi = 2 one candidate is
+      left: 15 > 12, so hi = 1 and the loop ends. lo = 2 is where 12 would be inserted — between 10 and 15.
+    wrongAnswers:
+      - answer: |
+          0 6 3
+          0 2 1
+          lo ends at 2
+        feedback: >-
+          With `while lo <= hi`, the loop still runs when lo == hi == 2: one candidate (15) remains and must be
+          checked.
+      - answer: |
+          0 6 3
+          4 6 5
+          lo ends at 6
+        feedback: items[3] is 20, which is bigger than 12, so the search goes left (hi = 2), not right.
+
+  - id: m-unsorted-tf
+    type: true-false
+    skill: recognition
+    prompt: "True or false: if you run binary search on an unsorted list, Python raises an error."
+    answer: false
+    explanation: >-
+      Nothing checks the order. The search compares with middle items and discards halves as usual, so it
+      silently returns wrong answers — for example, reporting a present item as missing.
+
+  - id: m-count-in-range
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `count_in_range(sorted_items, low, high)` that returns how many items x satisfy
+      `low <= x <= high`. For `[1, 3, 3, 5, 8, 13]` with low = 3 and high = 8 the answer is 4.
+
+      Use the `bisect` module so it runs in O(log n); the tests count comparisons.
+    starterCode: |
+      import bisect
+
+      def count_in_range(sorted_items, low, high):
+          pass
+
+      print(count_in_range([1, 3, 3, 5, 8, 13], 3, 8))
+    solution: |
+      import bisect
+
+      def count_in_range(sorted_items, low, high):
+          start = bisect.bisect_left(sorted_items, low)
+          end = bisect.bisect_right(sorted_items, high)
+          return max(0, end - start)
+
+      print(count_in_range([1, 3, 3, 5, 8, 13], 3, 8))
+    expectedOutput: |
+      4
+    tests:
+      - name: counts items in the range
+        code: |
+          data = [1, 3, 3, 5, 8, 13]
+          for low, high, expected in [(3, 8, 4), (0, 100, 6), (4, 4, 0), (3, 3, 2), (14, 20, 0), (-5, 0, 0), (13, 13, 1)]:
+              got = count_in_range(data, low, high)
+              assert got == expected, f"count_in_range({data}, {low}, {high}) should be {expected}, got {got!r}."
+          assert count_in_range([], 1, 5) == 0, "An empty list has 0 items in any range."
+          assert count_in_range(data, 9, 2) == 0, "If low > high the range is empty: return 0."
+      - name: runs in O(log n)
+        code: |
+          class Tracked:
+              comparisons = 0
+              def __init__(self, value):
+                  self.value = value
+              def __eq__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value == other.value
+              def __lt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value < other.value
+              def __le__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value <= other.value
+              def __gt__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value > other.value
+              def __ge__(self, other):
+                  Tracked.comparisons += 1
+                  return self.value >= other.value
+
+          data = [Tracked(i) for i in range(1000)]
+          Tracked.comparisons = 0
+          got = count_in_range(data, Tracked(250), Tracked(749))
+          assert got == 500, f"Values 250..749 in 0..999 should count 500, got {got!r}."
+          assert Tracked.comparisons <= 40, f"count_in_range made {Tracked.comparisons} comparisons on 1,000 items. Use bisect_left for low and bisect_right for high instead of looping."
+    hints:
+      - The items in the range start at the first position with x >= low. Which bisect function gives that?
+      - They end just before the first position with x > high — bisect_right(sorted_items, high).
+      - Return the difference of the two positions (and never a negative number).
+    feedback:
+      - when: { outputEquals: "3\n" }
+        message: >-
+          You are probably using bisect_left for high, which stops before the 8. Use bisect_right for the
+          upper end so items equal to high are counted.
+    explanation: >-
+      bisect_left(low) is the first index of an item ≥ low and bisect_right(high) is the first index of an
+      item > high, so everything between them is in range. Two binary searches cost O(log n), however many
+      items are counted. max(0, …) handles low > high.
+
+  - id: m-debug-mid
+    type: debug
+    skill: debugging
+    prompt: |
+      This binary search crashes with `TypeError: list indices must be integers or slices, not float`. Fix
+      it so that it returns the index of the target, or -1.
+    starterCode: |
+      def binary_search(items, target):
+          lo, hi = 0, len(items) - 1
+          while lo <= hi:
+              mid = (lo + hi) / 2
+              if items[mid] == target:
+                  return mid
+              elif items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid - 1
+          return -1
+
+      print(binary_search([4, 9, 16, 25, 36], 25))
+    solution: |
+      def binary_search(items, target):
+          lo, hi = 0, len(items) - 1
+          while lo <= hi:
+              mid = (lo + hi) // 2
+              if items[mid] == target:
+                  return mid
+              elif items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid - 1
+          return -1
+
+      print(binary_search([4, 9, 16, 25, 36], 25))
+    expectedOutput: |
+      3
+    tests:
+      - name: finds present items
+        code: |
+          data = [4, 9, 16, 25, 36]
+          for i, x in enumerate(data):
+              got = binary_search(data, x)
+              assert got == i, f"binary_search({data}, {x}) should be {i}, got {got!r}."
+      - name: absent items give -1
+        code: |
+          for x in [0, 10, 40]:
+              assert binary_search([4, 9, 16, 25, 36], x) == -1, f"binary_search(..., {x}) should be -1."
+          assert binary_search([], 3) == -1, "An empty list should give -1."
+      - name: keeps the halving loop
+        code: |
+          assert uses("While") and "//" in source, "Keep the while loop and compute mid with floor division //."
+          assert not calls("index"), "Fix the binary search rather than replacing it with list.index()."
+    hints:
+      - Read the error message. Which line produces a float?
+      - "`/` always returns a float, even for 4 / 2. Which operator gives a whole-number quotient?"
+    explanation: >-
+      True division `/` returns a float (e.g. 2.0), and list indices must be integers. Floor division `//`
+      returns an int, rounding down, which is exactly what binary search needs for mid.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-max-passes, m-predict-trace, m-unsorted-tf, m-count-in-range, m-debug-mid]
+
+cheatsheet: |
+  ```python
+  # Closed range [lo, hi]
+  lo, hi = 0, len(a) - 1
+  while lo <= hi:
+      mid = (lo + hi) // 2
+      if a[mid] == x: return mid
+      elif a[mid] < x: lo = mid + 1
+      else: hi = mid - 1
+  return -1
+
+  # Half-open [lo, hi): first index with a[i] >= x  (= bisect_left)
+  lo, hi = 0, len(a)
+  while lo < hi:
+      mid = (lo + hi) // 2
+      if a[mid] < x: lo = mid + 1
+      else: hi = mid
+  return lo
+
+  import bisect
+  bisect.bisect_left(a, x)    # before equal items     bisect.bisect_right(a, x)  # after them
+  bisect.insort(a, x)         # keep sorted (O(n) insert)
+  bisect.bisect_left(a, x, key=f)   # 3.10+: key applies to items, not x
+  ```
+  - Linear O(n), any data · binary O(log n), sorted data only (no error if unsorted!)
+  - Every pass must exclude mid · `//` not `/` · test empty, one item, ends, duplicates
+  - Many lookups: set for membership, sort + bisect for ordered queries; one lookup: scan

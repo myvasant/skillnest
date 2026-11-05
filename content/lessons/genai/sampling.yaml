@@ -1,0 +1,1124 @@
+id: genai.sampling
+concept: genai.sampling
+title: Decoding and Sampling
+subtitle: From logits to the token the model actually writes
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  At every step an LLM outputs a score for every token; decoding turns those scores into one chosen
+  token. You will implement softmax, greedy decoding, temperature, top-k and top-p (nucleus) filtering
+  and seeded sampling in pure Python, and learn why the same prompt gives different answers and which
+  settings suit extraction versus brainstorming.
+objectives:
+  - Convert logits to probabilities with a numerically stable softmax.
+  - Explain and compute the effect of temperature on a distribution (T = 0.5, 1 and 2), and treat T = 0 as greedy decoding.
+  - Implement top-k and top-p (nucleus) filtering with renormalisation.
+  - Use a seeded random generator to make sampling reproducible, and explain why hosted models can still vary.
+  - Choose decoding settings for a task (consistent extraction vs varied creative output).
+sources:
+  - title: Generation strategies
+    url: https://huggingface.co/docs/transformers/generation_strategies
+    publisher: Hugging Face
+  - title: The Curious Case of Neural Text Degeneration (nucleus sampling)
+    url: https://arxiv.org/abs/1904.09751
+    publisher: arXiv (Holtzman et al.)
+  - title: Hierarchical Neural Story Generation (top-k sampling)
+    url: https://arxiv.org/abs/1805.04833
+    publisher: arXiv (Fan, Lewis and Dauphin)
+  - title: random — Generate pseudo-random numbers
+    url: https://docs.python.org/3/library/random.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why the same prompt gives different answers
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Ask a chat assistant the same question twice and you may get two different answers. Sometimes
+          that is exactly what you want (ten different product names); sometimes it is a bug (an
+          invoice parser that extracts a different total each run).
+
+          In [what LLMs are](concept:genai.what-are-llms) you saw that a model outputs a **probability
+          for every possible next token**, and that something then has to **pick one**. That picking
+          step is called **decoding**, and its settings — temperature, top-k, top-p — decide how
+          predictable the output is. Two extremes show the trade-off:
+
+          - **Always take the most likely token** (greedy): consistent, but often bland and prone to
+            repetition loops.
+          - **Pick tokens uniformly at random**: varied, but nonsense, because rare and wrong tokens are
+            chosen as often as good ones.
+
+          Good decoding sits in between, and you choose where. This lesson builds every piece in Python,
+          using small made-up scores in place of a real model.
+
+  - id: softmax
+    title: Logits and softmax
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A model's final layer outputs one raw score per vocabulary token, called a
+          **[logit](glossary:logits)**. Logits can be any real number; higher means "more likely". They
+          are not probabilities yet: they can be negative and do not add up to 1.
+
+          **Softmax** turns logits into probabilities:
+
+          *pᵢ = exp(zᵢ) / Σⱼ exp(zⱼ)*
+
+          Exponentiating makes every value positive and exaggerates differences; dividing by the total
+          makes them sum to 1. In code we first subtract the largest logit. That does not change the
+          result (the common factor cancels) but keeps `math.exp` from overflowing on large logits.
+
+          Below, made-up logits stand in for a model's scores after the prompt "The weather today is":
+      - type: code
+        runnable: true
+        id: softmax-basic
+        code: |
+          import math
+
+          logits = {"sunny": 2.0, "cloudy": 1.5, "rainy": 1.0, "cold": 0.5, "purple": -1.0}
+
+          def softmax(logits):
+              biggest = max(logits.values())
+              exps = {tok: math.exp(v - biggest) for tok, v in logits.items()}
+              total = sum(exps.values())
+              return {tok: e / total for tok, e in exps.items()}
+
+          probs = softmax(logits)
+          for tok, p in probs.items():
+              print(f"{tok:7} logit {logits[tok]:5.1f}  ->  p = {p:.3f}")
+          print("sum:", round(sum(probs.values()), 6))
+        expectedOutput: |
+          sunny   logit   2.0  ->  p = 0.445
+          cloudy  logit   1.5  ->  p = 0.270
+          rainy   logit   1.0  ->  p = 0.164
+          cold    logit   0.5  ->  p = 0.099
+          purple  logit  -1.0  ->  p = 0.022
+          sum: 1.0
+        annotations:
+          - line: 6
+            text: Subtracting the maximum makes the largest exponent exp(0) = 1, so nothing overflows.
+          - line: 9
+            text: Every probability is positive and they sum to 1 — a probability distribution over the vocabulary.
+      - type: markdown
+        body: |
+          A real model does this over its whole vocabulary — tens of thousands of tokens or more — at
+          every generation step. Even "purple" gets a small non-zero probability, which matters once we
+          start sampling.
+
+  - id: greedy
+    title: Greedy decoding
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[Greedy decoding](glossary:greedy-decoding)** always picks the token with the highest
+          probability (or, equivalently, the highest logit — softmax never changes the order):
+      - type: code
+        runnable: true
+        code: |
+          logits = {"sunny": 2.0, "cloudy": 1.5, "rainy": 1.0, "cold": 0.5, "purple": -1.0}
+          print("greedy pick:", max(logits, key=logits.get))
+        expectedOutput: |
+          greedy pick: sunny
+      - type: markdown
+        body: |
+          Greedy decoding is deterministic *for a fixed model and input* and is a good default for tasks
+          with one right answer (classification, extraction, short factual answers). For long text it
+          tends to repeat itself, and it can miss a better overall sentence that starts with a slightly
+          less likely token. (Beam search, which keeps several candidate sequences, is one response; it
+          is common in translation and speech recognition but rarely used for chat.)
+
+  - id: temperature
+    title: Temperature
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[Temperature](glossary:temperature)** *T* divides every logit before softmax:
+          *pᵢ = softmax(zᵢ / T)*.
+
+          - **T < 1** makes differences between logits larger → the distribution gets **sharper**; the
+            top token gets even more likely.
+          - **T = 1** leaves the model's distribution unchanged.
+          - **T > 1** shrinks the differences → the distribution gets **flatter**; unlikely tokens
+            become more likely.
+          - **T → 0** approaches greedy decoding. Dividing by zero is impossible, so implementations
+            treat T = 0 as "pick the top token".
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          logits = {"sunny": 2.0, "cloudy": 1.5, "rainy": 1.0, "cold": 0.5, "purple": -1.0}
+
+          def softmax(logits):
+              biggest = max(logits.values())
+              exps = {tok: math.exp(v - biggest) for tok, v in logits.items()}
+              total = sum(exps.values())
+              return {tok: e / total for tok, e in exps.items()}
+
+          def apply_temperature(logits, temperature):
+              return {tok: v / temperature for tok, v in logits.items()}
+
+          for T in (0.5, 1.0, 2.0):
+              p = softmax(apply_temperature(logits, T))
+              print(f"T={T}: " + "  ".join(f"{tok} {v:.2f}" for tok, v in p.items()))
+        expectedOutput: |
+          T=0.5: sunny 0.64  cloudy 0.24  rainy 0.09  cold 0.03  purple 0.00
+          T=1.0: sunny 0.44  cloudy 0.27  rainy 0.16  cold 0.10  purple 0.02
+          T=2.0: sunny 0.32  cloudy 0.25  rainy 0.20  cold 0.15  purple 0.07
+        caption: At T = 0.5 "sunny" rises from 44% to 64%; at T = 2 the nonsense token "purple" rises from 2% to 7%. The ranking never changes — only how spread out the probabilities are.
+      - type: item
+        ref: predict-temperature
+
+  - id: top-k-top-p
+    title: Top-k and top-p (nucleus) filtering
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Even at a sensible temperature, the long tail of unlikely tokens adds up: across a vocabulary
+          of many thousands, thousands of individually tiny probabilities can be chosen surprisingly
+          often, and one bad token can derail the rest of the text. Filtering removes the tail before
+          sampling.
+
+          - **[Top-k](glossary:top-k-sampling)** keeps only the *k* most likely tokens
+            ([Fan et al., 2018](https://arxiv.org/abs/1805.04833)).
+          - **[Top-p](glossary:top-p-sampling)** (*nucleus sampling*) keeps the **smallest** set of most
+            likely tokens whose probabilities add up to at least *p*
+            ([Holtzman et al., 2020](https://arxiv.org/abs/1904.09751)).
+
+          In both cases the kept probabilities are **renormalised** (divided by their sum) so they add
+          up to 1 again, and the rest become 0.
+      - type: code
+        runnable: true
+        code: |
+          def top_k_filter(probs, k):
+              top = sorted(probs, key=probs.get, reverse=True)[:k]
+              total = sum(probs[t] for t in top)
+              return {t: probs[t] / total for t in top}
+
+          def top_p_filter(probs, p):
+              kept = {}
+              cumulative = 0.0
+              for tok in sorted(probs, key=probs.get, reverse=True):
+                  kept[tok] = probs[tok]
+                  cumulative += probs[tok]
+                  if cumulative >= p:
+                      break
+              total = sum(kept.values())
+              return {t: v / total for t, v in kept.items()}
+
+          probs = {"sunny": 0.445, "cloudy": 0.270, "rainy": 0.164, "cold": 0.099, "purple": 0.022}
+          print("top-k=2:  ", {t: round(v, 3) for t, v in top_k_filter(probs, 2).items()})
+          print("top-p=0.9:", {t: round(v, 3) for t, v in top_p_filter(probs, 0.9).items()})
+        expectedOutput: |
+          top-k=2:   {'sunny': 0.622, 'cloudy': 0.378}
+          top-p=0.9: {'sunny': 0.455, 'cloudy': 0.276, 'rainy': 0.168, 'cold': 0.101}
+        annotations:
+          - line: 2
+            text: Sort tokens from most to least likely and keep the first k.
+          - line: 12
+            text: Stop as soon as the kept tokens cover at least p of the probability mass — the token that crosses the line is included.
+          - line: 15
+            text: Renormalise so the kept probabilities sum to 1.
+      - type: visualization
+        component: python-tracer
+        title: Step through top-p
+        caption: Watch `cumulative` grow until it reaches p = 0.8. The token that crosses the threshold is kept; everything after it is dropped.
+        props:
+          code: |
+            probs = {"a": 0.5, "b": 0.25, "c": 0.15, "d": 0.1}
+            p = 0.8
+            kept = {}
+            cumulative = 0.0
+            for tok in sorted(probs, key=probs.get, reverse=True):
+                kept[tok] = probs[tok]
+                cumulative += probs[tok]
+                if cumulative >= p:
+                    break
+            total = sum(kept.values())
+            print({t: round(v / total, 3) for t, v in kept.items()})
+      - type: markdown
+        body: |
+          The key difference: **top-k keeps a fixed number of tokens; top-p adapts to the model's
+          confidence.** When the model is sure, top-p keeps very few tokens; when many continuations are
+          plausible, it keeps more.
+      - type: code
+        runnable: true
+        code: |
+          def top_k_filter(probs, k):
+              top = sorted(probs, key=probs.get, reverse=True)[:k]
+              total = sum(probs[t] for t in top)
+              return {t: probs[t] / total for t in top}
+
+          def top_p_filter(probs, p):
+              kept, cumulative = {}, 0.0
+              for tok in sorted(probs, key=probs.get, reverse=True):
+                  kept[tok] = probs[tok]
+                  cumulative += probs[tok]
+                  if cumulative >= p:
+                      break
+              total = sum(kept.values())
+              return {t: v / total for t, v in kept.items()}
+
+          confident = {"Paris": 0.92, "Lyon": 0.04, "Rome": 0.02, "London": 0.02}
+          uncertain = {"red": 0.3, "blue": 0.25, "green": 0.2, "yellow": 0.16, "black": 0.09}
+          for name, dist in [("confident", confident), ("uncertain", uncertain)]:
+              print(f"{name}: top-k=2 keeps {list(top_k_filter(dist, 2))}, top-p=0.9 keeps {list(top_p_filter(dist, 0.9))}")
+        expectedOutput: |
+          confident: top-k=2 keeps ['Paris', 'Lyon'], top-p=0.9 keeps ['Paris']
+          uncertain: top-k=2 keeps ['red', 'blue'], top-p=0.9 keeps ['red', 'blue', 'green', 'yellow']
+        caption: '"The capital of France is …" is a confident step; "my favourite colour is …" is not. Top-k=2 keeps a wrong city in the first case and drops good colours in the second; top-p adapts.'
+      - type: item
+        ref: mcq-top-p
+
+  - id: seeded-sampling
+    title: Sampling, seeds and reproducibility
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          **Sampling** draws a token at random, with each token's chance equal to its probability.
+          `random.Random(seed).choices(tokens, weights=probs)` does exactly that. A fixed **seed** makes
+          the pseudo-random sequence — and therefore our examples — repeatable.
+
+          Draw 1,000 tokens at each temperature (same seed each time) and count them:
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import random
+          from collections import Counter
+
+          logits = {"sunny": 2.0, "cloudy": 1.5, "rainy": 1.0, "cold": 0.5, "purple": -1.0}
+
+          def softmax(logits):
+              biggest = max(logits.values())
+              exps = {tok: math.exp(v - biggest) for tok, v in logits.items()}
+              total = sum(exps.values())
+              return {tok: e / total for tok, e in exps.items()}
+
+          def sample(probs, rng):
+              tokens = list(probs)
+              return rng.choices(tokens, weights=[probs[t] for t in tokens])[0]
+
+          for T in (0.5, 1.0, 2.0):
+              rng = random.Random(42)
+              probs = softmax({t: v / T for t, v in logits.items()})
+              draws = Counter(sample(probs, rng) for _ in range(1000))
+              print(f"T={T}:", dict(draws.most_common()))
+        expectedOutput: |
+          T=0.5: {'sunny': 630, 'cloudy': 247, 'rainy': 81, 'cold': 37, 'purple': 5}
+          T=1.0: {'sunny': 429, 'cloudy': 273, 'rainy': 172, 'cold': 99, 'purple': 27}
+          T=2.0: {'sunny': 322, 'cloudy': 238, 'rainy': 206, 'cold': 151, 'purple': 83}
+        caption: The counts track the probabilities computed earlier. At T = 2, "purple" is chosen 83 times in 1,000 — about once every 12 steps.
+      - type: markdown
+        body: |
+          Now generate whole sentences with a tiny hand-written "model" (a table of made-up logits for
+          what follows each word — a stand-in, not a real LLM). The `sample_next` function combines
+          everything: temperature 0 means greedy, otherwise temperature → softmax → optional filters →
+          sample.
+      - type: code
+        runnable: true
+        id: generate-sentences
+        code: |
+          import math
+          import random
+
+          LOGITS = {  # a stand-in for a model: made-up next-token logits for each previous word
+              "<start>": {"The": 2.0, "A": 0.5},
+              "The": {"cat": 2.0, "dog": 1.5, "idea": -0.5},
+              "A": {"cat": 1.0, "dog": 1.0},
+              "cat": {"sleeps": 1.8, "runs": 1.0, "sings": -1.0},
+              "dog": {"runs": 1.8, "sleeps": 1.0, "sings": -0.5},
+              "idea": {"sleeps": 0.5, "sings": 0.5},
+              "sleeps": {".": 3.0}, "runs": {".": 3.0}, "sings": {".": 3.0},
+          }
+
+          def softmax(logits):
+              biggest = max(logits.values())
+              exps = {t: math.exp(v - biggest) for t, v in logits.items()}
+              total = sum(exps.values())
+              return {t: e / total for t, e in exps.items()}
+
+          def top_p_filter(probs, p):
+              kept, cumulative = {}, 0.0
+              for tok in sorted(probs, key=probs.get, reverse=True):
+                  kept[tok] = probs[tok]
+                  cumulative += probs[tok]
+                  if cumulative >= p:
+                      break
+              total = sum(kept.values())
+              return {t: v / total for t, v in kept.items()}
+
+          def sample_next(logits, temperature, rng, top_p=None):
+              if temperature == 0:
+                  return max(logits, key=logits.get)            # greedy
+              probs = softmax({t: v / temperature for t, v in logits.items()})
+              if top_p is not None:
+                  probs = top_p_filter(probs, top_p)
+              tokens = list(probs)
+              return rng.choices(tokens, weights=[probs[t] for t in tokens])[0]
+
+          def generate(temperature, rng, top_p=None):
+              word, out = "<start>", []
+              while word != ".":
+                  word = sample_next(LOGITS[word], temperature, rng, top_p)
+                  out.append(word)
+              return " ".join(out)
+
+          for T in (0, 0.3, 1.5):
+              rng = random.Random(3)
+              print(f"T={T}:", " | ".join(generate(T, rng) for _ in range(4)))
+          rng = random.Random(3)
+          print("T=1.5, top_p=0.8:", " | ".join(generate(1.5, rng, top_p=0.8) for _ in range(4)))
+        expectedOutput: |
+          T=0: The cat sleeps . | The cat sleeps . | The cat sleeps . | The cat sleeps .
+          T=0.3: The cat sleeps . | The cat sleeps . | The cat runs . | The cat sleeps .
+          T=1.5: The dog runs . | The cat sleeps . | The cat sings . | A cat runs .
+          T=1.5, top_p=0.8: The cat sleeps . | The cat sleeps . | The cat runs . | A cat runs .
+        annotations:
+          - line: 33
+            text: Temperature 0 is special-cased as greedy — dividing by 0 would raise ZeroDivisionError.
+          - line: 49
+            text: Same seed for each setting, so the only difference between rows is the decoding settings.
+        caption: Same "prompt", four runs each. Low temperature repeats itself; high temperature varies and occasionally picks the odd "sings"; adding top-p = 0.8 cuts that tail while keeping some variety.
+      - type: markdown
+        body: |
+          This is the full answer to "why does the same prompt give different answers?": every step is
+          a random draw, and because generation is autoregressive, **one different early token changes
+          the context for everything after it** ("The dog…" vs "The cat…").
+
+          **Why hosted models are not perfectly reproducible, even at temperature 0.** On a provider's
+          servers, your request is batched with others, computed in floating point on parallel hardware,
+          and the model or serving stack may be updated. Tiny numerical differences can flip a near-tie
+          between two tokens, and the texts then diverge. Some APIs accept a `seed` parameter as a
+          best-effort aid; whether it exists and what it guarantees is provider-specific. Design your
+          tests to tolerate variation (or to check properties rather than exact strings).
+      - type: item
+        ref: tf-temp-zero
+      - type: item
+        ref: explain-same-prompt
+
+  - id: pipeline
+    title: "Mental model: the decoding pipeline"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Every generation step runs the same small pipeline. Changing a setting changes one stage, and
+          none of them change the model's weights or knowledge:
+      - type: visualization
+        component: step-diagram
+        title: One decoding step
+        caption: Exact order and available stages vary by library and provider; this is a common arrangement.
+        props:
+          width: 860
+          height: 200
+          nodes:
+            - { id: logits, label: Logits from model, x: 80, y: 100, shape: pill }
+            - { id: temp, label: Divide by T, x: 220, y: 100 }
+            - { id: soft, label: Softmax, x: 360, y: 100 }
+            - { id: filter, label: Top-k / top-p, x: 500, y: 100 }
+            - { id: draw, label: Sample (or argmax), x: 640, y: 100 }
+            - { id: token, label: Next token, x: 780, y: 100, shape: store }
+          edges:
+            - { id: e1, from: logits, to: temp }
+            - { id: e2, from: temp, to: soft }
+            - { id: e3, from: soft, to: filter }
+            - { id: e4, from: filter, to: draw }
+            - { id: e5, from: draw, to: token }
+          steps:
+            - title: The model scores every token
+              body: One logit per vocabulary entry. Nothing below changes these scores' order.
+              active: [logits]
+              payload: "sunny 2.0  cloudy 1.5  rainy 1.0  cold 0.5  purple -1.0"
+            - title: Temperature reshapes
+              body: Dividing by T < 1 spreads the logits apart (sharper); T > 1 squeezes them together (flatter). T = 0 skips straight to argmax.
+              active: [logits, e1, temp]
+              payload: "T = 0.5 → sunny 4.0  cloudy 3.0  rainy 2.0  cold 1.0  purple -2.0"
+            - title: Softmax makes probabilities
+              body: Exponentiate and normalise so the values are positive and sum to 1.
+              active: [temp, e2, soft]
+              payload: "sunny 0.64  cloudy 0.24  rainy 0.09  cold 0.03  purple 0.00"
+            - title: Filters cut the tail
+              body: Top-k keeps a fixed number of tokens; top-p keeps the smallest set covering probability p. The survivors are renormalised.
+              active: [soft, e3, filter]
+              payload: "top-p = 0.9 → sunny 0.67  cloudy 0.24  rainy 0.09   (cold and purple dropped)"
+            - title: Draw one token
+              body: Sampling picks at random according to the probabilities; greedy takes the top one. A seed makes the draw repeatable in your own code.
+              active: [filter, e4, draw]
+            - title: Append and repeat
+              body: The chosen token joins the context and the whole pipeline runs again for the next position.
+              active: [draw, e5, token]
+              payload: "The weather today is sunny"
+
+  - id: choosing
+    title: Choosing settings for a task
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          | Task | Goal | Typical starting point |
+          |---|---|---|
+          | Extraction, classification, structured output, code fixes | Same input → same answer | Temperature 0 (greedy) or low (≈ 0–0.3) |
+          | Question answering over sources, summaries | Faithful and fluent | Low to moderate temperature |
+          | Brainstorming, creative writing, generating varied test data | Variety | Moderate to high temperature (≈ 0.7–1.0+), often with top-p |
+
+          These are starting points, not rules — tune them on your evaluation set. Other controls you
+          will meet: a **maximum output length**, **stop sequences** (strings that end generation), and
+          penalties that discourage repeating tokens. **Which controls exist, their names and their
+          ranges vary by provider and model**, and some reasoning models fix or ignore sampling
+          parameters. Some providers recommend adjusting temperature *or* top-p rather than both.
+      - type: callout
+        variant: misconception
+        title: Lower temperature is not "more accurate"
+        body: |
+          Temperature changes how often the model departs from its most likely token. If the most likely
+          answer is wrong, greedy decoding will give that wrong answer *every time*, very consistently.
+          Consistency and correctness are different properties; only evaluation tells you about the
+          second.
+      - type: code
+        language: json
+        status: illustrative
+        code: |
+          {
+            "model": "example-model-name",
+            "messages": [{"role": "user", "content": "Extract the invoice total from: ..."}],
+            "temperature": 0,
+            "max_tokens": 200
+          }
+        caption: Illustrative, provider-neutral request (not executed — it needs a real API). Check your provider's reference for the exact parameter names, defaults and allowed ranges.
+      - type: code
+        status: illustrative
+        code: |
+          outputs = model.generate(**inputs, do_sample=True, temperature=0.7, top_p=0.9, max_new_tokens=50)
+        caption: >-
+          The same settings in one library's API (Hugging Face Transformers, running a local model; greedy
+          decoding is its default and `do_sample=True` switches to sampling). Not executed here: it needs
+          the transformers and torch packages and a downloaded model.
+      - type: item
+        ref: mcq-settings-extraction
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Why subtracting the maximum is safe.** exp(zᵢ − c) / Σ exp(zⱼ − c) = exp(zᵢ)·e⁻ᶜ / (e⁻ᶜ·Σ exp(zⱼ)),
+          and e⁻ᶜ cancels. So softmax is unchanged when you add or subtract the same number from every
+          logit:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          def softmax(xs):
+              m = max(xs)
+              e = [math.exp(x - m) for x in xs]
+              s = sum(e)
+              return [round(v / s, 4) for v in e]
+
+          print(softmax([2.0, 1.0, 0.0]))
+          print(softmax([102.0, 101.0, 100.0]))
+        expectedOutput: |
+          [0.6652, 0.2447, 0.09]
+          [0.6652, 0.2447, 0.09]
+      - type: markdown
+        body: |
+          **Measuring "randomness".** The entropy of a distribution, −Σ p log₂ p, is the average number
+          of bits of surprise per draw. Temperature directly controls it:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          logits = {"sunny": 2.0, "cloudy": 1.5, "rainy": 1.0, "cold": 0.5, "purple": -1.0}
+          for T in (0.5, 1.0, 2.0):
+              scaled = [v / T for v in logits.values()]
+              m = max(scaled)
+              exps = [math.exp(v - m) for v in scaled]
+              probs = [e / sum(exps) for e in exps]
+              entropy = -sum(p * math.log2(p) for p in probs)
+              print(f"T={T}: entropy {entropy:.2f} bits")
+        expectedOutput: |
+          T=0.5: entropy 1.38 bits
+          T=1.0: entropy 1.91 bits
+          T=2.0: entropy 2.18 bits
+        caption: The maximum possible for 5 tokens is log₂ 5 ≈ 2.32 bits (all equally likely); greedy decoding corresponds to 0 bits.
+      - type: markdown
+        body: |
+          **Where the name comes from.** softmax(z / T) has the form of the Boltzmann distribution from
+          statistical physics, where temperature controls how evenly a system spreads across states.
+
+          **Log-probabilities.** Many APIs can return the log-probabilities of the chosen tokens (and
+          sometimes of alternatives). They are useful for confidence heuristics and debugging, but a
+          high probability means "typical text", not "true".
+
+          **Sampling is not the only source of variation.** Different prompts, different retrieved
+          documents and model updates all change outputs too — which is why evaluation runs each case
+          several times and pins model versions where the provider allows it.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `OverflowError: math range error` in your softmax | `math.exp` of a large logit | Subtract the maximum logit first. |
+          | `ZeroDivisionError` at temperature 0 | Dividing logits by T = 0 | Special-case T = 0 as greedy (argmax). |
+          | Output is incoherent or drifts off-topic | Temperature too high, no top-p/top-k | Lower the temperature or add top-p. |
+          | Output repeats the same phrase | Greedy or very low temperature on long text | Raise temperature slightly, use top-p, or a repetition penalty if available. |
+          | Tests fail randomly | Assertions on exact sampled text | Use temperature 0 for exact checks, fixed seeds in your own code, or assert properties. |
+          | "Temperature 0 but answers still differ" | Server-side non-determinism, model updates | Expect small variation; evaluate over several runs; pin model versions if offered. |
+
+          Here is the overflow in action — a softmax written straight from the formula:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          logits = [1000.0, 999.0]
+          exps = [math.exp(z) for z in logits]
+          print([e / sum(exps) for e in exps])
+        expectError: OverflowError
+        caption: "math.exp(1000) is far beyond the largest float (about 1.8e308). Subtracting max(logits) first gives exp(0) and exp(-1) — and the same probabilities, [0.731, 0.269]."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Implement the decoding pieces yourself. The checks use several different inputs, including
+          large logits, so your functions must work in general.
+      - type: item
+        ref: code-softmax
+      - type: item
+        ref: parsons-temperature
+      - type: item
+        ref: debug-top-k
+      - type: item
+        ref: code-top-p
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - The model outputs **logits**; **softmax** (after subtracting the max) turns them into
+            probabilities that sum to 1.
+          - **Greedy** picks the top token; **sampling** draws one at random by probability.
+          - **Temperature** divides logits: T < 1 sharper, T > 1 flatter, T = 0 treated as greedy.
+          - **Top-k** keeps the k most likely tokens; **top-p** keeps the smallest set with total
+            probability ≥ p; both renormalise.
+          - Same prompt, different answers = random draws compounded autoregressively. Seeds make your
+            own sampling reproducible; hosted models may still vary.
+          - Low temperature for consistency (extraction, classification), higher for variety — and lower
+            temperature means more consistent, not more correct.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Explain temperature and top-p precisely." — Temperature divides the logits before softmax,
+          sharpening (T < 1) or flattening (T > 1) the distribution; top-p keeps the smallest set of most
+          likely tokens whose cumulative probability reaches p and renormalises. Then say what you would
+          use for extraction (T ≈ 0) versus brainstorming (higher T with top-p), and that T = 0 still
+          is not a hard reproducibility guarantee on hosted APIs.
+
+items:
+  - id: predict-temperature
+    type: predict-output
+    skill: prediction
+    prompt: Two tokens have logits 2.0 and 0.0. What does this print at T = 1 and T = 2?
+    code: |
+      import math
+
+      def softmax(xs):
+          m = max(xs)
+          e = [math.exp(x - m) for x in xs]
+          s = sum(e)
+          return [round(v / s, 2) for v in e]
+
+      logits = [2.0, 0.0]
+      print(softmax([x / 1 for x in logits]))
+      print(softmax([x / 2 for x in logits]))
+    answer: |
+      [0.88, 0.12]
+      [0.73, 0.27]
+    explanation: >-
+      At T = 1, exp(0) / (exp(0) + exp(-2)) ≈ 0.88. At T = 2 the logits become 1.0 and 0.0, a smaller
+      gap, so the distribution is flatter: exp(0) / (exp(0) + exp(-1)) ≈ 0.73.
+    wrongAnswers:
+      - answer: |
+          [0.88, 0.12]
+          [0.98, 0.02]
+        feedback: >-
+          That is what T = 0.5 would do. A temperature above 1 divides the logits by more than 1,
+          shrinking the gap between them, so the distribution becomes flatter, not sharper.
+      - answer: |
+          [0.88, 0.12]
+          [0.88, 0.12]
+        feedback: Temperature is applied before softmax, so it does change the probabilities (only the ranking stays the same).
+      - answer: |
+          [1.0, 0.0]
+          [0.5, 0.5]
+        feedback: Softmax gives every token a non-zero probability; you need exp() of each logit, not just "the biggest wins".
+
+  - id: mcq-top-p
+    type: mcq
+    skill: recognition
+    prompt: With `top_p = 0.9`, what happens at each decoding step?
+    explanation: >-
+      Nucleus sampling sorts tokens by probability, keeps the smallest prefix whose probabilities add up
+      to at least 0.9, renormalises those, and samples from them. The number of kept tokens changes from
+      step to step.
+    options:
+      - id: a
+        text: Keep the smallest set of most likely tokens whose probabilities add up to at least 0.9, renormalise, then sample.
+        correct: true
+        feedback: Right — the "nucleus" adapts to how confident the model is at that step.
+      - id: b
+        text: Keep the most likely 90% of the vocabulary's tokens.
+        feedback: That would keep almost the whole tail. Top-p is about probability mass, not a fraction of token count.
+      - id: c
+        text: Multiply every probability by 0.9.
+        feedback: Scaling every probability by the same factor and renormalising changes nothing. Top-p removes tokens.
+      - id: d
+        text: Pick the most likely token 90% of the time and a random token otherwise.
+        feedback: That is a different (epsilon-greedy) idea. Top-p always samples, but only from the nucleus.
+
+  - id: tf-temp-zero
+    type: true-false
+    skill: recognition
+    prompt: "True or false: setting temperature to 0 on a hosted LLM API guarantees byte-for-byte identical output every time you send the same request."
+    answer: false
+    explanation: >-
+      Temperature 0 means greedy decoding, which removes sampling randomness, but batching, parallel
+      floating-point arithmetic and model or serving updates can still flip near-ties between tokens.
+      Outputs are usually very similar, not guaranteed identical.
+
+  - id: explain-same-prompt
+    type: explain
+    skill: explanation
+    prompt: >-
+      A colleague asks: "Why does the model give a different answer each time I send exactly the same
+      prompt — and how do I make it consistent?" Write your answer.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that at each step the model outputs a probability distribution and decoding samples a token from it.
+      - Explains that one different early token changes the context for all later tokens (autoregressive generation), so whole answers diverge.
+      - Names a control for consistency — lower temperature or temperature 0 (greedy), top-p — and when variety is desirable instead.
+      - Notes that hosted APIs may still vary slightly even at temperature 0, so tests should tolerate variation or check properties.
+    modelAnswer: |
+      At every step the model produces a probability for each possible next token, and the API usually
+      samples from that distribution instead of always taking the top token. Because each new token is
+      fed back as context, a different choice early on ("The dog…" instead of "The cat…") sends the rest
+      of the answer down a different path. To make it consistent, lower the temperature — temperature 0
+      means greedy decoding — and optionally use top-p to cut unlikely tokens. Even then a hosted model
+      can vary a little because of batching and floating-point effects, so tests should check
+      properties (valid JSON, the right label) rather than exact strings. For creative tasks, the
+      variation is a feature and a higher temperature is fine.
+
+  - id: mcq-settings-extraction
+    type: mcq
+    skill: design
+    prompt: |
+      You use an LLM to extract invoice fields into JSON for an accounting system. The same invoice
+      should give the same result on every run. Which decoding setting fits best?
+    explanation: >-
+      Extraction has one correct answer, so you want the model's most likely output every time:
+      temperature 0 (greedy) or close to it. Validation and evaluation still check that the values are
+      right.
+    options:
+      - id: a
+        text: Temperature 0 (or close to it), then validate the JSON.
+        correct: true
+        feedback: Right — greedy decoding removes sampling variation; validation catches what remains wrong.
+      - id: b
+        text: Temperature 1.5, so the model considers more possible values.
+        feedback: High temperature makes it more likely to pick unlikely, wrong tokens — the opposite of what extraction needs.
+      - id: c
+        text: Leave the defaults; structured tasks are not affected by sampling.
+        feedback: Sampling affects every token, including digits in a total. Defaults on many APIs sample at temperature around 1.
+      - id: d
+        text: Top-p = 1.0 with temperature 1.0, to keep all tokens available.
+        feedback: That is ordinary full sampling and gives varied outputs between runs.
+
+  - id: code-softmax
+    type: code
+    skill: implementation
+    prompt: |
+      Write `softmax(logits)` that takes a **list** of numbers and returns a list of probabilities in the
+      same order. It must be numerically stable: `softmax([1000.0, 999.0])` must not raise
+      `OverflowError`.
+    starterCode: |
+      import math
+
+      def softmax(logits):
+          # Return a list of probabilities (same order as logits) that sum to 1.
+          return []
+
+      print([round(p, 3) for p in softmax([2.0, 1.0, 0.0])])
+    solution: |
+      import math
+
+      def softmax(logits):
+          biggest = max(logits)
+          exps = [math.exp(z - biggest) for z in logits]
+          total = sum(exps)
+          return [e / total for e in exps]
+
+      print([round(p, 3) for p in softmax([2.0, 1.0, 0.0])])
+    expectedOutput: |
+      [0.665, 0.245, 0.09]
+    tests:
+      - name: correct probabilities
+        code: |
+          import math
+          result = softmax([2.0, 1.0, 0.0])
+          expected = [0.6652, 0.2447, 0.0900]
+          assert len(result) == 3, f"Return one probability per logit; got {result!r}."
+          assert all(math.isclose(a, b, abs_tol=1e-3) for a, b in zip(result, expected)), f"softmax([2, 1, 0]) should be about {expected}, got {[round(r, 4) for r in result]}."
+      - name: sums to 1 for other inputs
+        code: |
+          import math
+          for logits in ([0.5, -1.0, 3.0, 0.0], [5.0], [-2.0, -2.0]):
+              result = softmax(logits)
+              assert math.isclose(sum(result), 1.0), f"Probabilities must sum to 1; for {logits} they sum to {sum(result)}."
+          assert softmax([-2.0, -2.0]) == [0.5, 0.5] or all(math.isclose(p, 0.5) for p in softmax([-2.0, -2.0])), "Equal logits should give equal probabilities."
+      - name: stable for large logits
+        code: |
+          import math
+          try:
+              result = softmax([1000.0, 999.0])
+          except OverflowError:
+              raise AssertionError("softmax([1000, 999]) overflowed. Subtract max(logits) from every logit before calling math.exp.")
+          assert math.isclose(result[0], 0.7311, abs_tol=1e-3), f"softmax([1000, 999]) should be about [0.731, 0.269], got {result}."
+    hints:
+      - "Compute `biggest = max(logits)` first."
+      - "Use `math.exp(z - biggest)` for every logit, then divide each by the sum."
+    feedback:
+      - when: { errorType: OverflowError }
+        message: math.exp overflowed on a large logit. Subtract the largest logit from every logit first; the probabilities do not change.
+      - when: { outputEquals: "[]\n" }
+        message: Your function still returns an empty list. Compute one probability per logit.
+    explanation: >-
+      Exponentiate (after subtracting the maximum) and normalise. Subtracting the maximum leaves the
+      result unchanged mathematically but keeps every exponent at or below 0, so nothing overflows.
+
+  - id: parsons-temperature
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to apply temperature 0.5 to the logits and print the resulting probabilities. It
+      should print `{'yes': 0.879, 'no': 0.119, 'maybe': 0.002}`. Two lines are distractors.
+    solution: |
+      import math
+      logits = {"yes": 2.0, "no": 1.0, "maybe": -1.0}
+      temperature = 0.5
+      scaled = {t: v / temperature for t, v in logits.items()}
+      m = max(scaled.values())
+      exps = {t: math.exp(v - m) for t, v in scaled.items()}
+      total = sum(exps.values())
+      print({t: round(e / total, 3) for t, e in exps.items()})
+    distractors:
+      - "scaled = {t: v * temperature for t, v in logits.items()}"
+      - "total = max(exps.values())"
+    expectedOutput: |
+      {'yes': 0.879, 'no': 0.119, 'maybe': 0.002}
+    explanation: >-
+      Divide by the temperature first (multiplying would flatten instead of sharpen at T = 0.5), subtract
+      the maximum for stability, exponentiate, and normalise by the sum — not the maximum — so the values
+      add up to 1.
+
+  - id: debug-top-k
+    type: debug
+    skill: debugging
+    prompt: |
+      `top_k_filter` should keep the `k` **most** likely tokens and renormalise them. For the example it
+      should print `{'a': 0.667, 'b': 0.333}`, but it keeps the wrong tokens. Fix it.
+    starterCode: |
+      def top_k_filter(probs, k):
+          top = sorted(probs, key=probs.get)[:k]
+          total = sum(probs[t] for t in top)
+          return {t: probs[t] / total for t in top}
+
+      result = top_k_filter({"a": 0.6, "b": 0.3, "c": 0.1}, 2)
+      print({t: round(p, 3) for t, p in result.items()})
+    solution: |
+      def top_k_filter(probs, k):
+          top = sorted(probs, key=probs.get, reverse=True)[:k]
+          total = sum(probs[t] for t in top)
+          return {t: probs[t] / total for t in top}
+
+      result = top_k_filter({"a": 0.6, "b": 0.3, "c": 0.1}, 2)
+      print({t: round(p, 3) for t, p in result.items()})
+    expectedOutput: |
+      {'a': 0.667, 'b': 0.333}
+    tests:
+      - name: keeps the two most likely tokens
+        code: |
+          import math
+          result = top_k_filter({"a": 0.6, "b": 0.3, "c": 0.1}, 2)
+          assert set(result) == {"a", "b"}, f"Top-2 of a=0.6, b=0.3, c=0.1 should keep a and b, but kept {sorted(result)}."
+          assert math.isclose(result["a"], 2 / 3), f"After renormalising, a should be 0.6 / 0.9 = 0.667, got {result['a']}."
+      - name: works for another distribution
+        code: |
+          import math
+          result = top_k_filter({"x": 0.1, "y": 0.2, "z": 0.3, "w": 0.4}, 3)
+          assert set(result) == {"y", "z", "w"}, f"Top-3 should drop only x (the least likely), but kept {sorted(result)}."
+          assert math.isclose(sum(result.values()), 1.0), "Kept probabilities must sum to 1."
+      - name: k = 1 is greedy
+        code: |
+          result = top_k_filter({"p": 0.2, "q": 0.7, "r": 0.1}, 1)
+          assert list(result) == ["q"] and abs(result["q"] - 1.0) < 1e-9, f"With k=1 only the most likely token q should remain, with probability 1; got {result}."
+    hints:
+      - "Print `sorted(probs, key=probs.get)`. Which end of that list holds the most likely tokens?"
+      - "`sorted(..., reverse=True)` sorts from largest to smallest."
+    feedback:
+      - when: { outputContains: "'c'" }
+        message: The least likely token "c" was kept. sorted() sorts ascending by default — sort in descending order before taking the first k.
+    explanation: >-
+      `sorted` returns ascending order, so slicing the first k items kept the *least* likely tokens.
+      Sorting with `reverse=True` puts the most likely first. Renormalising then makes the kept
+      probabilities sum to 1.
+
+  - id: code-top-p
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `top_p_filter(probs, p)`. Go through the tokens from most to least likely, keep each one,
+      and stop as soon as the kept probabilities add up to **at least** `p`. Return the kept tokens with
+      their probabilities **renormalised** to sum to 1.
+
+      Example: for `{"a": 0.5, "b": 0.3, "c": 0.15, "d": 0.05}` and `p = 0.75`, keep `a` and `b`
+      (0.5 + 0.3 = 0.8 ≥ 0.75), giving `{"a": 0.625, "b": 0.375}`.
+    starterCode: |
+      def top_p_filter(probs, p):
+          kept = {}
+          # Visit tokens from most to least likely; stop once the kept mass reaches p.
+          return kept
+
+      result = top_p_filter({"a": 0.5, "b": 0.3, "c": 0.15, "d": 0.05}, 0.75)
+      print({t: round(v, 3) for t, v in result.items()})
+    solution: |
+      def top_p_filter(probs, p):
+          kept = {}
+          cumulative = 0.0
+          for tok in sorted(probs, key=probs.get, reverse=True):
+              kept[tok] = probs[tok]
+              cumulative += probs[tok]
+              if cumulative >= p:
+                  break
+          total = sum(kept.values())
+          return {t: v / total for t, v in kept.items()}
+
+      result = top_p_filter({"a": 0.5, "b": 0.3, "c": 0.15, "d": 0.05}, 0.75)
+      print({t: round(v, 3) for t, v in result.items()})
+    expectedOutput: |
+      {'a': 0.625, 'b': 0.375}
+    tests:
+      - name: the example
+        code: |
+          import math
+          result = top_p_filter({"a": 0.5, "b": 0.3, "c": 0.15, "d": 0.05}, 0.75)
+          assert set(result) == {"a", "b"}, f"With p = 0.75, keep a and b (0.5 + 0.3 = 0.8 ≥ 0.75); you kept {sorted(result)}."
+          assert math.isclose(result["a"], 0.625) and math.isclose(result["b"], 0.375), f"Renormalise: a = 0.5 / 0.8 = 0.625, b = 0.375. Got {result}."
+      - name: a higher p keeps more tokens
+        code: |
+          result = top_p_filter({"a": 0.5, "b": 0.3, "c": 0.15, "d": 0.05}, 0.9)
+          assert set(result) == {"a", "b", "c"}, f"With p = 0.9, keep a, b and c (0.95 ≥ 0.9); you kept {sorted(result)}."
+      - name: a confident distribution keeps one token
+        code: |
+          result = top_p_filter({"y": 0.03, "x": 0.97}, 0.9)
+          assert list(result) == ["x"] and abs(result["x"] - 1.0) < 1e-9, f"x alone covers 0.97 ≥ 0.9, so only x (probability 1.0) should remain; got {result}."
+      - name: p = 1 keeps everything and sums to 1
+        code: |
+          import math
+          probs = {"q": 0.1, "r": 0.6, "s": 0.3}
+          result = top_p_filter(probs, 1.0)
+          assert set(result) == {"q", "r", "s"}, f"p = 1.0 should keep every token; you kept {sorted(result)}."
+          assert math.isclose(sum(result.values()), 1.0), "Kept probabilities must sum to 1."
+    hints:
+      - "Loop over `sorted(probs, key=probs.get, reverse=True)` so the most likely token comes first."
+      - Add each token to `kept` *before* checking whether the running total has reached p — the token that crosses the threshold is included.
+      - "Finish by dividing each kept probability by `sum(kept.values())`."
+    feedback:
+      - when: { outputEquals: "{}\n" }
+        message: Nothing was kept. Add tokens to kept in descending order of probability until the running total reaches p.
+      - when: { outputEquals: "{'a': 1.0}\n" }
+        message: You stopped too early. Check the threshold after adding the token, and include the token that makes the total reach p.
+      - when: { outputEquals: "{'a': 0.5, 'b': 0.3}\n" }
+        message: You kept the right tokens but did not renormalise. Divide each by the kept total so they sum to 1.
+    explanation: >-
+      Top-p walks down the sorted distribution accumulating probability, includes the token that crosses
+      the threshold, and renormalises. Because the cut-off depends on the probabilities, the nucleus is
+      small when the model is confident and large when it is not.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-top-k
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      probs = {"blue": 0.5, "green": 0.3, "red": 0.15, "pink": 0.05}
+      top = sorted(probs, key=probs.get, reverse=True)[:2]
+      total = sum(probs[t] for t in top)
+      print({t: round(probs[t] / total, 3) for t in top})
+    answer: "{'blue': 0.625, 'green': 0.375}"
+    explanation: >-
+      Top-2 keeps blue (0.5) and green (0.3). Their total is 0.8, so renormalising gives 0.5 / 0.8 =
+      0.625 and 0.3 / 0.8 = 0.375.
+    wrongAnswers:
+      - answer: "{'blue': 0.5, 'green': 0.3}"
+        feedback: The code divides by the kept total (0.8), so the kept probabilities are renormalised to sum to 1.
+      - answer: "{'red': 0.75, 'pink': 0.25}"
+        feedback: reverse=True sorts from most to least likely, so the first two are blue and green.
+
+  - id: m-temperature-effect
+    type: mcq
+    skill: explanation
+    prompt: You raise the temperature from 1.0 to 2.0. What happens to the probability of a token that was unlikely (say 2%)?
+    explanation: >-
+      Dividing logits by 2 shrinks the gaps between them, so the distribution flattens: likely tokens
+      lose probability and unlikely tokens gain it. The ranking stays the same.
+    options:
+      - id: a
+        text: It increases, because the distribution becomes flatter.
+        correct: true
+        feedback: Right — at T = 2 in this lesson's example, "purple" rose from 2% to 7%.
+      - id: b
+        text: It decreases, because higher temperature makes the model more decisive.
+        feedback: That describes T < 1. Above 1, differences between logits shrink.
+      - id: c
+        text: It stays the same; temperature only affects the most likely token.
+        feedback: Temperature rescales every logit, so every probability changes.
+      - id: d
+        text: It becomes 0; temperature removes unlikely tokens.
+        feedback: Removing tokens is what top-k and top-p do. Temperature reshapes but never removes.
+
+  - id: m-sample-next
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `sample_next(logits, temperature, rng)` for a dict of logits:
+
+      - if `temperature == 0`, return the token with the highest logit (greedy) — without dividing by 0;
+      - otherwise divide every logit by `temperature`, apply the provided `softmax`, and draw one token
+        with `rng.choices(tokens, weights=...)`, returning the token string.
+    starterCode: |
+      import math
+      import random
+
+      def softmax(logits):
+          biggest = max(logits.values())
+          exps = {t: math.exp(v - biggest) for t, v in logits.items()}
+          total = sum(exps.values())
+          return {t: e / total for t, e in exps.items()}
+
+      def sample_next(logits, temperature, rng):
+          # Greedy when temperature == 0; otherwise temperature -> softmax -> sample.
+          return None
+
+      rng = random.Random(0)
+      print(sample_next({"yes": 1.0, "no": 3.0}, 0, rng))
+    solution: |
+      import math
+      import random
+
+      def softmax(logits):
+          biggest = max(logits.values())
+          exps = {t: math.exp(v - biggest) for t, v in logits.items()}
+          total = sum(exps.values())
+          return {t: e / total for t, e in exps.items()}
+
+      def sample_next(logits, temperature, rng):
+          if temperature == 0:
+              return max(logits, key=logits.get)
+          probs = softmax({t: v / temperature for t, v in logits.items()})
+          tokens = list(probs)
+          return rng.choices(tokens, weights=[probs[t] for t in tokens])[0]
+
+      rng = random.Random(0)
+      print(sample_next({"yes": 1.0, "no": 3.0}, 0, rng))
+    expectedOutput: |
+      no
+    tests:
+      - name: temperature 0 is greedy
+        code: |
+          import random
+          rng = random.Random(1)
+          assert sample_next({"yes": 1.0, "no": 3.0}, 0, rng) == "no", "At temperature 0, return the token with the highest logit."
+          assert sample_next({"a": 5.0, "b": -1.0, "c": 4.9}, 0, rng) == "a", "At temperature 0, return the highest-logit token (a)."
+      - name: equal logits are sampled about evenly
+        code: |
+          import random
+          rng = random.Random(123)
+          draws = [sample_next({"a": 0.0, "b": 0.0}, 1.0, rng) for _ in range(2000)]
+          share = draws.count("a") / len(draws)
+          assert 0.4 < share < 0.6, f"With equal logits each token should come up about half the time; 'a' came up {share:.0%} of the time. Are you sampling with rng.choices?"
+      - name: low temperature sharpens, high temperature flattens
+        code: |
+          import random
+          rng = random.Random(7)
+          low = [sample_next({"a": 1.0, "b": 0.0}, 0.1, rng) for _ in range(1000)]
+          high = [sample_next({"a": 1.0, "b": 0.0}, 5.0, rng) for _ in range(1000)]
+          assert low.count("b") < 20, f"At T = 0.1, 'b' should almost never appear, but it appeared {low.count('b')} times in 1000. Divide the logits by the temperature."
+          assert high.count("b") > 300, f"At T = 5, the distribution is nearly flat, so 'b' should appear roughly 45% of the time; it appeared {high.count('b')} times in 1000. Divide (do not multiply) by the temperature."
+    hints:
+      - "Handle `temperature == 0` first with `max(logits, key=logits.get)`."
+      - "Build the scaled logits with a dict comprehension: `{t: v / temperature for t, v in logits.items()}`."
+      - "`rng.choices(tokens, weights=weights)` returns a list; take element `[0]`."
+    feedback:
+      - when: { errorType: ZeroDivisionError }
+        message: You divided by a temperature of 0. Return the greedy (highest-logit) token before doing any division.
+      - when: { outputEquals: "None\n" }
+        message: The function still returns None. Return the greedy token at T = 0 and a sampled token otherwise.
+    explanation: >-
+      This is the core of every sampler: special-case greedy, otherwise scale logits by 1/T, softmax, and
+      draw. The statistical checks confirm that the temperature reshapes the distribution in the right
+      direction.
+
+  - id: m-tf-truthful
+    type: true-false
+    skill: recognition
+    prompt: "True or false: lowering the temperature makes a model's answers more factually accurate."
+    answer: false
+    explanation: >-
+      Lower temperature makes the model stick to its most likely tokens, so answers become more
+      consistent. If the most likely answer is wrong, it is now consistently wrong. Accuracy has to be
+      measured with evaluation, and improved with better context, sources or models.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-top-k, m-temperature-effect, m-sample-next, m-tf-truthful]
+
+cheatsheet: |
+  ```python
+  def softmax(logits):                       # dict -> dict
+      m = max(logits.values())               # subtract max: no overflow
+      exps = {t: math.exp(v - m) for t, v in logits.items()}
+      s = sum(exps.values())
+      return {t: e / s for t, e in exps.items()}
+
+  scaled = {t: v / T for t, v in logits.items()}      # temperature (T == 0 -> greedy)
+  greedy = max(logits, key=logits.get)
+  top_k = sorted(probs, key=probs.get, reverse=True)[:k]   # then renormalise
+  # top-p: add tokens in descending order until cumulative >= p, then renormalise
+  token = random.Random(seed).choices(list(probs), weights=list(probs.values()))[0]
+  ```
+  - T < 1 sharper · T = 1 unchanged · T > 1 flatter · T = 0 greedy
+  - Top-k = fixed count; top-p = adaptive smallest set with mass ≥ p
+  - Extraction/classification: T ≈ 0. Brainstorming: higher T + top-p. Consistent ≠ correct.
+  - Parameter names, ranges and support vary by provider and model.

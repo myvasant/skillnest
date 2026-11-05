@@ -1,0 +1,816 @@
+id: file-processor
+title: Notes File Processor
+track: python-beginner
+level: beginner
+estimatedHours: 3
+environment: browser
+summary: >-
+  Write, read and analyse a text file of notes in the browser's virtual file system: count and
+  filter lines, count tags such as TODO and IDEA, write a summary file, and handle missing files
+  gracefully.
+concepts:
+  - python.files
+  - python.exceptions
+  - python.strings
+  - python.for-loops
+  - python.lists
+  - python.dictionaries
+  - python.functions
+  - python.input-output
+problem: |
+  Many people keep quick notes in a plain text file, marking lines with tags:
+
+  ```text
+  TODO: buy milk
+  IDEA: a calculator that speaks its answers
+  DONE: finish the quiz project
+
+  TODO: read about dictionaries
+  Meeting notes: Sam liked the quiz idea
+  ```
+
+  You will write a program that [reads the file](concept:python.files), works out how many lines
+  and tags it has and which TODOs are still open, **writes a summary to a second file**, and lets
+  the user search the notes. It must handle the most common file problem politely: a file name
+  that does not exist.
+
+  Files in this project live in the browser's **virtual file system**: Python 3.14 (Pyodide)
+  gives your program a private folder in memory. `open("notes.txt", "w", encoding="utf-8")` works
+  exactly as it does on a computer, but the files disappear when you reload the page. That is why
+  the program first writes its own sample file, `notes.txt`, before reading it.
+
+  A line has a **tag** when the text before its first `:` is a single upper-case word: `TODO`,
+  `IDEA`, `DONE`, `URL`. `Meeting notes:` and `todo:` are not tags.
+
+  Example session (what the user types is shown after each prompt):
+
+  ```text
+  Created notes.txt with sample notes.
+  File to summarise (Enter for notes.txt):
+  Notes summary
+  Total lines: 8
+  Non-blank lines: 7
+  DONE: 1
+  IDEA: 2
+  TODO: 3
+  Open TODOs:
+  - buy milk
+  - read about dictionaries
+  - practise reading files
+  Summary saved to summary.txt.
+  Search for (Enter to skip): quiz
+  Lines containing 'quiz': 2
+    DONE: finish the quiz project
+    Meeting notes: Sam liked the quiz idea
+  ```
+
+  And with a file that does not exist:
+
+  ```text
+  Created notes.txt with sample notes.
+  File to summarise (Enter for notes.txt): diary.txt
+  Could not find 'diary.txt'. Check the name and try again.
+  ```
+acceptanceCriteria:
+  - "Every file is opened with a `with` statement and `encoding=\"utf-8\"`; `write_text` replaces a file's content (mode `\"w\"`), and accented letters and emoji survive a write and read."
+  - "`read_lines(path)` returns the file's lines without their line endings, and lets `FileNotFoundError` reach the caller."
+  - "`count_non_blank`, `filter_lines` (case-insensitive, order kept), `get_tag` and `count_tags` are pure functions that pass the tests."
+  - "`build_summary(lines)` returns the exact summary layout, and `summarise_file` writes it (plus a final newline) to the summary file and returns it."
+  - "`main()` summarises the chosen file (default `notes.txt`), saves `summary.txt`, and searches the lines for a keyword."
+  - "A missing file prints `Could not find '<name>'. Check the name and try again.`, does not crash and does not overwrite the previous summary."
+architecture: |
+  ```text
+   SAMPLE_NOTES ──write_text──► notes.txt
+                                    │
+   user: file name ──► main() ──► summarise_file(notes_path, summary_path)
+                        │             │ read_lines ──► lines ──► build_summary(lines) ──► write_text ──► summary.txt
+                        │             │                              │
+                        │             │                count_non_blank · count_tags · get_tag
+                        │             └── FileNotFoundError ──► caught in main(): friendly message
+                        │
+   user: keyword ──────►└── filter_lines(read_lines(path), keyword) ──► print matches
+  ```
+
+  * **File layer**: `write_text` and `read_lines` are the only functions that call `open()`.
+    Both use `with`, which closes the file even if something goes wrong, and
+    `encoding="utf-8"`, so text is stored the same way on every computer.
+  * **Analysis layer**: pure functions over a [list](concept:python.lists) of lines. They never
+    touch files, so they are easy to test with lists made up in the test.
+    `count_tags` returns a [dictionary](concept:python.dictionaries) such as
+    `{"TODO": 3, "IDEA": 2, "DONE": 1}`.
+  * **Program layer**: `main()` talks to the user. It is the one place that decides what to do
+    when a file is missing, by catching `FileNotFoundError`
+    ([exceptions](concept:python.exceptions)) around the call that reads the file.
+setup: |
+  Nothing to install. This project runs in the editor on this page with Python 3.14 in your
+  browser (Pyodide), including a temporary virtual file system for `notes.txt` and
+  `summary.txt`. All milestones share **one code file**: keep your earlier functions as you add
+  new ones, and click **Run milestone tests** to check the milestone you are working on.
+
+  To run it on your own computer, save the code as `notes_processor.py` in a new, empty folder
+  and run it from a terminal in that folder (only built-in Python is used; no packages or virtual
+  environment needed). It creates `notes.txt` and `summary.txt` next to it:
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  mkdir notes-project; cd notes-project
+  python notes_processor.py
+  Get-Content summary.txt -Encoding utf8
+  ```
+
+  (If `python` is not found, try `py notes_processor.py`.)
+
+  **macOS / Linux**
+
+  ```bash
+  mkdir notes-project && cd notes-project
+  python3 notes_processor.py
+  cat summary.txt
+  ```
+milestones:
+  - id: write-and-read
+    title: Write and read a text file
+    description: |
+      Write the two functions that touch the disk:
+
+      * `write_text(path, text)`: open the file in write mode `"w"` with
+        `encoding="utf-8"` inside a `with` statement and write `text`. Mode `"w"` **replaces**
+        whatever was in the file (mode `"a"` would add to the end instead);
+      * `read_lines(path)`: open the file for reading (also with `encoding="utf-8"`), loop over
+        it line by line, and return a list of the lines **without** the line ending:
+        `line.rstrip("\n")`. Do not catch errors here: if the file does not exist, Python raises
+        `FileNotFoundError`, and the caller decides what to do about it.
+
+      The tests write files, read them back, check the bytes on disk, overwrite a file, use
+      accented letters and an emoji, and check that every `open()` uses `with` and
+      `encoding="utf-8"`.
+    starterCode: |
+      # Notes file processor
+      # One file for the whole project: keep your earlier functions as you add new ones.
+      # Files live in the browser's virtual file system (they vanish when the page reloads).
+
+      NOTES_PATH = "notes.txt"
+      SUMMARY_PATH = "summary.txt"
+
+      SAMPLE_NOTES = """TODO: buy milk
+      IDEA: a calculator that speaks its answers
+      DONE: finish the quiz project
+
+      TODO: read about dictionaries
+      Meeting notes: Sam liked the quiz idea
+      IDEA: palindrome finder for song titles
+      TODO: practise reading files
+      """
+
+
+      # --- Milestone 1: write_text(path, text), read_lines(path) --------------
+
+      def write_text(path, text):
+          """Write text to the file at path, replacing its old content (UTF-8)."""
+          # TODO: with open(path, "w", encoding="utf-8") as file: ...
+          pass
+
+
+      def read_lines(path):
+          """Return the lines of a UTF-8 text file, without their line endings."""
+          # TODO
+          pass
+
+
+      # --- Milestone 2: count_non_blank, filter_lines, get_tag, count_tags -----
+      # --- Milestone 3: build_summary(lines), summarise_file(...) -------------
+      # --- Milestone 4: read_line(prompt), main() ------------------------------
+
+
+      def main():
+          """Create the sample notes, summarise a file chosen by the user, and search it."""
+          write_text(NOTES_PATH, SAMPLE_NOTES)
+          print(f"Created {NOTES_PATH} with sample notes.")
+          # TODO (milestone 4)
+
+
+      if __name__ == "__main__":
+          main()
+    hints:
+      - "The pattern is `with open(path, \"w\", encoding=\"utf-8\") as file:` followed by an indented `file.write(text)`. The file is closed automatically when the indented block ends."
+      - "A file object is iterable: `for line in file:` gives one line at a time, each still ending in `\"\\n\"` (except perhaps the last)."
+      - "`rstrip(\"\\n\")` removes only the newline at the end, so spaces that belong to the line are kept."
+    tests:
+      - name: write_text and read_lines round-trip a file
+        code: |
+          import os
+          assert defined("write_text") and defined("read_lines"), "Define write_text(path, text) and read_lines(path)."
+          write_text("gw_test_m1.txt", "first\nsecond\n\nfourth\n")
+          assert os.path.exists("gw_test_m1.txt"), "write_text should create the file."
+          with open("gw_test_m1.txt", encoding="utf-8") as f:
+              raw = f.read()
+          assert raw == "first\nsecond\n\nfourth\n", f"write_text should write exactly the text it was given; the file contains {raw!r}."
+          got = read_lines("gw_test_m1.txt")
+          assert got == ["first", "second", "", "fourth"], f"read_lines should return ['first', 'second', '', 'fourth'], not {got!r}."
+          write_text("gw_test_m1.txt", "no newline at the end")
+          got = read_lines("gw_test_m1.txt")
+          assert got == ["no newline at the end"], f"A last line without a newline should be kept as it is; got {got!r}."
+          os.remove("gw_test_m1.txt")
+      - name: write_text replaces the old content
+        code: |
+          import os
+          write_text("gw_test_m1b.txt", "old line 1\nold line 2\n")
+          write_text("gw_test_m1b.txt", "new line\n")
+          got = read_lines("gw_test_m1b.txt")
+          assert got == ["new line"], f"Writing again should replace the file (mode 'w'), but the file now has {got!r}."
+          os.remove("gw_test_m1b.txt")
+      - name: accented letters and emoji survive
+        code: |
+          import os
+          write_text("gw_test_m1c.txt", "café ☕\nnaïve résumé\n")
+          with open("gw_test_m1c.txt", "rb") as f:
+              data = f.read()
+          assert data == "café ☕\nnaïve résumé\n".encode("utf-8"), "The file should be stored as UTF-8: pass encoding=\"utf-8\" to open()."
+          got = read_lines("gw_test_m1c.txt")
+          assert got == ["café ☕", "naïve résumé"], f"read_lines should give back the same text, not {got!r}."
+          os.remove("gw_test_m1c.txt")
+      - name: files are opened with with and encoding="utf-8"
+        code: |
+          import ast
+          tree = ast.parse(source)
+          opens = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "open"]
+          assert opens, "Use open() to read and write the files."
+          assert uses("With"), "Open files in a with statement, so they are always closed."
+          for call in opens:
+              enc = [k for k in call.keywords if k.arg == "encoding"]
+              ok = enc and isinstance(enc[0].value, ast.Constant) and str(enc[0].value.value).lower() in ("utf-8", "utf8")
+              assert ok, f"Line {call.lineno}: pass encoding=\"utf-8\" to open(), so text is read and written the same way everywhere."
+    solution: |
+      # Notes file processor: milestone 1
+
+      NOTES_PATH = "notes.txt"
+      SUMMARY_PATH = "summary.txt"
+
+      SAMPLE_NOTES = """TODO: buy milk
+      IDEA: a calculator that speaks its answers
+      DONE: finish the quiz project
+
+      TODO: read about dictionaries
+      Meeting notes: Sam liked the quiz idea
+      IDEA: palindrome finder for song titles
+      TODO: practise reading files
+      """
+
+
+      def write_text(path, text):
+          """Write text to the file at path, replacing its old content (UTF-8)."""
+          with open(path, "w", encoding="utf-8") as file:
+              file.write(text)
+
+
+      def read_lines(path):
+          """Return the lines of a UTF-8 text file, without their line endings."""
+          lines = []
+          with open(path, encoding="utf-8") as file:
+              for line in file:
+                  lines.append(line.rstrip("\n"))
+          return lines
+  - id: analyse
+    title: Count, filter and tag lines
+    description: |
+      Add four pure functions that work on a list of lines (no files involved):
+
+      * `count_non_blank(lines)`: how many lines contain something other than spaces;
+      * `filter_lines(lines, keyword)`: a new list of the lines that contain `keyword`, ignoring
+        upper/lower case, in their original order;
+      * `get_tag(line)`: the tag of a line, or `None`. Take the text before the first `:` and
+        strip spaces; it is a tag only if it is all letters (`isalpha()`) and upper case
+        (`isupper()`). `"TODO: buy milk"` → `"TODO"`, `"  IDEA : robots"` → `"IDEA"`,
+        `"Meeting notes: Sam"` → `None`, `"no colon"` → `None`;
+      * `count_tags(lines)`: a dictionary counting each tag, for example
+        `{"TODO": 3, "IDEA": 2, "DONE": 1}`.
+
+      The tests use lists of lines made up inside the tests, including blank lines, lines with
+      several colons and lower-case "tags".
+    hints:
+      - "`line.strip() != \"\"` is True for a line with real content, even if it has spaces around it."
+      - "Compare in lower case on both sides: `keyword.lower() in line.lower()`, but append the original `line` to the result."
+      - "`line.split(\":\")[0]` is the text before the first colon. Check `\":\" in line` first, otherwise every line would have a 'tag'."
+    tests:
+      - name: count_non_blank and filter_lines
+        code: |
+          assert defined("count_non_blank") and defined("filter_lines"), "Define count_non_blank(lines) and filter_lines(lines, keyword)."
+          for lines, expected in [(["a", "", "  ", "b", "\t"], 2), ([], 0), (["only"], 1)]:
+              got = count_non_blank(lines)
+              assert got == expected, f"count_non_blank({lines!r}) should be {expected}, but it returned {got!r}."
+          lines = ["Buy MILK", "bread", "milkshake recipe"]
+          for keyword, expected in [("milk", ["Buy MILK", "milkshake recipe"]), ("MILK", ["Buy MILK", "milkshake recipe"]), ("xyz", []), ("read", ["bread"])]:
+              got = filter_lines(lines, keyword)
+              assert got == expected, f"filter_lines({lines!r}, {keyword!r}) should be {expected!r}, but it returned {got!r}."
+          assert lines == ["Buy MILK", "bread", "milkshake recipe"], "filter_lines should build a new list, not change the one it was given."
+      - name: get_tag recognises upper-case tags
+        code: |
+          assert defined("get_tag"), "Define a function called get_tag(line)."
+          cases = [("TODO: buy milk", "TODO"), ("  IDEA : robots", "IDEA"), ("DONE:", "DONE"), ("URL: https://example.org", "URL"),
+                   ("Meeting notes: Sam", None), ("todo: lower case", None), ("no colon here", None), ("", None),
+                   ("TODO2: digits", None), ("Time: 10:30", None)]
+          for line, expected in cases:
+              got = get_tag(line)
+              assert got == expected, f"get_tag({line!r}) should be {expected!r}, but it returned {got!r}."
+      - name: count_tags counts each tag
+        code: |
+          assert defined("count_tags"), "Define a function called count_tags(lines)."
+          lines = ["TODO: a", "IDEA: b", "", "TODO: c", "Note: d", "DONE: e", "TODO: f", "plain"]
+          got = count_tags(lines)
+          assert got == {"TODO": 3, "IDEA": 1, "DONE": 1}, f"count_tags should be {{'TODO': 3, 'IDEA': 1, 'DONE': 1}}, but it returned {got!r}."
+          assert count_tags([]) == {}, "count_tags([]) should be an empty dictionary."
+    solution: |
+      # Notes file processor: milestones 1-2
+
+      NOTES_PATH = "notes.txt"
+      SUMMARY_PATH = "summary.txt"
+
+      SAMPLE_NOTES = """TODO: buy milk
+      IDEA: a calculator that speaks its answers
+      DONE: finish the quiz project
+
+      TODO: read about dictionaries
+      Meeting notes: Sam liked the quiz idea
+      IDEA: palindrome finder for song titles
+      TODO: practise reading files
+      """
+
+
+      def write_text(path, text):
+          """Write text to the file at path, replacing its old content (UTF-8)."""
+          with open(path, "w", encoding="utf-8") as file:
+              file.write(text)
+
+
+      def read_lines(path):
+          """Return the lines of a UTF-8 text file, without their line endings."""
+          lines = []
+          with open(path, encoding="utf-8") as file:
+              for line in file:
+                  lines.append(line.rstrip("\n"))
+          return lines
+
+
+      def count_non_blank(lines):
+          """Return how many lines contain something other than whitespace."""
+          count = 0
+          for line in lines:
+              if line.strip() != "":
+                  count = count + 1
+          return count
+
+
+      def filter_lines(lines, keyword):
+          """Return the lines that contain keyword, ignoring case, in their original order."""
+          keyword = keyword.lower()
+          matches = []
+          for line in lines:
+              if keyword in line.lower():
+                  matches.append(line)
+          return matches
+
+
+      def get_tag(line):
+          """Return the tag of a line such as "TODO: buy milk" ("TODO"), or None."""
+          if ":" not in line:
+              return None
+          tag = line.split(":")[0].strip()
+          if tag.isalpha() and tag.isupper():
+              return tag
+          return None
+
+
+      def count_tags(lines):
+          """Return a dictionary that counts each tag in lines."""
+          counts = {}
+          for line in lines:
+              tag = get_tag(line)
+              if tag is not None:
+                  counts[tag] = counts.get(tag, 0) + 1
+          return counts
+  - id: summary-file
+    title: Build and save the summary
+    description: |
+      Add:
+
+      * `build_summary(lines)`: return these lines joined with `"\n"`:
+
+        ```text
+        Notes summary
+        Total lines: 6
+        Non-blank lines: 5
+        DONE: 1
+        IDEA: 1
+        TODO: 2
+        Open TODOs:
+        - buy milk
+        - call Sam
+        ```
+
+        One line per tag, in **alphabetical order** (`sorted(tags)` sorts a dictionary's keys).
+        Under `Open TODOs:` list the text after the colon of every `TODO` line, stripped. If there
+        are none, the line is `Open TODOs: none` instead.
+      * `summarise_file(notes_path, summary_path)`: read the notes with `read_lines`, build the
+        summary, write it plus a final `"\n"` to `summary_path` with `write_text`, and **return**
+        the summary text. Let a `FileNotFoundError` from `read_lines` reach the caller.
+
+      The tests compare `build_summary` with exact expected texts (with tags, and with no tags or
+      TODOs), then summarise a real file and check what is on disk.
+    hints:
+      - "`line.split(\":\", 1)[1]` is everything after the first colon; `.strip()` removes the space after it."
+      - "Use `get_tag(line) == \"TODO\"` to find the TODO lines, so that the rule for tags lives in one function."
+      - "`summarise_file` only joins the pieces: `lines = read_lines(...)`, `summary = build_summary(lines)`, `write_text(..., summary + \"\\n\")`, `return summary`."
+    tests:
+      - name: build_summary produces the exact layout
+        code: |
+          assert defined("build_summary"), "Define a function called build_summary(lines)."
+          lines = ["TODO: buy milk", "IDEA: robot", "", "TODO:   call Sam ", "DONE: homework", "random thought"]
+          expected = "Notes summary\nTotal lines: 6\nNon-blank lines: 5\nDONE: 1\nIDEA: 1\nTODO: 2\nOpen TODOs:\n- buy milk\n- call Sam"
+          got = build_summary(lines)
+          assert got == expected, f"build_summary should return:\n{expected}\n\nbut it returned:\n{got}"
+      - name: build_summary without tags or TODOs
+        code: |
+          expected = "Notes summary\nTotal lines: 2\nNon-blank lines: 1\nOpen TODOs: none"
+          got = build_summary(["just some text", ""])
+          assert got == expected, f"Without tags or TODOs build_summary should return:\n{expected}\n\nbut it returned:\n{got}"
+          expected = "Notes summary\nTotal lines: 1\nNon-blank lines: 1\nDONE: 1\nOpen TODOs: none"
+          got = build_summary(["DONE: all of it"])
+          assert got == expected, f"With only a DONE line build_summary should return:\n{expected}\n\nbut it returned:\n{got}"
+      - name: summarise_file writes the summary file
+        code: |
+          import os
+          assert defined("summarise_file"), "Define summarise_file(notes_path, summary_path)."
+          with open("gw_test_m3_notes.txt", "w", encoding="utf-8") as f:
+              f.write("TODO: water plants\nIDEA: café map ☕\n\nTODO: email Ana\n")
+          got = summarise_file("gw_test_m3_notes.txt", "gw_test_m3_summary.txt")
+          expected = "Notes summary\nTotal lines: 4\nNon-blank lines: 3\nIDEA: 1\nTODO: 2\nOpen TODOs:\n- water plants\n- email Ana"
+          assert got == expected, f"summarise_file should return the summary:\n{expected}\n\nbut it returned:\n{got}"
+          assert os.path.exists("gw_test_m3_summary.txt"), "summarise_file should create the summary file."
+          with open("gw_test_m3_summary.txt", encoding="utf-8") as f:
+              on_disk = f.read()
+          assert on_disk == expected + "\n", f"The summary file should contain the summary plus a final newline, but it contains {on_disk!r}."
+          os.remove("gw_test_m3_notes.txt")
+          os.remove("gw_test_m3_summary.txt")
+    solution: |
+      # Notes file processor: milestones 1-3
+
+      NOTES_PATH = "notes.txt"
+      SUMMARY_PATH = "summary.txt"
+
+      SAMPLE_NOTES = """TODO: buy milk
+      IDEA: a calculator that speaks its answers
+      DONE: finish the quiz project
+
+      TODO: read about dictionaries
+      Meeting notes: Sam liked the quiz idea
+      IDEA: palindrome finder for song titles
+      TODO: practise reading files
+      """
+
+
+      def write_text(path, text):
+          """Write text to the file at path, replacing its old content (UTF-8)."""
+          with open(path, "w", encoding="utf-8") as file:
+              file.write(text)
+
+
+      def read_lines(path):
+          """Return the lines of a UTF-8 text file, without their line endings."""
+          lines = []
+          with open(path, encoding="utf-8") as file:
+              for line in file:
+                  lines.append(line.rstrip("\n"))
+          return lines
+
+
+      def count_non_blank(lines):
+          """Return how many lines contain something other than whitespace."""
+          count = 0
+          for line in lines:
+              if line.strip() != "":
+                  count = count + 1
+          return count
+
+
+      def filter_lines(lines, keyword):
+          """Return the lines that contain keyword, ignoring case, in their original order."""
+          keyword = keyword.lower()
+          matches = []
+          for line in lines:
+              if keyword in line.lower():
+                  matches.append(line)
+          return matches
+
+
+      def get_tag(line):
+          """Return the tag of a line such as "TODO: buy milk" ("TODO"), or None."""
+          if ":" not in line:
+              return None
+          tag = line.split(":")[0].strip()
+          if tag.isalpha() and tag.isupper():
+              return tag
+          return None
+
+
+      def count_tags(lines):
+          """Return a dictionary that counts each tag in lines."""
+          counts = {}
+          for line in lines:
+              tag = get_tag(line)
+              if tag is not None:
+                  counts[tag] = counts.get(tag, 0) + 1
+          return counts
+
+
+      def build_summary(lines):
+          """Return a short report about the notes, one fact per line."""
+          report = [
+              "Notes summary",
+              f"Total lines: {len(lines)}",
+              f"Non-blank lines: {count_non_blank(lines)}",
+          ]
+          tags = count_tags(lines)
+          for tag in sorted(tags):
+              report.append(f"{tag}: {tags[tag]}")
+          todos = []
+          for line in lines:
+              if get_tag(line) == "TODO":
+                  todos.append(line.split(":", 1)[1].strip())
+          if len(todos) == 0:
+              report.append("Open TODOs: none")
+          else:
+              report.append("Open TODOs:")
+              for todo in todos:
+                  report.append(f"- {todo}")
+          return "\n".join(report)
+
+
+      def summarise_file(notes_path, summary_path):
+          """Summarise the notes file into the summary file and return the summary.
+
+          Raises FileNotFoundError if the notes file does not exist.
+          """
+          lines = read_lines(notes_path)
+          summary = build_summary(lines)
+          write_text(summary_path, summary + "\n")
+          return summary
+  - id: interactive
+    title: Choose a file and handle missing files
+    description: |
+      Finish `main()` and add `read_line(prompt)` (returns `input(prompt).strip()`, or `None` when
+      `input()` raises `EOFError`). `main()` must:
+
+      1. write `SAMPLE_NOTES` to `notes.txt` and print `Created notes.txt with sample notes.`;
+      2. ask `File to summarise (Enter for notes.txt): `; an empty answer or no more input means
+         `notes.txt`;
+      3. call `summarise_file(name, SUMMARY_PATH)` inside `try`. On `FileNotFoundError` print
+         `Could not find '<name>'. Check the name and try again.` and stop (`return`);
+      4. otherwise print the summary and `Summary saved to summary.txt.`;
+      5. ask `Search for (Enter to skip): `; if a keyword was typed, print
+         `Lines containing '<keyword>': <count>` followed by each matching line of the chosen file,
+         indented by two spaces.
+
+      The tests run your program with the default file, with a notes file they create, with a
+      keyword, with a file name that does not exist (the previous `summary.txt` must stay
+      untouched) and with no input at all.
+    hints:
+      - "Put only the risky call inside `try:` (`summary = summarise_file(name, SUMMARY_PATH)`), with `except FileNotFoundError:` underneath. Everything that needs the summary comes after the try/except."
+      - "`if name is None or name == \"\":` → `name = NOTES_PATH` handles both an empty answer and the end of input."
+      - "For the search, call `filter_lines(read_lines(name), keyword)` and print `len(...)` of the result before the lines."
+    tests:
+      - name: the default run summarises notes.txt
+        code: |
+          import os
+          out = run_program("\n\n")
+          assert "Created notes.txt with sample notes." in out, "main() should first write SAMPLE_NOTES to notes.txt and say so."
+          with open("notes.txt", encoding="utf-8") as f:
+              assert f.read() == SAMPLE_NOTES, "notes.txt should contain exactly SAMPLE_NOTES."
+          expected = build_summary(read_lines("notes.txt"))
+          assert expected in out, f"With Enter as the answer, the program should print the summary of notes.txt:\n{expected}"
+          assert "Summary saved to summary.txt." in out, "After printing the summary, say 'Summary saved to summary.txt.'"
+          with open("summary.txt", encoding="utf-8") as f:
+              assert f.read() == expected + "\n", "summary.txt should contain the summary of notes.txt plus a final newline."
+      - name: another file can be chosen and searched
+        code: |
+          with open("gw_test_m4_notes.txt", "w", encoding="utf-8") as f:
+              f.write("TODO: call Sam\nIDEA: robot pet\nTODO: buy stamps\nCall the bank later\n")
+          out = run_program("gw_test_m4_notes.txt\ncall\n")
+          lines = [line.rstrip() for line in out.splitlines()]
+          assert "TODO: 2" in lines and "IDEA: 1" in lines, f"The summary should be for gw_test_m4_notes.txt (TODO: 2, IDEA: 1). The program printed:\n{out}"
+          with open("summary.txt", encoding="utf-8") as f:
+              assert "- buy stamps" in f.read(), "summary.txt should now hold the summary of the chosen file."
+          assert "Lines containing 'call': 2" in out, "Searching for 'call' should report 2 matching lines (case is ignored)."
+          assert "  TODO: call Sam" in lines and "  Call the bank later" in lines, "Print each matching line indented by two spaces."
+          out = run_program("gw_test_m4_notes.txt\n\n")
+          assert "Lines containing" not in out, "Pressing Enter at the search prompt should skip the search."
+      - name: a missing file is reported, not crashed
+        code: |
+          import os
+          if os.path.exists("gw_no_such_file.txt"):
+              os.remove("gw_no_such_file.txt")
+          with open("summary.txt", "w", encoding="utf-8") as f:
+              f.write("previous summary\n")
+          try:
+              out = run_program("gw_no_such_file.txt\nmilk\n")
+          except RuntimeError as err:
+              raise AssertionError(f"A missing file should be reported politely. Catch FileNotFoundError in main(). {err}")
+          assert "Could not find 'gw_no_such_file.txt'. Check the name and try again." in out, (
+              f"For a missing file print: Could not find 'gw_no_such_file.txt'. Check the name and try again.\nThe program printed:\n{out}"
+          )
+          assert "Lines containing" not in out, "After a missing file the program should stop instead of searching."
+          with open("summary.txt", encoding="utf-8") as f:
+              assert f.read() == "previous summary\n", "A failed run must not overwrite the previous summary.txt."
+          assert "FileNotFoundError" in source, "Catch FileNotFoundError specifically."
+      - name: no input at all still works
+        code: |
+          try:
+              out = run_program("")
+          except RuntimeError as err:
+              raise AssertionError(f"With no input the program should use notes.txt and skip the search. {err}")
+          assert "Notes summary" in out, "With no input at all, the program should summarise notes.txt."
+    solution: |
+      # Notes file processor: complete program (milestones 1-4)
+
+      NOTES_PATH = "notes.txt"
+      SUMMARY_PATH = "summary.txt"
+
+      SAMPLE_NOTES = """TODO: buy milk
+      IDEA: a calculator that speaks its answers
+      DONE: finish the quiz project
+
+      TODO: read about dictionaries
+      Meeting notes: Sam liked the quiz idea
+      IDEA: palindrome finder for song titles
+      TODO: practise reading files
+      """
+
+
+      def write_text(path, text):
+          """Write text to the file at path, replacing its old content (UTF-8)."""
+          with open(path, "w", encoding="utf-8") as file:
+              file.write(text)
+
+
+      def read_lines(path):
+          """Return the lines of a UTF-8 text file, without their line endings."""
+          lines = []
+          with open(path, encoding="utf-8") as file:
+              for line in file:
+                  lines.append(line.rstrip("\n"))
+          return lines
+
+
+      def count_non_blank(lines):
+          """Return how many lines contain something other than whitespace."""
+          count = 0
+          for line in lines:
+              if line.strip() != "":
+                  count = count + 1
+          return count
+
+
+      def filter_lines(lines, keyword):
+          """Return the lines that contain keyword, ignoring case, in their original order."""
+          keyword = keyword.lower()
+          matches = []
+          for line in lines:
+              if keyword in line.lower():
+                  matches.append(line)
+          return matches
+
+
+      def get_tag(line):
+          """Return the tag of a line such as "TODO: buy milk" ("TODO"), or None."""
+          if ":" not in line:
+              return None
+          tag = line.split(":")[0].strip()
+          if tag.isalpha() and tag.isupper():
+              return tag
+          return None
+
+
+      def count_tags(lines):
+          """Return a dictionary that counts each tag in lines."""
+          counts = {}
+          for line in lines:
+              tag = get_tag(line)
+              if tag is not None:
+                  counts[tag] = counts.get(tag, 0) + 1
+          return counts
+
+
+      def build_summary(lines):
+          """Return a short report about the notes, one fact per line."""
+          report = [
+              "Notes summary",
+              f"Total lines: {len(lines)}",
+              f"Non-blank lines: {count_non_blank(lines)}",
+          ]
+          tags = count_tags(lines)
+          for tag in sorted(tags):
+              report.append(f"{tag}: {tags[tag]}")
+          todos = []
+          for line in lines:
+              if get_tag(line) == "TODO":
+                  todos.append(line.split(":", 1)[1].strip())
+          if len(todos) == 0:
+              report.append("Open TODOs: none")
+          else:
+              report.append("Open TODOs:")
+              for todo in todos:
+                  report.append(f"- {todo}")
+          return "\n".join(report)
+
+
+      def summarise_file(notes_path, summary_path):
+          """Summarise the notes file into the summary file and return the summary.
+
+          Raises FileNotFoundError if the notes file does not exist.
+          """
+          lines = read_lines(notes_path)
+          summary = build_summary(lines)
+          write_text(summary_path, summary + "\n")
+          return summary
+
+
+      def read_line(prompt):
+          """Show prompt and return what the user typed, or None if there is no more input."""
+          try:
+              return input(prompt).strip()
+          except EOFError:
+              return None
+
+
+      def main():
+          """Create the sample notes, summarise a file chosen by the user, and search it."""
+          write_text(NOTES_PATH, SAMPLE_NOTES)
+          print(f"Created {NOTES_PATH} with sample notes.")
+          name = read_line(f"File to summarise (Enter for {NOTES_PATH}): ")
+          if name is None or name == "":
+              name = NOTES_PATH
+          try:
+              summary = summarise_file(name, SUMMARY_PATH)
+          except FileNotFoundError:
+              print(f"Could not find '{name}'. Check the name and try again.")
+              return
+          print(summary)
+          print(f"Summary saved to {SUMMARY_PATH}.")
+          keyword = read_line("Search for (Enter to skip): ")
+          if keyword is not None and keyword != "":
+              matches = filter_lines(read_lines(name), keyword)
+              print(f"Lines containing '{keyword}': {len(matches)}")
+              for line in matches:
+                  print(f"  {line}")
+
+
+      if __name__ == "__main__":
+          main()
+testing: |
+  Click **Run milestone tests** under a milestone. The tests run against your **whole program**
+  (all milestones share one file), so earlier functions must keep working as you add new ones.
+
+  * **File checks** write and read real files in the virtual file system, using names that start
+    with `gw_test_` so they never clash with your `notes.txt`, and delete them afterwards. They
+    inspect the bytes on disk, so they notice a missing `encoding="utf-8"` or a file opened in the
+    wrong mode.
+  * **Function checks** pass made-up lists of lines to the analysis functions and compare the
+    results exactly.
+  * **Program checks** re-run your whole program with `run_program("...")`, one line per
+    `input()` call, and then look at both what was printed and what ended up in `summary.txt`.
+
+  Every failed check says what it tried and what it expected. After your first test run you can
+  open the **reference solution** for the milestone to compare approaches.
+
+  On your own computer (see Setup), run the program, then open `notes.txt` in an editor, add
+  lines with new tags, run it again, and check `summary.txt`. Try a file name that does not
+  exist, too.
+security:
+  - File names typed by users are untrusted. Here any name in the folder can be read; a real application must restrict names to one folder (reject names containing / or \ and names starting with .) so that a name such as ../../secret.txt cannot reach other files.
+  - Mode "w" silently replaces a file. Only write to files your program owns (here summary.txt), never to a path the user typed without asking first; mode "x" creates a file only if it does not exist yet.
+  - Always pass encoding="utf-8". Without it Python uses the computer's default encoding, so the same file can be read differently, or fail, on another machine.
+  - Read big files line by line (for line in file) as read_lines does, rather than file.read(), so one huge file cannot exhaust memory.
+  - Report a missing file with a short message instead of a traceback; tracebacks can reveal folder names and other details about your system.
+extensions:
+  - Add a DONE count to the summary as a progress bar, for example 1 of 4 tasks done (25%).
+  - Let the user add a new TODO line from the program, appending it to the notes file with mode "a".
+  - Make tags case-insensitive, so that a line starting with "todo:" counts as TODO, and decide whether that is a good idea for your notes.
+  - Summarise several files at once (typed separated by commas) and write one combined summary, still reporting each missing file by name.
+  - Rewrite the file layer with pathlib.Path (read_text, write_text, exists) and compare it with open().
+rubric:
+  - criterion: Safe file handling
+    needsWork: Files are opened without with or without an encoding, or a file is left open.
+    meets: Every open() uses with and encoding="utf-8", and write_text replaces the file content.
+    exceeds: Only write_text and read_lines touch files, and you can explain why mode "w" is risky for user-chosen paths.
+  - criterion: Error handling
+    needsWork: A missing file crashes the program with a traceback.
+    meets: FileNotFoundError is caught in main() with a clear message, and the previous summary file is left untouched.
+    exceeds: Errors are handled in exactly one place, and read_lines stays simple because it lets the caller decide.
+  - criterion: Correct analysis
+    needsWork: Counts, tags or the summary layout are wrong for blank lines, extra colons or lower-case tags.
+    meets: All analysis functions and build_summary pass the exact tests.
+    exceeds: The tag rule lives only in get_tag and every other function reuses it.
+  - criterion: Program structure
+    needsWork: File access, analysis and printing are mixed together in main().
+    meets: Separate file, analysis and program layers; functions return values and main() does the talking.
+    exceeds: Every function has a docstring and the program would be easy to extend with new tags or reports.

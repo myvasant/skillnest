@@ -1,0 +1,1186 @@
+id: python.debugging
+concept: python.debugging
+title: Debugging Techniques
+subtitle: A systematic method instead of guessing
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Debugging is a skill with a method: reproduce the bug, read the error, form a hypothesis, isolate the
+  cause, inspect the program's state, fix the cause and add a test so it stays fixed. Learn print
+  debugging done well with f"{x=}", assertions, the pdb debugger and breakpoint(), rubber-duck
+  debugging, minimal reproducible examples and the bug patterns that cause most beginner bugs.
+objectives:
+  - Apply a systematic debugging method - reproduce, read, hypothesise, isolate, inspect, fix, prevent - instead of changing code at random.
+  - Inspect program state with labelled print debugging (f"{x=}", repr) and with a step-through debugger.
+  - Use assert statements to check assumptions and write small tests that catch regressions.
+  - Describe how to use breakpoint() and the main pdb commands.
+  - Reduce a bug to a minimal reproducible example and write a useful bug report.
+  - Recognise and fix common bug patterns - off-by-one, wrong indentation, mutating while iterating, aliasing, shadowing and string/number confusion.
+sources:
+  - title: pdb — The Python Debugger
+    url: https://docs.python.org/3/library/pdb.html
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: breakpoint()"
+    url: https://docs.python.org/3/library/functions.html#breakpoint
+    publisher: Python Software Foundation
+  - title: "PEP 553: Built-in breakpoint()"
+    url: https://peps.python.org/pep-0553/
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The assert statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-assert-statement
+    publisher: Python Software Foundation
+  - title: "What's New in Python 3.8: f-strings support = for self-documenting expressions and debugging"
+    url: https://docs.python.org/3/whatsnew/3.8.html#f-strings-support-for-self-documenting-expressions-and-debugging
+    publisher: Python Software Foundation
+  - title: "sys.settrace"
+    url: https://docs.python.org/3/library/sys.html#sys.settrace
+    publisher: Python Software Foundation
+  - title: How to create a Minimal, Reproducible Example
+    url: https://stackoverflow.com/help/minimal-reproducible-example
+    publisher: Stack Overflow
+sections:
+  - id: why
+    title: Why a method beats guessing
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          This function should count the words that have **at least** `min_length` letters. "quick" and
+          "brown" have 5 letters, so the answer should be 2. It prints 0.
+      - type: code
+        runnable: true
+        code: |
+          def count_long_words(text, min_length):
+              """Return how many words have at least min_length letters."""
+              count = 0
+              for word in text.split(" "):
+                  if len(word) > min_length:
+                      count += 1
+              return count
+
+          print(count_long_words("the quick brown fox", 5))
+        expectedOutput: |
+          0
+      - type: markdown
+        body: |
+          A **guesser** starts changing things: maybe `split` is wrong? maybe `count` should start at 1?
+          maybe `+=` is broken? Each random change might hide the symptom or add a new bug - and even if
+          the output becomes 2, the guesser does not know *why*.
+
+          A **debugger** (the person) asks a question the program can answer: *what are the values at the
+          moment the decision is made?*
+      - type: code
+        runnable: true
+        code: |
+          def count_long_words(text, min_length):
+              """Return how many words have at least min_length letters."""
+              count = 0
+              for word in text.split(" "):
+                  print(f"{word=} {len(word)=} {len(word) > min_length=}")
+                  if len(word) > min_length:
+                      count += 1
+              return count
+
+          print(count_long_words("the quick brown fox", 5))
+        expectedOutput: |
+          word='the' len(word)=3 len(word) > min_length=False
+          word='quick' len(word)=5 len(word) > min_length=False
+          word='brown' len(word)=5 len(word) > min_length=False
+          word='fox' len(word)=3 len(word) > min_length=False
+          0
+        annotations:
+          - line: 5
+            text: One temporary line prints each value with its name. The splitting and the lengths are clearly fine...
+      - type: markdown
+        body: |
+          The evidence rules out the splitting and the lengths, and points at one expression: `5 > 5` is
+          `False`. "At least" means `>=`. One observation replaced a dozen guesses - and you now know
+          the cause, so you can fix it with confidence (and delete the print).
+
+          Debugging is not a talent; it is a **process** of turning "it doesn't work" into a precise
+          question and then letting the program answer it.
+
+  - id: method
+    title: The debugging method
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The general troubleshooting habits from [troubleshooting](concept:foundations.troubleshooting)
+          become, for code, a loop of seven steps:
+
+          1. **Reproduce.** Find input that triggers the bug *every time*. A bug you cannot reproduce, you
+             cannot confirm you have fixed. Write down the exact input, the **expected** result and the
+             **actual** result.
+          2. **Read the error.** If there is a traceback, read it [bottom-up](concept:python.exceptions):
+             type and message, then the line, then the call chain. If there is no error, the "error" is the
+             difference between expected and actual - state it precisely.
+          3. **Hypothesise.** Make one specific, testable guess: "count is increased for negative numbers
+             too", not "the loop is broken".
+          4. **Isolate.** Narrow down *where* the bug can be. Check values halfway through: if they are
+             already wrong, the bug is in the first half; if not, the second. Remove code that is not needed
+             to reproduce it.
+          5. **Inspect.** Look at the actual state - with labelled prints, assertions or a debugger - to
+             confirm or reject the hypothesis. Rejected? Go back to step 3 with what you learned.
+          6. **Fix the cause**, not the symptom. "Add 1 to the answer" makes one test pass and leaves the
+             bug in place.
+          7. **Prevent.** Add a test that would have caught it (a
+             [regression test](concept:python.testing)), and ask: does the same mistake exist anywhere else?
+      - type: visualization
+        component: step-diagram
+        title: The debugging loop
+        caption: Step through the method. The loop back from Inspect to Hypothesise is normal - most bugs take a few rounds.
+        props:
+          width: 720
+          height: 300
+          nodes:
+            - { id: reproduce, label: "1 Reproduce", x: 90, y: 70 }
+            - { id: read, label: "2 Read the error", x: 260, y: 70 }
+            - { id: hypothesise, label: "3 Hypothesise", x: 430, y: 70 }
+            - { id: isolate, label: "4 Isolate", x: 610, y: 70 }
+            - { id: inspect, label: "5 Inspect state", x: 610, y: 230 }
+            - { id: fix, label: "6 Fix the cause", x: 430, y: 230 }
+            - { id: prevent, label: "7 Prevent (test)", x: 260, y: 230, shape: pill }
+          edges:
+            - { id: e1, from: reproduce, to: read }
+            - { id: e2, from: read, to: hypothesise }
+            - { id: e3, from: hypothesise, to: isolate }
+            - { id: e4, from: isolate, to: inspect }
+            - { id: e5, from: inspect, to: fix, label: confirmed }
+            - { id: e6, from: fix, to: prevent }
+            - { id: e7, from: inspect, to: hypothesise, label: rejected }
+          steps:
+            - title: Reproduce
+              body: Find an input that fails every time, and write down the expected and the actual result.
+              active: [reproduce]
+              payload: "count_long_words(\"the quick brown fox\", 5)  expected 2, actual 0"
+            - title: Read the error
+              body: No traceback here, so the "error" is the gap between expected and actual. With a traceback, read it bottom-up.
+              active: [reproduce, e1, read]
+            - title: Hypothesise
+              body: One specific, testable guess - for example "words with exactly 5 letters are not counted".
+              active: [read, e2, hypothesise]
+            - title: Isolate
+              body: Narrow down where the problem can be - the split, the lengths, or the comparison?
+              active: [hypothesise, e3, isolate]
+            - title: Inspect state
+              body: Print or step through the values at the decision point. The evidence either confirms the hypothesis or sends you back for a better one.
+              active: [isolate, e4, inspect, e7, hypothesise]
+              payload: "word='quick' len(word)=5 len(word) > min_length=False"
+            - title: Fix the cause
+              body: Change `>` to `>=` because the requirement says "at least" - not because it happens to make the number right.
+              active: [inspect, e5, fix]
+            - title: Prevent
+              body: Add a test for the boundary (a word of exactly min_length letters), and look for the same mistake elsewhere.
+              active: [fix, e6, prevent]
+              payload: "assert count_long_words(\"abcde\", 5) == 1"
+      - type: item
+        ref: mcq-next-step
+
+  - id: print-debugging
+    title: Print debugging, done well
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Adding temporary `print` calls is the oldest debugging tool, and still one of the most useful -
+          if the prints are informative. Habits that make them work:
+
+          - **Label every value.** The `=` specifier in an f-string prints the expression, an equals sign
+            and the value's `repr()`: `f"{total=}"` gives `total=42`. It works for any expression:
+            `f"{len(items)=}"`, `f"{price * qty = }"` (spaces around `=` are kept in the output).
+          - **Show the repr, not just the str.** `repr()` reveals what plain printing hides: quotes around
+            strings, trailing spaces, `\n`, and whether `3` is a number or the text `"3"`.
+          - **Print at boundaries.** At the start of a function (what came in?) and just before `return`
+            (what goes out?) - this isolates which function goes wrong.
+          - **Print inside loops with care** - one line per iteration, with the loop variable labelled.
+          - **Remove them afterwards.** For permanent diagnostics in real programs, use
+            [logging](concept:python.logging), which can be switched on and off without editing code.
+      - type: code
+        runnable: true
+        code: |
+          answer = "yes "
+          quantity = "3"
+
+          print(answer == "yes")
+          print(answer, quantity * 2)
+          print(f"{answer=} {quantity=}")
+          print(f"{type(quantity)=}")
+        expectedOutput: |
+          False
+          yes  33
+          answer='yes ' quantity='3'
+          type(quantity)=<class 'str'>
+        annotations:
+          - line: 5
+            text: Plain printing hides both problems - the trailing space is invisible and "33" looks like it could be a number.
+          - line: 6
+            text: The repr shows the space inside the quotes and that quantity is text.
+      - type: item
+        ref: predict-debug-print
+
+  - id: assertions
+    title: Assertions - make your assumptions executable
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An `assert` statement states something that must be true at that point:
+
+          ```text
+          assert condition, "message shown if it is false"
+          ```
+
+          If the condition is false, Python raises `AssertionError` with the message. Assertions help in two
+          ways:
+
+          1. **Fail fast, near the cause.** A wrong value caught where it is created is far easier to debug
+             than a strange result three functions later.
+          2. **Executable tests.** A few `assert` lines that call a function with known inputs form a
+             minimal test suite. Re-run them after every change - this is step 7, *prevent*. Real projects
+             use a test runner such as pytest ([testing](concept:python.testing)), which is built on plain
+             `assert` statements.
+      - type: code
+        runnable: true
+        code: |
+          def apply_discount(price, percent):
+              assert 0 <= percent <= 100, f"percent out of range: {percent}"
+              return price - price * percent / 100
+
+          print(apply_discount(200, 10))
+          print(apply_discount(200, 150))
+        expectError: AssertionError
+        expectedOutput: |
+          180.0
+        caption: "The second call stops immediately with AssertionError: percent out of range: 150 - instead of quietly returning a negative price."
+      - type: code
+        runnable: true
+        code: |
+          def is_even(n):
+              return n % 2 == 0
+
+          assert is_even(4)
+          assert not is_even(7)
+          assert is_even(0)
+          assert is_even(-2)
+          print("all checks passed")
+        expectedOutput: |
+          all checks passed
+        caption: A tiny test suite. Notice the edge cases - zero and a negative number - where bugs like to hide.
+      - type: callout
+        variant: warning
+        title: Two assert traps
+        body: |
+          - **Assertions can be switched off.** Running `python -O` removes all `assert` statements. Never
+            use them to validate user input or anything that must always be checked - raise an exception or
+            re-prompt instead.
+          - **No parentheses around the pair.** `assert (x > 0, "message")` asserts a two-item *tuple*,
+            which is always truthy, so it never fails. Python warns: `SyntaxWarning: assertion is always
+            true, perhaps remove parentheses?`
+      - type: code
+        runnable: true
+        code: |
+          x = -5
+          assert (x > 0, "x must be positive")
+          print("this still runs - the assert checked a non-empty tuple")
+        expectedOutput: |
+          this still runs - the assert checked a non-empty tuple
+        caption: The SyntaxWarning appears on standard error when the program is compiled; the assert itself never fails.
+
+  - id: debugger
+    title: Stepping through code with a debugger
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Prints answer questions you thought to ask in advance. A [debugger](glossary:debugger) lets you
+          pause a running program and ask new questions on the spot: look at any variable, run one line at a
+          time, step into a function call, look at the call stack.
+
+          Python ships with one, **pdb**. The easiest way to start it is the built-in
+          [`breakpoint()`](glossary:breakpoint): put it on a line, run the program in a terminal, and
+          execution pauses there with a `(Pdb)` prompt.
+          (Since Python 3.13, the debugger stops on the `breakpoint()` line itself.)
+      - type: code
+        status: illustrative
+        code: |
+          def total_price(prices, discount):
+              breakpoint()          # execution pauses here and opens pdb
+              total = 0
+              for price in prices:
+                  total += price
+              return total - discount
+
+          print(total_price([12, 30, 8], 5))
+        caption: >-
+          Illustrative - pdb needs an interactive terminal, which this in-browser runner does not provide.
+          Save it as shop.py and run python shop.py on your own computer.
+      - type: code
+        language: text
+        code: |
+          $ python shop.py
+          > /home/ada/shop.py(2)total_price()
+          -> breakpoint()          # execution pauses here and opens pdb
+          (Pdb) p prices, discount
+          ([12, 30, 8], 5)
+          (Pdb) n
+          > /home/ada/shop.py(3)total_price()
+          -> total = 0
+          (Pdb) w
+            /home/ada/shop.py(8)<module>()
+          -> print(total_price([12, 30, 8], 5))
+          > /home/ada/shop.py(3)total_price()
+          -> total = 0
+          (Pdb) c
+          45
+        caption: An example session (paths and exact formatting vary between Python versions and systems). w shows the call stack, innermost frame last.
+      - type: markdown
+        body: |
+          | Command | Does |
+          |---|---|
+          | `p expr` / `pp expr` | Print (pretty-print) the value of an expression |
+          | `n` (next) | Run the current line, stepping **over** function calls |
+          | `s` (step) | Run the current line, stepping **into** a function call |
+          | `c` (continue) | Run until the next breakpoint (or the end) |
+          | `l` / `ll` | List source around the current line / the whole function |
+          | `w` (where) | Show the call stack |
+          | `u` / `d` | Move up / down the stack to inspect a caller's variables |
+          | `b 12` | Set a breakpoint at line 12 |
+          | `q` | Quit the debugger (and the program) |
+
+          Tips: a variable whose name is also a command (such as `n` or `c`) must be printed with `p n`.
+          `python -m pdb script.py` runs a whole script under the debugger and, if it crashes, drops you into
+          *post-mortem* mode at the line that failed. Editors such as VS Code offer the same features
+          graphically: click in the margin to set a breakpoint, then use Step Over / Step Into and the
+          Variables and Call Stack panels.
+
+          In this browser, the **python-tracer** visualisations in these lessons play the debugger's role:
+          they record every step so you can move forwards and backwards through the program.
+
+  - id: watch-state
+    title: "Watch the state: a bug you can see"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Some bugs are almost impossible to understand by reading, and obvious once you watch the state
+          change. This loop is supposed to remove every 2 from the list - predict the result, then step
+          through and watch the list and the loop's position.
+      - type: visualization
+        component: python-tracer
+        title: Removing items from a list while looping over it
+        caption: >-
+          After the first 2 is removed, the second 2 slides into the position the loop has just finished
+          with, so the loop never sees it. Watch n jump from the first 2 straight to 3.
+        props:
+          code: |
+            numbers = [1, 2, 2, 3]
+            for n in numbers:
+                if n == 2:
+                    numbers.remove(n)
+            print(numbers)
+      - type: markdown
+        body: |
+          The result is `[1, 2, 3]`. A `for` loop over a list walks through **positions** 0, 1, 2…; removing
+          an item shifts everything after it one place left, so the next item is skipped. The fix is to
+          not mutate the list you are looping over: loop over a copy (`for n in numbers[:]`) or, better,
+          build a new list of the items you want to keep. (For dictionaries and sets Python refuses
+          outright: `RuntimeError: dictionary changed size during iteration`.)
+
+  - id: rubber-duck-mre
+    title: Rubber ducks and minimal reproducible examples
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[Rubber-duck debugging](glossary:rubber-duck-debugging).** Explain your code, line by line and
+          out loud, to someone - or something, like a rubber duck - that knows nothing about it. "Here I
+          loop over the words… and here I count the word if its length is greater than… oh. *Greater than.*"
+          Explaining forces you to state every assumption, and the wrong one stands out. It works
+          surprisingly often, and costs nothing.
+
+          **[Minimal reproducible example](glossary:minimal-reproducible-example) (MRE).** When you are
+          stuck, cut the problem down to the *smallest complete program that still shows the bug*:
+
+          1. Copy the failing code somewhere separate.
+          2. Replace input from users, files or networks with fixed values that still trigger the bug.
+          3. Delete a piece. Still broken? Keep the deletion. Fixed? Put it back - that piece matters.
+          4. Repeat until nothing more can be removed.
+
+          Very often the bug becomes obvious halfway through. If not, you now have exactly what a colleague
+          or a forum needs. For example, an invoice program that is "sometimes one paisa off" can shrink to
+          this:
+      - type: code
+        runnable: true
+        code: |
+          print(round(2.675, 2))
+        expectedOutput: |
+          2.67
+        caption: >-
+          One line instead of 300 - and now it is searchable. 2.675 cannot be stored exactly in binary, so
+          it is really 2.67499999… (see numbers). The fix is to store money as integer paise.
+      - type: code
+        language: text
+        code: |
+          Title: round(2.675, 2) returns 2.67, expected 2.68
+
+          Python 3.14, run in the Groundwork browser runner
+
+          Code (complete, runnable):
+              print(round(2.675, 2))
+
+          Expected: 2.68
+          Actual:   2.67
+          Tried:    round(2.665, 2) and round(2.685, 2) behave differently too.
+        caption: A good bug report - a title that states the symptom, the version, complete minimal code, expected vs actual, and what you already tried.
+      - type: item
+        ref: explain-mre
+
+  - id: bug-patterns
+    title: Common bug patterns
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          Most beginner bugs are one of a handful of patterns. Knowing them turns "no idea" into "let me
+          check the usual suspects".
+
+          | Pattern | Typical symptom | Example | Fix |
+          |---|---|---|---|
+          | [Off-by-one](glossary:off-by-one-error) | First or last item missing or extra | `range(1, n)` stops at n - 1 | `range(1, n + 1)`; test the boundaries |
+          | Wrong indentation | A statement runs too often, too rarely, or only once | `count += 1` outside the `if`; `return` inside the loop | Re-indent; check which block each line belongs to |
+          | Accumulator reset inside a loop | Total equals the last item | `total = 0` inside the `for` | Initialise once, before the loop |
+          | Mutating a list while looping over it | Items skipped | `for x in xs: xs.remove(x)` | Build a new list, or loop over a copy |
+          | Aliasing instead of copying | The "original" list changes too | `backup = scores` | `scores.copy()` - see [copying](concept:python.copying) |
+          | Text instead of numbers | `"3" + "4"` gives `"34"`, `"3" * 2` gives `"33"` | `input()` always returns a string | Convert with `int()` / `float()` |
+          | Missing `return` | `None` appears, or `NoneType` errors | a branch that computes but does not return | Return on every path |
+          | Shadowing a built-in | `TypeError: 'int' object is not callable` | `sum = 0`, `list = [...]` | Rename - see [scope](concept:python.scope) |
+          | Mutable default argument | A list "remembers" earlier calls | `def f(items=[])` | `None` default - see [parameters](concept:python.parameters) |
+          | Comparing floats with `==` | Equal-looking numbers compare unequal | `0.1 + 0.2 == 0.3` | `math.isclose(a, b)` |
+
+          Python helps with one classic from other languages: `if x = 5:` is a `SyntaxError` (it suggests
+          `==`), so you cannot accidentally assign in a condition.
+      - type: code
+        runnable: true
+        code: |
+          def sum_to(n):
+              """Return 1 + 2 + ... + n."""
+              total = 0
+              for i in range(1, n):
+                  total += i
+              return total
+
+          print(sum_to(4))
+          assert sum_to(4) == 10, f"sum_to(4) should be 10, got {sum_to(4)}"
+        expectError: AssertionError
+        expectedOutput: |
+          6
+        caption: "An off-by-one bug caught by a test: range(1, 4) is 1, 2, 3, so 4 is never added. This is one of the practice exercises below."
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How debuggers see your program.** CPython lets a program register a *trace function* with
+          `sys.settrace`. The interpreter then calls it for events such as "a function was called", "a new
+          line is about to run", "a function returned (with this value)" and "an exception was raised",
+          passing the current frame - with all its local variables. Debuggers, coverage tools and the
+          python-tracer in these lessons are built on hooks like this one. Python 3.12 added a lower-overhead
+          event API, `sys.monitoring` ([PEP 669](https://peps.python.org/pep-0669/)); in Python 3.14 pdb
+          can use either, and `breakpoint()` uses the `sys.monitoring` backend.
+      - type: code
+        runnable: true
+        code: |
+          import sys
+
+          def tracer(frame, event, arg):
+              if event == "call":
+                  print("call", frame.f_code.co_name, frame.f_locals)
+              elif event == "return":
+                  print("return", frame.f_code.co_name, "->", arg)
+              return tracer
+
+          def square(n):
+              return n * n
+
+          sys.settrace(tracer)
+          square(3)
+          sys.settrace(None)
+        expectedOutput: |
+          call square {'n': 3}
+          return square -> 9
+        caption: A ten-line "debugger" that reports calls and return values.
+      - type: markdown
+        body: |
+          **What `breakpoint()` really calls.** `breakpoint()` calls `sys.breakpointhook()`, which by default
+          imports pdb and starts it ([PEP 553](https://peps.python.org/pep-0553/)). The `PYTHONBREAKPOINT`
+          environment variable changes that: `PYTHONBREAKPOINT=0` turns every `breakpoint()` into a no-op
+          (useful if one is accidentally left in), and `PYTHONBREAKPOINT=some.module.function` uses a
+          different debugger.
+
+          **Other tools worth knowing.** `python -i script.py` leaves you in the interactive prompt after
+          the script ends or crashes, with all its global variables available; `import pdb; pdb.pm()` then
+          starts post-mortem debugging of the last exception. New in Python 3.14, `python -m pdb -p PID`
+          attaches the debugger to a program that is already running.
+
+  - id: practice
+    title: Debugging practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each program below has one bug from the patterns above. Don't just stare: **reproduce** it (run
+          it), form a **hypothesis**, add a labelled print or step through it to **inspect** the state, then
+          fix the **cause**. The checks re-run your function with other inputs, so the fix must be genuine.
+      - type: item
+        ref: debug-indentation
+      - type: item
+        ref: debug-off-by-one
+      - type: item
+        ref: debug-reset-accumulator
+      - type: item
+        ref: debug-mutate-iterate
+      - type: item
+        ref: debug-string-number
+      - type: item
+        ref: write-boundary-tests
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Debug with a loop: **reproduce → read → hypothesise → isolate → inspect → fix the cause →
+            prevent** with a test. A rejected hypothesis is progress.
+          - Print debugging: label values with `f"{x=}"`, look at `repr()`, print at function boundaries,
+            remove the prints afterwards.
+          - `assert condition, message` checks assumptions and makes tiny tests; never use it to validate
+            input (`python -O` removes asserts).
+          - `breakpoint()` opens pdb: `p`, `n`, `s`, `c`, `l`, `w`, `q`. IDEs offer the same graphically.
+          - Explain the code to a rubber duck; shrink stubborn bugs to a minimal reproducible example.
+          - Usual suspects: off-by-one, indentation, accumulator reset, mutating while iterating, aliasing,
+            strings vs numbers, missing return, shadowing, mutable defaults, float equality.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Walk me through how you would debug X" is a favourite behavioural and technical question. Show
+          a method, not luck: reproduce it reliably, read the error, form and test hypotheses, narrow it
+          down (bisect the code or the input), fix the root cause and add a regression test. Mention tools
+          you have actually used - labelled prints, pdb or an IDE debugger, logs - and the habit of writing a
+          minimal reproducible example before asking for help.
+
+items:
+  - id: mcq-next-step
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      You have reproduced a bug: `apply_discount(200, 10)` returns `20` instead of `180`. Your hypothesis
+      is that the function returns the discount amount instead of the discounted price. What is the best
+      next step?
+    explanation: >-
+      A hypothesis is only useful if you test it. Looking at the value computed just before the return
+      (with a labelled print or a debugger) either confirms that 20 is the discount amount or sends you back
+      to form a better hypothesis - without changing any code yet.
+    options:
+      - id: a
+        text: Inspect the values just before the return - with a labelled print or a debugger - to confirm or reject the hypothesis.
+        correct: true
+        feedback: Right. Test the hypothesis with evidence before you change anything.
+      - id: b
+        text: Rewrite the whole function from scratch.
+        feedback: You may well rewrite the same mistake, and you will not learn what went wrong. Find the cause first.
+      - id: c
+        text: Wrap the call in try/except so the program keeps running.
+        feedback: There is no exception here - the result is just wrong. Catching exceptions would not change a wrong value.
+      - id: d
+        text: Change several lines you suspect at once and re-run until the output is 180.
+        feedback: Changing many things at once hides which change mattered, and can make the output right for the wrong reason.
+
+  - id: predict-debug-print
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (Three lines.)
+    code: |
+      price = 19.5
+      items = ["pen", "ink"]
+      print(f"{price=}")
+      print(f"{items=}", f"{len(items)=}")
+      print(f"{price * 2 = }")
+    answer: |
+      price=19.5
+      items=['pen', 'ink'] len(items)=2
+      price * 2 = 39.0
+    explanation: >-
+      The = specifier prints the expression's source text, an equals sign and the repr of its value. The
+      list's repr shows the quotes around its strings. Spaces around = are copied into the output exactly.
+    wrongAnswers:
+      - answer: |
+          19.5
+          ['pen', 'ink'] 2
+          39.0
+        feedback: With = inside the braces, the f-string also prints the expression text before the value - that is the whole point of it.
+      - answer: |
+          price=19.5
+          items=[pen, ink] len(items)=2
+          price * 2 = 39.0
+        feedback: The value is shown with repr(), and a list's repr always shows its strings in quotes.
+      - answer: |
+          price=19.5
+          items=['pen', 'ink'] len(items)=2
+          price * 2=39.0
+        feedback: The spaces you write around = are kept in the output, so "price * 2 = 39.0" has spaces on both sides.
+
+  - id: explain-mre
+    type: explain
+    skill: explanation
+    prompt: >-
+      Your 300-line script crashes with a confusing error somewhere deep inside, and you want help from a
+      colleague. Describe how you would turn it into a minimal reproducible example, and list what a good
+      bug report should contain.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Describes copying the code and repeatedly deleting parts, keeping each deletion only if the bug still happens.
+      - Mentions replacing external input (user input, files, network) with fixed values that still trigger the bug.
+      - Says the result must be complete and runnable, and as small as possible.
+      - Lists report contents - Python version, the minimal code, expected vs actual result (with the full traceback), and what was already tried.
+    modelAnswer: |
+      I would copy the script into a new file and shrink it step by step: replace input() calls, files and
+      network calls with hard-coded values that still cause the crash, then delete functions, lines and data
+      one piece at a time, re-running after each deletion. If the bug still happens, the deletion stays; if
+      it disappears, I put the piece back because it matters. I stop when nothing else can be removed, and
+      make sure the result is a complete program anyone can run. Often the cause becomes obvious while doing
+      this. The bug report then contains a title describing the symptom, the Python version and how I ran it,
+      the minimal code, the expected result and the actual result with the full traceback, and what I have
+      already tried.
+
+  - id: debug-indentation
+    type: debug
+    skill: debugging
+    prompt: |
+      `average_positive([4, -2, 6])` should return the average of the **positive** numbers only, `5.0`,
+      but it returns `3.3333333333333335`. Find and fix the bug.
+    starterCode: |
+      def average_positive(numbers):
+          total = 0
+          count = 0
+          for n in numbers:
+              if n > 0:
+                  total += n
+              count += 1
+          return total / count
+
+      print(average_positive([4, -2, 6]))
+    solution: |
+      def average_positive(numbers):
+          total = 0
+          count = 0
+          for n in numbers:
+              if n > 0:
+                  total += n
+                  count += 1
+          return total / count
+
+      print(average_positive([4, -2, 6]))
+    expectedOutput: |
+      5.0
+    tests:
+      - name: averages only the positive numbers
+        code: |
+          for numbers, expected in [([4, -2, 6], 5.0), ([1, 2, 3], 2.0), ([-1, 5], 5.0), ([-3, -4, 9, 1], 5.0)]:
+              r = average_positive(numbers)
+              assert r == expected, f"average_positive({numbers}) returned {r!r}; expected {expected}."
+      - name: prints 5.0
+        code: |
+          assert output().strip() == "5.0", f"Your program printed {output()!r}."
+    hints:
+      - "Add `print(f\"{n=} {total=} {count=}\")` at the end of the loop body and run it. What happens to count when n is -2?"
+      - Which block does `count += 1` belong to - the loop, or the if?
+      - Indent `count += 1` so it only runs when the number is positive.
+    feedback:
+      - when: { outputContains: "3.333" }
+        message: count still goes up for every number. Look at the indentation of count += 1.
+    explanation: >-
+      count += 1 was indented at the loop level, so it counted every number, including negatives, while
+      total only added positives: 10 / 3. Moving it inside the if makes both describe the same set of
+      numbers: 10 / 2 = 5.0.
+
+  - id: debug-off-by-one
+    type: debug
+    skill: debugging
+    prompt: |
+      `sum_to(n)` should return 1 + 2 + … + n, so `sum_to(4)` should be `10`. It returns `6`. Fix it.
+    starterCode: |
+      def sum_to(n):
+          """Return 1 + 2 + ... + n."""
+          total = 0
+          for i in range(1, n):
+              total += i
+          return total
+
+      print(sum_to(4))
+    solution: |
+      def sum_to(n):
+          """Return 1 + 2 + ... + n."""
+          total = 0
+          for i in range(1, n + 1):
+              total += i
+          return total
+
+      print(sum_to(4))
+    expectedOutput: |
+      10
+    tests:
+      - name: correct sums
+        code: |
+          for n, expected in [(4, 10), (1, 1), (0, 0), (100, 5050)]:
+              r = sum_to(n)
+              assert r == expected, f"sum_to({n}) returned {r!r}; expected {expected}."
+      - name: prints 10
+        code: |
+          assert output().strip() == "10", f"Your program printed {output()!r}."
+    hints:
+      - "Print the loop variable: `print(f\"{i=}\")`. Which numbers does the loop actually visit?"
+      - range(start, stop) never includes stop.
+    feedback:
+      - when: { outputEquals: "6\n" }
+        message: The loop still stops one number early. range(1, n) produces 1 to n - 1.
+    explanation: >-
+      range(1, n) stops before n, so the last number was never added - a classic off-by-one error.
+      range(1, n + 1) includes n. Testing the boundaries (0, 1 and a normal value) is the way to catch these.
+
+  - id: debug-reset-accumulator
+    type: debug
+    skill: debugging
+    prompt: |
+      `total_sales(days)` should add up the sales for all days: `total_sales([120, 80, 45])` should be
+      `245`. It returns `45`, and `total_sales([])` crashes. Fix it so both work (an empty list gives `0`).
+    starterCode: |
+      def total_sales(days):
+          for sales in days:
+              total = 0
+              total += sales
+          return total
+
+      print(total_sales([120, 80, 45]))
+      print(total_sales([]))
+    solution: |
+      def total_sales(days):
+          total = 0
+          for sales in days:
+              total += sales
+          return total
+
+      print(total_sales([120, 80, 45]))
+      print(total_sales([]))
+    expectedOutput: |
+      245
+      0
+    tests:
+      - name: adds every day
+        code: |
+          for days, expected in [([120, 80, 45], 245), ([7], 7), ([1, 2, 3, 4], 10)]:
+              r = total_sales(days)
+              assert r == expected, f"total_sales({days}) returned {r!r}; expected {expected}."
+      - name: empty list gives 0
+        code: |
+          r = total_sales([])
+          assert r == 0, f"total_sales([]) returned {r!r}; expected 0."
+      - name: prints 245 and 0
+        code: |
+          assert output_lines() == ["245", "0"], f"Your program printed {output()!r}."
+    hints:
+      - The result equals the last day's sales. What happens to total at the start of every iteration?
+      - The crash for [] is an UnboundLocalError - total is only ever assigned inside the loop.
+      - Initialise the accumulator once, before the loop starts.
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: With an empty list the loop body never runs, so total is never assigned. Create total before the loop.
+      - when: { outputContains: "45\n" }
+        message: total is reset to 0 on every iteration, so only the last day survives. Move total = 0 above the for line.
+    explanation: >-
+      total = 0 inside the loop threw away the running total on every iteration, so only the last value
+      remained - and for an empty list total was never created at all. Initialising it once, before the
+      loop, fixes both symptoms with one change, which is a good sign you found the real cause.
+
+  - id: debug-mutate-iterate
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `remove_negatives(numbers)` should return a **new** list containing only the numbers that are not
+      negative, and leave the caller's list unchanged. For `[-1, -2, 3, -4, 5]` it returns `[-2, 3, 5]`.
+      Fix it.
+    starterCode: |
+      def remove_negatives(numbers):
+          for n in numbers:
+              if n < 0:
+                  numbers.remove(n)
+          return numbers
+
+      print(remove_negatives([-1, -2, 3, -4, 5]))
+    solution: |
+      def remove_negatives(numbers):
+          result = []
+          for n in numbers:
+              if n >= 0:
+                  result.append(n)
+          return result
+
+      print(remove_negatives([-1, -2, 3, -4, 5]))
+    expectedOutput: |
+      [3, 5]
+    tests:
+      - name: removes every negative
+        code: |
+          for numbers, expected in [([-1, -2, 3, -4, 5], [3, 5]), ([-1, -1], []), ([], []), ([0, 2, -3], [0, 2])]:
+              r = remove_negatives(list(numbers))
+              assert r == expected, f"remove_negatives({numbers}) returned {r!r}; expected {expected}."
+      - name: leaves the original list unchanged
+        code: |
+          original = [4, -1, -2, 7]
+          r = remove_negatives(original)
+          assert original == [4, -1, -2, 7], f"The caller's list was changed to {original}. Build a new list instead of removing from the one you were given."
+          assert r is not original, "Return a new list, not the same list object."
+      - name: prints [3, 5]
+        code: |
+          assert output().strip() == "[3, 5]", f"Your program printed {output()!r}."
+    hints:
+      - Step through it (or print n and numbers each iteration). Which values does the loop never look at?
+      - Removing an item shifts the later items left, so the loop skips the next one.
+      - Instead of removing, build a new list and append the numbers you want to keep.
+    feedback:
+      - when: { outputContains: "-2" }
+        message: A negative number survived because the loop skipped it after a removal. Build a new list instead of changing the one you are looping over.
+    explanation: >-
+      Removing from a list while a for loop walks over it shifts the remaining items, so the item after
+      each removal is skipped (-2 and then nothing after -4). Building a new list avoids mutating the
+      sequence being iterated and also leaves the caller's list untouched.
+
+  - id: debug-string-number
+    type: debug
+    skill: debugging
+    stdin: |
+      3
+      4
+    prompt: |
+      This program should read two whole numbers and print their sum. With the inputs `3` and `4` it
+      prints `Sum: 34`. Fix it so it prints `Sum: 7` (and works for any two whole numbers).
+    starterCode: |
+      first = input("First number: ")
+      second = input("Second number: ")
+      print("Sum:", first + second)
+    solution: |
+      first = int(input("First number: "))
+      second = int(input("Second number: "))
+      print("Sum:", first + second)
+    expectedOutput: |
+      First number: Second number: Sum: 7
+    tests:
+      - name: adds 3 and 4
+        code: |
+          assert output().rstrip().endswith("Sum: 7"), f"With inputs 3 and 4 the program should end with 'Sum: 7'. It printed {output()!r}."
+      - name: works for other numbers
+        code: |
+          for text, expected in [("10\n-2\n", "Sum: 8"), ("0\n0\n", "Sum: 0"), ("125\n5\n", "Sum: 130")]:
+              out = run_program(text)
+              assert out.rstrip().endswith(expected), f"With inputs {text.split()} the program printed {out!r}; expected it to end with {expected!r}."
+    hints:
+      - "Inspect the types: `print(f\"{first=} {type(first)=}\")`. What does input() return?"
+      - "+ joins two strings. Convert each input with int() before adding."
+    feedback:
+      - when: { outputContains: "Sum: 34" }
+        message: The two inputs are still strings, so + joins them. Convert them with int().
+    explanation: >-
+      input() always returns a string, and + on strings concatenates: "3" + "4" is "34". Converting each
+      value with int() makes + do arithmetic. A labelled print with repr or type() exposes this instantly.
+
+  - id: write-boundary-tests
+    type: code
+    skill: design
+    difficulty: 3
+    prompt: |
+      `grade(score)` below is correct. Your job is step 7 of the method - **prevent**. Extend
+      `test_grade()` with `assert` statements so that it **passes** for this correct `grade`, but would
+      **fail** if someone later introduced a boundary bug, such as changing `>= 90` to `> 90` or `>= 75`
+      to `> 75`, or forgetting the `"C"` case. Use at least four asserts.
+    starterCode: |
+      def grade(score):
+          if score >= 90:
+              return "A"
+          if score >= 75:
+              return "B"
+          return "C"
+
+      def test_grade():
+          assert grade(95) == "A"
+
+      test_grade()
+      print("all tests passed")
+    solution: |
+      def grade(score):
+          if score >= 90:
+              return "A"
+          if score >= 75:
+              return "B"
+          return "C"
+
+      def test_grade():
+          assert grade(95) == "A"
+          assert grade(90) == "A"
+          assert grade(89) == "B"
+          assert grade(75) == "B"
+          assert grade(74) == "C"
+          assert grade(0) == "C"
+
+      test_grade()
+      print("all tests passed")
+    expectedOutput: |
+      all tests passed
+    tests:
+      - name: test_grade passes for the correct grade
+        code: |
+          assert defined("test_grade") and callable(test_grade), "Keep the function test_grade()."
+          test_grade()
+      - name: uses at least four asserts
+        code: |
+          import ast
+          fn = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "test_grade"]
+          count = sum(isinstance(n, ast.Assert) for n in ast.walk(fn[0])) if fn else 0
+          assert count >= 4, f"test_grade has {count} assert statement(s); write at least four."
+      - name: catches a bug at the A boundary
+        code: |
+          def buggy(score):
+              if score > 90:
+                  return "A"
+              if score >= 75:
+                  return "B"
+              return "C"
+          g = test_grade.__globals__
+          original = g["grade"]
+          g["grade"] = buggy
+          try:
+              test_grade()
+              caught = False
+          except AssertionError:
+              caught = True
+          finally:
+              g["grade"] = original
+          assert caught, "test_grade() still passes if grade() wrongly uses score > 90, so a score of exactly 90 would get a B. Add an assert for the boundary value 90."
+      - name: catches a bug at the B boundary
+        code: |
+          def buggy(score):
+              if score >= 90:
+                  return "A"
+              if score > 75:
+                  return "B"
+              return "C"
+          g = test_grade.__globals__
+          original = g["grade"]
+          g["grade"] = buggy
+          try:
+              test_grade()
+              caught = False
+          except AssertionError:
+              caught = True
+          finally:
+              g["grade"] = original
+          assert caught, "test_grade() still passes if grade() wrongly uses score > 75. Add an assert for the boundary value 75."
+      - name: catches a missing C case
+        code: |
+          def buggy(score):
+              if score >= 90:
+                  return "A"
+              return "B"
+          g = test_grade.__globals__
+          original = g["grade"]
+          g["grade"] = buggy
+          try:
+              test_grade()
+              caught = False
+          except AssertionError:
+              caught = True
+          finally:
+              g["grade"] = original
+          assert caught, "test_grade() still passes if grade() never returns 'C'. Add an assert for a low score, such as 74 or 0."
+      - name: prints the success message
+        code: |
+          assert output().strip() == "all tests passed", f"Your program printed {output()!r}."
+    hints:
+      - Bugs hide at boundaries. Which exact scores sit on either side of each threshold?
+      - "Test both sides of every boundary: 90 and 89, 75 and 74."
+      - "`assert grade(90) == \"A\"` fails if someone writes > 90."
+    explanation: >-
+      A test only protects you if it would fail when the code is wrong. Values on both sides of each
+      threshold (90/89, 75/74) pin the boundaries exactly, and a low score pins the "C" branch. This is
+      how a fixed bug stays fixed: the next person who breaks it gets a failing assert instead of a wrong
+      grade in production.
+
+  # ----- Mastery check (new items) -----
+  - id: m-mcq-isolate
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: >-
+      A 200-line script reads data, transforms it in several stages and prints a total at the end. The
+      total is wrong, and there is no error message. What is the most efficient way to locate the bug?
+    explanation: >-
+      Checking the data at the midpoint tells you which half contains the bug; repeating this halves the
+      search space each time (bisection). Reading or rewriting everything does not use the program's own
+      evidence, and changing many things at once destroys the information you need.
+    options:
+      - id: a
+        text: Check the intermediate data halfway through. If it is already wrong, the bug is in the first half; otherwise in the second. Repeat on the half that is wrong.
+        correct: true
+        feedback: Correct - isolate by bisection. Each check halves the amount of code you have to suspect.
+      - id: b
+        text: Rewrite the script from scratch more carefully.
+        feedback: Expensive, and you may repeat the same mistake. Find the cause first.
+      - id: c
+        text: Change every line that looks suspicious, then run it again.
+        feedback: With several changes at once you cannot tell which one mattered - and you may add new bugs.
+      - id: d
+        text: Wrap the whole script in try/except so it cannot fail.
+        feedback: There is no exception to catch - the total is simply wrong. Handling exceptions cannot fix a wrong value.
+
+  - id: m-predict-repr
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Two lines.)
+    code: |
+      name = "Ada\n"
+      count = "3"
+      print(f"{name=}")
+      print(f"{count=}", count * 2)
+    answer: |
+      name='Ada\n'
+      count='3' 33
+    explanation: >-
+      The = specifier uses repr(), which shows the quotes and writes the newline as the two characters \n
+      instead of starting a new line. count is the string "3", so count * 2 repeats it: "33".
+    wrongAnswers:
+      - answer: |
+          name=Ada
+
+          count=3 6
+        feedback: >-
+          f"{x=}" shows the repr of the value: strings appear in quotes and a newline appears as \n. And
+          "3" * 2 repeats the string - it is not arithmetic.
+      - answer: |
+          name='Ada\n'
+          count='3' 6
+        feedback: count is the string "3". Multiplying a string by 2 repeats it, giving "33".
+
+  - id: m-mcq-pdb-step
+    type: mcq
+    skill: recognition
+    prompt: >-
+      You are paused in pdb on the line `total = compute_tax(price)`, and you want to watch what happens
+      *inside* compute_tax. Which command do you type?
+    explanation: >-
+      s (step) runs the current line but stops at the first line inside any function it calls. n (next)
+      would run compute_tax completely and stop on the following line of the current function.
+    options:
+      - id: a
+        text: "s (step)"
+        correct: true
+        feedback: Correct - step into the call.
+      - id: b
+        text: "n (next)"
+        feedback: next steps over the call - compute_tax runs to completion and you stop on the next line of the current function.
+      - id: c
+        text: "c (continue)"
+        feedback: continue runs until the next breakpoint (or the end of the program), so you would not see inside compute_tax.
+      - id: d
+        text: "q (quit)"
+        feedback: quit stops the debugger and the program.
+
+  - id: m-tf-assert-input
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `assert` is a good way to check that a user typed a valid number in a production program."
+    answer: false
+    explanation: >-
+      Running Python with -O removes every assert statement, and bad user input is an expected situation,
+      not a programming error. Validate input with try/except (or an if) and handle it - for example by
+      asking again.
+
+  - id: m-debug-aliasing
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `scaled(values)` should return a **new** list with every value multiplied by 10, leaving the caller's
+      list unchanged. The program should print `[1, 2, 3]` and then `[10, 20, 30]`, but it prints
+      `[10, 20, 30]` twice. Fix the bug.
+    starterCode: |
+      def scaled(values):
+          result = values
+          for i in range(len(result)):
+              result[i] = result[i] * 10
+          return result
+
+      original = [1, 2, 3]
+      bigger = scaled(original)
+      print(original)
+      print(bigger)
+    solution: |
+      def scaled(values):
+          result = values.copy()
+          for i in range(len(result)):
+              result[i] = result[i] * 10
+          return result
+
+      original = [1, 2, 3]
+      bigger = scaled(original)
+      print(original)
+      print(bigger)
+    expectedOutput: |
+      [1, 2, 3]
+      [10, 20, 30]
+    tests:
+      - name: returns the scaled values
+        code: |
+          for values, expected in [([1, 2, 3], [10, 20, 30]), ([], []), ([-1, 0], [-10, 0])]:
+              r = scaled(list(values))
+              assert r == expected, f"scaled({values}) returned {r!r}; expected {expected}."
+      - name: does not change the caller's list
+        code: |
+          data = [5, 6]
+          r = scaled(data)
+          assert data == [5, 6], f"The caller's list became {data}. result = values does not copy - make a new list."
+          assert r is not data, "scaled returned the caller's own list object. Return a new list."
+      - name: prints both lists
+        code: |
+          assert output_lines() == ["[1, 2, 3]", "[10, 20, 30]"], f"Your program printed {output()!r}."
+    hints:
+      - "Inspect identity: `print(result is values)` inside the function. What does it show?"
+      - Assignment never copies. result and values are two names for one list.
+      - Start from a copy (values.copy() or list(values)), or build a new list with append.
+    feedback:
+      - when: { outputContains: "[10, 20, 30]\n[10, 20, 30]" }
+        message: The caller's list is still being changed. `result = values` makes a second name for the same list, not a copy.
+    explanation: >-
+      result = values created an alias, so the loop mutated the caller's list. Copying first (or building a
+      new list) gives the function its own object to change, so the original stays [1, 2, 3].
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-mcq-isolate, m-predict-repr, m-mcq-pdb-step, m-tf-assert-input, m-debug-aliasing]
+
+cheatsheet: |
+  ```python
+  print(f"{total=} {len(items)=}")   # labelled values (repr) - remove when done
+  print(repr(text), type(value))     # see hidden spaces, quotes, types
+  assert 0 <= pct <= 100, f"bad pct {pct}"   # fail fast; never for user input
+  breakpoint()                       # pause here in pdb (needs a terminal)
+  ```
+  - pdb: `p expr` print · `n` next · `s` step into · `c` continue · `l` list · `w` where · `q` quit
+  - Method: reproduce → read → hypothesise → isolate → inspect → fix cause → prevent (test)
+  - Usual suspects: off-by-one · indentation · accumulator reset · mutate while iterating · aliasing · "3" vs 3 · missing return · shadowing

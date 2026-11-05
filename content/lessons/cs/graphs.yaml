@@ -1,0 +1,1450 @@
+id: cs.graphs
+concept: cs.graphs
+title: Graphs, BFS and DFS
+subtitle: Modelling connections and exploring them systematically
+estimatedMinutes: 60
+reviewedOn: 2026-10-22
+summary: >-
+  Graphs model anything made of connections: friendships, roads, web links, package dependencies. Learn
+  the vocabulary, store graphs as adjacency lists in dicts, and explore them with breadth-first search
+  (a queue — shortest paths in unweighted graphs) and depth-first search (recursion or a stack), always
+  with a visited set so cycles cannot trap you.
+objectives:
+  - Use graph vocabulary correctly — vertex, edge, directed, weighted, neighbour, degree, path, cycle, component.
+  - Represent a graph as an adjacency list with a dict, and compare it with an adjacency matrix.
+  - Implement breadth-first search with collections.deque and use it to find shortest paths in unweighted graphs.
+  - Implement depth-first search both recursively and with an explicit stack, and predict visit orders.
+  - Explain why a visited set is required and what goes wrong without one.
+  - State the O(V + E) cost of BFS and DFS and choose the right traversal for a problem.
+sources:
+  - title: "MIT 6.006 Introduction to Algorithms (Spring 2020)"
+    url: https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/
+    publisher: MIT OpenCourseWare
+  - title: Open Data Structures (Chapter 12, Graphs)
+    url: https://opendatastructures.org/
+    publisher: Pat Morin
+  - title: collections.deque
+    url: https://docs.python.org/3/library/collections.html#collections.deque
+    publisher: Python Software Foundation
+  - title: graphlib — Functionality to operate with graph-like structures
+    url: https://docs.python.org/3/library/graphlib.html
+    publisher: Python Software Foundation
+  - title: "Python Patterns: Implementing Graphs"
+    url: https://www.python.org/doc/essays/graphs/
+    publisher: Guido van Rossum (python.org)
+sections:
+  - id: why
+    title: Why graphs?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Six people — A to F — and who is friends with whom. You could store the friendships as a list of
+          pairs, but then every question means scanning every pair. "Who are B's friends?" is a full scan.
+          "Who can B reach through friends of friends?" is a scan inside a scan inside a scan.
+      - type: code
+        runnable: true
+        code: |
+          friendships = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "E"), ("D", "F"), ("E", "F"), ("B", "C")]
+
+          # A list of pairs: every question scans all the pairs.
+          friends_of_b = [x if y == "B" else y for x, y in friendships if "B" in (x, y)]
+          print(sorted(friends_of_b))
+
+          # A graph: each person maps straight to their friends.
+          graph = {}
+          for x, y in friendships:
+              graph.setdefault(x, []).append(y)
+              graph.setdefault(y, []).append(x)
+          print(sorted(graph["B"]))
+        expectedOutput: |
+          ['A', 'C', 'D']
+          ['A', 'C', 'D']
+        caption: Same answer, but the dict jumps straight to B's friends instead of scanning every friendship.
+      - type: markdown
+        body: |
+          This structure — things, and connections between them — is a [graph](glossary:graph). Road maps
+          (junctions and roads), the web (pages and links), package managers (packages and "depends on"),
+          social networks, airline routes, knowledge graphs and multi-step AI agent workflows are all graphs.
+          Most questions about them — *can I get from here to there? what is the shortest route? what must
+          happen first?* — reduce to **visiting the graph systematically**, which is what this lesson teaches.
+
+  - id: vocabulary
+    title: Graph vocabulary
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Term | Meaning | Example |
+          |---|---|---|
+          | [Vertex](glossary:vertex) (node) | One of the things being connected | a person, a city, a package |
+          | [Edge](glossary:graph-edge) | A connection between two vertices | a friendship, a road |
+          | Undirected | Edges go both ways | friendship: if A knows B, B knows A |
+          | [Directed](glossary:directed-graph) | Edges have a direction, drawn as arrows | "follows", one-way streets, "app depends on db" |
+          | Weighted | Edges carry a number | road length, flight price |
+          | Neighbours | The vertices joined to v by an edge | B's neighbours: A, C, D |
+          | Degree | The number of neighbours | B has degree 3 |
+          | Path | A sequence of vertices, each joined to the next | A → B → D → F |
+          | [Cycle](glossary:graph-cycle) | A path that returns to its start | A → B → C → A |
+          | [Connected component](glossary:connected-component) | A group of vertices that can all reach each other | a friend group with no links outside it |
+          | [DAG](glossary:dag) | Directed graph with no cycles | tasks and their prerequisites |
+
+          The size of a graph is described with two numbers: **V**, the number of vertices, and **E**, the
+          number of edges. Graph algorithms are analysed in terms of both.
+      - type: callout
+        variant: note
+        title: Trees are graphs too
+        body: |
+          A tree is a connected graph with no cycles: from the root there is exactly one path to every node.
+          That is why tree code can often skip the visited set — and why general graph code must not. See
+          [trees](concept:cs.trees).
+      - type: item
+        ref: vocab-mcq
+
+  - id: representations
+    title: Storing a graph — adjacency lists and matrices
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The usual representation in Python is an [adjacency list](glossary:adjacency-list): a dict mapping
+          each vertex to a list of its neighbours. Building one from a list of edges is a few lines. For an
+          **undirected** graph each edge is stored twice, once under each endpoint.
+          `collections.defaultdict(list)` creates an empty list the first time a key is used, which saves
+          a check:
+      - type: code
+        runnable: true
+        code: |
+          from collections import defaultdict
+
+          edges = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "E"), ("D", "F"), ("E", "F"), ("B", "C")]
+
+          graph = defaultdict(list)
+          for a, b in edges:
+              graph[a].append(b)        # undirected: store the edge in both directions
+              graph[b].append(a)
+
+          for node in sorted(graph):
+              print(node, "->", sorted(graph[node]))
+          print("degree of B:", len(graph["B"]))
+          print("is C a neighbour of A?", "C" in graph["A"])
+        expectedOutput: |
+          A -> ['B', 'C']
+          B -> ['A', 'C', 'D']
+          C -> ['A', 'B', 'E']
+          D -> ['B', 'F']
+          E -> ['C', 'F']
+          F -> ['D', 'E']
+          degree of B: 3
+          is C a neighbour of A? True
+        caption: 6 vertices and 7 edges become 14 list entries (each undirected edge appears twice).
+      - type: markdown
+        body: |
+          An [adjacency matrix](glossary:adjacency-matrix) is a V × V grid where row i, column j says
+          whether i and j are connected:
+      - type: code
+        runnable: true
+        code: |
+          nodes = ["A", "B", "C", "D", "E", "F"]
+          edges = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "E"), ("D", "F"), ("E", "F"), ("B", "C")]
+          index = {name: i for i, name in enumerate(nodes)}
+
+          matrix = [[0] * len(nodes) for _ in nodes]
+          for a, b in edges:
+              matrix[index[a]][index[b]] = 1
+              matrix[index[b]][index[a]] = 1
+
+          for name, row in zip(nodes, matrix):
+              print(name, row)
+          print("edge B-D?", matrix[index["B"]][index["D"]] == 1)
+        expectedOutput: |
+          A [0, 1, 1, 0, 0, 0]
+          B [1, 0, 1, 1, 0, 0]
+          C [1, 1, 0, 0, 1, 0]
+          D [0, 1, 0, 0, 0, 1]
+          E [0, 0, 1, 0, 0, 1]
+          F [0, 0, 0, 1, 1, 0]
+          edge B-D? True
+      - type: markdown
+        body: |
+          | | Adjacency list (dict of lists) | Adjacency matrix |
+          |---|---|---|
+          | Memory | O(V + E) | O(V²), however few edges there are |
+          | "Is there an edge u–v?" | O(degree of u) — O(1) with a dict of sets | O(1) |
+          | "List the neighbours of u" | O(degree of u) | O(V): scan a whole row |
+          | Good for | **sparse** graphs (most real ones) | small or very dense graphs |
+
+          Real graphs are usually sparse. A network of a million people with about 150 friends each has
+          around 75 million friendships: an adjacency list stores 150 million entries, while a matrix would
+          need 10¹² cells — almost all zero. Use a dict of lists unless you have a reason not to (and a dict
+          of **sets** if you often ask "are u and v connected?").
+      - type: item
+        ref: predict-adjacency
+
+  - id: bfs
+    title: Breadth-first search
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Breadth-first search](glossary:breadth-first-search) (BFS) explores in **rings**: first the start,
+          then everything one edge away, then everything two edges away, and so on. It keeps a **queue** of
+          vertices discovered but not yet explored — first in, first out — and a
+          [visited set](glossary:visited-set) so each vertex is queued only once.
+
+          A queue needs fast removal from the front. `list.pop(0)` shifts every remaining item (O(n)), so use
+          `collections.deque`, whose `popleft()` is O(1) (see [stacks and queues](concept:cs.stacks-queues)).
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          graph = {
+              "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+              "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+          }
+
+          def bfs(graph, start):
+              visited = {start}
+              queue = deque([start])
+              order = []
+              while queue:
+                  node = queue.popleft()              # take from the FRONT: first in, first out
+                  order.append(node)
+                  for neighbour in graph[node]:
+                      if neighbour not in visited:
+                          visited.add(neighbour)      # mark when discovered, so it is queued once
+                          queue.append(neighbour)
+              return order
+
+          print(bfs(graph, "A"))
+          print(bfs(graph, "F"))
+        expectedOutput: |
+          ['A', 'B', 'C', 'D', 'E', 'F']
+          ['F', 'D', 'E', 'B', 'C', 'A']
+        annotations:
+          - line: 9
+            text: The start counts as visited from the beginning, so no neighbour can queue it again.
+          - line: 13
+            text: popleft() takes the oldest entry, which is what makes the search go ring by ring.
+          - line: 17
+            text: Marking at discovery time (not when dequeued) guarantees each vertex enters the queue at most once.
+      - type: markdown
+        body: |
+          Use the explorer to watch the queue drive the order. Step through breadth-first first, then switch
+          to depth-first and compare:
+      - type: visualization
+        component: graph-traversal
+        title: BFS and DFS on the same graph
+        caption: >-
+          The same six-person graph as the code. BFS visits A, then its neighbours B and C, then the next ring
+          D and E, then F. Neighbours are taken in alphabetical order, like the lists in the code.
+        props:
+          nodes:
+            - { id: A, x: 40, y: 120 }
+            - { id: B, x: 150, y: 40 }
+            - { id: C, x: 150, y: 200 }
+            - { id: D, x: 270, y: 40 }
+            - { id: E, x: 270, y: 200 }
+            - { id: F, x: 380, y: 120 }
+          edges: [[A, B], [A, C], [B, D], [C, E], [D, F], [E, F], [B, C]]
+          start: A
+          directed: false
+      - type: markdown
+        body: |
+          The same loop, stepped line by line on a tiny directed graph. Watch the queue (a `deque`) and the
+          visited set change:
+      - type: visualization
+        component: python-tracer
+        title: BFS with a queue
+        caption: D is discovered from B and marked at once, so when C looks at D it is skipped — D enters the queue only once.
+        props:
+          code: |
+            from collections import deque
+
+            graph = {"A": ["B", "C"], "B": ["D"], "C": ["D"], "D": []}
+            visited = {"A"}
+            queue = deque(["A"])
+            while queue:
+                node = queue.popleft()
+                print("visit", node)
+                for neighbour in graph[node]:
+                    if neighbour not in visited:
+                        visited.add(neighbour)
+                        queue.append(neighbour)
+      - type: markdown
+        body: |
+          **BFS finds shortest paths.** Because BFS finishes every vertex at distance d before it touches any
+          vertex at distance d + 1, the first time it reaches a vertex is along a path with the **fewest
+          edges**. Recording "one more than the vertex we came from" gives every vertex's distance from the
+          start — the "degrees of separation" in a social network:
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          graph = {
+              "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+              "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+          }
+
+          def distances_from(graph, start):
+              dist = {start: 0}                        # doubles as the visited set
+              queue = deque([start])
+              while queue:
+                  node = queue.popleft()
+                  for neighbour in graph[node]:
+                      if neighbour not in dist:
+                          dist[neighbour] = dist[node] + 1
+                          queue.append(neighbour)
+              return dist
+
+          print(distances_from(graph, "A"))
+        expectedOutput: |
+          {'A': 0, 'B': 1, 'C': 1, 'D': 2, 'E': 2, 'F': 3}
+        caption: F is 3 introductions away from A. To recover the actual route, remember which vertex each one was discovered from — you will do that in the practice.
+      - type: callout
+        variant: warning
+        title: Only for unweighted graphs
+        body: |
+          BFS minimises the **number of edges**. If edges have different lengths (a 2 km road and a 50 km
+          road), the path with fewest edges may not be the shortest distance. Weighted shortest paths need
+          Dijkstra's algorithm — see [shortest paths](concept:cs.shortest-paths).
+      - type: item
+        ref: predict-bfs-order
+
+  - id: dfs
+    title: Depth-first search
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [Depth-first search](glossary:depth-first-search) (DFS) does the opposite: it follows one path as
+          far as it can, and only when it gets stuck does it back up to the most recent vertex with an
+          unexplored neighbour. The natural way to write it is with [recursion](concept:cs.recursion) —
+          "visit this vertex, then visit each unvisited neighbour":
+      - type: code
+        runnable: true
+        code: |
+          graph = {
+              "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+              "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+          }
+
+          def dfs(graph, start):
+              visited = set()
+              order = []
+
+              def visit(node):
+                  visited.add(node)
+                  order.append(node)
+                  for neighbour in graph[node]:
+                      if neighbour not in visited:
+                          visit(neighbour)        # go deeper before trying the next neighbour
+
+              visit(start)
+              return order
+
+          print(dfs(graph, "A"))
+        expectedOutput: |
+          ['A', 'B', 'C', 'E', 'F', 'D']
+        caption: From A it goes to B, then B's first unvisited neighbour C, then E, then F, then D — and only then backs all the way up. Compare BFS's A, B, C, D, E, F.
+      - type: visualization
+        component: python-tracer
+        title: Recursive DFS on the call stack
+        caption: Each recursive call is a frame on the stack. When D has no unvisited neighbours, its frame returns and B's frame continues — that is backtracking.
+        props:
+          code: |
+            graph = {"A": ["B", "C"], "B": ["D"], "C": ["D"], "D": []}
+
+            def dfs(node, visited):
+                visited.add(node)
+                print("visit", node)
+                for neighbour in graph[node]:
+                    if neighbour not in visited:
+                        dfs(neighbour, visited)
+
+            dfs("A", set())
+      - type: markdown
+        body: |
+          The call stack is doing the remembering. You can replace it with an **explicit stack** — a list
+          used last-in, first-out — which avoids the recursion limit on very long paths:
+      - type: code
+        runnable: true
+        code: |
+          graph = {
+              "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+              "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+          }
+
+          def dfs_iterative(graph, start):
+              visited = set()
+              order = []
+              stack = [start]
+              while stack:
+                  node = stack.pop()                       # take from the TOP: last in, first out
+                  if node in visited:
+                      continue                             # pushed more than once; skip the old copy
+                  visited.add(node)
+                  order.append(node)
+                  for neighbour in reversed(graph[node]):  # reversed: the first neighbour is popped first
+                      if neighbour not in visited:
+                          stack.append(neighbour)
+              return order
+
+          print(dfs_iterative(graph, "A"))
+        expectedOutput: |
+          ['A', 'B', 'C', 'E', 'F', 'D']
+        caption: Same order as the recursive version. Swap stack.pop() for a queue's popleft() and you have BFS — the container decides the order.
+        annotations:
+          - line: 12
+            text: A vertex can be pushed by several neighbours before it is popped, so check visited when popping.
+          - line: 16
+            text: Without reversed(), the last neighbour would be explored first — still a valid DFS, just a different order.
+      - type: item
+        ref: predict-dfs-order
+
+  - id: visited-and-cycles
+    title: Visited sets and cycles
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Trees have no cycles, so tree code can simply recurse into children. Graphs can have cycles — and in
+          an **undirected** graph even a single edge can be walked back and forth (A → B → A → …). Without a
+          visited set, a traversal goes round and round. This BFS forgets the check; the demo has a guard so
+          it stops after 10 visits:
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          graph = {"A": ["B"], "B": ["C"], "C": ["A"]}     # a cycle: A -> B -> C -> A
+
+          queue = deque(["A"])
+          visits = []
+          while queue and len(visits) < 10:                # guard so the demo stops
+              node = queue.popleft()
+              visits.append(node)
+              queue.extend(graph[node])                    # BUG: no visited check
+          print(visits)
+        expectedOutput: |
+          ['A', 'B', 'C', 'A', 'B', 'C', 'A', 'B', 'C', 'A']
+        caption: Without the guard this loop never ends. With branching graphs the queue also grows explosively.
+      - type: markdown
+        body: |
+          A recursive DFS without a visited set fails differently — it keeps calling deeper until Python
+          stops it:
+      - type: code
+        runnable: true
+        code: |
+          graph = {"A": ["B"], "B": ["C"], "C": ["A"]}
+
+          def explore(node):
+              for neighbour in graph[node]:
+                  explore(neighbour)          # BUG: no visited check
+
+          explore("A")
+        expectError: RecursionError
+        caption: "RecursionError: maximum recursion depth exceeded — the cycle makes the recursion infinite."
+      - type: markdown
+        body: |
+          The visited set gives two guarantees at once: **termination** (each vertex is explored at most
+          once, so the work is finite even with cycles) and **efficiency** (no vertex is processed twice).
+          Use a `set` (or a dict, as in `distances_from`) so that `in visited` is O(1) — a visited *list*
+          would make every check a linear scan.
+
+  - id: complexity
+    title: The cost of a traversal — O(V + E)
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With an adjacency list and a visited set, BFS and DFS each:
+
+          - add every reachable vertex to the queue or stack **once**, and remove it once — O(V) in total;
+          - look at every neighbour list once, which over the whole run touches each edge once in a directed
+            graph and twice in an undirected one — O(E) in total.
+
+          So both run in **O(V + E)** time and need O(V) extra memory for the visited set and the frontier.
+          With an adjacency matrix, listing neighbours costs O(V) per vertex, so a traversal becomes O(V²).
+          Counting the work on a 100 × 100 grid (each cell joined to its up, down, left and right neighbours):
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          def grid_graph(rows, cols):
+              graph = {}
+              for r in range(rows):
+                  for c in range(cols):
+                      graph[(r, c)] = [(r + dr, c + dc) for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                                       if 0 <= r + dr < rows and 0 <= c + dc < cols]
+              return graph
+
+          graph = grid_graph(100, 100)
+          visited = {(0, 0)}
+          queue = deque([(0, 0)])
+          dequeues = neighbour_checks = 0
+          while queue:
+              node = queue.popleft()
+              dequeues += 1
+              for neighbour in graph[node]:
+                  neighbour_checks += 1
+                  if neighbour not in visited:
+                      visited.add(neighbour)
+                      queue.append(neighbour)
+
+          edges = sum(len(n) for n in graph.values()) // 2
+          print("V =", len(graph), " E =", edges)
+          print("dequeues:", dequeues, " neighbour checks:", neighbour_checks)
+        expectedOutput: |
+          V = 10000  E = 19800
+          dequeues: 10000  neighbour checks: 39600
+        caption: Exactly V dequeues and 2E neighbour checks (each undirected edge is seen from both ends). Total work grows linearly with the size of the graph.
+      - type: item
+        ref: complexity-mcq
+
+  - id: applications
+    title: Applications — maps, dependencies and networks
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          **Maps and grids.** A maze or a game map is a graph whose vertices are cells and whose edges join
+          neighbouring open cells. You do not even need to build the dict — compute the neighbours on the fly.
+          BFS gives the fewest moves:
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          maze = [
+              "S.#.....",
+              ".##.###.",
+              "....#...",
+              "##.##.#.",
+              "...#..#G",
+          ]
+
+          def fewest_moves(maze):
+              rows, cols = len(maze), len(maze[0])
+              start = next((r, c) for r in range(rows) for c in range(cols) if maze[r][c] == "S")
+              dist = {start: 0}
+              queue = deque([start])
+              while queue:
+                  r, c = queue.popleft()
+                  if maze[r][c] == "G":
+                      return dist[(r, c)]
+                  for nr, nc in [(r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)]:
+                      if 0 <= nr < rows and 0 <= nc < cols and maze[nr][nc] != "#" and (nr, nc) not in dist:
+                          dist[(nr, nc)] = dist[(r, c)] + 1
+                          queue.append((nr, nc))
+              return None                                  # goal unreachable
+
+          print(fewest_moves(maze))
+        expectedOutput: |
+          15
+        caption: "# is a wall. The vertices are (row, col) tuples — hashable, so they can go in the dist dict."
+      - type: markdown
+        body: |
+          **Dependency resolution.** A package manager or build tool must install every dependency before the
+          package that needs it. Dependencies form a directed graph, and a DFS that records each package
+          **after** visiting all its dependencies (post-order) produces a valid installation order — a
+          *topological order*:
+      - type: code
+        runnable: true
+        code: |
+          import graphlib
+
+          requires = {
+              "app": ["web", "db"],
+              "web": ["http"],
+              "db": ["driver"],
+              "http": [],
+              "driver": [],
+          }
+
+          def install_order(requires, target):
+              order, done = [], set()
+
+              def visit(package):
+                  if package in done:
+                      return
+                  for dependency in requires[package]:
+                      visit(dependency)          # dependencies first...
+                  done.add(package)
+                  order.append(package)          # ...then the package itself
+
+              visit(target)
+              return order
+
+          print(install_order(requires, "app"))
+          print(list(graphlib.TopologicalSorter(requires).static_order()))
+        expectedOutput: |
+          ['http', 'web', 'driver', 'db', 'app']
+          ['http', 'driver', 'web', 'db', 'app']
+        caption: Two different orders, both valid — every package comes after its dependencies. Topological orders are usually not unique.
+      - type: markdown
+        body: |
+          The standard library's `graphlib.TopologicalSorter` takes the same "node → its prerequisites" dict
+          and also **detects cycles**, which make any install order impossible:
+      - type: code
+        runnable: true
+        code: |
+          import graphlib
+
+          circular = {"a": ["b"], "b": ["c"], "c": ["a"]}
+          try:
+              list(graphlib.TopologicalSorter(circular).static_order())
+          except graphlib.CycleError as error:
+              print("cycle found:", error.args[1])
+        expectedOutput: |
+          cycle found: ['a', 'c', 'b', 'a']
+        caption: Real tools must report cycles clearly instead of hanging. The full algorithms are in [shortest paths and topological sort](concept:cs.shortest-paths).
+      - type: markdown
+        body: |
+          **Networks.** In a social network, BFS distances are "degrees of separation" and vertices at
+          distance 2 are friend-of-friend suggestions. Counting how many times you must start a new traversal
+          to visit every vertex counts the connected components (separate friend groups, islands on a map,
+          disconnected parts of a computer network). Web crawlers are BFS over links, with a visited set of
+          URLs.
+      - type: item
+        ref: choose-traversal
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Why `deque`.** BFS with `queue.pop(0)` on a list is correct, but each pop shifts the whole list, so
+          a traversal of a large graph degrades towards O(V²). CPython implements `deque` as a doubly-linked
+          list of fixed-size blocks, giving O(1) appends and pops at both ends.
+
+          **When to mark visited.** In BFS, marking a vertex when it is **enqueued** keeps each vertex in the
+          queue at most once. Marking it only when it is dequeued is also correct *if you skip vertices
+          already visited when dequeuing*, but the queue can then hold up to E entries. The iterative DFS
+          above deliberately marks on pop, because marking on push produces an order that is not a true
+          depth-first order.
+
+          **Recursion depth.** Recursive DFS uses one frame per vertex on the current path. On a long path
+          that exceeds CPython's recursion limit (default 1000):
+      - type: code
+        runnable: true
+        code: |
+          chain = {i: [i + 1] for i in range(5000)}      # 0 -> 1 -> 2 -> ... -> 5000
+          chain[5000] = []
+
+          def dfs_recursive(node, visited):
+              visited.add(node)
+              for neighbour in chain[node]:
+                  if neighbour not in visited:
+                      dfs_recursive(neighbour, visited)
+
+          try:
+              dfs_recursive(0, set())
+          except RecursionError:
+              print("recursive DFS: RecursionError")
+
+          visited, stack = set(), [0]
+          while stack:
+              node = stack.pop()
+              if node not in visited:
+                  visited.add(node)
+                  stack.extend(chain[node])
+          print("iterative DFS visited", len(visited), "vertices")
+        expectedOutput: |
+          recursive DFS: RecursionError
+          iterative DFS visited 5001 vertices
+        caption: Real dependency chains and web-link paths can be thousands deep; production graph code usually uses an explicit stack.
+      - type: markdown
+        body: |
+          **Reproducible order.** The visit order depends on the order of each neighbour list. If you store
+          neighbours in a `set` of strings, that order can change between runs (string hashing is salted per
+          process), so sort neighbours when the order matters — in tests, for example.
+
+          **Beyond plain lists.** Weighted graphs store `(neighbour, weight)` pairs or nested dicts
+          (`graph[u][v] = weight`). Libraries such as NetworkX provide ready-made algorithms; they are not
+          available in this browser runtime, but the dict-of-lists ideas here map directly onto them.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | The program never finishes, or output repeats | No visited set, and the graph has a cycle — or is undirected, so every edge can be walked back and forth | Keep a visited set and check it before exploring |
+          | `RecursionError` in DFS | Missing visited check (a cycle) — or a genuinely very long path | Add the visited check; for deep graphs use an explicit stack |
+          | `KeyError: 'C'` | A vertex with no outgoing edges is not a key of the dict | Use `graph.get(node, [])`, or add every vertex with an empty list |
+          | BFS is slow on big graphs | `queue.pop(0)` on a list | `collections.deque` with `popleft()` |
+          | Vertices appear twice in the BFS order | Marking visited only when dequeued, without skipping repeats | Mark when enqueuing (start with `visited = {start}`) |
+          | A "shortest" path that is too long | Used DFS | BFS for fewest edges; Dijkstra for weighted edges |
+          | Some friends are unreachable in one direction | Undirected edges stored only one way | Append each edge under both endpoints |
+          | Visit order differs between runs | Neighbours kept in a set of strings | Sort neighbours, or keep them in a list |
+
+          The `KeyError` is the first one most people meet:
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          graph = {"A": ["B", "C"], "B": ["D"]}          # C and D have no outgoing edges
+
+          def bfs(graph, start):
+              visited, queue, order = {start}, deque([start]), []
+              while queue:
+                  node = queue.popleft()
+                  order.append(node)
+                  for neighbour in graph[node]:
+                      if neighbour not in visited:
+                          visited.add(neighbour)
+                          queue.append(neighbour)
+              return order
+
+          print(bfs(graph, "A"))
+        expectError: KeyError
+        caption: "KeyError: 'C'. Fix line 10 with graph.get(node, []) — a missing key means no neighbours."
+      - type: item
+        ref: debug-bfs-duplicates
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The tests run your functions on several graphs, including ones with cycles, unreachable vertices
+          and vertices that are missing from the dict because they have no outgoing edges.
+      - type: item
+        ref: shortest-path
+      - type: item
+        ref: count-components
+      - type: item
+        ref: explain-bfs-shortest
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **graph** is vertices joined by edges — directed or undirected, weighted or unweighted. Trees
+            are graphs without cycles.
+          - Store graphs as **adjacency lists**: `dict[vertex, list[vertex]]`, O(V + E) memory. Undirected
+            edges go under both endpoints. A matrix costs O(V²) memory.
+          - **BFS** uses a FIFO queue (`deque.popleft()`), explores ring by ring and finds **shortest paths
+            by number of edges** in unweighted graphs.
+          - **DFS** goes deep first, using recursion or an explicit LIFO stack; it powers reachability,
+            components, cycle detection and dependency ordering.
+          - Always keep a **visited set** — cycles otherwise cause infinite loops or RecursionError.
+          - Both traversals are **O(V + E)** time and O(V) extra space.
+          - Tools: `collections.deque` for queues, `graphlib.TopologicalSorter` for dependency order.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Grids, word ladders, course prerequisites and friend networks are graph problems in disguise. Say
+          what the vertices and edges are, pick BFS for fewest steps or DFS for reachability and ordering,
+          mention the visited set, and state O(V + E). Be ready to rebuild the path from parent links and to
+          explain why DFS does not give shortest paths.
+
+items:
+  - id: vocab-mcq
+    type: mcq
+    skill: recognition
+    prompt: |
+      On a photo-sharing app, a user can follow another user without being followed back. Which kind of
+      graph models "who follows whom"?
+    explanation: >-
+      "A follows B" does not imply "B follows A", so edges have a direction: a directed graph. A follow has no
+      length or cost attached, so it is unweighted.
+    options:
+      - id: a
+        text: An undirected, unweighted graph
+        feedback: Undirected edges go both ways, which would mean every follow is automatically mutual.
+      - id: b
+        text: A directed, unweighted graph
+        correct: true
+        feedback: Right. Each follow is an arrow from the follower to the followed account.
+      - id: c
+        text: A tree
+        feedback: Follows can form cycles (A follows B, B follows A) and an account can be followed by many people, so it is not a tree.
+      - id: d
+        text: A weighted graph, because some accounts are more popular
+        feedback: Popularity is a property of a vertex (its number of incoming edges), not a weight on each edge.
+
+  - id: predict-adjacency
+    type: predict-output
+    skill: prediction
+    prompt: This builds a **directed** graph. Predict both lines.
+    code: |
+      edges = [("x", "y"), ("y", "z"), ("x", "z")]
+      graph = {}
+      for a, b in edges:
+          graph.setdefault(a, []).append(b)
+      print(graph)
+      print(graph.get("z", []))
+    answer: |
+      {'x': ['y', 'z'], 'y': ['z']}
+      []
+    explanation: >-
+      Each edge is stored only under its starting vertex, because the graph is directed. z never starts an
+      edge, so it never becomes a key — `graph.get("z", [])` returns the default empty list instead of
+      raising KeyError.
+    wrongAnswers:
+      - answer: |
+          {'x': ['y', 'z'], 'y': ['x', 'z'], 'z': ['y', 'x']}
+          ['y', 'x']
+        feedback: That would be the undirected version, which also appends a to graph[b]. Here each edge is stored once.
+      - answer: |
+          {'x': ['y', 'z'], 'y': ['z'], 'z': []}
+          []
+        feedback: setdefault only creates keys for vertices that start an edge. z appears only as a destination.
+      - answer: |
+          {'x': ['z'], 'y': ['z']}
+          []
+        feedback: setdefault returns the existing list for x the second time, and the append adds to it — it does not replace it.
+
+  - id: predict-bfs-order
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: In what order does this BFS visit the vertices?
+    code: |
+      from collections import deque
+
+      graph = {"S": ["A", "B"], "A": ["C"], "B": ["C", "D"], "C": ["E"], "D": ["E"], "E": []}
+      visited = {"S"}
+      queue = deque(["S"])
+      order = []
+      while queue:
+          node = queue.popleft()
+          order.append(node)
+          for nb in graph[node]:
+              if nb not in visited:
+                  visited.add(nb)
+                  queue.append(nb)
+      print(" ".join(order))
+    answer: "S A B C D E"
+    explanation: >-
+      S's neighbours A and B are queued. A adds C. B finds C already visited and adds D. Then C adds E, D finds
+      E visited, and E has no neighbours. The queue releases vertices ring by ring: S; A, B; C, D; E.
+    wrongAnswers:
+      - answer: "S B D E C A"
+        feedback: >-
+          That is the order you would get with `queue.pop()`, which takes the newest entry (a stack). popleft()
+          takes the oldest, so A comes before B.
+      - answer: "S A C E B D"
+        feedback: That is depth-first order — following A all the way down first. BFS finishes S's whole ring (A and B) before going deeper.
+      - answer: "S A B C C D E E"
+        feedback: Each vertex is marked visited when it is first discovered, so C and E are queued only once.
+
+  - id: predict-dfs-order
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the order of this recursive depth-first search.
+    code: |
+      graph = {1: [2, 5], 2: [3, 4], 3: [], 4: [5], 5: []}
+
+      def dfs(node, visited):
+          visited.add(node)
+          print(node, end=" ")
+          for nb in graph[node]:
+              if nb not in visited:
+                  dfs(nb, visited)
+
+      dfs(1, set())
+    answer: "1 2 3 4 5"
+    explanation: >-
+      From 1, DFS goes to 2 and immediately to 2's first neighbour 3 (a dead end), backs up to 2 and tries 4,
+      then 4's neighbour 5. Back at 1, its second neighbour 5 is already visited, so the search ends.
+    wrongAnswers:
+      - answer: "1 2 5 3 4"
+        feedback: That is breadth-first order (1, then its neighbours 2 and 5, then 3 and 4). DFS dives into 2's neighbours before looking at 5.
+      - answer: "1 2 3 4 5 5"
+        feedback: 5 is marked visited when 4 visits it, so when 1 later considers 5, it is skipped.
+      - answer: "1 5 2 4 3"
+        feedback: The for loop takes neighbours in list order, so 2 is explored before 5, and 3 before 4.
+
+  - id: complexity-mcq
+    type: mcq
+    skill: recognition
+    prompt: What is the time complexity of BFS on a graph with V vertices and E edges stored as an adjacency list?
+    explanation: >-
+      Each vertex is enqueued and dequeued at most once (O(V)), and each vertex's neighbour list is scanned
+      once, which touches every edge a constant number of times (O(E)). With an adjacency matrix it would be
+      O(V²).
+    options:
+      - id: a
+        text: O(V + E)
+        correct: true
+        feedback: Right. Linear in the size of the graph.
+      - id: b
+        text: O(V · E)
+        feedback: That would be true if every vertex re-scanned every edge. The visited set ensures each neighbour list is scanned only once.
+      - id: c
+        text: O(V²)
+        feedback: That is the cost with an adjacency matrix, where listing neighbours means scanning a whole row.
+      - id: d
+        text: O(log V)
+        feedback: A traversal must at least look at every reachable vertex, so it cannot be faster than O(V).
+
+  - id: choose-traversal
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A delivery robot moves on a warehouse floor grid, one cell up, down, left or right per step, and some
+      cells are blocked. You need the **minimum number of steps** from the dock to a shelf. Which approach is
+      right?
+    explanation: >-
+      Cells are vertices and allowed moves are unweighted edges, so the minimum number of steps is a
+      shortest path by number of edges — exactly what BFS finds. DFS finds *a* path, not necessarily the
+      shortest.
+    options:
+      - id: a
+        text: BFS from the dock, stopping when the shelf is dequeued
+        correct: true
+        feedback: Right. BFS reaches every cell along a fewest-steps route.
+      - id: b
+        text: DFS from the dock, returning the first path that reaches the shelf
+        feedback: DFS may wander far before it reaches the shelf; the first path it finds can be much longer than necessary.
+      - id: c
+        text: Dijkstra's algorithm is required because it is a map
+        feedback: Dijkstra is needed when edges have different weights. Every step here costs the same, so BFS is simpler and equally correct.
+      - id: d
+        text: Binary search on the rows
+        feedback: The question is about paths around obstacles, not about finding a value in sorted data.
+
+  - id: debug-bfs-duplicates
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `bfs_order` should list each vertex once in breadth-first order, but on the six-person graph it prints
+      `['A', 'B', 'C', 'C', 'D', 'E', 'E', 'F', 'F', 'F']`. Fix it so it prints
+      `['A', 'B', 'C', 'D', 'E', 'F']` — each vertex queued only once.
+    starterCode: |
+      from collections import deque
+
+      def bfs_order(graph, start):
+          visited = set()
+          queue = deque([start])
+          order = []
+          while queue:
+              node = queue.popleft()
+              visited.add(node)
+              order.append(node)
+              for nb in graph[node]:
+                  if nb not in visited:
+                      queue.append(nb)
+          return order
+
+      graph = {
+          "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+          "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+      }
+      print(bfs_order(graph, "A"))
+    solution: |
+      from collections import deque
+
+      def bfs_order(graph, start):
+          visited = {start}
+          queue = deque([start])
+          order = []
+          while queue:
+              node = queue.popleft()
+              order.append(node)
+              for nb in graph[node]:
+                  if nb not in visited:
+                      visited.add(nb)
+                      queue.append(nb)
+          return order
+
+      graph = {
+          "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+          "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+      }
+      print(bfs_order(graph, "A"))
+    expectedOutput: |
+      ['A', 'B', 'C', 'D', 'E', 'F']
+    tests:
+      - name: correct order on the example
+        code: |
+          got = bfs_order(graph, "A")
+          assert got == ["A", "B", "C", "D", "E", "F"], f"Expected ['A', 'B', 'C', 'D', 'E', 'F'], got {got}."
+      - name: each vertex exactly once on other graphs
+        code: |
+          g1 = {1: [2, 3, 4], 2: [1, 3, 4], 3: [1, 2, 4], 4: [1, 2, 3]}
+          g2 = {"s": ["a", "b"], "a": ["c"], "b": ["c"], "c": ["s"]}
+          for g, start, expected in [(g1, 1, [1, 2, 3, 4]), (g2, "s", ["s", "a", "b", "c"]), ({"x": []}, "x", ["x"])]:
+              got = bfs_order(g, start)
+              assert got == expected, f"bfs_order({g}, {start!r}) should be {expected}, got {got}."
+      - name: vertices enter the queue once
+        code: |
+          from collections import deque
+          import collections
+          appended = []
+          class CountingDeque(deque):
+              def append(self, item):
+                  appended.append(item)
+                  super().append(item)
+          real = collections.deque
+          bfs_order.__globals__["deque"] = CountingDeque
+          try:
+              bfs_order({1: [2, 3, 4], 2: [1, 3, 4], 3: [1, 2, 4], 4: [1, 2, 3]}, 1)
+          finally:
+              bfs_order.__globals__["deque"] = real
+          assert len(appended) == len(set(appended)), f"Some vertices were added to the queue more than once: {appended}. Mark a vertex visited at the moment you append it."
+    hints:
+      - Look at when C is added to the queue. Is it marked as visited at that moment?
+      - Between being queued and being dequeued, a vertex is not yet in visited, so other neighbours queue it again.
+      - Start with `visited = {start}` and add each neighbour to visited in the same place you append it to the queue.
+    feedback:
+      - when: { outputContains: "'A', 'B', 'C', 'C'" }
+        message: C is still queued twice. Mark neighbours as visited when you append them, not when you pop them.
+    explanation: >-
+      A vertex is "discovered" when it is put in the queue. Marking it visited only when it is dequeued leaves
+      a window in which other vertices discover it again, so it is queued and processed several times. Marking
+      at discovery (and treating the start as visited from the beginning) queues every vertex exactly once.
+
+  - id: shortest-path
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `shortest_path(graph, start, goal)` that returns a list of vertices forming a path with the
+      **fewest edges** from `start` to `goal` (including both ends), or `None` if `goal` cannot be reached.
+
+      - `graph` is a dict of neighbour lists and may be directed.
+      - A vertex with no outgoing edges may be missing from the dict.
+      - `shortest_path(g, "A", "A")` is `["A"]`.
+
+      Use BFS and remember, for each vertex, the vertex you discovered it from.
+    starterCode: |
+      from collections import deque
+
+      def shortest_path(graph, start, goal):
+          # parent = {start: None}  records where each vertex was discovered from
+          return None
+
+      graph = {
+          "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+          "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+      }
+      print(shortest_path(graph, "A", "F"))
+    solution: |
+      from collections import deque
+
+      def shortest_path(graph, start, goal):
+          parent = {start: None}
+          queue = deque([start])
+          while queue:
+              node = queue.popleft()
+              if node == goal:
+                  path = []
+                  while node is not None:
+                      path.append(node)
+                      node = parent[node]
+                  return path[::-1]
+              for neighbour in graph.get(node, []):
+                  if neighbour not in parent:
+                      parent[neighbour] = node
+                      queue.append(neighbour)
+          return None
+
+      graph = {
+          "A": ["B", "C"], "B": ["A", "C", "D"], "C": ["A", "B", "E"],
+          "D": ["B", "F"], "E": ["C", "F"], "F": ["D", "E"],
+      }
+      print(shortest_path(graph, "A", "F"))
+    expectedOutput: |
+      ['A', 'B', 'D', 'F']
+    tests:
+      - name: returns valid shortest paths
+        code: |
+          from collections import deque
+          def true_distance(g, s, t):
+              dist = {s: 0}
+              q = deque([s])
+              while q:
+                  u = q.popleft()
+                  for v in g.get(u, []):
+                      if v not in dist:
+                          dist[v] = dist[u] + 1
+                          q.append(v)
+              return dist.get(t)
+          trap = {"S": ["A", "Z"], "A": ["B"], "B": ["C"], "C": ["G"], "Z": ["G"]}
+          cases = [(graph, "A", "F"), (graph, "F", "A"), (graph, "B", "E"), (trap, "S", "G"), ({"A": ["B"]}, "A", "B")]
+          for g, s, t in cases:
+              path = shortest_path(g, s, t)
+              d = true_distance(g, s, t)
+              assert isinstance(path, list), f"shortest_path(..., {s!r}, {t!r}) should return a list, got {path!r}."
+              assert path[0] == s and path[-1] == t, f"The path from {s!r} to {t!r} should start at {s!r} and end at {t!r}; got {path}."
+              for a, b in zip(path, path[1:]):
+                  assert b in g.get(a, []), f"Your path {path} uses {a!r} -> {b!r}, which is not an edge."
+              assert len(path) - 1 == d, f"From {s!r} to {t!r} the fewest edges is {d}, but your path {path} has {len(path) - 1}. Use BFS (popleft), not DFS."
+      - name: start equals goal
+        code: |
+          assert shortest_path(graph, "C", "C") == ["C"], f"shortest_path(graph, 'C', 'C') should be ['C'], got {shortest_path(graph, 'C', 'C')!r}."
+      - name: unreachable goal gives None
+        code: |
+          g = {"A": ["B"], "B": [], "C": ["A"]}
+          assert shortest_path(g, "A", "C") is None, "C cannot be reached from A in this directed graph: return None."
+          cyclic = {1: [2], 2: [3], 3: [1], 4: [1]}
+          assert shortest_path(cyclic, 1, 4) is None, "With a cycle 1 -> 2 -> 3 -> 1 and no way to reach 4, return None (and do not loop forever)."
+    hints:
+      - "Run BFS from start. Instead of a plain visited set, keep `parent = {start: None}`; a vertex is visited if it is in parent."
+      - "When you discover a neighbour, record `parent[neighbour] = node`. Use `graph.get(node, [])` for vertices missing from the dict."
+      - "When you dequeue goal, follow the parent links back to start (until None), collecting vertices, then reverse the list."
+    feedback:
+      - when: { errorType: KeyError }
+        message: Some vertices have no entry in the dict because they have no outgoing edges. Use graph.get(node, []).
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None for a reachable goal. Run BFS from start and build the path when you reach goal.
+    explanation: >-
+      BFS discovers each vertex along a fewest-edges route, and the parent dict remembers that route one step
+      at a time. Walking the parent links back from the goal and reversing gives the path. The parent dict also
+      serves as the visited set, so cycles cannot trap the search. The whole function is O(V + E).
+
+  - id: count-components
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A school records which students have worked together as a list of pairs. Write
+      `count_components(nodes, edges)` that returns how many separate groups there are — groups whose
+      members are connected through any chain of pairs. `nodes` lists every student (some have no pairs);
+      `edges` are **undirected** pairs.
+
+      ```python
+      count_components(["a", "b", "c", "d", "e", "f"], [("a", "b"), ("b", "c"), ("d", "e")])   # 3: abc, de, f
+      ```
+    starterCode: |
+      def count_components(nodes, edges):
+          # 1. Build an adjacency list (both directions).
+          # 2. For each node not yet visited, start a traversal and count it.
+          return 0
+
+      print(count_components(["a", "b", "c", "d", "e", "f"], [("a", "b"), ("b", "c"), ("d", "e")]))
+    solution: |
+      def count_components(nodes, edges):
+          graph = {node: [] for node in nodes}
+          for a, b in edges:
+              graph[a].append(b)
+              graph[b].append(a)
+          visited = set()
+          components = 0
+          for node in nodes:
+              if node in visited:
+                  continue
+              components += 1
+              stack = [node]
+              visited.add(node)
+              while stack:
+                  current = stack.pop()
+                  for neighbour in graph[current]:
+                      if neighbour not in visited:
+                          visited.add(neighbour)
+                          stack.append(neighbour)
+          return components
+
+      print(count_components(["a", "b", "c", "d", "e", "f"], [("a", "b"), ("b", "c"), ("d", "e")]))
+    expectedOutput: |
+      3
+    tests:
+      - name: counts groups
+        code: |
+          cases = [
+              (["a", "b", "c", "d", "e", "f"], [("a", "b"), ("b", "c"), ("d", "e")], 3),
+              (["x", "y", "z"], [], 3),
+              ([1, 2, 3, 4], [(1, 2), (2, 3), (3, 1)], 2),
+              ([], [], 0),
+              (["p", "q"], [("q", "p")], 1),
+          ]
+          for nodes, edges, expected in cases:
+              got = count_components(nodes, edges)
+              assert got == expected, f"count_components({nodes}, {edges}) should be {expected}, got {got!r}."
+      - name: edges count in both directions
+        code: |
+          got = count_components(["a", "b", "c"], [("b", "a"), ("c", "b")])
+          assert got == 1, f"Pairs are undirected, so b-a and c-b connect all three students into 1 group, got {got}. Store each edge under both ends."
+      - name: handles a long chain
+        code: |
+          nodes = list(range(500))
+          edges = [(i, i + 1) for i in range(499)]
+          assert count_components(nodes, edges) == 1, "500 students linked in a chain form 1 group."
+          assert count_components(nodes + [999], edges) == 2, "Adding one student with no pairs makes 2 groups."
+    hints:
+      - "Build `graph = {node: [] for node in nodes}` first, so students without pairs still appear, then add each pair in both directions."
+      - Loop over the nodes. Each time you meet one that is not visited yet, you have found a new group — count it and traverse from it (BFS or DFS) to mark its whole group as visited.
+    feedback:
+      - when: { errorType: KeyError }
+        message: A student is missing from your adjacency dict. Create an entry for every node before adding edges.
+    explanation: >-
+      Every traversal visits exactly one connected component, so the number of traversals you have to start
+      equals the number of components. Each vertex and edge is handled once overall, so this is O(V + E) —
+      the same idea finds islands on a map or separate clusters in a network.
+
+  - id: explain-bfs-shortest
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain why BFS finds a path with the fewest edges in an unweighted graph, and why DFS does not.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that BFS's FIFO queue processes vertices in order of distance — all at distance d before any at d + 1.
+      - Concludes that the first time BFS reaches a vertex is along a path with the fewest edges.
+      - Explains that DFS follows one branch as deep as possible, so it can reach a vertex first by a long detour.
+      - Notes that this holds only for unweighted graphs; weighted shortest paths need an algorithm such as Dijkstra's.
+    modelAnswer: |
+      BFS starts with the start vertex, then queues all its neighbours (distance 1). Because the queue is
+      first-in, first-out, all distance-1 vertices are processed before the distance-2 vertices they
+      discover, and so on: the queue always holds vertices in order of distance. So the first time BFS
+      reaches any vertex, it does so from a vertex one step closer to the start, along a fewest-edges path.
+      DFS instead follows the first neighbour, then its first neighbour, as deep as it can before backing up.
+      It may reach the goal at the end of a long detour before it ever tries the direct edge. Both facts are
+      about counting edges; if edges have different weights, fewest edges is not the same as shortest
+      distance, and you need Dijkstra's algorithm.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-levels
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output.
+    code: |
+      from collections import deque
+
+      graph = {"home": ["park", "shop"], "park": ["lake"], "shop": ["lake", "school"],
+               "lake": ["hill"], "school": [], "hill": []}
+      dist = {"home": 0}
+      queue = deque(["home"])
+      while queue:
+          place = queue.popleft()
+          for nxt in graph[place]:
+              if nxt not in dist:
+                  dist[nxt] = dist[place] + 1
+                  queue.append(nxt)
+      print(dist["lake"], dist["school"], dist["hill"])
+    answer: "2 2 3"
+    explanation: >-
+      park and shop are 1 step from home. lake is discovered first from park (distance 2) — when shop later
+      sees lake, it is already in dist. school is 2 (via shop) and hill is 3 (via lake).
+    wrongAnswers:
+      - answer: "3 2 4"
+        feedback: lake is reached through park in two steps; BFS records the first (shortest) discovery and never overwrites it.
+      - answer: "2 2 2"
+        feedback: hill is only reachable through lake, which is itself 2 steps away, so hill is 3.
+      - answer: "1 2 3"
+        feedback: lake is not a direct neighbour of home; it takes home → park → lake.
+
+  - id: m-matrix-vs-list
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      You are storing a social network of 1,000,000 users, each with about 150 friends, and you need to list a
+      user's friends quickly. Which representation fits?
+    explanation: >-
+      The graph is sparse: about 75 million undirected edges, stored as about 150 million adjacency-list
+      entries. A matrix needs a cell for every pair of users — 10¹² cells, almost all zero — and listing one
+      user's friends means scanning a row of a million cells.
+    options:
+      - id: a
+        text: An adjacency list (dict of user → list or set of friends)
+        correct: true
+        feedback: Right. Memory grows with V + E, and listing friends costs O(number of friends).
+      - id: b
+        text: An adjacency matrix, because edge checks are O(1)
+        feedback: The O(1) edge check does not justify 10¹² cells. A dict of sets also gives O(1) average edge checks.
+      - id: c
+        text: A single list of (user, friend) pairs
+        feedback: Every "list the friends of u" question would scan all ~75 million pairs.
+      - id: d
+        text: A sorted list of users
+        feedback: That stores the vertices but not the connections between them.
+
+  - id: m-dfs-shortest-tf
+    type: true-false
+    skill: recognition
+    prompt: "True or false: in an unweighted graph, the first path DFS finds from start to goal is always a shortest one."
+    answer: false
+    explanation: >-
+      DFS follows whichever neighbour comes first as deep as it can, so it may reach the goal by a long detour
+      before trying a direct route. BFS, which explores ring by ring, is the traversal that guarantees fewest
+      edges.
+
+  - id: m-has-path
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `has_path(graph, start, goal)` that returns `True` if `goal` can be reached from `start` by
+      following edges in a **directed** graph, else `False`. The graph may contain cycles, and vertices with
+      no outgoing edges may be missing from the dict. Any traversal is fine — but it must always finish.
+    starterCode: |
+      def has_path(graph, start, goal):
+          return False
+
+      graph = {"A": ["B"], "B": ["C"], "C": ["A", "D"], "E": ["A"]}
+      print(has_path(graph, "A", "D"), has_path(graph, "A", "E"))
+    solution: |
+      def has_path(graph, start, goal):
+          visited = {start}
+          stack = [start]
+          while stack:
+              node = stack.pop()
+              if node == goal:
+                  return True
+              for neighbour in graph.get(node, []):
+                  if neighbour not in visited:
+                      visited.add(neighbour)
+                      stack.append(neighbour)
+          return False
+
+      graph = {"A": ["B"], "B": ["C"], "C": ["A", "D"], "E": ["A"]}
+      print(has_path(graph, "A", "D"), has_path(graph, "A", "E"))
+    expectedOutput: |
+      True False
+    tests:
+      - name: follows edges in their direction
+        code: |
+          g = {"A": ["B"], "B": ["C"], "C": ["A", "D"], "E": ["A"]}
+          for s, t, expected in [("A", "D", True), ("A", "E", False), ("E", "D", True), ("D", "A", False), ("B", "A", True)]:
+              got = has_path(g, s, t)
+              assert got is expected, f"has_path(g, {s!r}, {t!r}) should be {expected}, got {got!r}."
+      - name: a vertex reaches itself
+        code: |
+          assert has_path({"A": ["B"]}, "A", "A") is True, "Every vertex can reach itself: has_path(g, 'A', 'A') should be True."
+          assert has_path({}, "Z", "Z") is True, "Even a vertex that is not in the dict reaches itself."
+      - name: terminates on graphs full of cycles
+        code: |
+          g = {i: [(i + 1) % 50, (i + 7) % 50] for i in range(50)}
+          g[100] = [0]
+          assert has_path(g, 0, 100) is False, "Vertex 100 points into the cycle but nothing points back to it: False."
+          assert has_path(g, 100, 49) is True, "100 -> 0 -> ... reaches 49."
+    hints:
+      - Use a visited set — the graph has cycles, so without one the search never ends.
+      - "Use `graph.get(node, [])` so vertices missing from the dict simply have no neighbours."
+      - Return True as soon as you take goal off the stack (or queue); return False when it is empty.
+    feedback:
+      - when: { errorType: KeyError }
+        message: A vertex with no outgoing edges is not in the dict. Use graph.get(node, []).
+      - when: { errorType: RecursionError }
+        message: Your recursion never stops — the graph has cycles. Keep a visited set and skip vertices already in it.
+    explanation: >-
+      Reachability is a plain traversal: start at start, follow edges, and see whether goal is ever reached.
+      The visited set guarantees termination on cyclic graphs, and `get` handles vertices with no outgoing
+      edges. DFS and BFS are equally correct here; the cost is O(V + E).
+
+  - id: m-debug-undirected
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Friendships are mutual, but `build_graph` stores each friendship only one way. As a result, starting
+      from Ana the search never finds Dev, and starting from Dev it never finds Ana or Ben. Fix `build_graph`
+      so both searches find all four people.
+    starterCode: |
+      def build_graph(edges):
+          graph = {}
+          for a, b in edges:
+              graph.setdefault(a, []).append(b)
+          return graph
+
+      def reachable(graph, start):
+          seen = {start}
+          stack = [start]
+          while stack:
+              node = stack.pop()
+              for nb in graph.get(node, []):
+                  if nb not in seen:
+                      seen.add(nb)
+                      stack.append(nb)
+          return seen
+
+      friends = [("Ana", "Ben"), ("Ben", "Cai"), ("Dev", "Cai")]
+      graph = build_graph(friends)
+      print(sorted(reachable(graph, "Ana")))
+      print(sorted(reachable(graph, "Dev")))
+    solution: |
+      def build_graph(edges):
+          graph = {}
+          for a, b in edges:
+              graph.setdefault(a, []).append(b)
+              graph.setdefault(b, []).append(a)
+          return graph
+
+      def reachable(graph, start):
+          seen = {start}
+          stack = [start]
+          while stack:
+              node = stack.pop()
+              for nb in graph.get(node, []):
+                  if nb not in seen:
+                      seen.add(nb)
+                      stack.append(nb)
+          return seen
+
+      friends = [("Ana", "Ben"), ("Ben", "Cai"), ("Dev", "Cai")]
+      graph = build_graph(friends)
+      print(sorted(reachable(graph, "Ana")))
+      print(sorted(reachable(graph, "Dev")))
+    expectedOutput: |
+      ['Ana', 'Ben', 'Cai', 'Dev']
+      ['Ana', 'Ben', 'Cai', 'Dev']
+    tests:
+      - name: every edge is stored both ways
+        code: |
+          pairs = [("p", "q"), ("q", "r"), ("s", "r"), ("t", "p")]
+          g = build_graph(pairs)
+          for a, b in pairs:
+              assert b in g.get(a, []) and a in g.get(b, []), f"The friendship ({a!r}, {b!r}) should appear under both {a!r} and {b!r}; got {g}."
+      - name: everyone is reachable from everyone
+        code: |
+          g = build_graph([("Ana", "Ben"), ("Ben", "Cai"), ("Dev", "Cai")])
+          for person in ["Ana", "Ben", "Cai", "Dev"]:
+              got = sorted(reachable(g, person))
+              assert got == ["Ana", "Ben", "Cai", "Dev"], f"From {person!r} everyone should be reachable, got {got}."
+    hints:
+      - In an undirected graph, the edge a–b can be followed from a to b and from b to a.
+      - Add a second line in the loop that stores a under b.
+    explanation: >-
+      An undirected edge must appear in both endpoints' neighbour lists. Storing it once turns the graph into
+      a directed one, so traversals can follow some friendships in only one direction.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-levels, m-matrix-vs-list, m-dfs-shortest-tf, m-has-path, m-debug-undirected]
+
+cheatsheet: |
+  ```python
+  from collections import defaultdict, deque
+
+  graph = defaultdict(list)                # adjacency list
+  for a, b in edges:
+      graph[a].append(b); graph[b].append(a)    # undirected: both ways
+
+  def bfs(graph, start):                   # FIFO queue: ring by ring, fewest edges
+      visited, queue = {start}, deque([start])
+      while queue:
+          node = queue.popleft()
+          for nb in graph.get(node, []):
+              if nb not in visited:
+                  visited.add(nb); queue.append(nb)   # mark when discovered
+
+  def dfs(node, visited):                  # recursion (or a list used as a stack)
+      visited.add(node)
+      for nb in graph.get(node, []):
+          if nb not in visited:
+              dfs(nb, visited)
+  ```
+  - Always a visited **set** (cycles!) · `graph.get(node, [])` for vertices with no outgoing edges
+  - BFS → shortest path in unweighted graphs (keep `parent` to rebuild it) · DFS → reachability, components, ordering
+  - O(V + E) time, O(V) space · matrix O(V²) memory · weighted → Dijkstra · dependencies → `graphlib.TopologicalSorter`

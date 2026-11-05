@@ -1,0 +1,221 @@
+id: de.orchestration
+concept: de.orchestration
+title: Pipeline orchestration
+subtitle: Orchestrators (Airflow, Dagster, Prefect) run tasks as DAGs with schedules, dependencies, retries, alerts
+  and backfills
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: Orchestrators (Airflow, Dagster, Prefect) run tasks as DAGs with schedules, dependencies, retries, alerts
+  and backfills.
+objectives:
+- Explain the role of pipeline orchestration in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: Airflow core concepts
+  url: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/index.html
+  publisher: Apache Software Foundation
+- title: Dagster documentation
+  url: https://dagster.io/docs
+  publisher: Dagster Labs
+- title: Prefect documentation
+  url: https://docs.prefect.io/
+  publisher: Prefect Technologies
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Orchestrators (Airflow, Dagster, Prefect) run tasks as DAGs with schedules, dependencies, retries, alerts
+      and backfills. Real pipelines have dozens of dependent steps that must run in order, on time, with retries
+      and alerts; cron scripts cannot see dependencies or recover from failures.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task
+      runs only when its upstream tasks succeed.
+
+      - Each scheduled run is tied to a data interval (Airflow''s logical date), which enables catch-up and backfills
+      of past intervals.
+
+      - Configure retries with backoff, timeouts and failure alerts per task; this is only safe when tasks are idempotent.
+
+      - The orchestrator coordinates work; heavy computation belongs in the warehouse, Spark or containers, not
+      inside scheduler workers.
+
+      - Asset-oriented orchestration (Dagster assets, Airflow assets/datasets) models the data each step produces
+      and schedules on data updates — APIs and names are version-dependent.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Airflow is not a data processing engine; passing large datasets between tasks (for example through
+      XCom) is an anti-pattern — pass references instead.
+
+      - A run''s logical date marks the data interval it processes, not the wall-clock time it executes.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def topological_order(graph):\n    result=[]; visiting=set(); visited=set()\n    def visit(node):\n \
+      \       if node in visiting: raise ValueError(\"cycle\")\n        if node in visited: return\n        visiting.add(node)\n\
+      \        for dep in graph.get(node, []): visit(dep)\n        visiting.remove(node); visited.add(node); result.append(node)\n\
+      \    for node in graph: visit(node)\n    return result\n\nprint(topological_order({\"train\":[\"clean\"],\"\
+      clean\":[\"load\"],\"load\":[]}))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: orchestration-code
+  - type: item
+    ref: orchestration-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task runs
+      only when its upstream tasks succeed.
+
+      - Each scheduled run is tied to a data interval (Airflow''s logical date), which enables catch-up and backfills
+      of past intervals.
+
+      - Configure retries with backoff, timeouts and failure alerts per task; this is only safe when tasks are idempotent.
+
+      - The orchestrator coordinates work; heavy computation belongs in the warehouse, Spark or containers, not
+      inside scheduler workers.
+
+      - Asset-oriented orchestration (Dagster assets, Airflow assets/datasets) models the data each step produces
+      and schedules on data updates — APIs and names are version-dependent.
+
+
+      **Watch for**
+
+      - Airflow is not a data processing engine; passing large datasets between tasks (for example through XCom)
+      is an anti-pattern — pass references instead.
+
+      - A run''s logical date marks the data interval it processes, not the wall-clock time it executes.'
+  - type: item
+    ref: orchestration-mcq
+  - type: item
+    ref: orchestration-tf
+  - type: item
+    ref: orchestration-code
+items:
+- id: orchestration-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of pipeline orchestration?
+  explanation: A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task
+    runs only when its upstream tasks succeed.
+  options:
+  - id: a
+    text: A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task runs
+      only when its upstream tasks succeed.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: Airflow is not a data processing engine; passing large datasets between tasks (for example through XCom)
+      is an anti-pattern — pass references instead.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: orchestration-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Airflow is not a data processing engine; passing large datasets between tasks (for example through XCom)
+    is an anti-pattern — pass references instead.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: orchestration-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying pipeline orchestration to a dataset that may contain missing, duplicate or malformed
+    records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: orchestration-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for pipeline orchestration. The assertions test the main behaviour and an important
+    edge case.
+  starterCode: "def topological_order(graph):\n    raise NotImplementedError('Complete this function')"
+  solution: "def topological_order(graph):\n    result=[]; visiting=set(); visited=set()\n    def visit(node):\n\
+    \        if node in visiting: raise ValueError(\"cycle\")\n        if node in visited: return\n        visiting.add(node)\n\
+    \        for dep in graph.get(node, []): visit(dep)\n        visiting.remove(node); visited.add(node); result.append(node)\n\
+    \    for node in graph: visit(node)\n    return result"
+  tests:
+  - name: Core transformation
+    code: order = topological_order({"train":["clean"],"clean":["load"],"load":[]})
+  - name: Edge case
+    code: 'assert order.index("load") < order.index("clean") < order.index("train")
+
+      try: topological_order({"a":["b"],"b":["a"]})
+
+      except ValueError: pass
+
+      else: raise AssertionError("cycle must fail")'
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - orchestration-mcq
+  - orchestration-tf
+  - orchestration-code
+cheatsheet: '**Key ideas**
+
+  - A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task runs only
+  when its upstream tasks succeed.
+
+  - Each scheduled run is tied to a data interval (Airflow''s logical date), which enables catch-up and backfills
+  of past intervals.
+
+  - Configure retries with backoff, timeouts and failure alerts per task; this is only safe when tasks are idempotent.
+
+  - The orchestrator coordinates work; heavy computation belongs in the warehouse, Spark or containers, not inside
+  scheduler workers.
+
+  - Asset-oriented orchestration (Dagster assets, Airflow assets/datasets) models the data each step produces and
+  schedules on data updates — APIs and names are version-dependent.
+
+
+  **Data quality risks**
+
+  - Airflow is not a data processing engine; passing large datasets between tasks (for example through XCom) is
+  an anti-pattern — pass references instead.
+
+  - A run''s logical date marks the data interval it processes, not the wall-clock time it executes.'

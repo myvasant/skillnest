@@ -1,0 +1,376 @@
+id: frameworks
+order: 15
+title: LLM Frameworks — LangChain, LangGraph, LangSmith, Langfuse and More
+shortTitle: LLM Frameworks
+summary: >-
+  What LLM application frameworks provide and cost: LangChain components, LangGraph state graphs with
+  persistence and human-in-the-loop, tracing and evaluation with LangSmith and Langfuse, and alternatives.
+why: >-
+  Frameworks speed up common patterns and add tooling, but they also add abstraction and churn. Learning
+  the concepts first lets you use any framework — or none — deliberately.
+modules:
+  - id: composition
+    title: Composition with LangChain
+    summary: Models, messages, prompts, parsers, tools and retrievers.
+  - id: orchestration
+    title: Orchestration with LangGraph
+    summary: State, nodes, edges, routing, checkpoints and interrupts.
+  - id: observability
+    title: Tracing and evaluation tools
+    summary: LangSmith, Langfuse and how they fit into a workflow.
+  - id: landscape
+    title: The wider landscape
+    summary: Other frameworks and how to choose.
+concepts:
+  - id: frameworks.why-frameworks
+    title: Why (and when) to use an LLM framework
+    module: composition
+    level: intermediate
+    priority: essential
+    summary: Frameworks standardise model interfaces, prompts, tools, retrieval and tracing; for small, stable apps a provider SDK and plain Python may be clearer.
+    requires: [genai.tool-calling, rag.context-assembly]
+    why: >-
+      Every LLM app needs the same plumbing — provider APIs, message formats, tool schemas, retries,
+      retrieval, tracing. Frameworks package it, but you should know what you are buying before adding a
+      dependency that changes quickly.
+    keyIdeas:
+      - "What frameworks give you: one interface across model providers, prompt and message utilities, tool and structured-output helpers, retrieval integrations, orchestration (graphs, agents) and tracing hooks."
+      - "What they cost: abstraction between you and the API, frequent breaking changes, large dependency trees, and debugging through someone else's code."
+      - A provider SDK plus plain Python is often clearer when you use one provider and a few fixed calls; a framework pays off with many integrations, durable orchestration or its ecosystem tooling.
+      - Whatever you choose, understand the raw calls underneath; Anthropic's agent guidance suggests starting with LLM APIs directly and making sure you understand any framework code you adopt.
+      - Pin versions and read migration guides — LangChain, for example, reorganised its packages and agent API in its 1.0 release.
+    misconceptions:
+      - A framework does not make an app production-ready; evaluation, error handling, security and observability are still your job.
+    interview: Interviewers ask when you would and would not use a framework such as LangChain, and what you would lose by using one.
+    sources:
+      - title: Building effective agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: LangChain overview
+        url: https://docs.langchain.com/oss/python/langchain/overview
+        publisher: LangChain
+        version: "1.x"
+  - id: frameworks.langchain-core
+    title: LangChain core concepts
+    module: composition
+    level: intermediate
+    priority: technology-specific
+    summary: Chat models behind one interface, typed messages, prompt templates, output parsers and the Runnable interface (invoke, stream, batch) that the LangChain Expression Language composes with `|`.
+    requires: [frameworks.why-frameworks]
+    tools: [LangChain]
+    why: >-
+      LangChain's building blocks give every model provider the same calling interface and message format, so
+      you can swap models and compose steps without rewriting your application.
+    keyIdeas:
+      - "Packages are split: `langchain-core` (base abstractions such as messages and runnables), `langchain` (agents and high-level APIs), provider packages such as `langchain-openai` or `langchain-anthropic`, and `langchain-classic` for legacy chains moved out in 1.0."
+      - "`init_chat_model('provider:model')` returns a chat model with the standard methods `invoke`, `stream` and `batch` (plus async variants)."
+      - "Messages are typed (`SystemMessage`, `HumanMessage`, `AIMessage`, `ToolMessage`); in 1.x they also expose provider-independent `content_blocks`."
+      - "Runnables share one interface and can be piped with LCEL: `prompt | model | parser` builds a sequence that itself supports invoke, stream and batch."
+      - LangChain moves fast and 0.x tutorials differ from 1.x; check your installed version and the current docs before copying code.
+    misconceptions:
+      - LangChain is not a model or a hosted service; it is a client-side library that calls the providers you configure.
+      - "Many older tutorials use APIs such as `LLMChain` that now live in `langchain-classic` or are deprecated."
+    interview: Expect to explain the Runnable interface and how LangChain hides provider differences behind one chat-model API.
+    sources:
+      - title: Models
+        url: https://docs.langchain.com/oss/python/langchain/models
+        publisher: LangChain
+        version: "1.x"
+      - title: Messages
+        url: https://docs.langchain.com/oss/python/langchain/messages
+        publisher: LangChain
+        version: "1.x"
+      - title: LangChain v1 migration guide
+        url: https://docs.langchain.com/oss/python/migrate/langchain-v1
+        publisher: LangChain
+  - id: frameworks.langchain-tools
+    title: Tools and structured output in LangChain
+    module: composition
+    level: intermediate
+    priority: technology-specific
+    summary: Define tools from Python functions, bind them to models, and request schema-validated structured output.
+    requires: [frameworks.langchain-core]
+    why: >-
+      Agents and extraction pipelines need the model to call your functions with valid arguments and to return
+      data your code can parse. LangChain converts Python functions and schemas into each provider's format.
+    keyIdeas:
+      - "The `@tool` decorator (`from langchain.tools import tool`) turns a function into a tool: its name is the tool name, the docstring the description, and type hints the input schema (or pass a Pydantic `args_schema`)."
+      - "`model.bind_tools([...])` lets a chat model request tool calls; the returned `AIMessage.tool_calls` lists names and arguments, and your code or an agent loop runs them and replies with `ToolMessage`s."
+      - "`model.with_structured_output(Schema)` returns validated objects for a Pydantic model, TypedDict or JSON Schema; in `create_agent`, `response_format` does the same using the provider's native structured output or a tool-calling strategy."
+      - Tool descriptions are prompts; clear names, precise descriptions and constrained argument types reduce wrong calls.
+      - Validate tool arguments and handle tool errors explicitly, returning useful error text to the model instead of crashing the loop.
+    misconceptions:
+      - Binding a tool does not execute it; the model only proposes a call, and your code must run it and send back the result.
+      - Structured output can still fail validation or contain wrong values; handle parse errors and check the content.
+    interview: Interviewers ask how a Python function becomes a tool schema and what happens between a model's tool call and its next response.
+    sources:
+      - title: Tools
+        url: https://docs.langchain.com/oss/python/langchain/tools
+        publisher: LangChain
+        version: "1.x"
+      - title: Structured output
+        url: https://docs.langchain.com/oss/python/langchain/structured-output
+        publisher: LangChain
+        version: "1.x"
+  - id: frameworks.langchain-retrievers
+    title: Retrieval components in LangChain
+    module: composition
+    level: intermediate
+    priority: technology-specific
+    summary: Document loaders, text splitters, embedding wrappers, vector stores and retrievers assembled into RAG chains.
+    requires: [frameworks.langchain-core, rag.vector-databases]
+    why: >-
+      RAG needs loaders, splitters, embedding models and vector stores from many vendors. LangChain wraps them
+      in common interfaces so the pipeline stays the same when you swap a component.
+    keyIdeas:
+      - "Document loaders return `Document` objects (`page_content` plus `metadata`); splitters such as `RecursiveCharacterTextSplitter` (package `langchain-text-splitters`) chunk them."
+      - "Embedding wrappers expose `embed_documents` and `embed_query`; vector-store integrations (Chroma, pgvector, Qdrant, FAISS, in-memory and more) offer `add_documents` and `similarity_search`."
+      - "`vector_store.as_retriever(search_kwargs={'k': 5})` turns a store into a retriever — a runnable that maps a query string to a list of documents."
+      - RAG can be 2-step (always retrieve, then generate) or agentic (the model calls a retrieval tool when it decides it needs one).
+      - "Integration packages and import paths change between versions; several older retrievers (for example `MultiQueryRetriever`) moved to `langchain-classic` in 1.0."
+    misconceptions:
+      - The framework does not pick good chunk sizes, embedding models or k for you; defaults are starting points to evaluate.
+    interview: Expect to sketch a LangChain RAG pipeline from loader to retriever and say what you would evaluate at each step.
+    sources:
+      - title: Retrieval
+        url: https://docs.langchain.com/oss/python/deepagents/retrieval
+        publisher: LangChain
+        version: "1.x"
+      - title: Text splitters
+        url: https://docs.langchain.com/oss/python/integrations/splitters
+        publisher: LangChain
+  - id: frameworks.langgraph-basics
+    title: LangGraph state graphs
+    module: orchestration
+    level: advanced
+    priority: technology-specific
+    summary: Model an application as a graph of nodes that read and update shared state, with edges and conditional routing deciding what runs next.
+    requires: [frameworks.why-frameworks, genai.tool-calling, cs.graphs]
+    tools: [LangGraph]
+    why: >-
+      Real LLM applications loop, branch, call tools and wait for people. LangGraph makes that control flow
+      explicit as a graph over shared state, so it is inspectable, testable and resumable instead of hidden in
+      nested callbacks.
+    keyIdeas:
+      - "Define a state schema (usually a `TypedDict`); nodes are functions that take the state and return a partial update; reducers such as `Annotated[list, add_messages]` or `operator.add` decide how updates merge — without one, a key is overwritten."
+      - "Build with `StateGraph(State)`, `add_node`, `add_edge(START, 'node')` and `add_conditional_edges(node, router_fn)`, then call `compile()` before `invoke` or `stream`."
+      - Execution runs in super-steps (inspired by Google's Pregel); nodes triggered in the same step run in parallel, and the run ends when no more nodes are triggered.
+      - "`Command(update=..., goto=...)` lets a node update state and choose the next node; `Send` fans out to one node with different inputs (map-reduce)."
+      - "A recursion limit caps the number of super-steps and raises `GraphRecursionError`; its default has changed between versions, so set it explicitly for looping graphs."
+    misconceptions:
+      - LangGraph does not require LangChain chains or models; nodes can be any Python function (LangChain's agents are, however, built on LangGraph).
+      - A graph is not automatically an agent; many useful graphs are deterministic workflows with a single LLM step.
+    interview: Interviewers ask you to sketch state, nodes and conditional edges for a tool-calling loop and to explain how reducers merge parallel updates.
+    sources:
+      - title: LangGraph overview
+        url: https://docs.langchain.com/oss/python/langgraph/overview
+        publisher: LangChain
+        version: "1.x"
+      - title: Graph API overview
+        url: https://docs.langchain.com/oss/python/langgraph/graph-api
+        publisher: LangChain
+        version: "1.x"
+  - id: frameworks.langgraph-persistence
+    title: Persistence, memory and recovery in LangGraph
+    module: orchestration
+    level: advanced
+    priority: technology-specific
+    summary: Checkpointers save state after each step, enabling multi-turn threads, resuming after failures and inspecting past states.
+    requires: [frameworks.langgraph-basics]
+    why: >-
+      Multi-turn chats, long-running jobs and crashes all need the application to remember where it was.
+      Checkpointing saves graph state so a thread can continue, be inspected, or resume after a failure.
+    keyIdeas:
+      - "Compile with a checkpointer (`InMemorySaver` for tests; SQLite or `PostgresSaver` for real use) and pass `config={'configurable': {'thread_id': ...}}`; each step of that thread is saved as a checkpoint."
+      - Invoking again with the same `thread_id` continues the thread; a new ID starts an empty one.
+      - "`graph.get_state(config)` and `graph.get_state_history(config)` inspect checkpoints, and you can replay or fork from an earlier one (\"time travel\")."
+      - "Checkpointers give short-term, thread-scoped memory; stores (such as `InMemoryStore` or database-backed stores) hold long-term memory shared across threads, like user preferences."
+      - After a failure, re-running the thread resumes from the last saved checkpoint rather than starting over, so make node side effects idempotent.
+    misconceptions:
+      - "`InMemorySaver` loses everything when the process restarts; it is for development only."
+      - A checkpoint is not long-term memory by itself; cross-thread memory needs a store and an explicit policy for what to save.
+    interview: Expect to explain what a thread ID is and how checkpointing enables resumption and human-in-the-loop.
+    production: Use a durable checkpointer on a database you operate, plan retention and clean-up of old threads, and treat checkpoints as sensitive user data.
+    sources:
+      - title: Persistence
+        url: https://docs.langchain.com/oss/python/langgraph/persistence
+        publisher: LangChain
+        version: "1.x"
+      - title: Memory overview
+        url: https://docs.langchain.com/oss/python/concepts/memory
+        publisher: LangChain
+  - id: frameworks.langgraph-hitl
+    title: Human-in-the-loop with LangGraph
+    module: orchestration
+    level: advanced
+    priority: technology-specific
+    summary: Interrupt a graph before sensitive steps, let a person approve or edit state, then resume from the checkpoint.
+    requires: [frameworks.langgraph-persistence]
+    why: >-
+      Agents that send email, move money or change data need a person to approve, edit or reject actions.
+      LangGraph interrupts pause a run, persist its state and resume when the human answers — even hours later.
+    keyIdeas:
+      - "Calling `interrupt(payload)` inside a node pauses the graph and surfaces the JSON-serialisable payload to the caller (with `invoke`, under `__interrupt__` in the result)."
+      - "Resume by invoking again with the same `thread_id` and `Command(resume=value)`; `value` becomes the return value of `interrupt()`."
+      - "On resume the interrupted node runs again from its start, so code before `interrupt()` executes twice — keep it idempotent or move side effects after the interrupt."
+      - "Interrupts need a checkpointer; static `interrupt_before` / `interrupt_after` breakpoints exist but are mainly for debugging."
+      - Common patterns are approving or rejecting a tool call, editing proposed arguments or state, and asking the user for missing input; LangChain agents also ship human-in-the-loop middleware.
+    misconceptions:
+      - "Wrapping `interrupt()` in a bare `try/except` swallows the pause, because it works by raising a special exception."
+      - Resuming does not continue from the exact line of the interrupt; the whole node runs again.
+    production: Store pending approvals durably, show reviewers the exact action and arguments, and expire or escalate requests nobody answers.
+    sources:
+      - title: Interrupts
+        url: https://docs.langchain.com/oss/python/langgraph/interrupts
+        publisher: LangChain
+        version: "1.x"
+      - title: Human-in-the-loop (agent middleware)
+        url: https://docs.langchain.com/oss/python/langchain/human-in-the-loop
+        publisher: LangChain
+        version: "1.x"
+  - id: frameworks.langsmith
+    title: LangSmith
+    module: observability
+    level: intermediate
+    priority: technology-specific
+    summary: A hosted platform for tracing, datasets and evaluations of LLM applications (framework-agnostic); check current plan limits and data-handling terms before use.
+    requires: [genai.evaluation, mlops.observability]
+    tools: [LangSmith]
+    why: >-
+      When an LLM app misbehaves you need to see every prompt, tool call and response, and when you change a
+      prompt you need to know whether quality improved. LangSmith provides tracing, datasets and evaluation for
+      that loop.
+    keyIdeas:
+      - Tracing records each run as a tree of steps (LLM calls, tools, retrievers) with inputs, outputs, latency, tokens and errors; LangChain and LangGraph apps can be traced by setting environment variables, other code through the SDK (for example the `@traceable` decorator) or integrations.
+      - Datasets hold example inputs and reference outputs; experiments run your app over a dataset and score it with evaluators — code checks, LLM-as-judge or human review.
+      - Online evaluations and user feedback attach scores to production traces so regressions appear on dashboards.
+      - It works with other frameworks and plain code, but its deepest integration is with LangChain and LangGraph.
+      - It is a commercial product with cloud and self-hosted or hybrid deployment options; plans, limits and retention change, so check current terms.
+    misconceptions:
+      - Using LangSmith does not require LangChain; you can trace any Python or JavaScript code with its SDK.
+      - Traces are not evaluations; you still need datasets and evaluators to measure quality.
+    production: Traces can contain personal or confidential data; review what is sent, configure masking where needed, and check data-handling and residency terms.
+    sources:
+      - title: LangSmith observability
+        url: https://docs.langchain.com/langsmith/observability
+        publisher: LangChain
+      - title: LangSmith evaluation
+        url: https://docs.langchain.com/langsmith/evaluation
+        publisher: LangChain
+  - id: frameworks.langfuse
+    title: Langfuse
+    module: observability
+    level: intermediate
+    priority: technology-specific
+    summary: An open-source LLM engineering platform for traces, prompt management and evaluations that can be self-hosted.
+    requires: [genai.evaluation, mlops.observability]
+    tools: [Langfuse]
+    why: >-
+      Teams that want tracing, prompt management and evaluation without sending data to a third party can
+      self-host Langfuse, an open-source platform that also offers a managed cloud.
+    keyIdeas:
+      - Traces capture LLM and non-LLM steps (retrieval, tools, API calls) with cost and latency; sessions group multi-turn conversations.
+      - The SDKs are built on OpenTelemetry, with integrations for the OpenAI SDK, LangChain, LlamaIndex, LiteLLM and many others.
+      - "Prompt management versions prompts and serves them by label (for example `production`), so prompt changes can ship without a code deploy and be linked to traces."
+      - "Evaluation: scores (numeric, boolean or categorical) from LLM-as-judge, user feedback, annotation queues or custom code; datasets and experiments compare versions."
+      - The repository is MIT-licensed except its `ee` folders, and can be self-hosted with Docker Compose for local use or Kubernetes for production.
+    misconceptions:
+      - Self-hosting is not free of work; you operate its databases, upgrades, backups and security.
+    production: When self-hosting, size the storage backends for your trace volume, set retention policies and keep the deployment patched; check the self-hosting docs for the current architecture.
+    sources:
+      - title: Langfuse documentation
+        url: https://langfuse.com/docs
+        publisher: Langfuse
+      - title: Self-hosting Langfuse
+        url: https://langfuse.com/self-hosting
+        publisher: Langfuse
+      - title: langfuse/langfuse (source and licence)
+        url: https://github.com/langfuse/langfuse
+        publisher: GitHub
+  - id: frameworks.llamaindex
+    title: LlamaIndex
+    module: landscape
+    level: intermediate
+    priority: optional
+    summary: A data framework focused on ingestion, indexing and querying for RAG and agent applications.
+    requires: [rag.context-assembly, frameworks.why-frameworks]
+    tools: [LlamaIndex]
+    why: >-
+      If your application is mostly about turning many document sources into something queryable, LlamaIndex
+      offers a data-centred toolkit for ingestion, indexing and query engines that gets a RAG prototype running
+      quickly.
+    keyIdeas:
+      - "Core flow: readers (connectors) load `Document`s; node parsers split them into `Node`s (chunks with metadata and relationships); an index such as `VectorStoreIndex` embeds and stores them."
+      - "`index.as_retriever()` returns nodes, `index.as_query_engine()` retrieves and synthesises an answer, and chat engines add conversation history."
+      - Agents and event-driven Workflows build multi-step and agentic applications on the same components.
+      - The open-source framework is separate from the company's hosted document parsing and indexing platform (LlamaParse); check which features need an account.
+      - The docs now live at developers.llamaindex.ai and APIs evolve; match tutorials to your installed version.
+    misconceptions:
+      - LlamaIndex and LangChain are not mutually exclusive; they overlap, and either can be used for RAG or agents.
+    sources:
+      - title: LlamaIndex Python framework documentation
+        url: https://developers.llamaindex.ai/python/framework/
+        publisher: LlamaIndex
+      - title: High-level concepts
+        url: https://developers.llamaindex.ai/python/framework/getting_started/concepts/
+        publisher: LlamaIndex
+  - id: frameworks.other-sdks
+    title: Other frameworks and SDKs
+    module: landscape
+    level: intermediate
+    priority: optional
+    summary: Pydantic AI, DSPy, Haystack, Microsoft Agent Framework (the successor to Semantic Kernel) and provider agent SDKs take different approaches to typing, optimisation and orchestration.
+    requires: [frameworks.why-frameworks]
+    tools: [Pydantic AI, DSPy, Haystack]
+    why: >-
+      No single framework fits every team. Knowing the main alternatives and their design philosophies helps
+      you pick one that matches your constraints — or recognise when you need none.
+    keyIdeas:
+      - "Pydantic AI (from the Pydantic team): type-safe agents with validated structured outputs and typed dependencies."
+      - "DSPy: write programs from declarative modules with signatures, then let optimizers tune the prompts (and optionally weights) against a metric instead of hand-editing prompts."
+      - "Haystack (deepset): pipelines of typed components for search, RAG and agents, with a long history in production search."
+      - Microsoft Agent Framework (.NET and Python) is the stated successor to both Semantic Kernel and AutoGen; provider SDKs such as the OpenAI Agents SDK and the Claude Agent SDK give thinner, provider-centred agent loops.
+      - "Compare on: control over prompts and calls, typing, observability (OpenTelemetry support), provider lock-in, release stability and licence."
+    misconceptions:
+      - Popularity (stars, downloads) says little about fit, stability or maintenance; read the release history and migration guides.
+    sources:
+      - title: Pydantic AI documentation
+        url: https://pydantic.dev/docs/ai/overview/
+        publisher: Pydantic
+      - title: DSPy documentation
+        url: https://dspy.ai/
+        publisher: DSPy project
+      - title: Haystack documentation
+        url: https://docs.haystack.deepset.ai/docs/intro
+        publisher: deepset
+  - id: frameworks.tradeoffs
+    title: Framework trade-offs
+    module: landscape
+    level: advanced
+    priority: essential
+    summary: Weigh speed of development against abstraction cost, debuggability, version churn, lock-in and performance, and keep core logic framework-independent.
+    requires: [frameworks.langchain-core, frameworks.langgraph-basics]
+    why: >-
+      Framework choices are hard to reverse once business logic is entangled with them. Weighing the costs up
+      front and isolating the framework behind your own interfaces keeps you free to upgrade, switch or remove
+      it.
+    keyIdeas:
+      - "Speed versus control: frameworks get prototypes running quickly, but defaults (prompts, retries, parsing) may be hidden — inspect what is actually sent to the model."
+      - "Churn: fast-moving frameworks rename packages and APIs (LangChain 1.0 moved agents to `create_agent` and legacy chains to `langchain-classic`); pin versions, read release policies and budget for upgrades."
+      - Keep domain logic (prompts, tool implementations, retrieval rules, validation) in your own modules and call the framework at the edges; a thin adapter layer makes swapping feasible.
+      - Deep abstraction stacks make stack traces and latency harder to read; tracing helps but does not replace understanding.
+      - Decide with a small spike — build one real flow with and without the framework and compare clarity, code size, performance and test effort.
+    misconceptions:
+      - No framework is not automatically simpler; you may end up rebuilding retries, streaming, tool schemas and tracing yourself.
+      - Lock-in comes less from imports than from data stored in framework- or vendor-specific shapes (checkpoints, prompt registries, traces, datasets).
+    interview: Interviewers ask you to justify a framework choice for a given system and explain how you would limit lock-in.
+    sources:
+      - title: Building effective agents
+        url: https://www.anthropic.com/research/building-effective-agents
+        publisher: Anthropic
+      - title: LangChain release policy
+        url: https://docs.langchain.com/oss/python/release-policy
+        publisher: LangChain
+      - title: LangChain v1 migration guide
+        url: https://docs.langchain.com/oss/python/migrate/langchain-v1
+        publisher: LangChain

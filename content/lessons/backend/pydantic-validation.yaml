@@ -1,0 +1,221 @@
+id: backend.pydantic-validation
+concept: backend.pydantic-validation
+title: Validation and serialisation with Pydantic
+subtitle: Pydantic models parse and validate untrusted data into typed objects and serialise them back, with clear
+  errors for bad input
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Pydantic models parse and validate untrusted data into typed objects and serialise them back, with clear
+  errors for bad input.
+objectives:
+- Explain the core model behind validation and serialisation with pydantic.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'Pydantic: Models'
+  url: https://pydantic.dev/docs/validation/latest/concepts/models/
+  publisher: Pydantic
+- title: 'Pydantic: Validators'
+  url: https://pydantic.dev/docs/validation/latest/concepts/validators/
+  publisher: Pydantic
+- title: Request Body
+  url: https://fastapi.tiangolo.com/tutorial/body/
+  publisher: FastAPI
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Pydantic models parse and validate untrusted data into typed objects and serialise them back, with clear
+      errors for bad input. Request bodies, config files, queue messages and LLM outputs are all untrusted; validating
+      them at the boundary turns a crash deep inside your code into one clear error at the door.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)`
+      or `User.model_validate(data)`.
+
+      - Pydantic v2 validates in lax mode by default, so `"3"` becomes `3` for an `int` field; use `strict=True`
+      or strict types when coercion is unwanted.
+
+      - Constraints and custom rules: `Field(gt=0, max_length=50)`, `@field_validator` for one field, `@model_validator`
+      for checks across fields.
+
+      - Invalid data raises `ValidationError` listing every failing field with its location and message; FastAPI
+      turns this into a 422 response.
+
+      - Serialise with `model_dump()` (dict) or `model_dump_json()`; unknown fields are ignored by default, and
+      `model_config = ConfigDict(extra="forbid")` rejects them.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Type hints on a plain class or dataclass are not checked at runtime; only a validation library such
+      as Pydantic enforces them.
+
+      - Pydantic v1 methods such as `.dict()` and `.parse_obj()` are deprecated in v2; use `model_dump()` and `model_validate()`.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def validate_user(payload):\n    if not isinstance(payload, dict): raise ValueError(\"Expected an object\"\
+      )\n    if not isinstance(payload.get(\"name\"), str) or not payload[\"name\"].strip(): raise ValueError(\"\
+      name is required\")\n    age = payload.get(\"age\")\n    if not isinstance(age, int) or isinstance(age, bool)\
+      \ or age < 0: raise ValueError(\"age must be a non-negative integer\")\n    return {\"name\": payload[\"name\"\
+      ].strip(), \"age\": age}\n\nprint(validate_user({\"name\": \" Ada \", \"age\": 36}))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: pydantic-validation-code
+  - type: item
+    ref: pydantic-validation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)`
+      or `User.model_validate(data)`.
+
+      - Pydantic v2 validates in lax mode by default, so `"3"` becomes `3` for an `int` field; use `strict=True`
+      or strict types when coercion is unwanted.
+
+      - Constraints and custom rules: `Field(gt=0, max_length=50)`, `@field_validator` for one field, `@model_validator`
+      for checks across fields.
+
+      - Invalid data raises `ValidationError` listing every failing field with its location and message; FastAPI
+      turns this into a 422 response.
+
+      - Serialise with `model_dump()` (dict) or `model_dump_json()`; unknown fields are ignored by default, and
+      `model_config = ConfigDict(extra="forbid")` rejects them.
+
+
+      **Avoid**
+
+      - Type hints on a plain class or dataclass are not checked at runtime; only a validation library such as Pydantic
+      enforces them.
+
+      - Pydantic v1 methods such as `.dict()` and `.parse_obj()` are deprecated in v2; use `model_dump()` and `model_validate()`.'
+  - type: item
+    ref: pydantic-validation-mcq
+  - type: item
+    ref: pydantic-validation-tf
+  - type: item
+    ref: pydantic-validation-code
+items:
+- id: pydantic-validation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of validation and serialisation with pydantic?
+  explanation: 'Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)`
+    or `User.model_validate(data)`.'
+  options:
+  - id: a
+    text: 'Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)`
+      or `User.model_validate(data)`.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Type hints on a plain class or dataclass are not checked at runtime; only a validation library such as
+      Pydantic enforces them.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: pydantic-validation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Type hints on a plain class or dataclass are not checked at runtime; only a validation library such as
+    Pydantic enforces them.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: pydantic-validation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing validation and serialisation with pydantic in a real application. What design decisions
+    would you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: pydantic-validation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for validation and serialisation with pydantic. Implement the stated rule and make
+    sure both ordinary and edge-case tests pass.
+  starterCode: "def validate_user(payload):\n    raise NotImplementedError('Complete this function')"
+  solution: "def validate_user(payload):\n    if not isinstance(payload, dict): raise ValueError(\"Expected an object\"\
+    )\n    if not isinstance(payload.get(\"name\"), str) or not payload[\"name\"].strip(): raise ValueError(\"name\
+    \ is required\")\n    age = payload.get(\"age\")\n    if not isinstance(age, int) or isinstance(age, bool) or\
+    \ age < 0: raise ValueError(\"age must be a non-negative integer\")\n    return {\"name\": payload[\"name\"\
+    ].strip(), \"age\": age}"
+  tests:
+  - name: Core behaviour
+    code: assert validate_user({"name":" Ada ","age":36}) == {"name":"Ada","age":36}
+  - name: Edge cases
+    code: 'try: validate_user({"name":"Ada","age":True})
+
+      except ValueError: pass
+
+      else: raise AssertionError("bool must not be accepted as an integer age")'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - pydantic-validation-mcq
+  - pydantic-validation-tf
+  - pydantic-validation-code
+cheatsheet: '**Core model**
+
+  - Subclass `BaseModel` and annotate fields (`name: str`, `age: int = 0`); build instances with `User(**data)`
+  or `User.model_validate(data)`.
+
+  - Pydantic v2 validates in lax mode by default, so `"3"` becomes `3` for an `int` field; use `strict=True` or
+  strict types when coercion is unwanted.
+
+  - Constraints and custom rules: `Field(gt=0, max_length=50)`, `@field_validator` for one field, `@model_validator`
+  for checks across fields.
+
+  - Invalid data raises `ValidationError` listing every failing field with its location and message; FastAPI turns
+  this into a 422 response.
+
+  - Serialise with `model_dump()` (dict) or `model_dump_json()`; unknown fields are ignored by default, and `model_config
+  = ConfigDict(extra="forbid")` rejects them.
+
+
+  **Common mistakes**
+
+  - Type hints on a plain class or dataclass are not checked at runtime; only a validation library such as Pydantic
+  enforces them.
+
+  - Pydantic v1 methods such as `.dict()` and `.parse_obj()` are deprecated in v2; use `model_dump()` and `model_validate()`.'

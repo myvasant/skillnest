@@ -1,0 +1,1026 @@
+id: python.iterators
+concept: python.iterators
+title: Iterables and Iterators
+subtitle: iter(), next(), StopIteration and what a for loop really does
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  One for loop works on lists, strings, dicts, files, ranges and zips because they all follow the same
+  iterator protocol. Learn the difference between an iterable and an iterator, drive iteration by hand
+  with iter() and next(), rewrite a for loop as the while loop it really is, and avoid the classic
+  "my zip is empty the second time" bug.
+objectives:
+  - Distinguish iterables (can be looped over repeatedly) from iterators (single-use, remember their position).
+  - Use iter() and next(), including next(it, default), and explain the role of StopIteration.
+  - Rewrite a for loop as the equivalent while loop with try/except StopIteration.
+  - Predict the behaviour of exhausted iterators such as zip, map, enumerate and file objects.
+  - Explain why range is a lazy sequence but not an iterator, and diagnose common iteration errors.
+sources:
+  - title: "Glossary: iterator"
+    url: https://docs.python.org/3/glossary.html#term-iterator
+    publisher: Python Software Foundation
+  - title: "Glossary: iterable"
+    url: https://docs.python.org/3/glossary.html#term-iterable
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Iterator Types"
+    url: https://docs.python.org/3/library/stdtypes.html#iterator-types
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The for statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-for-statement
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Ranges"
+    url: https://docs.python.org/3/library/stdtypes.html#ranges
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: iter() and next()"
+    url: https://docs.python.org/3/library/functions.html#iter
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: One loop, many kinds of data
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          You have looped over lists, strings, dictionaries, ranges, files and `zip(...)` with the same
+          `for` statement. Those are very different objects — how can one statement handle them all? And
+          why does this program print the pairs once, and then find nothing?
+      - type: code
+        runnable: true
+        code: |
+          pairs = zip(["Ada", "Lin"], [91, 78])
+
+          for name, score in pairs:
+              print(name, score)
+
+          print("Again:", list(pairs))
+        expectedOutput: |
+          Ada 91
+          Lin 78
+          Again: []
+        annotations:
+          - line: 6
+            text: The same zip object, looped over a second time, is empty.
+      - type: markdown
+        body: |
+          Both questions have the same answer: the **iterator protocol**, a tiny agreement between `for`
+          and the objects it loops over. Once you know it, you can predict exactly when data is "used up",
+          and you will understand [generators](concept:python.generators) — the next lesson — immediately.
+
+  - id: iterable-vs-iterator
+    title: Iterable vs iterator
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two roles, two words:
+
+          - An [iterable](glossary:iterable) is anything you can loop over: a list, a string, a dict, a
+            range, a file. Its job is to **hand out iterators** when asked, via the built-in `iter()`.
+          - An [iterator](glossary:iterator) does the actual walking. It **remembers its position** and
+            gives the next item each time you call `next()` on it. When there are no items left, it raises
+            [StopIteration](glossary:stop-iteration).
+
+          A list is iterable but is **not** an iterator — it does not remember any position, which is why
+          you can loop over the same list as often as you like. Each `iter(list)` creates a fresh iterator
+          with its own position:
+      - type: code
+        runnable: true
+        code: |
+          colors = ["red", "green", "blue"]
+
+          first = iter(colors)
+          second = iter(colors)
+
+          print(next(first))
+          print(next(first))
+          print(next(second))     # independent: starts at the beginning
+          print(type(first).__name__)
+        expectedOutput: |
+          red
+          green
+          red
+          list_iterator
+        annotations:
+          - line: 3
+            text: iter() asks the list for a new iterator.
+          - line: 8
+            text: second has its own position, untouched by first.
+      - type: callout
+        variant: analogy
+        title: A book and its bookmarks
+        body: |
+          An iterable is like a **book**; an iterator is a **bookmark** in it. Many readers can have their
+          own bookmark in the same book, each at a different page. A bookmark only moves forward, and once
+          it reaches the end it is no use — you need a new bookmark to read again. Some objects, like a zip
+          or an open file, are *bookmarks without a book*: the iterator is all there is.
+      - type: markdown
+        body: |
+          **Every iterator is also iterable:** `iter(an_iterator)` simply returns the same iterator. That
+          is what allows you to write `for x in some_iterator:`. So "iterable" is the broad category, and
+          iterators are the single-use members of it.
+
+          | Object | Iterable? | Iterator? | Can loop over it again? |
+          |---|---|---|---|
+          | `list`, `tuple`, `str`, `dict`, `set` | yes | no | yes |
+          | `range(10)` | yes | no | yes |
+          | `zip(...)`, `map(...)`, `filter(...)`, `enumerate(...)`, `reversed(...)` | yes | **yes** | no |
+          | open file object | yes | **yes** | no (unless you `seek(0)`) |
+          | `iter(any_iterable)` | yes | **yes** | no |
+      - type: item
+        ref: iterable-mcq
+
+  - id: iter-and-next
+    title: Driving iteration by hand with iter() and next()
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `next(iterator)` returns the next item and moves the iterator forward. When nothing is left it
+          raises `StopIteration` — an exception that simply means "finished", not "something went wrong".
+          If you would rather get a value than an exception, pass a default: `next(iterator, default)`.
+      - type: code
+        runnable: true
+        code: |
+          letters = iter("ab")
+
+          print(next(letters))
+          print(next(letters))
+          print(next(letters, "no more"))   # default instead of an exception
+
+          try:
+              next(letters)
+          except StopIteration:
+              print("StopIteration: the iterator is exhausted")
+        expectedOutput: |
+          a
+          b
+          no more
+          StopIteration: the iterator is exhausted
+      - type: markdown
+        body: |
+          Calling `next()` by hand is genuinely useful when the first item is special — for example, a
+          header line — and the rest should be processed normally:
+      - type: code
+        runnable: true
+        code: |
+          rows = iter(["name,score", "Ada,91", "Lin,78"])
+
+          header = next(rows)          # take the first item off
+          print("columns:", header.split(","))
+
+          for row in rows:             # the loop continues from where next() left off
+              print("data:", row)
+        expectedOutput: |
+          columns: ['name', 'score']
+          data: Ada,91
+          data: Lin,78
+        annotations:
+          - line: 6
+            text: The for loop uses the same iterator, so it starts at the second item.
+      - type: item
+        ref: predict-next
+
+  - id: for-loop
+    title: What a for loop really does
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `for item in iterable:` is a convenient way to write the [iterator protocol](glossary:iterator-protocol):
+
+          1. Call `iter(iterable)` **once** to get an iterator.
+          2. Call `next()` on it, bind the result to `item`, and run the body.
+          3. Repeat step 2 until `next()` raises `StopIteration`; the loop catches it silently and ends.
+
+          Written out by hand, these two programs do the same thing:
+
+          ```python
+          for color in colors:          # what you write
+              print(color)
+          ```
+      - type: code
+        runnable: true
+        code: |
+          colors = ["red", "green"]
+
+          it = iter(colors)                  # step 1
+          while True:
+              try:
+                  color = next(it)           # step 2
+              except StopIteration:          # step 3: no more items
+                  break
+              print(color)                   # the loop body
+        expectedOutput: |
+          red
+          green
+        caption: The real for loop does this in C inside the interpreter, but the logic is exactly this.
+      - type: visualization
+        component: python-tracer
+        title: The for loop, unrolled
+        caption: >-
+          Each pass calls next(it) and binds color. On the third call the iterator has nothing left: the
+          tracer shows StopIteration being raised on line 5, the except clause runs, and break ends the
+          loop.
+        props:
+          code: |
+            colors = ["red", "green"]
+            it = iter(colors)
+            while True:
+                try:
+                    color = next(it)
+                except StopIteration:
+                    break
+                print(color)
+      - type: callout
+        variant: note
+        title: Why this matters
+        body: |
+          Because `for` only needs `iter()` and `next()`, **any** object that supports them can be looped
+          over — including ones you will create yourself with [generators](concept:python.generators) or,
+          later, [classes](concept:python.classes) that define the `__iter__` and `__next__` methods. The
+          same protocol powers `list()`, `sum()`, `max()`, `sorted()`, unpacking (`a, b = pair`),
+          comprehensions and `in`.
+      - type: item
+        ref: parsons-while-for
+
+  - id: single-use
+    title: Iterators are single-use
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An iterator only moves forward. Once it has raised `StopIteration`, every later `next()` raises it
+          again, and every later loop finds nothing. Anything that consumes items — a `for` loop, `list()`,
+          `sum()`, `max()`, even `in` — moves the same iterator forward:
+      - type: code
+        runnable: true
+        code: |
+          prices = ["4", "10", "6"]
+          numbers = map(int, prices)      # map returns an iterator
+
+          print(sum(numbers))             # consumes all three items
+          print(list(numbers))            # nothing left
+          print(max(map(int, prices)))    # a NEW map object works again
+        expectedOutput: |
+          20
+          []
+          10
+        annotations:
+          - line: 2
+            text: map(int, prices) converts each item when it is asked for — not in advance.
+          - line: 6
+            text: The list prices is untouched; calling map again creates a fresh iterator over it.
+      - type: visualization
+        component: python-tracer
+        title: The second pass finds an empty iterator
+        caption: >-
+          After the loop, pairs still refers to the same zip object, but it has been exhausted, so again is
+          bound to an empty list.
+        props:
+          code: |
+            pairs = zip(["Ada", "Lin"], [91, 78])
+            for name, score in pairs:
+                print(name, score)
+            again = list(pairs)
+            print(again)
+      - type: callout
+        variant: tip
+        title: Need the items twice? Make a list
+        body: |
+          If you must use the results of `zip`, `map`, `filter`, `enumerate` or a file more than once, store
+          them: `pairs = list(zip(names, scores))`. A list is an iterable, so every loop gets a fresh
+          iterator. (Do this only when the data fits comfortably in memory.)
+      - type: item
+        ref: predict-exhausted
+
+  - id: lazy
+    title: "Lazy objects: range, zip, enumerate"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Many built-ins are **lazy**: they produce items only when asked, instead of building a whole list
+          up front. That is why `zip`, `map`, `filter` and `enumerate` return iterators — each pair or
+          result is computed on the call to `next()` that needs it.
+
+          `range` is lazy too, but it is **not** an iterator. It is a *lazy sequence*: it stores only
+          `start`, `stop` and `step` and calculates any item on demand. So it supports `len()`, indexing and
+          fast `in` tests, takes the same tiny amount of memory for a billion numbers as for three, and can be
+          looped over any number of times.
+      - type: code
+        runnable: true
+        code: |
+          import sys
+
+          r = range(1_000_000_000)
+          print(len(r), r[-1], 123_456_789 in r)   # instant: computed, not stored
+          print(sys.getsizeof(r) < 100)             # a few dozen bytes
+
+          small = range(3)
+          print(list(small), list(small))           # reusable
+
+          e = enumerate(["x", "y"])                 # an iterator
+          print(next(e), list(e), list(e))
+        expectedOutput: |
+          1000000000 999999999 True
+          True
+          [0, 1, 2] [0, 1, 2]
+          (0, 'x') [(1, 'y')] []
+        annotations:
+          - line: 4
+            text: "`in` on a range of ints is answered with arithmetic, without looping."
+          - line: 8
+            text: range is iterable, not an iterator, so each list() gets a fresh iterator.
+          - line: 11
+            text: enumerate is single-use like zip.
+      - type: code
+        runnable: true
+        code: |
+          next(range(3))
+        expectError: TypeError
+        caption: "TypeError: 'range' object is not an iterator — call iter(range(3)) first."
+      - type: callout
+        variant: deep-dive
+        title: Dictionary views are live, not single-use
+        depth: deep
+        body: |
+          `d.keys()`, `d.values()` and `d.items()` return *views*: iterables (not iterators) that always
+          reflect the dict's current contents. You can loop over a view many times, but you must not add or
+          remove keys **while** looping over the dict or one of its views — that raises
+          `RuntimeError: dictionary changed size during iteration`.
+      - type: item
+        ref: explain-range
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Second loop prints nothing; `max()` says `iterable argument is empty` | Reusing an exhausted iterator (zip, map, filter, file…) | Store it with `list(...)`, or create a new iterator |
+          | `TypeError: 'list' object is not an iterator` | `next(my_list)` | `it = iter(my_list)`, then `next(it)` |
+          | `TypeError: 'int' object is not iterable` | `for i in len(items):` or `for x in 5:` | `for i in range(len(items)):` — or better `for i, item in enumerate(items):` |
+          | Some items are skipped when removing from a list in a loop | The list iterator walks by position while the list shrinks | Build a new list: `[x for x in items if keep(x)]`, or loop over a copy `items[:]` |
+          | `RuntimeError: dictionary changed size during iteration` | Adding or deleting keys while looping over the dict | Loop over `list(d)` (a snapshot of the keys) |
+          | Unexpected `StopIteration` traceback | Calling `next()` on an exhausted iterator outside a loop | Use `next(it, default)` or catch `StopIteration` |
+      - type: code
+        runnable: true
+        code: |
+          names = ["Ada", "Lin", "Sam"]
+          for i in len(names):
+              print(i, names[i])
+        expectError: TypeError
+        caption: len() returns an int, and an int is not iterable.
+      - type: markdown
+        body: |
+          Changing a list while iterating over it does not raise an error — it silently skips items, which is
+          worse. The list iterator keeps an index; when an item is removed, everything after it shifts left
+          and the next item is jumped over:
+      - type: code
+        runnable: true
+        code: |
+          scores = [50, 40, 45, 90]
+          for s in scores:
+              if s < 60:
+                  scores.remove(s)
+          print("buggy:", scores)
+
+          scores = [50, 40, 45, 90]
+          scores = [s for s in scores if s >= 60]
+          print("fixed:", scores)
+        expectedOutput: |
+          buggy: [40, 90]
+          fixed: [90]
+        annotations:
+          - line: 4
+            text: Removing 50 shifts 40 into position 0 — but the iterator moves on to position 1 (45), so 40 is never checked.
+          - line: 8
+            text: Building a new list never disturbs the one being iterated.
+      - type: code
+        runnable: true
+        code: |
+          stock = {"pens": 0, "pads": 3, "ink": 0}
+          for item in stock:
+              if stock[item] == 0:
+                  del stock[item]
+        expectError: RuntimeError
+        caption: "Dicts detect the change and stop: loop over list(stock) instead."
+      - type: item
+        ref: debug-zip-twice
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: first-and-rest
+      - type: item
+        ref: count-without-for
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Special methods.** `iter(x)` calls `type(x).__iter__(x)` and `next(it)` calls
+          `type(it).__next__(it)`. An iterator's `__iter__` returns the iterator itself. You can call them
+          directly to see the protocol (normal code should use the built-ins):
+      - type: code
+        runnable: true
+        code: |
+          nums = [10, 20]
+          it = nums.__iter__()          # what iter(nums) does
+          print(it.__next__())          # what next(it) does
+          print(it.__iter__() is it)    # an iterator returns itself
+          print(hasattr(nums, "__next__"), hasattr(it, "__next__"))
+        expectedOutput: |
+          10
+          True
+          False True
+      - type: markdown
+        body: |
+          - **The old sequence protocol.** If an object has no `__iter__` but has `__getitem__` accepting
+            0, 1, 2, …, `iter()` still works: it calls `obj[0]`, `obj[1]`, … until `IndexError`.
+          - **Your own iterators.** A class that defines `__iter__` and `__next__` works with `for`,
+            `list()` and everything else — see [classes](concept:python.classes) and the
+            [data model](concept:python.data-model). Generators are a much shorter way to get the same
+            result.
+          - **Bytecode.** CPython compiles `for` into a `GET_ITER` instruction (calls `iter()`) followed by
+            a loop around `FOR_ITER` (calls `__next__` and jumps out at the end). Built-in iterators signal
+            exhaustion efficiently without creating a `StopIteration` object each time; the exception is the
+            protocol's contract for Python-level code.
+          - **`iter(callable, sentinel)`.** The two-argument form calls `callable()` repeatedly until it
+            returns `sentinel`. Example: reading a file in fixed-size chunks.
+      - type: code
+        runnable: true
+        code: |
+          with open("chunks.txt", "w", encoding="utf-8") as f:
+              f.write("abcdefghij")
+
+          with open("chunks.txt", encoding="utf-8") as f:
+              for chunk in iter(lambda: f.read(4), ""):   # stop when read() returns ""
+                  print(chunk)
+        expectedOutput: |
+          abcd
+          efgh
+          ij
+      - type: markdown
+        body: |
+          **Sharing one iterator.** Because `zip()` pulls from each argument in turn, passing the *same*
+          iterator twice groups items into pairs — a well-known idiom that only makes sense once you see
+          iterators as single-use bookmarks:
+      - type: code
+        runnable: true
+        code: |
+          it = iter([1, 2, 3, 4, 5, 6])
+          print(list(zip(it, it)))
+        expectedOutput: |
+          [(1, 2), (3, 4), (5, 6)]
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Iterable**: can be looped over; `iter(x)` gives a fresh iterator. Lists, strings, dicts, sets,
+            ranges are iterables you can reuse.
+          - **Iterator**: remembers a position; `next(it)` returns the next item or raises `StopIteration`.
+            Single-use. `iter(it) is it`.
+          - A `for` loop = `iter()` once + `next()` repeatedly + stop on `StopIteration`.
+          - `zip`, `map`, `filter`, `enumerate`, `reversed` and file objects are **iterators**: lazy and
+            single-use. Use `list(...)` to keep the items.
+          - `range` is a **lazy sequence**, not an iterator: `len`, indexing, `in`, reusable, tiny memory.
+          - Don't change a list or dict while looping over it; build a new one instead.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What's the difference between an iterable and an iterator?" — iterables produce iterators via
+          `__iter__`; iterators implement `__next__`, keep state, are exhausted after one pass and return
+          themselves from `__iter__`. Then show how a `for` loop expands into `iter`/`next`/`StopIteration`,
+          and mention that `range` is not an iterator.
+
+items:
+  - id: iterable-mcq
+    type: mcq
+    skill: recognition
+    prompt: Which of these objects is an **iterator** (not just an iterable)?
+    explanation: >-
+      zip() returns an iterator: it has __next__, remembers its position and is used up after one pass.
+      Lists, strings and ranges are iterables — they hand out a new iterator each time you loop over them.
+    options:
+      - id: a
+        text: "`[1, 2, 3]`"
+        feedback: "A list is iterable but not an iterator. next([1, 2, 3]) raises TypeError: 'list' object is not an iterator."
+      - id: b
+        text: "`range(3)`"
+        feedback: range is a lazy sequence — iterable and reusable, but not an iterator. next(range(3)) is a TypeError.
+      - id: c
+        text: "`zip([1, 2], [3, 4])`"
+        correct: true
+        feedback: Right. zip objects are iterators — loop over one twice and the second loop finds nothing.
+      - id: d
+        text: '`"hello"`'
+        feedback: Strings are iterables. iter("hello") would give you an iterator over the characters.
+
+  - id: predict-next
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? (Three lines.)
+    code: |
+      it = iter([10, 20])
+      print(next(it))
+      print(next(it, 0))
+      print(next(it, 0))
+    answer: |
+      10
+      20
+      0
+    explanation: >-
+      The first next() returns 10. The second still has an item, so the default is ignored and 20 is
+      returned. The third finds the iterator exhausted and returns the default 0 instead of raising
+      StopIteration.
+    wrongAnswers:
+      - answer: |
+          10
+          0
+          0
+        feedback: The default is used only when the iterator is exhausted. 20 is still available on the second call.
+      - answer: |
+          10
+          10
+          10
+        feedback: An iterator remembers its position; each next() moves it forward.
+      - answer: |
+          10
+          20
+          10
+        feedback: Iterators never restart on their own. Once exhausted, they stay exhausted.
+
+  - id: parsons-while-for
+    type: parsons
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Arrange the lines into the while-loop equivalent of `for n in [3, 5]: print(n * 10)`. One line is a
+      distractor.
+    solution: |
+      it = iter([3, 5])
+      while True:
+          try:
+              n = next(it)
+          except StopIteration:
+              break
+          print(n * 10)
+    distractors:
+      - "        n = next([3, 5])"
+    expectedOutput: |
+      30
+      50
+    explanation: >-
+      iter() is called once, before the loop. Inside, next(it) gets each item; StopIteration ends the loop
+      with break. next([3, 5]) is the distractor — a list is not an iterator, so it raises TypeError.
+
+  - id: predict-exhausted
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Three lines.)
+    code: |
+      words = ["sun", "moon", "star"]
+      lengths = map(len, words)
+
+      print(max(lengths))
+      print(sum(lengths))
+      print(len(words))
+    answer: |
+      4
+      0
+      3
+    explanation: >-
+      map returns a single-use iterator. max() consumes all of it, so sum() sees no items and returns 0
+      (the sum of nothing). The list words itself is unchanged and still has 3 items.
+    wrongAnswers:
+      - answer: |
+          4
+          11
+          3
+        feedback: That would be right with a list of lengths. But lengths is a map iterator, and max() already used it up.
+      - answer: |
+          4
+          0
+          0
+        feedback: Consuming the map iterator does not change the original list — words still has three items.
+      - answer: |
+          4
+          7
+          3
+        feedback: max() reads every item to find the largest, so it consumes the whole iterator, not just the first two items.
+
+  - id: explain-range
+    type: explain
+    skill: explanation
+    prompt: >-
+      `range(10)` can be looped over twice and gives the same numbers both times, but `zip(a, b)` cannot.
+      Explain why, using the words iterable and iterator, and say how much memory `range(10**9)` needs.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says range is an iterable (a lazy sequence) and zip returns an iterator.
+      - Explains that each loop calls iter() on the range and gets a fresh iterator, whereas iter() on a zip returns the same, already-advanced iterator.
+      - Explains that an exhausted iterator produces nothing more.
+      - Says range stores only start, stop and step, so even range(10**9) uses a tiny, constant amount of memory.
+    modelAnswer: |
+      A for loop starts by calling iter() on what it is given. range(10) is an iterable — a lazy
+      sequence — so iter() creates a brand-new iterator starting at 0 every time, and the numbers come out
+      again. zip(a, b) returns an iterator: iter() on an iterator returns the iterator itself, with its
+      position wherever the last loop left it. After the first full pass it is exhausted, so a second loop
+      gets StopIteration immediately and does nothing. range never stores its numbers; it keeps start, stop
+      and step and computes each value on demand, so range(10**9) takes only a few dozen bytes.
+
+  - id: debug-zip-twice
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should print every result and then the best student, but it crashes with
+      `ValueError: max() iterable argument is empty`. Fix it so both parts work.
+    starterCode: |
+      names = ["Ada", "Lin", "Sam"]
+      scores = [91, 78, 95]
+      results = zip(names, scores)
+
+      for name, score in results:
+          print(name, score)
+
+      best = max(results, key=lambda pair: pair[1])
+      print("Best:", best[0])
+    solution: |
+      names = ["Ada", "Lin", "Sam"]
+      scores = [91, 78, 95]
+      results = list(zip(names, scores))
+
+      for name, score in results:
+          print(name, score)
+
+      best = max(results, key=lambda pair: pair[1])
+      print("Best:", best[0])
+    expectedOutput: |
+      Ada 91
+      Lin 78
+      Sam 95
+      Best: Sam
+    tests:
+      - name: prints the results and the best student
+        code: |
+          assert output_lines() == ["Ada 91", "Lin 78", "Sam 95", "Best: Sam"], f"Got {output()!r}."
+      - name: still computed from the lists
+        code: |
+          import io, contextlib
+          changed = source.replace("[91, 78, 95]", "[99, 78, 95]")
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue().splitlines()[-1] == "Best: Ada", "Find the best student from the data rather than printing a fixed name."
+    hints:
+      - zip() returns an iterator. What happens to an iterator after a for loop has gone through it?
+      - "By the time max() runs, results has no items left."
+      - Store the pairs in a list with list(zip(names, scores)) so they can be used twice.
+    feedback:
+      - when: { errorType: ValueError }
+        message: >-
+          max() still receives an exhausted iterator. Turn the zip into a list when you create it, so it can
+          be looped over twice.
+    explanation: >-
+      The for loop consumed the zip iterator, so max() received no items. list(zip(...)) materialises the
+      pairs once; a list can be iterated any number of times.
+
+  - id: first-and-rest
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `first_and_rest(iterable)` that **returns a tuple** `(first, rest)`: the first item and a list
+      of all remaining items. It must work for **any** iterable — lists, strings, ranges and single-use
+      iterators like `zip` — so use `iter()` and `next()` rather than indexing. For an empty iterable return
+      `(None, [])`.
+    starterCode: |
+      def first_and_rest(iterable):
+          # Get an iterator, take one item with next() (with a default), then collect the rest.
+          pass
+
+
+      print(first_and_rest(["header", "a", "b"]))
+      print(first_and_rest("xyz"))
+      print(first_and_rest([]))
+    solution: |
+      def first_and_rest(iterable):
+          it = iter(iterable)
+          first = next(it, None)
+          rest = list(it)
+          return first, rest
+
+
+      print(first_and_rest(["header", "a", "b"]))
+      print(first_and_rest("xyz"))
+      print(first_and_rest([]))
+    expectedOutput: |
+      ('header', ['a', 'b'])
+      ('x', ['y', 'z'])
+      (None, [])
+    tests:
+      - name: works for lists and strings
+        code: |
+          assert first_and_rest([1, 2, 3]) == (1, [2, 3]), f"first_and_rest([1, 2, 3]) returned {first_and_rest([1, 2, 3])!r}."
+          assert first_and_rest("ab") == ("a", ["b"]), f"first_and_rest('ab') returned {first_and_rest('ab')!r}."
+      - name: works for iterators that cannot be indexed
+        code: |
+          result = first_and_rest(zip("ab", [1, 2]))
+          assert result == (("a", 1), [("b", 2)]), f"For a zip object the result should be (('a', 1), [('b', 2)]), got {result!r}. Use iter() and next() instead of [0] and slicing."
+          result = first_and_rest(range(5))
+          assert result == (0, [1, 2, 3, 4]), f"first_and_rest(range(5)) returned {result!r}."
+      - name: empty input gives (None, [])
+        code: |
+          assert first_and_rest([]) == (None, []), f"first_and_rest([]) should be (None, []), got {first_and_rest([])!r}."
+          assert first_and_rest(iter([])) == (None, []), "An empty iterator should also give (None, [])."
+      - name: uses next()
+        code: |
+          assert calls("next"), "Take the first item with next(it, None)."
+    hints:
+      - "Start with it = iter(iterable). That works for every kind of iterable."
+      - next(it, None) returns the first item, or None if there is none — no exception.
+      - list(it) collects whatever is left after next() moved the iterator forward.
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "not subscriptable" }
+        message: Iterators such as zip cannot be indexed with [0]. Use it = iter(iterable) and next(it, None).
+      - when: { errorType: StopIteration }
+        message: next() raised StopIteration on the empty input. Pass a default — next(it, None).
+      - when: { outputContains: "('header', ['header'" }
+        message: The rest still includes the first item. Collect the rest from the same iterator after calling next().
+    explanation: >-
+      iter() gives one iterator whatever the input. next(it, None) takes the first item (or None when there
+      is none) and advances the iterator, so list(it) collects exactly the remaining items. Indexing would
+      fail for zip and other iterators.
+
+  - id: count-without-for
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      To prove you know what a `for` loop does, write `count_matches(iterable, target)` that **returns** how
+      many items equal `target` — **without** using a `for` loop or a comprehension. Use `iter()`, `next()`,
+      a `while` loop and `StopIteration`.
+    starterCode: |
+      def count_matches(iterable, target):
+          # No for loops! Use iter(), a while loop, next() and except StopIteration.
+          pass
+
+
+      print(count_matches([3, 1, 3, 3, 2], 3))
+      print(count_matches("banana", "a"))
+    solution: |
+      def count_matches(iterable, target):
+          it = iter(iterable)
+          count = 0
+          while True:
+              try:
+                  item = next(it)
+              except StopIteration:
+                  break
+              if item == target:
+                  count += 1
+          return count
+
+
+      print(count_matches([3, 1, 3, 3, 2], 3))
+      print(count_matches("banana", "a"))
+    expectedOutput: |
+      3
+      3
+    tests:
+      - name: counts in lists and strings
+        code: |
+          assert count_matches([3, 1, 3, 3, 2], 3) == 3, f"count_matches([3, 1, 3, 3, 2], 3) returned {count_matches([3, 1, 3, 3, 2], 3)!r}."
+          assert count_matches("banana", "n") == 2, f"count_matches('banana', 'n') returned {count_matches('banana', 'n')!r}."
+          assert count_matches([], 1) == 0, "An empty iterable has 0 matches."
+      - name: works with iterators
+        code: |
+          assert count_matches(map(abs, [-1, 1, 2]), 1) == 2, "count_matches should work with any iterable, including map objects."
+      - name: no for loops or comprehensions
+        code: |
+          assert not uses("For", "ListComp", "SetComp", "DictComp", "GeneratorExp"), "Don't use a for loop or a comprehension — drive the iterator yourself with while and next()."
+          assert uses("While") and calls("next"), "Use a while loop that calls next()."
+          assert not calls("count"), "Don't use the .count() method — the point is to iterate by hand."
+    hints:
+      - "Get an iterator first: it = iter(iterable)."
+      - Inside `while True:`, put `item = next(it)` in a try block and `break` in `except StopIteration:`.
+      - After the try/except, compare item with target and add 1 to a counter. Return the counter after the loop.
+    feedback:
+      - when: { errorType: StopIteration }
+        message: StopIteration escaped your function. Catch it with try/except and break out of the loop.
+      - when: { errorType: TypeError, errorMessageContains: "not an iterator" }
+        message: Call iter() on the input first; next() needs an iterator, not a list or string.
+    explanation: >-
+      This is exactly what for does internally: get an iterator once, call next() repeatedly, and stop
+      when StopIteration is raised. Because it only relies on the protocol, the function works for lists,
+      strings, maps and any other iterable.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-in
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Two lines.)
+    code: |
+      it = iter([1, 2, 3, 4, 5])
+      print(3 in it)
+      print(list(it))
+    answer: |
+      True
+      [4, 5]
+    explanation: >-
+      `in` on an iterator calls next() until it finds the item, consuming 1, 2 and 3 along the way. The
+      list() call then collects only what is left: 4 and 5.
+    wrongAnswers:
+      - answer: |
+          True
+          [1, 2, 3, 4, 5]
+        feedback: An `in` test on an iterator consumes items until it finds a match; they are gone afterwards.
+      - answer: |
+          True
+          []
+        feedback: The search stops as soon as 3 is found, so 4 and 5 are still in the iterator.
+
+  - id: m-tf-range
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `range(5)` is an iterator, so after one loop over it a second loop prints nothing."
+    answer: false
+    explanation: >-
+      range is a lazy sequence — an iterable, not an iterator. Every loop calls iter() on it and gets a
+      fresh iterator, so it can be looped over any number of times. next(range(5)) raises TypeError.
+
+  - id: m-mcq-remove
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `for x in nums: if x % 2 == 0: nums.remove(x)` with `nums = [2, 4, 5, 6]` leaves `[4, 5]`. Why was
+      4 not removed?
+    explanation: >-
+      The list iterator tracks an index. Removing 2 (index 0) shifts 4 into index 0, but the iterator moves
+      on to index 1, which is now 5. 4 is never examined. Build a new list instead.
+    options:
+      - id: a
+        text: The list iterator moves by index; removing an item shifts the next one into the position already visited, so it is skipped.
+        correct: true
+        feedback: Right. Never change a list's length while iterating over it; use a comprehension or loop over a copy.
+      - id: b
+        text: remove() deletes only the last matching item.
+        feedback: remove() deletes the first matching item. The problem is the skipped check, not remove().
+      - id: c
+        text: The for loop works on a copy of the list made when it started.
+        feedback: A for loop does not copy the list — that is exactly why changes during the loop affect it.
+      - id: d
+        text: "4 % 2 == 0 is False."
+        feedback: 4 is even. The condition was simply never evaluated for 4.
+
+  - id: m-code-take
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `take(iterable, n)` that **returns a list** of at most the first `n` items. It must stop as soon
+      as it has `n` items — so it works on endless iterators like `itertools.count()` — and must not take
+      more items than it returns from an iterator it was given.
+    starterCode: |
+      import itertools
+
+
+      def take(iterable, n):
+          # Use iter() and next(it, ...) — stop after n items or when the iterable runs out.
+          pass
+
+
+      print(take(itertools.count(10), 3))
+      print(take("ab", 5))
+    solution: |
+      import itertools
+
+
+      def take(iterable, n):
+          it = iter(iterable)
+          result = []
+          while len(result) < n:
+              try:
+                  result.append(next(it))
+              except StopIteration:
+                  break
+          return result
+
+
+      print(take(itertools.count(10), 3))
+      print(take("ab", 5))
+    expectedOutput: |
+      [10, 11, 12]
+      ['a', 'b']
+    tests:
+      - name: takes from an endless iterator
+        code: |
+          import itertools
+          assert take(itertools.count(1), 4) == [1, 2, 3, 4], f"take(itertools.count(1), 4) returned {take(itertools.count(1), 4)!r}."
+      - name: stops early when the iterable runs out
+        code: |
+          assert take([1, 2], 5) == [1, 2], f"take([1, 2], 5) should be [1, 2], got {take([1, 2], 5)!r}."
+          assert take([], 3) == [], "take([], 3) should be []."
+          assert take([1, 2, 3], 0) == [], "take(..., 0) should be []."
+      - name: does not consume extra items
+        code: |
+          it = iter([1, 2, 3, 4])
+          assert take(it, 2) == [1, 2], "take(it, 2) should return [1, 2]."
+          assert next(it) == 3, "After take(it, 2), the next item of it should still be 3 — don't call next() more than n times."
+    hints:
+      - "Get an iterator with iter(iterable) and keep a result list."
+      - Loop while the result has fewer than n items; call next() inside try/except StopIteration.
+      - Check the length *before* calling next(), so you never take an item you won't return.
+    feedback:
+      - when: { errorType: StopIteration }
+        message: next() raised StopIteration because the iterable was shorter than n. Catch it and stop.
+      - when: { errorType: MemoryError }
+        message: Something tried to read the endless iterator to the end (list() on itertools.count never finishes). Take items one at a time.
+    explanation: >-
+      Calling next() exactly as many times as needed makes take() safe for endless iterators and leaves an
+      iterator positioned right after the last item returned. itertools.islice(iterable, n) does the same
+      job in the standard library.
+
+  - id: m-debug-len-loop
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print a numbered list starting at 1, but crashes with
+      `TypeError: 'int' object is not iterable`. Fix it using `enumerate`.
+    starterCode: |
+      tasks = ["write", "test", "ship"]
+      for i in len(tasks):
+          print(i + 1, tasks[i])
+    solution: |
+      tasks = ["write", "test", "ship"]
+      for number, task in enumerate(tasks, start=1):
+          print(number, task)
+    expectedOutput: |
+      1 write
+      2 test
+      3 ship
+    tests:
+      - name: prints the numbered list
+        code: |
+          assert output_lines() == ["1 write", "2 test", "3 ship"], f"Got {output()!r}."
+      - name: uses enumerate
+        code: |
+          assert calls("enumerate"), "Use enumerate(tasks, start=1) to get the number and the task together."
+      - name: works for other lists
+        code: |
+          import io, contextlib
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(source.replace('["write", "test", "ship"]', '["plan"]'), "<variant>", "exec"), {})
+          assert buffer.getvalue().splitlines() == ["1 plan"], "Number the items from the list itself."
+    hints:
+      - len(tasks) is the number 3. Can you loop over a number?
+      - enumerate(tasks) gives (index, item) pairs; start=1 makes the numbering begin at 1.
+    feedback:
+      - when: { outputContains: "0 write" }
+        message: The numbering starts at 0. Pass start=1 to enumerate.
+    explanation: >-
+      A for loop needs an iterable, and an int is not one. enumerate(tasks, start=1) yields (1, "write"),
+      (2, "test"), … — the number and the item together, without indexing.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-in, m-tf-range, m-mcq-remove, m-code-take, m-debug-len-loop]
+
+cheatsheet: |
+  ```python
+  it = iter(iterable)          # get an iterator (lists, str, dict, range, file...)
+  next(it)                     # next item, or StopIteration
+  next(it, default)            # next item, or default when exhausted
+  iter(it) is it               # True: iterators return themselves
+
+  # what `for x in data: body` does
+  it = iter(data)
+  while True:
+      try:
+          x = next(it)
+      except StopIteration:
+          break
+      body
+
+  pairs = list(zip(a, b))      # keep single-use results to reuse them
+  ```
+  - Iterators (single-use): zip, map, filter, enumerate, reversed, files, generators
+  - Reusable iterables: list, tuple, str, dict, set, range (a lazy sequence)
+  - Don't add/remove items while iterating; build a new collection instead

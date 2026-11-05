@@ -1,0 +1,342 @@
+id: python.higher-order-functions
+concept: python.higher-order-functions
+title: Lambdas and Higher-Order Functions
+subtitle: Functions as values, arguments and results
+estimatedMinutes: 50
+reviewedOn: '2026-11-04'
+summary: Learn how Python functions can be passed as values, used as callbacks, and returned from other functions.
+  Apply `lambda`, `sorted(key=...)`, `map`, `filter` and `Callable` type hints without sacrificing readability.
+objectives:
+- Explain the difference between referring to a function and calling it.
+- Pass a function as an argument and predict when the receiving code calls it.
+- Use `sorted(key=...)` with a named function or a small lambda.
+- Compare `map` and `filter` with list comprehensions and explain lazy iteration.
+- Use `Callable` to document a function parameter that accepts behaviour.
+- Debug mistakes caused by calling a callback too early or assuming an iterator is a list.
+sources:
+- title: Functional Programming HOWTO
+  url: https://docs.python.org/3/howto/functional.html
+  publisher: Python Software Foundation
+- title: 'Built-in Functions: sorted, map and filter'
+  url: https://docs.python.org/3/library/functions.html
+  publisher: Python Software Foundation
+- title: collections.abc.Callable
+  url: https://docs.python.org/3/library/collections.abc.html#collections.abc.Callable
+  publisher: Python Software Foundation
+sections:
+- id: why-higher-order
+  title: Why pass functions around?
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'Many operations have a stable workflow but one part that changes. Sorting always compares records,
+      but the rule for what makes one record come first varies. A report always walks through rows, but the formatting
+      rule may change.
+
+
+      A **higher-order function** accepts another function as an argument, returns a function, or does both. This
+      lets code reuse a workflow while callers supply the varying behaviour.'
+  - type: callout
+    variant: analogy
+    title: A function can be a tool you hand to another function
+    body: The caller chooses the tool; the receiving function decides when to use it. The tool is passed as a
+      value, not executed at the moment it is passed.
+- id: functions-as-values
+  title: Functions are values in Python
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: A `def` statement creates a function object and binds its name to that object. Writing `square` refers
+      to the function. Writing `square(4)` calls it and produces its return value. This is the same distinction
+      as a recipe versus cooking the recipe.
+  - type: code
+    language: python
+    code: "def square(number):\n    return number * number\n\ndef apply(number, operation):\n    return operation(number)\n\
+      \nprint(apply(5, square))\nprint(callable(square))"
+    runnable: true
+    status: verified
+    expectedOutput: '25
+
+      True'
+    caption: The function `square` is passed as a value. `apply` decides when to call it.
+  - type: markdown
+    body: Python functions can be stored in lists and dictionaries, passed as arguments, and returned from other
+      functions. A function that receives a callable can work with many behaviours without knowing their internal
+      details.
+- id: passing-behaviour
+  title: Pass behaviour into a function
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The `key` parameter of `sorted` is a classic example. It receives a function that maps each item to
+      a comparison value. The sort algorithm does not need to know what a person or product means; it only needs
+      the key returned by the function.
+  - type: code
+    language: python
+    code: "people = [\n    {\"name\": \"Grace\", \"age\": 37},\n    {\"name\": \"Lin\", \"age\": 28},\n    {\"\
+      name\": \"Ada\", \"age\": 36},\n]\n\nby_age = sorted(people, key=lambda person: person[\"age\"])\nprint([person[\"\
+      name\"] for person in by_age])"
+    runnable: true
+    status: verified
+    expectedOutput: '[''Lin'', ''Ada'', ''Grace'']'
+    caption: The lambda is called with each person and returns the age used for sorting.
+  - type: markdown
+    body: A `lambda` creates a small anonymous function containing one expression. Use a named `def` when the
+      behaviour needs a name, multiple steps, validation, documentation or reuse. The `key` function should return
+      the value to compare; it should not perform the sorting itself.
+- id: map-filter-comprehensions
+  title: map, filter and comprehensions
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '`map(function, iterable)` applies a function to each item. `filter(predicate, iterable)` keeps items
+      for which the predicate returns a truthy value. Both return lazy iterators: they compute values as you consume
+      them.
+
+
+      For ordinary Python code, list comprehensions are often easier to read, especially when filtering and transforming
+      together:'
+  - type: code
+    language: python
+    code: 'prices = [10.0, 12.5, 8.0, 20.0]
+
+
+      # Keep prices at least 10 and add 5% tax.
+
+      with_tax = [round(price * 1.05, 2) for price in prices if price >= 10]
+
+      print(with_tax)'
+    runnable: true
+    status: verified
+    expectedOutput: '[10.5, 13.12, 21.0]'
+    caption: A comprehension makes both the filter and transformation visible in one expression.
+  - type: callout
+    variant: tip
+    title: Choose for clarity
+    body: Use `map` when an existing function makes the transformation obvious. Use a comprehension when you need
+      a condition or when the expression reads more naturally. Do not convert an iterator to a list unless you
+      need the values stored at once.
+- id: callable-types
+  title: Document callable inputs with Callable
+  kind: internals
+  blocks:
+  - type: markdown
+    body: A type hint can describe the input and output types of a function parameter. `collections.abc.Callable`
+      makes the dependency visible to readers and static analysis tools. Type hints do not validate values at
+      runtime by themselves.
+  - type: code
+    language: python
+    code: "from collections.abc import Callable\n\ndef transform_all(\n    values: list[int],\n    operation:\
+      \ Callable[[int], int],\n) -> list[int]:\n    return [operation(value) for value in values]\n\nprint(transform_all([1,\
+      \ 2, 3], abs))"
+    runnable: true
+    status: verified
+    expectedOutput: '[1, 2, 3]'
+    caption: Callable[[int], int] means a function that accepts an int and returns an int.
+  - type: markdown
+    body: A callback is a function supplied to another component so that the component can call it later. Event
+      handlers, sort keys, retry policies and validation hooks often use callbacks. Returning a function is another
+      higher-order pattern; the next lesson on [closures](concept:python.closures) explains how a returned inner
+      function can remember values from its enclosing call.
+- id: mistakes-hof
+  title: Common mistakes
+  kind: mistakes
+  blocks:
+  - type: markdown
+    body: '- **Calling instead of passing:** `key=score()` runs the function immediately. Use `key=score` when
+      the receiving function should call it.
+
+      - **A lambda that is too complex:** move multi-step logic into a named function.
+
+      - **Assuming `map` is a list:** consume it with `list(...)` or iterate over it.
+
+      - **Using `map` for side effects:** use a normal loop when the purpose is to perform an action, not create
+      transformed values.
+
+      - **Confusing a callback with a closure:** a callback is about when another component calls a function;
+      a closure is about the variables an inner function remembers.'
+  - type: callout
+    variant: misconception
+    title: A function name and a function call are different values
+    body: When you see `function` and `function()`, stop and ask whether the caller needs the callable itself
+      or the result of running it.
+- id: practice-hof
+  title: Practice before the mastery check
+  kind: practice
+  blocks:
+  - type: markdown
+    body: '1. Write a function that receives a list of numbers and a predicate, then returns only values accepted
+      by the predicate.
+
+      2. Sort a list of dictionaries by two keys. Use a tuple returned from the key function and explain how ties
+      are handled.
+
+      3. Rewrite a short `map`/`filter` pipeline as a comprehension and compare readability.'
+  - type: item
+    ref: hof-practice-pass-function
+  - type: item
+    ref: hof-practice-sort-output
+- id: summary-hof
+  title: Summary and decision checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: 'A function is an object. Pass it without parentheses when another function should decide when to call
+      it. Use `lambda` for tiny one-expression behaviour and `def` for meaningful logic. `sorted(key=...)` is
+      a common callback pattern. `map` and `filter` are lazy; comprehensions are often clearer for everyday transformations.
+
+
+      Before using a higher-order function, ask: what input will the callback receive, what should it return,
+      who calls it, and when will its result be consumed?'
+items:
+- id: hof-practice-pass-function
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: A function `score(person)` returns a number. Which argument passes the function to `sorted` so Python
+    can call it for each person?
+  options:
+  - id: function-object
+    text: '`key=score`'
+    correct: true
+    feedback: This passes the callable itself. `sorted` calls it with each item.
+  - id: call-now
+    text: '`key=score()`'
+    correct: false
+    feedback: This calls `score` immediately with no person. The result, not the function, would be passed.
+  - id: string-name
+    text: '`key="score"`'
+    correct: false
+    feedback: A string names text; it is not the function object.
+  - id: call-with-item
+    text: '`key=score(person)`'
+    correct: false
+    feedback: There is no single `person` value to pass here; `sorted` supplies each item later.
+  explanation: A higher-order function accepts another function or returns one. Passing `score` gives `sorted`
+    the behaviour it needs.
+- id: hof-practice-sort-output
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: Predict the list of words after sorting by length. Remember that Python sorting is stable when keys
+    tie.
+  code: 'words = ["pear", "fig", "plum", "kiwi"]
+
+    print(sorted(words, key=len))'
+  answer: '[''fig'', ''pear'', ''plum'', ''kiwi'']'
+  wrongAnswers:
+  - answer: '[''fig'', ''kiwi'', ''pear'', ''plum'']'
+    feedback: 'The two four-letter words keep their original relative order: pear comes before plum.'
+  - answer: '[''pear'', ''plum'', ''kiwi'', ''fig'']'
+    feedback: The key is length, so shorter words come first.
+  - answer: None
+    feedback: '`sorted` returns a new list; it does not return None.'
+  explanation: The key function returns each word length. `fig` has length 3; the other three have length 4 and
+    retain their original order.
+- id: hof-master-callable-transfer
+  type: mcq
+  skill: transfer
+  difficulty: 2
+  prompt: A report function must support different formatting rules without adding an `if` branch for every format.
+    Which design best uses higher-order functions?
+  options:
+  - id: pass-formatter
+    text: Accept a formatter function as an argument.
+    correct: true
+    feedback: The caller supplies the varying behaviour while the report function keeps one stable responsibility.
+  - id: global-format
+    text: Read a global variable that names the formatter.
+    correct: false
+    feedback: Hidden global state makes dependencies harder to test and reason about.
+  - id: duplicate-functions
+    text: Copy the report function once for every format.
+    correct: false
+    feedback: This duplicates the stable report workflow and makes fixes drift.
+  - id: string-eval
+    text: Accept a string of Python code and evaluate it.
+    correct: false
+    feedback: Executing strings adds security and debugging risks and is unnecessary.
+  explanation: Passing a callable makes the varying behaviour explicit and testable. This is a simple form of
+    the Strategy idea used later.
+- id: hof-master-apply-each
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Implement `apply_to_each(values, operation)`. Return a new list containing `operation(value)` for every
+    value. Do not change the original input list.
+  starterCode: "def apply_to_each(values, operation):\n    # Return a new list with operation applied to each\
+    \ value.\n    pass"
+  solution: "def apply_to_each(values, operation):\n    return [operation(value) for value in values]"
+  tests:
+  - name: transforms every value
+    code: 'assert apply_to_each([1, 2, 3], lambda number: number * 2) == [2, 4, 6]'
+  - name: accepts a named function
+    code: "def add_prefix(text):\n    return \"user:\" + text\n\nassert apply_to_each([\"ada\", \"lin\"], add_prefix)\
+      \ == [\"user:ada\", \"user:lin\"]"
+  - name: does not mutate input
+    code: 'values = [1, 2]
+
+      result = apply_to_each(values, abs)
+
+      assert values == [1, 2]
+
+      assert result == [1, 2]'
+  hints:
+  - Create a list comprehension that calls `operation` once for each value.
+  - Do not write `operation()`; the operation needs the current value as its argument.
+  explanation: The operation is a parameter whose value is a callable. A list comprehension applies it to each
+    element and builds a new list.
+- id: hof-master-fix-sort-key
+  type: debug
+  skill: debugging
+  difficulty: 2
+  prompt: The program raises a `TypeError` before sorting. Fix the `key` argument so `sorted` receives the function
+    and can call it for each record.
+  starterCode: "def score(person):\n    return person[\"score\"]\n\npeople = [\n    {\"name\": \"Lin\", \"score\"\
+    : 81},\n    {\"name\": \"Ada\", \"score\": 96},\n]\nordered = sorted(people, key=score())\nprint([person[\"\
+    name\"] for person in ordered])"
+  solution: "def score(person):\n    return person[\"score\"]\n\npeople = [\n    {\"name\": \"Lin\", \"score\"\
+    : 81},\n    {\"name\": \"Ada\", \"score\": 96},\n]\nordered = sorted(people, key=score)\nprint([person[\"\
+    name\"] for person in ordered])"
+  tests:
+  - name: sorts by score
+    code: assert [person["name"] for person in ordered] == ["Lin", "Ada"]
+  - name: keeps both records
+    code: assert len(ordered) == 2
+  hints:
+  - Pass the function object, not the result of calling it.
+  - Remove the parentheses after `score` in the `key` argument.
+  explanation: The parentheses call `score` immediately without the required `person` argument. `key=score` passes
+    the callable so sorting can invoke it for each record.
+- id: hof-master-explain-map
+  type: explain
+  skill: design
+  difficulty: 2
+  prompt: A teammate uses `map()` to turn a list of prices into rounded prices. Explain when a list comprehension
+    is clearer, when `map()` can be useful, and why a `map` result may not print like a list.
+  rubric:
+  - States that a list comprehension is often clearer for transformations with conditions or multiple steps.
+  - Explains that `map` is lazy and produces an iterator, not a list.
+  - Mentions that `map` can be useful with an existing function or a streaming/iterator pipeline.
+  modelAnswer: A list comprehension such as `[round(price, 2) for price in prices]` makes the transformation and
+    output list explicit. `map(round_price, prices)` is useful when an existing function expresses the operation
+    cleanly, but it returns a lazy iterator. Convert it with `list(...)` if a list is required. Prefer the form
+    the team can read most easily.
+  explanation: Good engineering is not about using the most functional-looking tool. Choose the clearest expression
+    and understand whether it creates a list or a lazy iterator.
+- id: hof-master-map-lazy
+  type: true-false
+  skill: recognition
+  difficulty: 1
+  prompt: A `map` object is a list that stores every transformed value immediately.
+  answer: false
+  explanation: '`map` returns a lazy iterator. It computes values as they are requested; convert it with `list(...)`
+    when a stored list is actually needed.'
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - hof-master-callable-transfer
+  - hof-master-apply-each
+  - hof-master-fix-sort-key
+  - hof-master-explain-map
+  - hof-master-map-lazy

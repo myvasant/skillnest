@@ -1,0 +1,1066 @@
+id: ml.linear-regression
+concept: ml.linear-regression
+title: Linear Regression
+subtitle: Fitting a line by minimising squared error
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Predict a number as a weighted sum of features. You will define the model y = w·x + b, measure its
+  errors with mean squared error, fit it by gradient descent written in pure Python, check the answer
+  against the closed-form solution, and learn to read coefficients and residuals honestly.
+objectives:
+  - Write the linear model y_hat = w·x + b and explain what the weight and the intercept mean in the units of the data.
+  - Compute mean squared error by hand and in code, and explain why errors are squared.
+  - Implement gradient descent for linear regression in pure Python, including the gradients of the MSE.
+  - Compute the closed-form least-squares solution for one feature and verify it against gradient descent.
+  - Diagnose a fit from its residuals and from the behaviour of the training loss (convergence vs divergence).
+  - Extend the model to several features and relate it to scikit-learn's LinearRegression.
+sources:
+  - title: Linear models
+    url: https://scikit-learn.org/stable/modules/linear_model.html
+    publisher: scikit-learn
+  - title: LinearRegression
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html
+    publisher: scikit-learn
+  - title: "statistics.linear_regression"
+    url: https://docs.python.org/3/library/statistics.html#statistics.linear_regression
+    publisher: Python Software Foundation
+  - title: "Dive into Deep Learning: Linear Regression"
+    url: https://d2l.ai/chapter_linear-regression/linear-regression.html
+    publisher: Zhang, Lipton, Li and Smola
+  - title: An Introduction to Statistical Learning (free book)
+    url: https://www.statlearning.com/
+    publisher: James, Witten, Hastie, Tibshirani and Taylor
+sections:
+  - id: why
+    title: Predicting a number
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A food-delivery app wants to promise a delivery time. Five past orders give the distance in km
+          and the time it took in minutes. Without a model, the best single guess is the **mean** time —
+          the regression [baseline](glossary:baseline-model). A line that uses distance should do better.
+          To compare guesses we need a score; we use the average squared miss, the
+          [mean squared error](glossary:mean-squared-error):
+      - type: code
+        runnable: true
+        code: |
+          xs = [1, 2, 3, 4, 5]          # delivery distance in km
+          ys = [9, 11, 15, 17, 18]      # delivery time in minutes
+
+          mean_y = sum(ys) / len(ys)
+          baseline_preds = [mean_y for _ in xs]               # ignore distance entirely
+          line_preds = [2 * x + 8 for x in xs]                # a guessed line: 2 min per km + 8
+
+          def mse(ys, preds):
+              return sum((y - p) ** 2 for y, p in zip(ys, preds)) / len(ys)
+
+          print("mean baseline MSE:", mse(ys, baseline_preds))
+          print("guessed line MSE: ", mse(ys, line_preds))
+        expectedOutput: |
+          mean baseline MSE: 12.0
+          guessed line MSE:  0.8
+        caption: Even a guessed line is 15 times better than the mean. Can we find the best line automatically?
+        annotations:
+          - line: 4
+            text: The mean time is 14 minutes; the baseline predicts 14 for every order.
+          - line: 9
+            text: Square each miss, then average. Lower is better; 0 would be perfect.
+      - type: markdown
+        body: |
+          [Linear regression](glossary:linear-regression) answers that question. It is the simplest useful
+          model for numbers and a strong baseline in its own right — and its ideas (a loss, gradients, a
+          learning rate, parameters) are exactly the ones used to train neural networks.
+
+  - id: model
+    title: "The model: y = w·x + b"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With one feature `x`, the model predicts
+
+          ```text
+          y_hat = w * x + b
+          ```
+
+          - `w` is the **weight** (slope, [coefficient](glossary:regression-coefficient)): how much the
+            prediction changes when `x` increases by one unit.
+          - `b` is the **intercept** (bias): the prediction when `x` is 0.
+          - `y_hat` ("y hat") is the prediction; `y` is the true value.
+
+          `w` and `b` are the model's [parameters](glossary:model-parameter). Training means choosing them.
+      - type: code
+        runnable: true
+        code: |
+          def predict(x, w, b):
+              return w * x + b
+
+          print(predict(4, w=2, b=8))
+          print([predict(x, 2.5, 6) for x in [1, 2, 3]])
+        expectedOutput: |
+          16
+          [8.5, 11.0, 13.5]
+        caption: 'With w = 2 and b = 8, a 4 km order is predicted to take 2 × 4 + 8 = 16 minutes.'
+      - type: callout
+        variant: misconception
+        title: '"Linear" means linear in the parameters'
+        body: |
+          The prediction must be a weighted sum of the inputs, but the inputs can be anything you compute:
+          `x`, `x ** 2`, `log(x)`, `x1 * x2`. A model `w1 * x + w2 * x ** 2 + b` draws a curve, and it is
+          still linear regression, because it is linear in `w1`, `w2` and `b`.
+
+  - id: loss
+    title: "The loss: mean squared error"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For each example the **error** (or residual) is `y - y_hat`. The mean squared error averages the
+          squared errors:
+
+          ```text
+          MSE = (1/n) * Σ (y_i - y_hat_i)²
+          ```
+
+          Why square?
+
+          1. **Signs cannot cancel.** Errors of +5 and -5 would average to 0; their squares do not.
+          2. **Big misses cost more.** A miss of 4 costs 16, four times a miss of 2. Squared error prefers
+             many small errors to a few large ones.
+          3. **It is smooth.** MSE has a derivative everywhere, which is what gradient descent needs, and
+             for a linear model it has a single minimum (it is *convex*).
+
+          Here is a hand calculation you can check line by line:
+      - type: code
+        runnable: true
+        code: |
+          ys = [9, 11, 15]
+          preds = [10, 11, 13]
+          errors = [y - p for y, p in zip(ys, preds)]
+          print("errors:", errors)
+          print("squared:", [e ** 2 for e in errors])
+          print("MSE:", sum(e ** 2 for e in errors) / len(errors))
+        expectedOutput: |
+          errors: [-1, 0, 2]
+          squared: [1, 0, 4]
+          MSE: 1.6666666666666667
+        caption: (1 + 0 + 4) / 3 = 1.67 square minutes. Its square root, about 1.29 minutes, is back in the original units (RMSE).
+      - type: item
+        ref: predict-mse
+
+  - id: gradient-descent
+    title: "Walkthrough: fitting by gradient descent"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The MSE is a function of the two parameters, `MSE(w, b)`. We want the `w` and `b` at its lowest
+          point. [Gradient descent](concept:math.optimization) gets there by repeatedly stepping
+          **downhill**:
+
+          1. Compute the slope of the loss with respect to each parameter (the *gradient*).
+          2. Move each parameter a small step **against** its slope: `w ← w − lr · ∂MSE/∂w`.
+          3. Repeat until the loss stops falling.
+
+          The step size `lr` is the **learning rate**. For MSE the slopes have a simple form. Writing
+          `e_i = y_hat_i − y_i` for prediction minus target:
+
+          ```text
+          ∂MSE/∂w = (2/n) Σ e_i · x_i        ∂MSE/∂b = (2/n) Σ e_i
+          ```
+
+          (Chain rule: the derivative of `e²` is `2e`, and `e` changes by `x_i` per unit of `w` and by 1
+          per unit of `b`.) Before running a full loop, step through **one** update on three points that
+          lie exactly on `y = 2x + 1`:
+      - type: visualization
+        component: python-tracer
+        title: One gradient-descent step
+        caption: >-
+          Starting from w = b = 0, every prediction is too low, so all errors are negative and both
+          gradients are negative. Subtracting a negative step increases w and b.
+        props:
+          code: |
+            xs = [1, 2, 3]
+            ys = [3, 5, 7]
+            w, b, lr = 0.0, 0.0, 0.1
+            errors = [w * x + b - y for x, y in zip(xs, ys)]
+            dw = 2 / 3 * sum(e * x for e, x in zip(errors, xs))
+            db = 2 / 3 * sum(errors)
+            w = w - lr * dw
+            b = b - lr * db
+            print(round(w, 3), round(b, 3))
+      - type: markdown
+        body: |
+          Now the full loop on the delivery data, printing progress:
+      - type: code
+        runnable: true
+        code: |
+          xs = [1, 2, 3, 4, 5]          # distance in km
+          ys = [9, 11, 15, 17, 18]      # minutes
+
+          def mse(w, b):
+              return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+          def gradients(w, b):
+              n = len(xs)
+              errors = [w * x + b - y for x, y in zip(xs, ys)]     # prediction minus target
+              dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / n * sum(errors)
+              return dw, db
+
+          w, b = 0.0, 0.0
+          lr = 0.05
+          for step in range(2001):
+              if step in (0, 10, 100, 500, 1000, 2000):
+                  print(f"step {step:4}: w={w:.3f}  b={b:.3f}  mse={mse(w, b):.3f}")
+              dw, db = gradients(w, b)
+              w, b = w - lr * dw, b - lr * db
+        expectedOutput: |
+          step    0: w=0.000  b=0.000  mse=208.000
+          step   10: w=3.731  b=1.995  mse=4.682
+          step  100: w=2.687  b=5.764  mse=0.675
+          step  500: w=2.400  b=6.799  mse=0.480
+          step 1000: w=2.400  b=6.800  mse=0.480
+          step 2000: w=2.400  b=6.800  mse=0.480
+        caption: The loss falls quickly at first, then creeps towards its minimum of 0.48 at w = 2.4, b = 6.8.
+        annotations:
+          - line: 9
+            text: Positive error = the prediction is too high.
+          - line: 20
+            text: Both gradients were computed from the same old w and b; now both are updated together.
+      - type: markdown
+        body: |
+          Notice that `w` overshoots to 3.7 early on while `b` is still small, then both settle. Gradient
+          descent never "knows" the answer; it only ever looks at the local slope. The visualization below
+          shows the same process for a single parameter: imagine `b` fixed and the loss as a function of
+          `w` alone, a parabola with its minimum at 2.4.
+      - type: visualization
+        component: gradient-descent
+        title: Gradient descent on one parameter
+        caption: >-
+          This loss is (w − 2.4)², a simplified one-parameter version. Try learning rates of 0.1 (smooth),
+          0.9 (overshoots and oscillates but converges) and 1.05 (diverges). Real losses have different
+          curvature, so the safe range of learning rates depends on the data — which is why the delivery
+          data diverges at 0.1 (see Common mistakes).
+        props:
+          target: 2.4
+          start: -2
+          learningRate: 0.1
+
+  - id: closed-form
+    title: The closed-form solution for one feature
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For linear regression we do not actually need to search: setting both derivatives to zero and
+          solving gives the **[ordinary least squares](glossary:ordinary-least-squares)** formulas
+          directly. With one feature:
+
+          ```text
+          w = Σ (x_i − x̄)(y_i − ȳ) / Σ (x_i − x̄)²        b = ȳ − w · x̄
+          ```
+
+          where `x̄` and `ȳ` are the means. In words: the slope is how much `x` and `y` vary *together*,
+          divided by how much `x` varies on its own. Python's standard library even includes this as
+          `statistics.linear_regression`, so we can check our arithmetic:
+      - type: code
+        runnable: true
+        code: |
+          import statistics
+
+          xs = [1, 2, 3, 4, 5]
+          ys = [9, 11, 15, 17, 18]
+
+          x_mean = sum(xs) / len(xs)
+          y_mean = sum(ys) / len(ys)
+          w = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / sum((x - x_mean) ** 2 for x in xs)
+          b = y_mean - w * x_mean
+          print("closed form:", round(w, 6), round(b, 6))
+
+          fit = statistics.linear_regression(xs, ys)
+          print("statistics: ", round(fit.slope, 6), round(fit.intercept, 6))
+        expectedOutput: |
+          closed form: 2.4 6.8
+          statistics:  2.4 6.8
+        caption: The same w and b that gradient descent found after 1,000 steps, computed in one go.
+        annotations:
+          - line: 8
+            text: "By hand: x deviations −2, −1, 0, 1, 2; y deviations −5, −3, 1, 3, 4; products sum to 24; squares sum to 10; w = 2.4."
+          - line: 9
+            text: The best line always passes through the point of means (x̄, ȳ) = (3, 14).
+          - line: 10
+            text: Rounding hides tiny floating-point noise such as 6.800000000000001.
+      - type: callout
+        variant: note
+        title: Then why ever use gradient descent?
+        body: |
+          With many features the closed form needs a matrix solve whose cost grows roughly with the cube of
+          the number of features, and it must hold all the data at once. Gradient descent (especially its
+          mini-batch form) works on huge datasets in pieces and generalises to models with no closed form
+          at all — logistic regression and every neural network. Linear regression is where you can see
+          both methods agree.
+      - type: item
+        ref: explain-squared
+
+  - id: interpreting
+    title: Interpreting the coefficients
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Our fitted model is **minutes ≈ 2.4 × km + 6.8**.
+
+          - **Slope 2.4**: in this data, each extra kilometre goes with about 2.4 more minutes of delivery
+            time, on average.
+          - **Intercept 6.8**: the predicted time at 0 km — perhaps the time to prepare and hand over the
+            order. Here it is plausible; often it is not, because `x = 0` lies far outside the data (a
+            house with 0 m² of floor area). Do not interpret an intercept you never observed.
+
+          Three cautions that apply to every regression:
+
+          1. **Units matter.** Measure distance in metres and the slope becomes 0.0024. A coefficient's size
+             says nothing about importance until features share a scale.
+          2. **Association, not causation.** The slope summarises how the variables moved together in this
+             data. It does not prove that changing `x` would change `y`.
+          3. **Extrapolation is risky.** The data covers 1–5 km. The model will happily predict 246.8
+             minutes for 100 km, but nothing in the data supports that.
+      - type: item
+        ref: mcq-coefficient
+
+  - id: residuals
+    title: Residuals tell you what the model missed
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [residual](glossary:residual) is `actual − predicted` for one example. Looking at them is the
+          single most useful check of a regression:
+      - type: code
+        runnable: true
+        code: |
+          xs = [1, 2, 3, 4, 5]
+          ys = [9, 11, 15, 17, 18]
+          w, b = 2.4, 6.8
+          for x, y in zip(xs, ys):
+              pred = w * x + b
+              print(f"x={x}  actual={y}  predicted={pred:.1f}  residual={y - pred:+.1f}")
+          print("sum of residuals:", round(sum(y - (w * x + b) for x, y in zip(xs, ys)), 10))
+        expectedOutput: |
+          x=1  actual=9  predicted=9.2  residual=-0.2
+          x=2  actual=11  predicted=11.6  residual=-0.6
+          x=3  actual=15  predicted=14.0  residual=+1.0
+          x=4  actual=17  predicted=16.4  residual=+0.6
+          x=5  actual=18  predicted=18.8  residual=-0.8
+          sum of residuals: 0.0
+        caption: Small, mixed-sign residuals with no pattern. With an intercept, least-squares residuals always sum to zero.
+      - type: markdown
+        body: |
+          Now fit a straight line to data that is actually curved (`y = x²`). The text bars show the
+          residuals:
+      - type: code
+        runnable: true
+        code: |
+          def fit_line(xs, ys):
+              x_mean, y_mean = sum(xs) / len(xs), sum(ys) / len(ys)
+              w = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / sum((x - x_mean) ** 2 for x in xs)
+              return w, y_mean - w * x_mean
+
+          xs = [0, 1, 2, 3, 4, 5, 6]
+          ys = [x ** 2 for x in xs]                 # a curved relationship
+          w, b = fit_line(xs, ys)
+          print("slope", w, "intercept", b)
+          for x, y in zip(xs, ys):
+              r = y - (w * x + b)
+              bar = ("+" if r > 0 else "-") * round(abs(r))
+              print(f"x={x}  residual={r:+5.1f}  {bar}")
+        expectedOutput: |
+          slope 6.0 intercept -5.0
+          x=0  residual= +5.0  +++++
+          x=1  residual= +0.0
+          x=2  residual= -3.0  ---
+          x=3  residual= -4.0  ----
+          x=4  residual= -3.0  ---
+          x=5  residual= +0.0
+          x=6  residual= +5.0  +++++
+        caption: Positive at both ends, negative in the middle — a U-shape. The line is systematically wrong, not randomly wrong.
+      - type: markdown
+        body: |
+          A **pattern** in the residuals means the model is missing structure. Here the fix is an
+          engineered feature: add `x²` as a second input and the model fits perfectly — still linear
+          regression, because it is linear in the parameters. Other common patterns: residuals that grow
+          with `x` (the spread is not constant; try predicting `log(y)`), or a few huge residuals
+          (outliers that squared error weighs heavily).
+      - type: item
+        ref: mcq-residuals
+
+  - id: multiple-features
+    title: "Preview: several features"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Real predictions use many features: distance, time of day, number of items, weather. The model
+          becomes a weighted sum — a [dot product](concept:math.vectors) of a weight vector with the
+          feature vector:
+
+          ```text
+          y_hat = w1·x1 + w2·x2 + ... + wd·xd + b  =  w · x + b
+          ```
+
+          For a whole dataset stacked as a matrix `X` (one row per example) this is `X @ w + b`, as in
+          [matrix multiplication](concept:math.matrices). Gradient descent is unchanged: each weight's
+          gradient is `(2/n) Σ e_i · x_ij`, using its own feature column. Below, the data is generated
+          from known weights so we can check that training recovers them:
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          rng = random.Random(0)
+          X = [[rng.random(), rng.random()] for _ in range(50)]   # two features per row
+          y = [2 * x1 + 3 * x2 + 1 for x1, x2 in X]               # true weights 2 and 3, bias 1
+
+          w = [0.0, 0.0]
+          b = 0.0
+          lr = 0.3
+          for step in range(3000):
+              preds = [sum(wj * xj for wj, xj in zip(w, row)) + b for row in X]
+              errors = [p - t for p, t in zip(preds, y)]
+              grad_w = [2 / len(X) * sum(e * row[j] for e, row in zip(errors, X)) for j in range(len(w))]
+              grad_b = 2 / len(X) * sum(errors)
+              w = [wj - lr * g for wj, g in zip(w, grad_w)]
+              b = b - lr * grad_b
+          print([round(wj, 3) for wj in w], round(b, 3))
+        expectedOutput: |
+          [2.0, 3.0] 1.0
+        caption: Training recovers the weights used to generate the data (real data has noise, so you never get them exactly).
+        annotations:
+          - line: 11
+            text: "One prediction per row: the dot product of the weights with that row, plus the bias."
+          - line: 13
+            text: The gradient for weight j uses column j of every row.
+      - type: callout
+        variant: warning
+        title: Scale your features
+        body: |
+          With features on very different scales (distance in metres next to number of items), one weight's
+          gradient dwarfs the others and no single learning rate suits them all: training either crawls or
+          diverges. Standardising each feature (subtract the training mean, divide by the training standard
+          deviation) fixes this — fitted on the training set only, as you saw in
+          [train/validation/test](concept:ml.train-val-test).
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Loss grows every step, then `OverflowError`, `inf` or `nan` | Learning rate too large (or features unscaled) | Lower `lr` (try ÷10); scale features |
+          | Loss falls painfully slowly | Learning rate too small, or features on very different scales | Raise `lr` carefully; standardise features |
+          | Loss grows steadily even with a small `lr` | Sign error: `w += lr * grad` (gradient *ascent*) | Subtract the gradient |
+          | Different results from "the same" update | `w` updated before `db` was computed from it | Compute all gradients first, then update all parameters |
+          | Great training MSE, poor test MSE | Too many features for the data, or evaluation on training rows | Evaluate on held-out data; see [overfitting](concept:ml.overfitting) |
+          | scikit-learn says it expected a 2-D array | Passed `[1, 2, 3]` as `X` | Use one row per example: `[[1], [2], [3]]` |
+
+          Here is what a too-large learning rate looks like. On the delivery data, 0.05 converges, but 0.1
+          overshoots further on every step:
+      - type: code
+        runnable: true
+        code: |
+          xs = [1, 2, 3, 4, 5]
+          ys = [9, 11, 15, 17, 18]
+          w, b, lr = 0.0, 0.0, 0.1          # learning rate too large for this data
+
+          for step in range(2000):
+              errors = [w * x + b - y for x, y in zip(xs, ys)]
+              loss = sum(e ** 2 for e in errors) / len(xs)
+              if step < 5:
+                  print(f"step {step}: mse={loss:.0f}")
+              dw = 2 / len(xs) * sum(e * x for e, x in zip(errors, xs))
+              db = 2 / len(xs) * sum(errors)
+              w, b = w - lr * dw, b - lr * db
+        expectedOutput: |
+          step 0: mse=208
+          step 1: mse=382
+          step 2: mse=708
+          step 3: mse=1316
+          step 4: mse=2452
+        expectError: OverflowError
+        caption: The loss roughly doubles each step until squaring a huge float raises OverflowError ("Result too large" or "Numerical result out of range", depending on the platform).
+        annotations:
+          - line: 7
+            text: "`e ** 2` raises OverflowError once e is around 1e154; with NumPy you would get inf and then nan instead."
+      - type: item
+        ref: debug-gd-sign
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: code-mse
+      - type: item
+        ref: code-fit-line
+      - type: item
+        ref: parsons-gd
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Where the formulas come from.** At the minimum both partial derivatives are zero:
+          `Σ e_i = 0` and `Σ e_i x_i = 0`. The first says residuals sum to zero (so the line passes
+          through `(x̄, ȳ)`, giving `b = ȳ − w x̄`); substituting into the second gives the slope formula.
+
+          **The normal equation.** With a feature matrix `X` (a column of ones added for the intercept),
+          the same conditions read `Xᵀ X w = Xᵀ y`, so `w = (Xᵀ X)⁻¹ Xᵀ y`. Libraries do **not** compute
+          that inverse: it is slow and numerically fragile when features are nearly collinear.
+          scikit-learn's `LinearRegression` calls `scipy.linalg.lstsq`, which uses a stable matrix
+          factorisation.
+
+          **Why MSE?** If the noise around the true line is Gaussian with constant variance, minimising
+          MSE is exactly [maximum likelihood estimation](concept:math.maximum-likelihood). MSE is also
+          sensitive to outliers for the same reason it punishes large errors; Huber or absolute-error
+          losses are more robust.
+
+          **Convexity.** For a linear model, MSE is a bowl-shaped (convex) function of the parameters, so
+          gradient descent with a small enough learning rate reaches the single global minimum from any
+          start. The largest safe learning rate depends on the curvature, which grows with the scale of the
+          features — the reason 0.05 works and 0.1 explodes on the delivery data.
+
+          **Beyond least squares.** Ridge (L2) and lasso (L1) regression add a penalty on the size of the
+          weights to reduce [overfitting](concept:ml.overfitting).
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install scikit-learn
+          from sklearn.linear_model import LinearRegression
+          from sklearn.metrics import mean_squared_error
+
+          X = [[1], [2], [3], [4], [5]]      # 2-D: one row per order, one column per feature
+          y = [9, 11, 15, 17, 18]
+
+          model = LinearRegression().fit(X, y)
+          print(model.coef_, model.intercept_)        # about [2.4] and 6.8 (tiny float noise possible)
+          print(model.predict([[6]]))                 # about [21.2]
+          print(mean_squared_error(y, model.predict(X)))   # about 0.48 - training MSE
+
+          # Several features: add columns, e.g. [[km, items], ...]; coef_ then has one weight per column.
+          # Gradient-descent version: sklearn.linear_model.SGDRegressor (scale features first).
+        caption: >-
+          Illustrative: scikit-learn (and NumPy, which it needs) is not available in the browser. Install
+          it with pip and run the file locally; it should match the pure-Python results above.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Model: `y_hat = w·x + b` (several features: `w · x + b`, or `X @ w + b` for a dataset).
+          - Loss: **MSE** = mean of squared errors; squaring removes signs and punishes large misses.
+          - Gradients: `∂MSE/∂w = (2/n) Σ e·x`, `∂MSE/∂b = (2/n) Σ e`, with `e = prediction − target`.
+          - Gradient descent: `w ← w − lr · gradient`; too large an `lr` diverges, too small crawls.
+          - Closed form (one feature): `w = Σ(x−x̄)(y−ȳ) / Σ(x−x̄)²`, `b = ȳ − w·x̄`.
+          - Coefficients are per-unit changes in this data — mind units, causation and extrapolation.
+          - Patterns in residuals reveal missing structure; engineered features keep the model linear.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Be ready to write the MSE and its gradients, implement a gradient-descent loop from memory, state
+          the closed-form solution, and explain when you would use each. Interviewers often follow up with
+          "What does this coefficient mean?" (per unit, holding other features fixed, not causal) and
+          "How do you know the model is adequate?" (held-out error vs a baseline, residual plots).
+
+items:
+  - id: predict-mse
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      ys = [3, 5, 7]
+      preds = [2, 6, 5]
+      errors = [y - p for y, p in zip(ys, preds)]
+      print(sum(e ** 2 for e in errors) / len(errors))
+    answer: "2.0"
+    explanation: >-
+      The errors are 1, -1 and 2. Their squares are 1, 1 and 4, which sum to 6; divided by 3 that is 2.0.
+      Division with / always produces a float.
+    wrongAnswers:
+      - answer: "0.6666666666666666"
+        feedback: >-
+          That is the mean of the errors without squaring: (1 - 1 + 2) / 3. Squaring stops the +1 and -1
+          from cancelling.
+      - answer: "1.3333333333333333"
+        feedback: "That is the mean absolute error, (1 + 1 + 2) / 3. MSE squares each error first: (1 + 1 + 4) / 3."
+      - answer: "2"
+        feedback: The value is right, but `/` always returns a float in Python, so it prints 2.0.
+
+  - id: explain-squared
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a teammate (a) why linear regression minimises the **squared** error rather than the plain
+      error, and (b) why gradient descent **subtracts** the gradient.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Plain errors can be positive or negative and cancel out, so their mean can be zero for a bad model.
+      - Squaring makes every error count positively and penalises large errors more than small ones.
+      - Squared error is smooth (differentiable), giving gradients, and for linear models a single minimum.
+      - The gradient points in the direction in which the loss increases fastest, so stepping against it decreases the loss.
+    modelAnswer: |
+      (a) The plain errors y − y_hat have signs, so a model that is 10 too high on one order and 10 too
+      low on another has a mean error of zero despite being bad. Squaring makes every miss positive and
+      weighs big misses more (a miss of 4 costs 16, a miss of 2 costs 4). It is also smooth, so we can take
+      derivatives, and for a linear model the MSE is a convex bowl with one minimum.
+      (b) The gradient tells you which way is uphill — the direction in which a small change of the
+      parameters increases the loss the most. We want the loss to go down, so we move each parameter a
+      small step in the opposite direction, scaled by the learning rate.
+
+  - id: mcq-coefficient
+    type: mcq
+    skill: explanation
+    prompt: |
+      A model predicts monthly rent (in rupees) as `rent ≈ 450 × area_m2 + 3000`, fitted on flats from
+      30 to 120 m². Which statement is justified?
+    explanation: >-
+      The slope is the change in predicted rent per extra square metre in the data the model was fitted
+      on. It is an association, and it only describes the range of the data. The intercept (a 0 m² flat)
+      lies outside that range and has no sensible interpretation.
+    options:
+      - id: a
+        text: In this data, each extra square metre goes with about 450 rupees more rent, on average.
+        correct: true
+        feedback: Correct — a per-unit change, within the range the model was fitted on.
+      - id: b
+        text: A flat with no floor area would rent for 3,000 rupees.
+        feedback: The intercept is a prediction at 0 m², far outside the 30–120 m² data. It anchors the line; it is not a real price.
+      - id: c
+        text: Adding a 10 m² extension to a flat will raise its rent by exactly 4,500 rupees.
+        feedback: >-
+          The slope is an average association in observational data, not a causal effect, and real rents
+          vary around the line.
+      - id: d
+        text: Area is the most important factor in rent, because 450 is a large number.
+        feedback: >-
+          A coefficient's size depends on the units (per cm² it would be 0.045). Importance needs
+          comparable scales and more analysis.
+
+  - id: mcq-residuals
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      After fitting a straight line, you plot the residuals against `x`. They are negative for small and
+      large `x` and positive in the middle (an upside-down U). What does this tell you?
+    explanation: >-
+      A systematic pattern means the model is missing structure: the true relationship curves. Adding an
+      engineered feature such as x² (still linear regression) or using a more flexible model addresses it.
+    options:
+      - id: a
+        text: The relationship is curved, so the straight line systematically misses; try adding an x² feature.
+        correct: true
+        feedback: Correct. Residuals should look like patternless noise; a curve means missed structure.
+      - id: b
+        text: The learning rate was too high.
+        feedback: >-
+          A too-high learning rate shows up as a loss that grows or oscillates during training. Once the
+          fit has converged, residual patterns are about the model's shape, not the optimiser.
+      - id: c
+        text: Nothing — residuals always sum to zero, so the fit is fine.
+        feedback: Summing to zero is guaranteed for least squares with an intercept, whatever the pattern. The pattern is what matters.
+      - id: d
+        text: The data contains one outlier.
+        feedback: An outlier gives a single large residual, not a smooth pattern across the whole range of x.
+
+  - id: debug-gd-sign
+    type: debug
+    skill: debugging
+    prompt: |
+      This training loop should fit the delivery data (w ≈ 2.4, b ≈ 6.8), but the loss **grows** with
+      every step and the parameters run off to infinity. Run it, read the printed losses, and fix it.
+    starterCode: |
+      xs = [1, 2, 3, 4, 5]
+      ys = [9, 11, 15, 17, 18]
+
+      def mse(w, b):
+          return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+      w, b, lr = 0.0, 0.0, 0.05
+      for step in range(2000):
+          errors = [w * x + b - y for x, y in zip(xs, ys)]
+          dw = 2 / len(xs) * sum(e * x for e, x in zip(errors, xs))
+          db = 2 / len(xs) * sum(errors)
+          w = w + lr * dw
+          b = b + lr * db
+          if step < 3:
+              print("mse after step", step, "=", round(mse(w, b), 1))
+      print("final w and b:", round(w, 2), round(b, 2))
+    solution: |
+      xs = [1, 2, 3, 4, 5]
+      ys = [9, 11, 15, 17, 18]
+
+      def mse(w, b):
+          return sum((w * x + b - y) ** 2 for x, y in zip(xs, ys)) / len(xs)
+
+      w, b, lr = 0.0, 0.0, 0.05
+      for step in range(2000):
+          errors = [w * x + b - y for x, y in zip(xs, ys)]
+          dw = 2 / len(xs) * sum(e * x for e, x in zip(errors, xs))
+          db = 2 / len(xs) * sum(errors)
+          w = w - lr * dw
+          b = b - lr * db
+          if step < 3:
+              print("mse after step", step, "=", round(mse(w, b), 1))
+      print("final w and b:", round(w, 2), round(b, 2))
+    expectedOutput: |
+      mse after step 0 = 13.0
+      mse after step 1 = 6.2
+      mse after step 2 = 5.8
+      final w and b: 2.4 6.8
+    tests:
+      - name: Training converges to the least-squares line
+        code: |
+          import math
+          assert math.isfinite(w) and math.isfinite(b), f"w and b ended up as {w!r} and {b!r}. The parameters are moving uphill - check the sign of the update."
+          assert abs(w - 2.4) < 0.01 and abs(b - 6.8) < 0.01, f"Expected w ≈ 2.4 and b ≈ 6.8, got w = {w:.3f}, b = {b:.3f}."
+      - name: The loss ends at its minimum
+        code: |
+          assert mse(w, b) < 0.481, f"The final MSE should be about 0.48, got {mse(w, b)!r}."
+      - name: Still uses gradient descent with the same learning rate
+        code: |
+          assert lr == 0.05, "Keep the learning rate at 0.05 - it is not the problem here."
+          assert "dw" in source and "db" in source, "Keep computing the gradients dw and db and use them in the update."
+    hints:
+      - The printed MSE goes up after every step. Which way does the gradient point — uphill or downhill?
+      - The gradient points in the direction that *increases* the loss.
+      - "Move against the gradient: `w = w - lr * dw` and the same for `b`."
+    feedback:
+      - when: { codeContains: "lr = 0.005" }
+        message: >-
+          A smaller learning rate only slows the explosion down. The loss rises because the update moves
+          with the gradient instead of against it.
+    explanation: >-
+      `dw` and `db` point uphill — the direction in which the MSE increases. Adding them performs gradient
+      ascent, so the loss grows every step until the numbers overflow. Subtracting them moves downhill, and
+      the loop converges to the least-squares solution w = 2.4, b = 6.8.
+
+  - id: code-mse
+    type: code
+    skill: implementation
+    prompt: |
+      Write `mse(ys, preds)` that returns the mean squared error between the true values `ys` and the
+      predictions `preds` (two lists of the same length).
+    starterCode: |
+      def mse(ys, preds):
+          pass
+
+      print(mse([9, 11, 15], [10, 11, 13]))
+    solution: |
+      def mse(ys, preds):
+          return sum((y - p) ** 2 for y, p in zip(ys, preds)) / len(ys)
+
+      print(mse([9, 11, 15], [10, 11, 13]))
+    expectedOutput: |
+      1.6666666666666667
+    tests:
+      - name: Matches the hand calculation
+        code: |
+          import math
+          got = mse([9, 11, 15], [10, 11, 13])
+          assert got is not None, "mse returned None. Return the computed value."
+          assert math.isclose(got, 5 / 3), f"Errors -1, 0, 2 → squares 1, 0, 4 → mean 5/3 ≈ 1.667. Got {got!r}."
+      - name: Errors of opposite sign do not cancel
+        code: |
+          import math
+          got = mse([0, 0], [3, -3])
+          assert math.isclose(got, 9.0), f"Errors +3 and -3 each square to 9, so MSE is 9.0. Got {got!r}. Did you square before averaging?"
+      - name: Perfect predictions give 0
+        code: |
+          assert mse([1.5, 2.5, 4.0], [1.5, 2.5, 4.0]) == 0, "Identical lists should give an MSE of 0."
+      - name: Works for other lengths
+        code: |
+          import math
+          got = mse([1, 2, 3, 4], [2, 2, 2, 2])
+          assert math.isclose(got, 1.5), f"Squares 1, 0, 1, 4 sum to 6; 6 / 4 = 1.5. Got {got!r}. Divide by len(ys), not a fixed number."
+    hints:
+      - Pair each true value with its prediction using `zip(ys, preds)`.
+      - "Square each difference: `(y - p) ** 2`."
+      - Sum the squares and divide by the number of examples.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Add a return statement.
+      - when: { outputContains: "0.666" }
+        message: That is the mean of the plain errors. Square each error before averaging.
+    explanation: >-
+      Pairing with zip, squaring each difference and averaging gives MSE. Squaring first is essential: it
+      stops positive and negative errors from cancelling and weights large errors more heavily.
+
+  - id: code-fit-line
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `fit_line(xs, ys)` that returns the least-squares `(w, b)` for one feature using the
+      closed-form formulas:
+
+      ```text
+      w = Σ (x − x̄)(y − ȳ) / Σ (x − x̄)²        b = ȳ − w · x̄
+      ```
+
+      Implement the formulas yourself — do not call `statistics.linear_regression` (the tests use it to
+      check your answer).
+    starterCode: |
+      def fit_line(xs, ys):
+          pass
+
+      print(fit_line([1, 2, 3, 4, 5], [9, 11, 15, 17, 18]))
+    solution: |
+      def fit_line(xs, ys):
+          x_mean = sum(xs) / len(xs)
+          y_mean = sum(ys) / len(ys)
+          numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))
+          denominator = sum((x - x_mean) ** 2 for x in xs)
+          w = numerator / denominator
+          b = y_mean - w * x_mean
+          return w, b
+
+      w, b = fit_line([1, 2, 3, 4, 5], [9, 11, 15, 17, 18])
+      print(round(w, 6), round(b, 6))
+    expectedOutput: |
+      2.4 6.8
+    tests:
+      - name: Fits the delivery data
+        code: |
+          import math
+          result = fit_line([1, 2, 3, 4, 5], [9, 11, 15, 17, 18])
+          assert result is not None, "fit_line returned None. Return w, b."
+          w_, b_ = result
+          assert math.isclose(w_, 2.4) and math.isclose(b_, 6.8), f"Expected (2.4, 6.8), got {result!r}."
+      - name: Matches statistics.linear_regression on random data
+        code: |
+          import math, random, statistics
+          rng = random.Random(5)
+          xs = [rng.uniform(0, 20) for _ in range(30)]
+          ys = [4 - 1.5 * x + rng.gauss(0, 3) for x in xs]
+          w_, b_ = fit_line(xs, ys)
+          ref = statistics.linear_regression(xs, ys)
+          assert math.isclose(w_, ref.slope, rel_tol=1e-9) and math.isclose(b_, ref.intercept, rel_tol=1e-9), f"Got w = {w_:.4f}, b = {b_:.4f}; expected w = {ref.slope:.4f}, b = {ref.intercept:.4f}."
+      - name: Recovers an exact line
+        code: |
+          import math
+          w_, b_ = fit_line([0, 10, 20], [7, 2, -3])
+          assert math.isclose(w_, -0.5) and math.isclose(b_, 7), f"The points lie on y = -0.5x + 7, got w = {w_!r}, b = {b_!r}."
+      - name: Implements the formula itself
+        code: |
+          assert not calls("linear_regression"), "Implement the formulas yourself instead of calling statistics.linear_regression."
+    hints:
+      - Compute the two means first, `x_mean` and `y_mean`.
+      - "The numerator is `sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys))`; the denominator sums `(x - x_mean) ** 2`."
+      - Then `b = y_mean - w * x_mean`, and return both values as a tuple.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: fit_line returns None. Finish with `return w, b`.
+      - when: { errorType: ZeroDivisionError }
+        message: >-
+          You divided by zero. The denominator Σ(x − x̄)² is only zero when every x is the same; check
+          you are subtracting the mean of xs, not of ys.
+    explanation: >-
+      The slope is the co-variation of x and y divided by the variation of x, and the intercept makes the
+      line pass through the point of means. These are exactly the values at which both MSE derivatives are
+      zero, which is why they match gradient descent and the standard library.
+
+  - id: parsons-gd
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a gradient-descent loop that fits `y_hat = w * x` (no intercept) to points on
+      `y = 2x`, then prints `w` rounded to 3 decimals. One line is a distractor.
+    solution: |
+      xs = [1, 2, 3]
+      ys = [2, 4, 6]
+      w, lr = 0.0, 0.1
+      for step in range(100):
+          errors = [w * x - y for x, y in zip(xs, ys)]
+          dw = 2 / len(xs) * sum(e * x for e, x in zip(errors, xs))
+          w = w - lr * dw
+      print(round(w, 3))
+    distractors:
+      - "    w = w + lr * dw"
+    expectedOutput: |
+      2.0
+    explanation: >-
+      Inside the loop the order is fixed: compute the errors with the current w, then the gradient from
+      those errors, then update. Adding the gradient (the distractor) would climb the loss instead of
+      descending it.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-gradient
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The current parameters are w = 1.0 and b = 0.0. What does this print?
+    code: |
+      xs = [1, 2]
+      ys = [4, 6]
+      w, b = 1.0, 0.0
+      errors = [w * x + b - y for x, y in zip(xs, ys)]
+      db = 2 / len(xs) * sum(errors)
+      dw = 2 / len(xs) * sum(e * x for e, x in zip(errors, xs))
+      print(errors, db, dw)
+    answer: "[-3.0, -4.0] -7.0 -11.0"
+    explanation: >-
+      Predictions are 1.0 and 2.0, so errors (prediction minus target) are -3.0 and -4.0. db = (2/2)(-7) =
+      -7.0 and dw = (2/2)(-3·1 + -4·2) = -11.0. Both gradients are negative, so the update (subtracting
+      them) will increase w and b — the line is too low.
+    wrongAnswers:
+      - answer: "[3.0, 4.0] 7.0 11.0"
+        feedback: The code computes prediction minus target (w * x + b - y), and the predictions are below the targets, so the errors are negative.
+      - answer: "[-3.0, -4.0] -3.5 -5.5"
+        feedback: You left out the factor 2 from the derivative of the square. Here 2 / len(xs) is 1.0, so db is simply the sum, -7.0.
+
+  - id: m-mcq-learning-rate
+    type: mcq
+    skill: debugging
+    prompt: |
+      Your gradient-descent loop prints these losses: `5.1, 9.8, 21.3, 47.0, 104.2, ...`. The gradients
+      were checked and are correct. What is the most likely problem?
+    explanation: >-
+      With correct gradients, a loss that grows by a roughly constant factor each step means every step
+      overshoots the minimum by more than the last: the learning rate is too large for the curvature of
+      this loss (often because features are on a large scale).
+    options:
+      - id: a
+        text: The learning rate is too large; reduce it (and consider scaling the features).
+        correct: true
+        feedback: Correct. Each update jumps past the minimum and lands higher up the other side.
+      - id: b
+        text: The learning rate is too small.
+        feedback: A small learning rate makes the loss fall slowly. It never makes it grow.
+      - id: c
+        text: The model needs more training steps.
+        feedback: More steps would make the divergence worse, ending in overflow or nan.
+      - id: d
+        text: Linear regression cannot fit this data.
+        feedback: Even a poorly fitting model's loss decreases under gradient descent with a suitable learning rate.
+
+  - id: m-tf-polynomial
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: a model `y_hat = w1 * x + w2 * x ** 2 + b`, fitted by minimising MSE, is still a
+      linear regression model, even though its prediction curve is not a straight line.
+    answer: true
+    explanation: >-
+      "Linear" refers to the parameters. The prediction is a weighted sum of the features x and x², with
+      the weights w1, w2 and b entering linearly, so all the same formulas and gradients apply.
+
+  - id: m-code-gd-step
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `gd_step(w, b, xs, ys, lr)` that performs **one** gradient-descent update for `y_hat = w * x + b`
+      under MSE and returns the new `(w, b)`. Use errors `e = prediction - target`,
+      `dw = (2/n) Σ e·x`, `db = (2/n) Σ e`, and update both parameters from the **same** old values.
+    starterCode: |
+      def gd_step(w, b, xs, ys, lr):
+          pass
+
+      print(gd_step(0.0, 0.0, [1, 2, 3], [3, 5, 7], 0.1))
+    solution: |
+      def gd_step(w, b, xs, ys, lr):
+          n = len(xs)
+          errors = [w * x + b - y for x, y in zip(xs, ys)]
+          dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+          db = 2 / n * sum(errors)
+          return w - lr * dw, b - lr * db
+
+      print(gd_step(0.0, 0.0, [1, 2, 3], [3, 5, 7], 0.1))
+    expectedOutput: |
+      (2.2666666666666666, 1.0)
+    tests:
+      - name: One step from zero
+        code: |
+          import math
+          result = gd_step(0.0, 0.0, [1, 2, 3], [3, 5, 7], 0.1)
+          assert result is not None, "gd_step returned None. Return the new (w, b)."
+          w_, b_ = result
+          assert math.isclose(w_, 34 / 15) and math.isclose(b_, 1.0), f"Expected about (2.267, 1.0), got {result!r}."
+      - name: Updates both parameters from the old values
+        code: |
+          import math
+          w_, b_ = gd_step(1.0, 0.0, [1, 2], [4, 6], 0.1)
+          assert math.isclose(w_, 2.1) and math.isclose(b_, 0.7), f"From w=1, b=0: dw = -11, db = -7, so expect (2.1, 0.7). Got {(w_, b_)!r}. Compute both gradients before changing w."
+      - name: Repeated steps converge
+        code: |
+          w_, b_ = 0.0, 0.0
+          for _ in range(5000):
+              w_, b_ = gd_step(w_, b_, [1, 2, 3, 4], [5, 7, 9, 11], 0.05)
+          assert abs(w_ - 2) < 1e-6 and abs(b_ - 3) < 1e-6, f"Points on y = 2x + 3 should give w ≈ 2, b ≈ 3 after many steps, got {(w_, b_)!r}."
+    hints:
+      - Compute the list of errors first, using the current w and b.
+      - Then compute dw and db from those errors, and only then build the new values.
+      - "`return w - lr * dw, b - lr * db` returns both new parameters as a tuple."
+    explanation: >-
+      A gradient-descent step evaluates the gradient at the current point and moves every parameter
+      against it at once. Computing both gradients before updating keeps the step a true gradient step;
+      calling the function in a loop is the whole training algorithm.
+
+  - id: m-mcq-extrapolate
+    type: mcq
+    skill: transfer
+    prompt: |
+      The delivery model `minutes ≈ 2.4 × km + 6.8` was fitted on orders between 1 and 5 km. A customer
+      40 km away asks for an estimate. What is the best response?
+    explanation: >-
+      The model has never seen anything near 40 km; the relationship may change completely (highways,
+      different couriers, zone limits). Its prediction of 102.8 minutes is an extrapolation with no
+      support in the data, so it should be flagged or the case handled differently.
+    options:
+      - id: a
+        text: Quote 102.8 minutes — the line extends indefinitely.
+        feedback: The arithmetic is right, but nothing in the 1–5 km data tells us the line continues to 40 km.
+      - id: b
+        text: Treat it as outside the model's range — flag it, use a different rule, or collect data for long trips.
+        correct: true
+        feedback: Correct. Predictions far outside the training range are extrapolations and should not be trusted blindly.
+      - id: c
+        text: Quote 6.8 minutes, the intercept.
+        feedback: The intercept is the prediction at 0 km, which is unrelated to a 40 km order.
+      - id: d
+        text: Refit the model with gradient descent instead of the closed form to make it accurate at 40 km.
+        feedback: Both methods give the same line. The problem is the missing data, not the fitting method.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-gradient, m-mcq-learning-rate, m-tf-polynomial, m-code-gd-step, m-mcq-extrapolate]
+
+cheatsheet: |
+  ```python
+  y_hat = w * x + b                                   # one feature
+  mse = sum((y - p) ** 2 for y, p in zip(ys, preds)) / len(ys)
+
+  errors = [w * x + b - y for x, y in zip(xs, ys)]   # prediction - target
+  dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+  db = 2 / n * sum(errors)
+  w, b = w - lr * dw, b - lr * db                     # step AGAINST the gradient
+
+  # closed form, one feature
+  w = sum((x - xm) * (y - ym) for x, y in zip(xs, ys)) / sum((x - xm) ** 2 for x in xs)
+  b = ym - w * xm
+  ```
+  - Loss rising every step → learning rate too high (or a sign error) · crawling → too low / unscaled features
+  - Residual pattern → missing structure; try engineered features (x², log x)
+  - Coefficient = change per unit, in this data — not causal, not valid outside the data range
+  - scikit-learn: `LinearRegression().fit(X_2d, y)`, then `coef_`, `intercept_`, `predict`

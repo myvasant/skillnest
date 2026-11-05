@@ -1,0 +1,206 @@
+id: ml.cross-validation
+concept: ml.cross-validation
+title: Cross-validation
+subtitle: k-fold, stratified and time-series splits give more reliable performance estimates than a single split
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: k-fold, stratified and time-series splits give more reliable performance estimates than a single split.
+objectives:
+- Explain the learning problem and assumptions behind cross-validation.
+- Interpret the model behaviour using a small numerical example.
+- Evaluate model quality without confusing training performance with real-world generalisation.
+sources:
+- title: 'Cross-validation: evaluating estimator performance'
+  url: https://scikit-learn.org/stable/modules/cross_validation.html
+  publisher: scikit-learn
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: k-fold, stratified and time-series splits give more reliable performance estimates than a single split.
+      A single validation split is noisy, especially on small datasets; cross-validation uses all the data for both
+      training and validation and shows how much scores vary.
+- id: mental-model
+  title: Core model and assumptions
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining fold,
+      rotates, and averages the `k` scores.
+
+      - Report the mean and standard deviation of fold scores; the spread shows how stable the estimate is.
+
+      - `StratifiedKFold` keeps class ratios, `GroupKFold` keeps all rows of an entity in one fold, and `TimeSeriesSplit`
+      always trains on the past and validates on the future.
+
+      - Nested cross-validation (an inner loop for tuning, an outer loop for evaluation) gives an unbiased estimate
+      when hyperparameters are also tuned.
+
+      - All preprocessing must be fitted inside each fold — wrap it in a `Pipeline` — to avoid leakage.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- The models trained during cross-validation are not your final model; refit on all training data with
+      the chosen settings.
+
+      - Cross-validation does not replace a final test set when many decisions were made by looking at CV scores.'
+- id: worked-example
+  title: Worked numerical example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one mathematical or evaluation rule used by the method. A production
+      estimator also needs a suitable dataset, preprocessing, validation strategy and monitoring.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def kfold_sizes(sample_count, k):\n    if k < 2 or k > sample_count: raise ValueError(\"k must be between\
+      \ 2 and sample count\")\n    base, extra = divmod(sample_count, k)\n    return [base + (1 if i < extra else\
+      \ 0) for i in range(k)]\n\nprint(kfold_sizes(10, 3))"
+    caption: Runnable standard-library teaching model; not a replacement for a complete ML library estimator.
+- id: practice
+  title: Practice and evaluation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper, test a normal case and an edge case, and explain what the result does and does not
+      tell you about a trained model.
+  - type: item
+    ref: cross-validation-code
+  - type: item
+    ref: cross-validation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining fold,
+      rotates, and averages the `k` scores.
+
+      - Report the mean and standard deviation of fold scores; the spread shows how stable the estimate is.
+
+      - `StratifiedKFold` keeps class ratios, `GroupKFold` keeps all rows of an entity in one fold, and `TimeSeriesSplit`
+      always trains on the past and validates on the future.
+
+      - Nested cross-validation (an inner loop for tuning, an outer loop for evaluation) gives an unbiased estimate
+      when hyperparameters are also tuned.
+
+      - All preprocessing must be fitted inside each fold — wrap it in a `Pipeline` — to avoid leakage.
+
+
+      **Limitations**
+
+      - The models trained during cross-validation are not your final model; refit on all training data with the
+      chosen settings.
+
+      - Cross-validation does not replace a final test set when many decisions were made by looking at CV scores.'
+  - type: item
+    ref: cross-validation-mcq
+  - type: item
+    ref: cross-validation-tf
+  - type: item
+    ref: cross-validation-code
+items:
+- id: cross-validation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of cross-validation?
+  explanation: k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining
+    fold, rotates, and averages the `k` scores.
+  options:
+  - id: a
+    text: k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining fold,
+      rotates, and averages the `k` scores.
+    correct: true
+    feedback: 'Correct: this is the central mechanism or evaluation principle.'
+  - id: b
+    text: The models trained during cross-validation are not your final model; refit on all training data with the
+      chosen settings.
+    feedback: This is a known misconception; evaluate on data that was not used to fit the model.
+  - id: c
+    text: Model evaluation can be skipped when training loss decreases.
+    feedback: Training loss alone cannot establish generalisation or suitability.
+- id: cross-validation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: The models trained during cross-validation are not your final model; refit on all training data with the
+    chosen settings.
+  answer: false
+  explanation: This is a known misconception. Use a validation strategy appropriate to the data and the deployment
+    setting.
+- id: cross-validation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are using cross-validation for a real prediction task. What assumptions must hold, what failure mode
+    would you test, and how would you evaluate the result on unseen data?
+  rubric:
+  - Explain the method or evaluation assumption correctly.
+  - Name a realistic failure mode and a test that could reveal it.
+  - Describe an evaluation approach that avoids misleading leakage or overclaiming.
+  modelAnswer: Define the prediction target and the data available at prediction time. Choose a validation split
+    that reflects deployment, compare against a simple baseline, inspect errors across important groups and document
+    uncertainty. Check for leakage and distribution changes before trusting the score.
+  explanation: A strong answer links the algorithm to its assumptions and evaluates performance on data that represents
+    future use.
+- id: cross-validation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for cross-validation. The tests check the central rule and a boundary case.
+  starterCode: "def kfold_sizes(sample_count, k):\n    raise NotImplementedError('Complete this function')"
+  solution: "def kfold_sizes(sample_count, k):\n    if k < 2 or k > sample_count: raise ValueError(\"k must be between\
+    \ 2 and sample count\")\n    base, extra = divmod(sample_count, k)\n    return [base + (1 if i < extra else\
+    \ 0) for i in range(k)]"
+  tests:
+  - name: Core behaviour
+    code: assert kfold_sizes(10, 3) == [4,3,3]
+  - name: Edge case
+    code: 'assert sum(kfold_sizes(12, 4)) == 12
+
+      try: kfold_sizes(3, 4)
+
+      except ValueError: pass
+
+      else: raise AssertionError("invalid fold count must fail")'
+  hints:
+  - Translate the method or metric into a small deterministic calculation.
+  - Check empty inputs, ties, dimensions or numerical extremes.
+  - Do not interpret the helper output as a complete model-quality guarantee.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - cross-validation-mcq
+  - cross-validation-tf
+  - cross-validation-code
+cheatsheet: '**Core ideas**
+
+  - k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining fold, rotates,
+  and averages the `k` scores.
+
+  - Report the mean and standard deviation of fold scores; the spread shows how stable the estimate is.
+
+  - `StratifiedKFold` keeps class ratios, `GroupKFold` keeps all rows of an entity in one fold, and `TimeSeriesSplit`
+  always trains on the past and validates on the future.
+
+  - Nested cross-validation (an inner loop for tuning, an outer loop for evaluation) gives an unbiased estimate
+  when hyperparameters are also tuned.
+
+  - All preprocessing must be fitted inside each fold — wrap it in a `Pipeline` — to avoid leakage.
+
+
+  **Evaluation risks**
+
+  - The models trained during cross-validation are not your final model; refit on all training data with the chosen
+  settings.
+
+  - Cross-validation does not replace a final test set when many decisions were made by looking at CV scores.'

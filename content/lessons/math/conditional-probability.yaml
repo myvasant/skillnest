@@ -1,0 +1,1154 @@
+id: math.conditional-probability
+concept: math.conditional-probability
+title: "Conditional Probability and Bayes' Theorem"
+subtitle: Why a positive result from a 99%-accurate test can still mean "probably not"
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Compute P(A|B) by counting inside a table, test events for independence, derive Bayes' theorem and use it
+  to reverse a condition. Work the classic medical-test example exactly with fractions, confirm it with a
+  seeded simulation, and see the same reasoning in spam filters, diagnostic metrics and model calibration.
+objectives:
+  - Compute a conditional probability from counts by restricting attention to the cases where the condition holds.
+  - Distinguish P(A|B) from P(B|A) and explain why confusing them leads to wrong decisions.
+  - Test whether two events are independent, and distinguish independent from mutually exclusive events.
+  - Apply Bayes' theorem with the law of total probability to turn a prior and likelihoods into a posterior.
+  - Explain the base-rate fallacy with an exact calculation and verify it with a seeded simulation.
+  - Recognise conditional probabilities in spam filtering, diagnostic tests and classifier calibration.
+sources:
+  - title: Bayes theorem, the geometry of changing beliefs
+    url: https://www.3blue1brown.com/lessons/bayes-theorem/
+    publisher: 3Blue1Brown
+  - title: "Introductory Statistics 2e, Chapter 3: Probability Topics"
+    url: https://openstax.org/books/introductory-statistics-2e/pages/3-introduction
+    publisher: OpenStax (Rice University)
+  - title: Mathematics for Machine Learning (Ch. 6 Probability and Distributions)
+    url: https://mml-book.github.io/
+    publisher: Deisenroth, Faisal and Ong (Cambridge University Press, free PDF)
+  - title: fractions — Rational numbers
+    url: https://docs.python.org/3/library/fractions.html
+    publisher: Python Software Foundation
+  - title: random — Generate pseudo-random numbers
+    url: https://docs.python.org/3/library/random.html
+    publisher: Python Software Foundation
+  - title: "scikit-learn User Guide: Probability calibration"
+    url: https://scikit-learn.org/stable/modules/calibration.html
+    publisher: scikit-learn
+sections:
+  - id: why
+    title: "Why this matters: the 99%-accurate test"
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A disease affects **1 in 1,000** people. A test catches **99%** of people who have it, and wrongly
+          flags only **1%** of people who do not. You test positive. How likely is it that you have the
+          disease?
+
+          Most people — including, in classic studies, many doctors — answer "about 99%". Before reading on,
+          make your own guess. Then count: imagine 100,000 people taking the test.
+      - type: code
+        runnable: true
+        code: |
+          population = 100_000
+          sick = population // 1000             # 1 in 1,000 has the disease -> 100 people
+          healthy = population - sick           # 99,900 people
+
+          true_positives = sick * 99 // 100     # the test catches 99% of sick people -> 99
+          false_positives = healthy * 1 // 100  # and wrongly flags 1% of healthy people -> 999
+
+          positives = true_positives + false_positives
+          print("positive tests:", positives)
+          print("of whom actually sick:", true_positives)
+          print(f"chance a positive is really sick: {true_positives / positives:.1%}")
+        expectedOutput: |
+          positive tests: 1098
+          of whom actually sick: 99
+          chance a positive is really sick: 9.0%
+        caption: About 9%, not 99%. The few true positives are swamped by false positives from the huge healthy group.
+      - type: markdown
+        body: |
+          The test is genuinely good; the intuition is what fails. "99%" is the probability of a positive
+          result **given** the disease. The question asks for the probability of the disease **given** a
+          positive result. Those are different [conditional probabilities](glossary:conditional-probability),
+          and getting from one to the other requires the **base rate** — how common the disease is. The same
+          trap appears in fraud alerts, security alarms, spam filters and every classifier that hunts for rare
+          events. This lesson gives you the tools to get it right every time.
+
+  - id: counting
+    title: Conditional probability by counting
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **P(A | B)** — read "the probability of A given B" — answers: *among the cases where B happened, what
+          fraction also have A?* You **shrink the universe** to the B cases and count inside it:
+
+          ```text
+          P(A | B) = count(A and B) / count(B)  =  P(A and B) / P(B)
+          ```
+
+          A mail server classified 1,000 emails:
+
+          | | contains "free" | no "free" | total |
+          |---|---|---|---|
+          | **spam** | 120 | 80 | 200 |
+          | **not spam** | 40 | 760 | 800 |
+          | **total** | 160 | 840 | 1,000 |
+
+          - P(free | spam): restrict to the 200 spam emails → 120 / 200 = **0.6**.
+          - P(spam | free): restrict to the 160 emails containing "free" → 120 / 160 = **0.75**.
+
+          Same cell (120), different denominators, different answers. Python's `fractions.Fraction` keeps the
+          results exact:
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+
+          # one (label, contains_free) record per email, matching the table
+          emails = ([("spam", True)] * 120 + [("spam", False)] * 80
+                    + [("ham", True)] * 40 + [("ham", False)] * 760)
+
+          def is_spam(email):
+              return email[0] == "spam"
+
+          def has_free(email):
+              return email[1]
+
+          def probability(event):
+              return Fraction(sum(1 for e in emails if event(e)), len(emails))
+
+          def conditional(event, given):
+              """P(event | given): keep only the records where `given` holds, then count."""
+              subset = [e for e in emails if given(e)]
+              return Fraction(sum(1 for e in subset if event(e)), len(subset))
+
+          print("P(spam)        =", probability(is_spam))
+          print("P(free | spam) =", conditional(has_free, is_spam))
+          print("P(spam | free) =", conditional(is_spam, has_free))
+
+          both = probability(lambda e: is_spam(e) and has_free(e))
+          print("P(spam and free) / P(free) =", both / probability(has_free))
+        expectedOutput: |
+          P(spam)        = 1/5
+          P(free | spam) = 3/5
+          P(spam | free) = 3/4
+          P(spam and free) / P(free) = 3/4
+        annotations:
+          - line: 18
+            text: Shrinking the universe to the records where the condition holds — this is all "given" means.
+          - line: 25
+            text: The formula P(A and B) / P(B) gives the same answer as counting inside the subset.
+      - type: callout
+        variant: misconception
+        title: "P(A | B) is not P(B | A)"
+        body: |
+          60% of spam contains "free", but 75% of emails containing "free" are spam. Swapping the two is so
+          common it has a name in law — the *prosecutor's fallacy*: "if the suspect were innocent, this evidence
+          would be very unlikely" (P(evidence | innocent) is small) does **not** mean "the suspect is very
+          unlikely to be innocent" (P(innocent | evidence)).
+      - type: item
+        ref: predict-table
+      - type: item
+        ref: mcq-reverse
+
+  - id: independence
+    title: The multiplication rule and independence
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Rearranging the definition gives the **multiplication rule**:
+
+          ```text
+          P(A and B) = P(A | B) · P(B) = P(B | A) · P(A)
+          ```
+
+          Two events are **independent** when knowing one tells you nothing about the other:
+          P(A | B) = P(A). Equivalently, P(A and B) = P(A) · P(B). You can check this exactly for two dice by
+          listing all 36 equally likely outcomes:
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+          from itertools import product
+
+          outcomes = list(product(range(1, 7), repeat=2))      # 36 equally likely (first, second) pairs
+
+          def P(event, given=lambda o: True):
+              subset = [o for o in outcomes if given(o)]
+              return Fraction(sum(1 for o in subset if event(o)), len(subset))
+
+          def first_even(o): return o[0] % 2 == 0
+          def sum_is_7(o): return o[0] + o[1] == 7
+          def first_is_6(o): return o[0] == 6
+          def sum_at_least_10(o): return o[0] + o[1] >= 10
+
+          print(P(sum_is_7), P(sum_is_7, given=first_even))
+          print(P(sum_at_least_10), P(sum_at_least_10, given=first_is_6))
+          print(P(lambda o: first_even(o) and sum_is_7(o)), P(first_even) * P(sum_is_7))
+        expectedOutput: |
+          1/6 1/6
+          1/6 1/2
+          1/12 1/12
+        annotations:
+          - line: 15
+            text: Knowing the first die is even leaves P(sum is 7) at 1/6 — independent.
+          - line: 16
+            text: Knowing the first die is 6 triples the chance of a high sum — dependent.
+          - line: 17
+            text: For independent events the joint probability is the product of the separate ones.
+      - type: callout
+        variant: misconception
+        title: Independent is not the same as mutually exclusive
+        body: |
+          **Mutually exclusive** events cannot happen together (P(A and B) = 0): "the first die shows 1" and
+          "the first die shows 6". They are strongly **dependent** — learning that one happened tells you the
+          other did not. Two events with non-zero probabilities can never be both mutually exclusive and
+          independent.
+      - type: markdown
+        body: |
+          Independence is an **assumption** you must justify, not a default. Multiplying probabilities of events
+          that are in fact related — two tests that share the same failure mode, two servers in the same data
+          centre — badly underestimates how often both happen. A weaker assumption, *conditional independence*
+          (independent once you know the class, e.g. "spam" or "not spam"), is what naive Bayes classifiers
+          rely on; see the applications below.
+      - type: item
+        ref: tf-independent-exclusive
+
+  - id: bayes
+    title: "Bayes' theorem: reversing the condition"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The multiplication rule can be written two ways, and setting them equal gives
+          [Bayes' theorem](glossary:bayes-theorem):
+
+          ```text
+          P(H | E) · P(E) = P(E | H) · P(H)     ⟹     P(H | E) = P(E | H) · P(H) / P(E)
+          ```
+
+          Read H as a **hypothesis** (has the disease, is spam) and E as **evidence** (a positive test, the word
+          "free"):
+
+          | Term | Name | Meaning |
+          |---|---|---|
+          | P(H) | [prior](glossary:prior-probability) | how plausible H was before the evidence — the base rate |
+          | P(E \| H) | [likelihood](glossary:likelihood) | how expected the evidence is if H is true |
+          | P(E) | evidence | how common the evidence is overall |
+          | P(H \| E) | [posterior](glossary:posterior-probability) | how plausible H is after the evidence |
+
+          P(E) usually comes from the [law of total probability](glossary:law-of-total-probability): the
+          evidence can arise with H or without it, so
+
+          ```text
+          P(E) = P(E | H) · P(H) + P(E | not H) · P(not H)
+          ```
+
+          Check it against the spam table: P(spam) = 1/5, P(free | spam) = 3/5, P(free | not spam) = 40/800 = 1/20.
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+
+          def posterior(prior, p_e_given_h, p_e_given_not_h):
+              """P(H | E) by Bayes' theorem, with P(E) from the law of total probability."""
+              p_e = p_e_given_h * prior + p_e_given_not_h * (1 - prior)
+              return p_e_given_h * prior / p_e
+
+          p = posterior(Fraction(1, 5), Fraction(3, 5), Fraction(1, 20))
+          print(p, float(p))
+        expectedOutput: |
+          3/4 0.75
+        caption: Bayes' theorem recovers P(spam | free) = 3/4 without looking at the table's "free" column total.
+        annotations:
+          - line: 5
+            text: "P(E) = 3/5 · 1/5 + 1/20 · 4/5 = 3/25 + 1/25 = 4/25, i.e. 160 of 1,000 emails."
+          - line: 6
+            text: "(3/5 · 1/5) / (4/25) = (3/25) / (4/25) = 3/4."
+
+  - id: base-rates
+    title: The base-rate fallacy, worked exactly and simulated
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Back to the medical test, now with the vocabulary:
+
+          - prior P(sick) = 1/1000 (the **prevalence**);
+          - likelihood P(+ | sick) = 99/100 (the test's **sensitivity**);
+          - P(+ | healthy) = 1/100 (the **false-positive rate**; the test's **specificity**, P(− | healthy), is 99%).
+
+          Step through the same 100,000 people as a tree of natural frequencies:
+      - type: visualization
+        component: step-diagram
+        title: "100,000 people take the test"
+        caption: Bayes' theorem is this tree, divided out. The answer is the share of positives that came from the sick branch.
+        props:
+          width: 760
+          height: 360
+          nodes:
+            - { id: pop, label: "100,000 people", x: 380, y: 40, shape: store }
+            - { id: sick, label: 100 sick, x: 200, y: 140 }
+            - { id: healthy, label: "99,900 healthy", x: 560, y: 140 }
+            - { id: tp, label: 99 test positive, x: 110, y: 240 }
+            - { id: fn, label: 1 test negative, x: 290, y: 240 }
+            - { id: fp, label: 999 test positive, x: 470, y: 240 }
+            - { id: tn, label: "98,901 negative", x: 650, y: 240 }
+            - { id: pos, label: "1,098 positives", x: 290, y: 320, shape: pill }
+          edges:
+            - { id: e-sick, from: pop, to: sick, label: "1 in 1,000" }
+            - { id: e-healthy, from: pop, to: healthy, label: "999 in 1,000" }
+            - { id: e-tp, from: sick, to: tp, label: "99%" }
+            - { id: e-fn, from: sick, to: fn, label: "1%" }
+            - { id: e-fp, from: healthy, to: fp, label: "1%" }
+            - { id: e-tn, from: healthy, to: tn, label: "99%" }
+            - { id: e-tp-pos, from: tp, to: pos }
+            - { id: e-fp-pos, from: fp, to: pos }
+          steps:
+            - title: Start with a population
+              body: Imagine 100,000 people tested. Whole numbers make the reasoning concrete.
+              active: [pop]
+              payload: "prevalence 1/1000 · sensitivity 99% · false-positive rate 1%"
+            - title: Split by the base rate
+              body: Only 100 people are sick. The healthy group is almost a thousand times larger — this is what intuition ignores.
+              active: [pop, e-sick, e-healthy, sick, healthy]
+              payload: "100,000 × 1/1000 = 100 sick;  100,000 − 100 = 99,900 healthy"
+            - title: Test the sick
+              body: The test catches 99 of the 100 sick people (true positives) and misses 1 (a false negative).
+              active: [sick, e-tp, e-fn, tp, fn]
+              payload: "100 × 99% = 99 true positives"
+            - title: Test the healthy
+              body: "Only 1% of healthy people are wrongly flagged, but 1% of a huge group is a lot of people: 999 false positives."
+              active: [healthy, e-fp, e-tn, fp, tn]
+              payload: "99,900 × 1% = 999 false positives"
+            - title: Collect everyone who tested positive
+              body: A positive result puts you in this group of 1,098 people, without telling you which branch you came from.
+              active: [tp, fp, e-tp-pos, e-fp-pos, pos]
+              payload: "99 + 999 = 1,098 positives"
+            - title: The answer
+              body: Only the 99 true positives are sick, so P(sick | positive) is about 9%.
+              active: [tp, pos]
+              payload: "P(sick | +) = 99 / 1,098 = 11/122 ≈ 0.090"
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+
+          def posterior(prior, sensitivity, false_positive_rate):
+              p_positive = sensitivity * prior + false_positive_rate * (1 - prior)
+              return sensitivity * prior / p_positive
+
+          exact = posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100))
+          print(exact, f"= {float(exact):.4f}")
+        expectedOutput: |
+          11/122 = 0.0902
+        caption: The exact answer from Bayes' theorem — the same 99/1098 as the tree, reduced.
+      - type: markdown
+        body: |
+          **Check it by simulation.** Simulate a million people with `random` seeded, so the run is reproducible:
+          each person is sick with probability 0.001, then tests positive with probability 0.99 if sick or 0.01
+          if healthy. Count what fraction of the positives were sick.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          random.seed(2024)
+          PEOPLE = 1_000_000
+          positives = sick_and_positive = 0
+          for _ in range(PEOPLE):
+              sick = random.random() < 0.001
+              if sick:
+                  positive = random.random() < 0.99
+              else:
+                  positive = random.random() < 0.01
+              if positive:
+                  positives += 1
+                  if sick:
+                      sick_and_positive += 1
+
+          print("positives:", positives, " of whom sick:", sick_and_positive)
+          print(f"simulated P(sick | positive) = {sick_and_positive / positives:.4f}")
+          print(f"exact                        = {99 / 1098:.4f}")
+        expectedOutput: |
+          positives: 10955  of whom sick: 1006
+          simulated P(sick | positive) = 0.0918
+          exact                        = 0.0902
+        caption: Close to the exact 0.0902. Only about a thousand people are sick, so the estimate still wobbles in the second decimal place.
+        annotations:
+          - line: 3
+            text: A fixed seed makes the "random" run identical every time — essential for checking and debugging.
+          - line: 7
+            text: random.random() < 0.001 is True with probability 0.001.
+      - type: markdown
+        body: |
+          **The base rate dominates.** Keep the same test and change only how common the disease is in the group
+          being tested:
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+
+          def posterior(prior, sensitivity, false_positive_rate):
+              p_positive = sensitivity * prior + false_positive_rate * (1 - prior)
+              return sensitivity * prior / p_positive
+
+          for prior in [Fraction(1, 10000), Fraction(1, 1000), Fraction(1, 100), Fraction(1, 10), Fraction(1, 2)]:
+              p = posterior(prior, Fraction(99, 100), Fraction(1, 100))
+              print(f"prevalence {str(prior):>7}: P(sick | positive) = {float(p):6.1%}  ({p})")
+        expectedOutput: |
+          prevalence 1/10000: P(sick | positive) =   1.0%  (1/102)
+          prevalence  1/1000: P(sick | positive) =   9.0%  (11/122)
+          prevalence   1/100: P(sick | positive) =  50.0%  (1/2)
+          prevalence    1/10: P(sick | positive) =  91.7%  (11/12)
+          prevalence     1/2: P(sick | positive) =  99.0%  (99/100)
+        caption: The same positive result means 1% or 99% depending on the prior. Screening everyone and testing people with symptoms are different situations.
+      - type: markdown
+        body: |
+          Ignoring the prior and reading the likelihood as the answer is the
+          [base-rate fallacy](glossary:base-rate-fallacy). Two practical consequences:
+
+          - **Confirm with a second, independent test.** Today's posterior becomes tomorrow's prior. If a second
+            test's errors are independent of the first's *given* the true status (an assumption to check — tests
+            based on the same mechanism may fail together), a second positive pushes the probability above 90%.
+          - **Rare-event detectors raise mostly false alarms** unless their false-positive rate is far below the
+            base rate — fraud, intrusion detection, content moderation.
+      - type: item
+        ref: mcq-base-rate
+      - type: item
+        ref: predict-second-test
+      - type: item
+        ref: explain-base-rate
+
+  - id: applications
+    title: "Where you'll meet it: spam filters, diagnostics, calibration"
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          **1. Spam filtering (naive Bayes).** A classifier compares P(spam | words) with P(not spam | words).
+          By Bayes, each is proportional to prior × likelihood. Estimating P(all these words | spam) directly is
+          impossible (too many word combinations), so naive Bayes *assumes the words are conditionally
+          independent given the class* and multiplies one likelihood per word. It is rarely literally true, yet
+          the classifier often works well. Sums of logarithms replace the products to avoid underflow (see the
+          deep dive). This sketch uses only the words present, with made-up likelihoods:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          prior = {"spam": 0.2, "ham": 0.8}
+          likelihood = {           # P(word appears | class), as if estimated from labelled emails
+              "spam": {"free": 0.6, "winner": 0.3, "meeting": 0.05},
+              "ham": {"free": 0.05, "winner": 0.01, "meeting": 0.3},
+          }
+
+          def classify(words):
+              log_scores = {}
+              for label in prior:
+                  score = math.log(prior[label])
+                  for word in words:
+                      score += math.log(likelihood[label][word])     # naive: one factor per word
+                  log_scores[label] = score
+              total = sum(math.exp(s) for s in log_scores.values())   # P(E), by total probability
+              return {label: round(math.exp(s) / total, 3) for label, s in log_scores.items()}
+
+          print(classify(["free", "winner"]))
+          print(classify(["meeting"]))
+          print(classify(["free", "meeting"]))
+        expectedOutput: |
+          {'spam': 0.989, 'ham': 0.011}
+          {'spam': 0.04, 'ham': 0.96}
+          {'spam': 0.333, 'ham': 0.667}
+        annotations:
+          - line: 12
+            text: Start from the prior — 80% of mail is legitimate, so spam must earn its way up.
+          - line: 17
+            text: Dividing by the total turns the two scores into posteriors that add up to 1.
+      - type: markdown
+        body: |
+          **2. Diagnostic tests and classifier metrics.** The same quantities have names in medicine and ML:
+
+          | Quantity | Medicine | ML classification |
+          |---|---|---|
+          | P(+ \| condition) | sensitivity | recall, true-positive rate |
+          | P(− \| no condition) | specificity | true-negative rate |
+          | P(condition \| +) | positive predictive value (PPV) | precision |
+
+          Sensitivity and specificity describe the test; PPV/precision also depends on the **base rate**. A fraud
+          model with excellent recall and specificity can still have poor precision on a population where fraud
+          is rare, and its precision changes when it is deployed on a population with a different fraud rate.
+          See [evaluation metrics](concept:ml.evaluation-metrics) and
+          [imbalanced data](concept:ml.imbalanced-data).
+
+          **3. Model calibration.** When a classifier outputs 0.9, a user reads "90% chance". The model is
+          *calibrated* if, among all cases that get a score near 0.9, about 90% really are positive:
+          P(positive | score ≈ 0.9) ≈ 0.9 — a conditional probability you can measure by grouping predictions by
+          score. Here a simulated, over-confident model pushes its scores away from 0.5:
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          random.seed(1)
+          bins = {}                                       # reported score -> (cases, positives)
+          for _ in range(20_000):
+              true_p = random.random()                    # the real chance this case is positive
+              label = random.random() < true_p
+              reported = min(1.0, max(0.0, 0.5 + 1.6 * (true_p - 0.5)))   # an over-confident model
+              key = round(reported, 1)
+              count, pos = bins.get(key, (0, 0))
+              bins[key] = (count + 1, pos + label)
+
+          for key in (0.1, 0.3, 0.5, 0.7, 0.9):
+              count, pos = bins[key]
+              print(f"model says {key:.1f} -> actually positive {pos / count:.2f}  ({count} cases)")
+        expectedOutput: |
+          model says 0.1 -> actually positive 0.26  (1248 cases)
+          model says 0.3 -> actually positive 0.37  (1279 cases)
+          model says 0.5 -> actually positive 0.49  (1249 cases)
+          model says 0.7 -> actually positive 0.62  (1232 cases)
+          model says 0.9 -> actually positive 0.76  (1191 cases)
+        caption: When this model says 90%, it is right about 76% of the time. A reliability check like this is how calibration is measured.
+        annotations:
+          - line: 8
+            text: Stretching scores away from 0.5 makes the model sound more certain than it is.
+          - line: 11
+            text: True counts as 1 when added to an int, so this counts positives.
+
+  - id: under-the-hood
+    title: Under the hood — odds and log-probabilities
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Odds form.** Writing probabilities as odds (P / (1 − P)) turns Bayes' theorem into one
+          multiplication:
+
+          ```text
+          posterior odds = prior odds × likelihood ratio,   likelihood ratio = P(E | H) / P(E | not H)
+          ```
+
+          For the medical test the prior odds are 1 : 999 and the likelihood ratio of a positive result is
+          0.99 / 0.01 = 99, so the posterior odds are 99 : 999 — that is 99 / (99 + 999) = 99/1098, the same
+          answer. Each independent piece of evidence multiplies the odds by its own likelihood ratio, which is
+          why evidence is often summarised as a likelihood ratio.
+
+          **Log-probabilities.** Multiplying hundreds of small probabilities (one per word, one per data point)
+          underflows to exactly 0.0 in floating point, and then every class looks equally impossible. Adding
+          logarithms instead keeps the information:
+      - type: code
+        runnable: true
+        code: |
+          import math
+
+          p = 0.01
+          print(p ** 200, 200 * math.log(p))
+        expectedOutput: |
+          0.0 -921.0340371976182
+        caption: 0.01²⁰⁰ = 10⁻⁴⁰⁰ is below the smallest positive float (about 5 × 10⁻³²⁴); its logarithm is an ordinary number.
+      - type: markdown
+        body: |
+          This is why ML code works with log-likelihoods and why classification losses are written in terms of
+          logarithms (see [entropy and cross-entropy](concept:math.information-theory)).
+
+          **Exact versus floating point.** `Fraction` arithmetic is exact, which makes it ideal for checking
+          small textbook calculations like these; floats are much faster and are what real models use.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | "The test is 99% accurate, so I'm 99% likely sick" | Reading P(E \| H) as P(H \| E) | Apply Bayes' theorem; ask for the base rate. |
+          | Posterior equals the likelihood, or ignores how rare H is | Prior left out | Multiply by P(H) and divide by P(E) from total probability. |
+          | Conditional probability too small | Divided by the total count instead of the count of the condition | P(A \| B) divides by count(B). |
+          | Joint probability far too small | Multiplied probabilities of dependent events | Only multiply when independence (or conditional independence) is justified. |
+          | `ZeroDivisionError` | Conditioned on an event that never occurs in the data | Check the condition's count first; collect more data or smooth the estimate. |
+          | Simulation gives different answers each run | No seed | `random.seed(...)` or a `random.Random(seed)` instance. |
+          | Simulated rare-event estimate is noisy | Too few cases satisfy the condition | Simulate more trials, or compute exactly. |
+      - type: code
+        runnable: true
+        code: |
+          from fractions import Fraction
+
+          emails = [("spam", True), ("ham", False), ("ham", True)]
+          about_lottery = [e for e in emails if e[0] == "lottery"]       # nothing matches
+          spam_share = Fraction(sum(1 for e in about_lottery if e[0] == "spam"), len(about_lottery))
+        expectError: ZeroDivisionError
+        caption: P(A | B) is undefined when B never happens — check the size of the subset before dividing.
+      - type: item
+        ref: debug-bayes-denominator
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks call your functions with several datasets and probabilities, and compare with exact
+          fractions, so the formulas must be general.
+      - type: item
+        ref: code-conditional-from-records
+      - type: item
+        ref: code-posterior
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - P(A | B) = P(A and B) / P(B): shrink the universe to the B cases, then count A inside it.
+          - P(A | B) and P(B | A) are different numbers; confusing them is the prosecutor's fallacy.
+          - Independent: P(A | B) = P(A), i.e. P(A and B) = P(A)·P(B). Mutually exclusive events are dependent.
+          - Bayes: P(H | E) = P(E | H)·P(H) / P(E), with P(E) = P(E | H)P(H) + P(E | not H)P(not H).
+          - Base rates dominate: a 99%-sensitive, 99%-specific test for a 1-in-1,000 condition gives positives that
+            are right only about 9% of the time (exactly 11/122).
+          - Check reasoning with exact fractions and seeded simulations.
+          - Applications: naive Bayes (conditional independence, log-probabilities), precision vs recall,
+            calibration P(positive | score).
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          The classic question: "A test is 99% sensitive and 99% specific; the condition affects 0.1% of people;
+          you test positive — what is the probability you have it?" Answer with natural frequencies (100 sick,
+          99,900 healthy → 99 vs 999 positives → about 9%) and then Bayes' theorem. Follow-ups: why base rates
+          matter for fraud alerts, how precision depends on prevalence, and what calibration means.
+
+items:
+  - id: predict-table
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: An app has 60 users, recorded as (platform, upgraded_to_paid). What does this print?
+    code: |
+      from fractions import Fraction
+
+      users = ([("ios", True)] * 9 + [("ios", False)] * 21
+               + [("android", True)] * 6 + [("android", False)] * 24)
+
+      ios = [u for u in users if u[0] == "ios"]
+      paid = [u for u in users if u[1]]
+      p_paid_given_ios = Fraction(sum(1 for u in ios if u[1]), len(ios))
+      p_ios_given_paid = Fraction(sum(1 for u in paid if u[0] == "ios"), len(paid))
+      print(p_paid_given_ios, p_ios_given_paid)
+    answer: "3/10 3/5"
+    explanation: >-
+      P(paid | ios): of the 30 iOS users, 9 paid → 9/30 = 3/10. P(ios | paid): of the 15 paying users, 9 are on
+      iOS → 9/15 = 3/5. Same 9 people in the numerator, different groups in the denominator.
+    wrongAnswers:
+      - answer: "3/5 3/10"
+        feedback: "The two are swapped. P(paid | ios) divides by the iOS users (30); P(ios | paid) divides by the paying users (15)."
+      - answer: "3/20 3/20"
+        feedback: 9/60 = 3/20 is the joint probability P(ios and paid). A conditional probability divides by the size of the condition's group, not by everyone.
+      - answer: "1/2 1/4"
+        feedback: Those are P(ios) = 30/60 and P(paid) = 15/60, the unconditional probabilities.
+
+  - id: mcq-reverse
+    type: mcq
+    skill: recognition
+    prompt: |
+      "90% of fraudulent transactions are made at night." A colleague concludes: "So a night-time transaction is
+      90% likely to be fraud." What is wrong?
+    explanation: >-
+      The statistic is P(night | fraud). The conclusion needs P(fraud | night), which also depends on how rare fraud
+      is and how many legitimate transactions happen at night. By Bayes,
+      P(fraud | night) = P(night | fraud)·P(fraud) / P(night) — usually far below 90%.
+    options:
+      - id: a
+        text: It swaps P(night | fraud) for P(fraud | night); the second also depends on the fraud rate and how common night transactions are.
+        correct: true
+        feedback: Right — reversing a conditional needs Bayes' theorem and the base rate.
+      - id: b
+        text: Nothing; the two probabilities are always equal.
+        feedback: They are equal only when P(fraud) = P(night), which is almost never the case.
+      - id: c
+        text: The conclusion is wrong only because 90% is an estimate.
+        feedback: Even with exact numbers, the conclusion answers a different question.
+      - id: d
+        text: It should be 10%, because 100% − 90% = 10%.
+        feedback: That would be P(day | fraud). It still says nothing directly about P(fraud | night).
+
+  - id: tf-independent-exclusive
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: if two events A and B both have non-zero probability and are mutually exclusive (cannot
+      happen together), then they are independent.
+    answer: false
+    explanation: >-
+      Mutually exclusive means P(A and B) = 0. Independence would require P(A and B) = P(A)·P(B) > 0. Knowing that
+      A happened tells you B did not — the strongest possible dependence.
+
+  - id: mcq-base-rate
+    type: mcq
+    skill: explanation
+    prompt: Why is P(sick | positive) only about 9% for a test that is 99% sensitive and 99% specific, when 1 in 1,000 people is sick?
+    explanation: >-
+      With 100,000 people: 99 of the 100 sick test positive, but so do 1% of the 99,900 healthy — 999 people.
+      Positives are dominated by false positives because the healthy group is so much larger.
+    options:
+      - id: a
+        text: The healthy group is so large that its 1% false positives (999) far outnumber the true positives (99).
+        correct: true
+        feedback: Exactly — the base rate decides the mix of true and false positives.
+      - id: b
+        text: The test is really only 9% accurate.
+        feedback: The test's sensitivity and specificity are both 99%; the low number comes from the rarity of the disease.
+      - id: c
+        text: Because 1% of 1,000 is 9.
+        feedback: The calculation compares 99 true positives with 999 false positives out of 100,000 people.
+      - id: d
+        text: Because tests always have a 91% false-positive rate.
+        feedback: The false-positive rate is 1%. What is 91% here is the share of false positives *among the positives*.
+
+  - id: predict-second-test
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: |
+      After one positive result the probability is 11/122. A second, independent test (same accuracy, errors
+      independent given the true status) is also positive. What does this print?
+    code: |
+      from fractions import Fraction
+
+      def posterior(prior, sensitivity, false_positive_rate):
+          p_positive = sensitivity * prior + false_positive_rate * (1 - prior)
+          return sensitivity * prior / p_positive
+
+      after_first = posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100))
+      after_second = posterior(after_first, Fraction(99, 100), Fraction(1, 100))
+      print(after_first, after_second)
+    answer: "11/122 363/400"
+    explanation: >-
+      The first posterior (11/122) becomes the prior for the second test. Then
+      (0.99 · 11/122) / (0.99 · 11/122 + 0.01 · 111/122) = 1089 / 1200 = 363/400 = 0.9075. In odds form: 1 : 999
+      becomes 99 : 999 after one positive and 9801 : 999 ≈ 9.8 : 1 after two.
+    wrongAnswers:
+      - answer: "11/122 11/122"
+        feedback: The second test is new evidence. Use the first posterior as the new prior and apply Bayes again.
+      - answer: "11/122 9801/10000"
+        feedback: 0.99² is the probability of two positives if sick, a likelihood — not the posterior. The prior still matters.
+      - answer: "11/122 121/14884"
+        feedback: Squaring the first posterior is not how evidence combines; apply Bayes' theorem with the updated prior.
+
+  - id: explain-base-rate
+    type: explain
+    skill: explanation
+    prompt: >-
+      A security team's intrusion detector flags 99% of real attacks and only 0.5% of normal sessions. Attacks are
+      1 in 10,000 sessions. The team wants every alert to page an engineer at night. Explain, with numbers, what
+      fraction of pages will be real attacks and what you would recommend.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Uses natural frequencies or Bayes with the base rate (e.g. per 1,000,000 sessions, 100 attacks and 999,900 normal).
+      - "Computes about 99 true alerts versus about 5,000 false alerts, so only about 2% of pages are real."
+      - Names the cause as the base-rate fallacy — a low false-positive rate is still large compared with a tiny base rate.
+      - Recommends a response such as a second-stage check, raising the threshold, triage before paging, or combining independent signals.
+    modelAnswer: |
+      Out of 1,000,000 sessions, about 100 are attacks and 999,900 are normal. The detector flags 99 of the attacks
+      and 0.5% of normal sessions — about 5,000 false alarms. So of roughly 5,100 pages, only 99 are real: about
+      2%. By Bayes, P(attack | alert) = 0.99 · 0.0001 / (0.99 · 0.0001 + 0.005 · 0.9999) ≈ 0.019. The false-positive
+      rate looks small, but the base rate is far smaller. I would not page on every alert: add a second,
+      independent check (or a more specific model) before paging, triage low-confidence alerts during working
+      hours, and tune the threshold using measured precision rather than detection rate alone.
+
+  - id: debug-bayes-denominator
+    type: debug
+    skill: debugging
+    prompt: |
+      This function should return P(sick | positive). For the lesson's test (prevalence 1/1000, sensitivity 99/100,
+      false-positive rate 1/100) it returns `1/1000` — as if the test told you nothing. Fix it.
+    starterCode: |
+      from fractions import Fraction
+
+      def posterior(prior, sensitivity, false_positive_rate):
+          p_positive = sensitivity                 # P(positive)
+          return sensitivity * prior / p_positive
+
+      print(posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100)))
+    solution: |
+      from fractions import Fraction
+
+      def posterior(prior, sensitivity, false_positive_rate):
+          p_positive = sensitivity * prior + false_positive_rate * (1 - prior)   # P(positive)
+          return sensitivity * prior / p_positive
+
+      print(posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100)))
+    expectedOutput: |
+      11/122
+    tests:
+      - name: the medical-test example
+        code: |
+          from fractions import Fraction
+          got = posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100))
+          assert got == Fraction(11, 122), f"Expected 11/122, got {got}. P(positive) must include both the sick and the healthy who test positive."
+      - name: other priors and tests
+        code: |
+          from fractions import Fraction
+          cases = [((Fraction(1, 2), Fraction(9, 10), Fraction(1, 10)), Fraction(9, 10)),
+                   ((Fraction(1, 10), Fraction(9, 10), Fraction(1, 10)), Fraction(1, 2)),
+                   ((Fraction(1, 5), Fraction(3, 5), Fraction(1, 20)), Fraction(3, 4))]
+          for args, expected in cases:
+              got = posterior(*args)
+              assert got == expected, f"posterior{tuple(str(a) for a in args)} should be {expected}, got {got}."
+    hints:
+      - "P(positive) is not the sensitivity. Who can test positive?"
+      - "Sick people test positive with probability sensitivity; healthy people with probability false_positive_rate."
+      - "Law of total probability: `sensitivity * prior + false_positive_rate * (1 - prior)`."
+    feedback:
+      - when: { outputEquals: "1/1000\n" }
+        message: Still returning the prior. The denominator must be the total probability of a positive result.
+    explanation: >-
+      Using the sensitivity as P(positive) cancels it from the fraction and leaves the prior, ignoring the false
+      positives entirely. P(positive) must sum both ways to get a positive result: sick and detected
+      (sensitivity × prior) plus healthy and wrongly flagged (false-positive rate × (1 − prior)).
+
+  - id: code-conditional-from-records
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `conditional_probability(records, event, given)` where `records` is a list of dicts and `event` and
+      `given` are functions that take a record and return True or False. Return P(event | given) as a
+      `Fraction`. If no record satisfies `given`, raise `ValueError` (the probability is undefined).
+    starterCode: |
+      from fractions import Fraction
+
+      def conditional_probability(records, event, given):
+          ...
+
+      transactions = [
+          {"country": "IN", "fraud": False}, {"country": "IN", "fraud": True},
+          {"country": "US", "fraud": False}, {"country": "US", "fraud": False},
+          {"country": "IN", "fraud": False}, {"country": "BR", "fraud": True},
+      ]
+      def is_fraud(t): return t["fraud"]
+      def from_india(t): return t["country"] == "IN"
+
+      print(conditional_probability(transactions, is_fraud, from_india))
+      print(conditional_probability(transactions, from_india, is_fraud))
+    solution: |
+      from fractions import Fraction
+
+      def conditional_probability(records, event, given):
+          subset = [r for r in records if given(r)]
+          if not subset:
+              raise ValueError("the condition never occurs, so P(event | given) is undefined")
+          return Fraction(sum(1 for r in subset if event(r)), len(subset))
+
+      transactions = [
+          {"country": "IN", "fraud": False}, {"country": "IN", "fraud": True},
+          {"country": "US", "fraud": False}, {"country": "US", "fraud": False},
+          {"country": "IN", "fraud": False}, {"country": "BR", "fraud": True},
+      ]
+      def is_fraud(t): return t["fraud"]
+      def from_india(t): return t["country"] == "IN"
+
+      print(conditional_probability(transactions, is_fraud, from_india))
+      print(conditional_probability(transactions, from_india, is_fraud))
+    expectedOutput: |
+      1/3
+      1/2
+    tests:
+      - name: the example transactions
+        code: |
+          from fractions import Fraction
+          got = conditional_probability(transactions, is_fraud, from_india)
+          assert got == Fraction(1, 3), f"P(fraud | IN) should be 1/3 (1 of 3 Indian transactions), got {got!r}."
+          got = conditional_probability(transactions, from_india, is_fraud)
+          assert got == Fraction(1, 2), f"P(IN | fraud) should be 1/2 (1 of 2 frauds), got {got!r}."
+          assert isinstance(got, Fraction), "Return a Fraction so the result is exact."
+      - name: other data and events
+        code: |
+          from fractions import Fraction
+          from itertools import product
+          rolls = [{"a": a, "b": b} for a, b in product(range(1, 7), repeat=2)]
+          got = conditional_probability(rolls, lambda r: r["a"] + r["b"] >= 10, lambda r: r["a"] == 6)
+          assert got == Fraction(1, 2), f"For two dice, P(sum >= 10 | first is 6) is 1/2; got {got!r}."
+          got = conditional_probability(rolls, lambda r: r["a"] == r["b"], lambda r: True)
+          assert got == Fraction(1, 6), f"P(doubles) with an always-true condition should be 1/6; got {got!r}."
+      - name: an impossible condition raises ValueError
+        code: |
+          try:
+              conditional_probability(transactions, is_fraud, lambda t: t["country"] == "JP")
+          except ValueError:
+              pass
+          except ZeroDivisionError:
+              raise AssertionError("Check whether any record satisfies `given` and raise ValueError yourself, instead of dividing by zero.")
+          else:
+              raise AssertionError("No transaction is from JP, so the conditional probability is undefined: raise ValueError.")
+    hints:
+      - "First keep only the records where the condition holds: `subset = [r for r in records if given(r)]`."
+      - If the subset is empty, `raise ValueError(...)`.
+      - "Count the subset records where `event(r)` is True and return `Fraction(count, len(subset))`."
+    feedback:
+      - when: { outputContains: "1/6" }
+        message: That divides by all records. A conditional probability divides by the number of records where the condition holds.
+    explanation: >-
+      The function implements "shrink the universe": filter to the records where `given` holds, then count how many
+      of those also satisfy `event`. Returning a Fraction keeps the answer exact, and refusing an empty condition
+      turns an undefined probability into a clear error.
+
+  - id: code-posterior
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Diagnostic tests are usually described by **sensitivity** P(+ | condition) and **specificity**
+      P(− | no condition). Write `positive_predictive_value(prevalence, sensitivity, specificity)` returning
+      P(condition | +). Note that the false-positive rate is `1 − specificity`.
+    starterCode: |
+      from fractions import Fraction
+
+      def positive_predictive_value(prevalence, sensitivity, specificity):
+          ...
+
+      print(positive_predictive_value(Fraction(1, 1000), Fraction(99, 100), Fraction(99, 100)))
+      print(round(positive_predictive_value(0.02, 0.95, 0.9), 4))
+    solution: |
+      from fractions import Fraction
+
+      def positive_predictive_value(prevalence, sensitivity, specificity):
+          false_positive_rate = 1 - specificity
+          p_positive = sensitivity * prevalence + false_positive_rate * (1 - prevalence)
+          return sensitivity * prevalence / p_positive
+
+      print(positive_predictive_value(Fraction(1, 1000), Fraction(99, 100), Fraction(99, 100)))
+      print(round(positive_predictive_value(0.02, 0.95, 0.9), 4))
+    expectedOutput: |
+      11/122
+      0.1624
+    tests:
+      - name: exact results with fractions
+        code: |
+          from fractions import Fraction
+          got = positive_predictive_value(Fraction(1, 1000), Fraction(99, 100), Fraction(99, 100))
+          assert got == Fraction(11, 122), f"Expected 11/122 for the lesson's test, got {got!r}."
+          got = positive_predictive_value(Fraction(1, 2), Fraction(9, 10), Fraction(9, 10))
+          assert got == Fraction(9, 10), f"With prevalence 1/2 and 90%/90% the answer is 9/10; got {got!r}."
+      - name: uses specificity correctly
+        code: |
+          from fractions import Fraction
+          got = positive_predictive_value(Fraction(1, 10), Fraction(1, 1), Fraction(4, 5))
+          assert got == Fraction(5, 14), (
+              f"Prevalence 1/10, sensitivity 1, specificity 4/5 should give 5/14, got {got!r}. "
+              "The false-positive rate is 1 - specificity."
+          )
+      - name: works with floats
+        code: |
+          import math
+          got = positive_predictive_value(0.02, 0.95, 0.9)
+          assert math.isclose(got, 0.019 / (0.019 + 0.098)), f"Expected about {0.019 / 0.117:.4f}, got {got!r}."
+    hints:
+      - "The false-positive rate is P(+ | no condition) = 1 − specificity."
+      - "P(+) = sensitivity × prevalence + (1 − specificity) × (1 − prevalence)."
+      - "Return sensitivity × prevalence / P(+)."
+    feedback:
+      - when: { outputContains: "1/1000" }
+        message: It looks like specificity was used as the false-positive rate (the result collapsed to the prior). The false-positive rate is 1 − specificity.
+    explanation: >-
+      This is Bayes' theorem with the test's usual parameters: the likelihood of a positive is the sensitivity if
+      the condition is present and 1 − specificity if it is not, and the prevalence is the prior. For the second
+      example, 0.95·0.02 = 0.019 true positives versus 0.1·0.98 = 0.098 false positives give a PPV of about 16%.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-prevalence
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The same test (sensitivity 9/10, false-positive rate 1/10) is used in two clinics. What does this print?
+    code: |
+      from fractions import Fraction
+
+      def posterior(prior, sensitivity, false_positive_rate):
+          p_positive = sensitivity * prior + false_positive_rate * (1 - prior)
+          return sensitivity * prior / p_positive
+
+      specialist_clinic = posterior(Fraction(1, 2), Fraction(9, 10), Fraction(1, 10))
+      general_screening = posterior(Fraction(1, 10), Fraction(9, 10), Fraction(1, 10))
+      print(specialist_clinic, general_screening)
+    answer: "9/10 1/2"
+    explanation: >-
+      With prior 1/2: 0.45 / (0.45 + 0.05) = 9/10. With prior 1/10: 0.09 / (0.09 + 0.09) = 1/2. Same test, same
+      positive result, very different meaning — the base rate changed.
+    wrongAnswers:
+      - answer: "9/10 9/10"
+        feedback: That ignores the base rate. In general screening the healthy group is 9 times larger, producing as many false positives as true ones.
+      - answer: "1/2 9/10"
+        feedback: The higher prior (the specialist clinic) gives the higher posterior, not the lower one.
+      - answer: "9/10 1/10"
+        feedback: 1/10 is the prior. A positive result still raises it — to 1/2.
+
+  - id: m-mcq-calibration
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A fraud model gave a score of about 0.9 to 1,000 transactions. Investigation found that 600 of them were
+      fraud. What is the best reading of this?
+    explanation: >-
+      Calibration compares the score with the observed conditional frequency P(fraud | score ≈ 0.9). Here that is
+      0.6, so at this score the model is over-confident (miscalibrated). Its ranking might still be useful, but its
+      scores should not be read as probabilities until recalibrated.
+    options:
+      - id: a
+        text: At this score the model is over-confident — P(fraud | score ≈ 0.9) is about 0.6, not 0.9.
+        correct: true
+        feedback: Correct. Recalibration (or reporting measured precision per score band) fixes how scores are read.
+      - id: b
+        text: The model is useless and should be discarded.
+        feedback: 60% fraud among flagged cases may be far above the base rate — the model can still rank well; its scores just are not calibrated.
+      - id: c
+        text: The model is well calibrated, because 0.6 is close enough to 0.9.
+        feedback: A 30-point gap between stated and observed frequency is a large miscalibration.
+      - id: d
+        text: It shows that 90% of all fraud gets a score of 0.9.
+        feedback: That would be a statement about P(score | fraud). The data describe P(fraud | score ≈ 0.9).
+
+  - id: m-code-simulation
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Estimate **P(sum of two dice ≥ 10 | first die is 6)** by simulation. Write `estimate(trials, seed)` that
+      creates `rng = random.Random(seed)`, rolls two dice `trials` times with `rng.randint(1, 6)`, and returns
+      (number of rolls where the first die is 6 **and** the sum is at least 10) ÷ (number of rolls where the first
+      die is 6). The exact answer is 1/2.
+    starterCode: |
+      import random
+
+      def estimate(trials, seed):
+          rng = random.Random(seed)
+          ...
+
+      print(round(estimate(30_000, 1), 3))
+    solution: |
+      import random
+
+      def estimate(trials, seed):
+          rng = random.Random(seed)
+          first_six = high_sum = 0
+          for _ in range(trials):
+              a, b = rng.randint(1, 6), rng.randint(1, 6)
+              if a == 6:
+                  first_six += 1
+                  if a + b >= 10:
+                      high_sum += 1
+          return high_sum / first_six
+
+      print(round(estimate(30_000, 1), 3))
+    expectedOutput: |
+      0.483
+    tests:
+      - name: close to the exact answer 1/2
+        code: |
+          for seed in (3, 4):
+              got = estimate(30_000, seed)
+              assert got is not None and abs(got - 0.5) < 0.035, (
+                  f"estimate(30000, {seed}) = {got!r}, but the exact answer is 0.5. If you got about 0.17, you divided "
+                  "by all rolls (that is P(sum >= 10)); divide by the rolls whose first die is 6."
+              )
+      - name: reproducible with the same seed
+        code: |
+          assert estimate(5_000, 11) == estimate(5_000, 11), "The same seed must give the same estimate. Use rng = random.Random(seed) for every roll."
+      - name: really simulates
+        code: |
+          values = {estimate(5_000, s) for s in (21, 22, 23)}
+          assert len(values) > 1, "Different seeds gave identical results. Roll the dice with rng.randint instead of returning a fixed number."
+    hints:
+      - "Inside the loop: `a, b = rng.randint(1, 6), rng.randint(1, 6)`."
+      - "Count two things: rolls with `a == 6`, and among those, rolls with `a + b >= 10`."
+      - Return the second count divided by the first — you are conditioning on the first die being 6.
+    feedback:
+      - when: { outputContains: "0.16" }
+        message: That is close to P(sum >= 10) = 1/6. Condition on the first die being 6 by dividing by the number of rolls where a == 6.
+    explanation: >-
+      Conditioning in a simulation means the same thing as in a table: keep only the trials where the condition
+      holds and count how often the event happens among them. With 30,000 trials about 5,000 have a 6 first, so the
+      estimate typically lands within about ±0.02 of the exact 1/2.
+
+  - id: m-debug-table
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Using the lesson's spam table, this should print P(spam | free) = `3/4`, but prints `3/25`. Fix the
+      calculation (the checks also run it on other data).
+    starterCode: |
+      from fractions import Fraction
+
+      def p_spam_given_free(emails):
+          spam_and_free = sum(1 for label, free in emails if label == "spam" and free)
+          return Fraction(spam_and_free, len(emails))
+
+      emails = ([("spam", True)] * 120 + [("spam", False)] * 80
+                + [("ham", True)] * 40 + [("ham", False)] * 760)
+      print(p_spam_given_free(emails))
+    solution: |
+      from fractions import Fraction
+
+      def p_spam_given_free(emails):
+          spam_and_free = sum(1 for label, free in emails if label == "spam" and free)
+          free_count = sum(1 for label, free in emails if free)
+          return Fraction(spam_and_free, free_count)
+
+      emails = ([("spam", True)] * 120 + [("spam", False)] * 80
+                + [("ham", True)] * 40 + [("ham", False)] * 760)
+      print(p_spam_given_free(emails))
+    expectedOutput: |
+      3/4
+    tests:
+      - name: the lesson's table
+        code: |
+          from fractions import Fraction
+          got = p_spam_given_free(emails)
+          assert got == Fraction(3, 4), f"Expected 3/4, got {got}. Divide by the number of emails that contain 'free'."
+      - name: other data
+        code: |
+          from fractions import Fraction
+          other = [("spam", True)] * 3 + [("ham", True)] * 9 + [("spam", False)] * 5 + [("ham", False)] * 83
+          got = p_spam_given_free(other)
+          assert got == Fraction(1, 4), f"With 3 spam among 12 'free' emails the answer is 1/4; got {got}."
+    hints:
+      - "3/25 = 120/1000 is P(spam and free) — a joint probability."
+      - The condition is "contains free". Which group should the 120 be divided by?
+      - "Count the emails where `free` is True and divide by that."
+    feedback:
+      - when: { outputEquals: "3/5\n" }
+        message: 3/5 is P(free | spam) — you divided by the spam emails. The condition here is "contains free".
+    explanation: >-
+      Dividing by all 1,000 emails gives the joint probability P(spam and free) = 120/1000. Conditioning on "free"
+      means dividing by the 160 emails that contain it: 120/160 = 3/4.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-prevalence, m-mcq-calibration, m-code-simulation, m-debug-table]
+
+cheatsheet: |
+  ```text
+  P(A | B) = P(A and B) / P(B)                    shrink the universe to B, count A inside it
+  P(A and B) = P(A | B) · P(B)                     multiplication rule
+  independent  ⇔  P(A | B) = P(A)  ⇔  P(A and B) = P(A) · P(B)
+  P(H | E) = P(E | H) · P(H) / P(E)                Bayes: posterior = likelihood × prior / evidence
+  P(E) = P(E | H) P(H) + P(E | not H) P(not H)     law of total probability
+  posterior odds = prior odds × P(E | H) / P(E | not H)
+  ```
+  ```python
+  from fractions import Fraction
+  def posterior(prior, sens, fpr):
+      return sens * prior / (sens * prior + fpr * (1 - prior))
+  posterior(Fraction(1, 1000), Fraction(99, 100), Fraction(1, 100))   # 11/122 ≈ 9%
+  ```
+  - P(A|B) ≠ P(B|A) · mutually exclusive ≠ independent · always ask for the base rate
+  - Sensitivity = recall = P(+|condition) · specificity = P(−|no condition) · PPV = precision = P(condition|+)
+  - Simulate with a seed (`random.Random(seed)`); multiply many probabilities in log space

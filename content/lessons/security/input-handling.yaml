@@ -1,0 +1,213 @@
+id: security.input-handling
+concept: security.input-handling
+title: Input validation and output encoding
+subtitle: Validate at trust boundaries, use parameterised queries, encode output for its context, and defend against
+  XSS, SSRF and path traversal
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Validate at trust boundaries, use parameterised queries, encode output for its context, and defend against
+  XSS, SSRF and path traversal.
+objectives:
+- Explain the core engineering decisions behind input validation and output encoding.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: Input Validation Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+  publisher: OWASP Cheat Sheet Series
+- title: SQL Injection Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+  publisher: OWASP Cheat Sheet Series
+- title: Cross Site Scripting Prevention Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+  publisher: OWASP Cheat Sheet Series
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Validate at trust boundaries, use parameterised queries, encode output for its context, and defend against
+      XSS, SSRF and path traversal. Injection and many other attacks start with untrusted input being treated as
+      trusted; handling input and output correctly at trust boundaries removes whole classes of vulnerabilities.
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Validate on the server at every trust boundary with allow-lists - type, length, range and format (for
+      example a Pydantic model) - and reject bad input rather than trying to repair it.
+
+      - Never build SQL by string concatenation; use parameterised queries such as `cur.execute("SELECT * FROM users
+      WHERE id = ?", (user_id,))` in sqlite3, or an ORM. Placeholder style varies by driver.
+
+      - Prevent XSS with output encoding for the right context (HTML body, attribute, JavaScript, URL); use auto-escaping
+      templates and add a Content Security Policy.
+
+      - Prevent SSRF when fetching user-supplied URLs - allow-list destinations, block private, loopback and cloud
+      metadata addresses, and re-check after redirects.
+
+      - Prevent path traversal - never join user input straight into a file path; resolve the final path and check
+      it stays inside the allowed directory.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Client-side validation is for user experience only; attackers bypass it trivially.
+
+      - Validation alone does not stop SQL injection or XSS; parameterisation and contextual output encoding are
+      the primary defences.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def validate_username(value):\n    import re\n    if not isinstance(value,str) or not re.fullmatch(r\"\
+      [A-Za-z0-9_]{3,24}\",value): raise ValueError(\"invalid username\")\n    return value\n\nprint(validate_username(\"\
+      learner_01\"))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: input-handling-code
+  - type: item
+    ref: input-handling-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Validate on the server at every trust boundary with allow-lists - type, length, range and format (for example
+      a Pydantic model) - and reject bad input rather than trying to repair it.
+
+      - Never build SQL by string concatenation; use parameterised queries such as `cur.execute("SELECT * FROM users
+      WHERE id = ?", (user_id,))` in sqlite3, or an ORM. Placeholder style varies by driver.
+
+      - Prevent XSS with output encoding for the right context (HTML body, attribute, JavaScript, URL); use auto-escaping
+      templates and add a Content Security Policy.
+
+      - Prevent SSRF when fetching user-supplied URLs - allow-list destinations, block private, loopback and cloud
+      metadata addresses, and re-check after redirects.
+
+      - Prevent path traversal - never join user input straight into a file path; resolve the final path and check
+      it stays inside the allowed directory.
+
+
+      **Watch for**
+
+      - Client-side validation is for user experience only; attackers bypass it trivially.
+
+      - Validation alone does not stop SQL injection or XSS; parameterisation and contextual output encoding are
+      the primary defences.'
+  - type: item
+    ref: input-handling-mcq
+  - type: item
+    ref: input-handling-tf
+  - type: item
+    ref: input-handling-code
+items:
+- id: input-handling-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of input validation and output encoding?
+  explanation: Validate on the server at every trust boundary with allow-lists - type, length, range and format
+    (for example a Pydantic model) - and reject bad input rather than trying to repair it.
+  options:
+  - id: a
+    text: Validate on the server at every trust boundary with allow-lists - type, length, range and format (for
+      example a Pydantic model) - and reject bad input rather than trying to repair it.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: Client-side validation is for user experience only; attackers bypass it trivially.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: input-handling-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Client-side validation is for user experience only; attackers bypass it trivially.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: input-handling-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply input validation and output encoding to a realistic engineering scenario. State your assumptions,
+    explain your decision, compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: input-handling-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for input validation and output encoding. The assertions cover the expected path and
+    an important boundary case.
+  starterCode: "def validate_username(value):\n    raise NotImplementedError('Complete this function')"
+  solution: "def validate_username(value):\n    import re\n    if not isinstance(value,str) or not re.fullmatch(r\"\
+    [A-Za-z0-9_]{3,24}\",value): raise ValueError(\"invalid username\")\n    return value"
+  tests:
+  - name: Core behaviour
+    code: assert validate_username("learner_01") == "learner_01"
+  - name: Boundary behaviour
+    code: 'try: validate_username("../admin")
+
+      except ValueError: pass
+
+      else: raise AssertionError("unsafe username must fail")'
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - input-handling-mcq
+  - input-handling-tf
+  - input-handling-code
+cheatsheet: '**Key principles**
+
+  - Validate on the server at every trust boundary with allow-lists - type, length, range and format (for example
+  a Pydantic model) - and reject bad input rather than trying to repair it.
+
+  - Never build SQL by string concatenation; use parameterised queries such as `cur.execute("SELECT * FROM users
+  WHERE id = ?", (user_id,))` in sqlite3, or an ORM. Placeholder style varies by driver.
+
+  - Prevent XSS with output encoding for the right context (HTML body, attribute, JavaScript, URL); use auto-escaping
+  templates and add a Content Security Policy.
+
+  - Prevent SSRF when fetching user-supplied URLs - allow-list destinations, block private, loopback and cloud metadata
+  addresses, and re-check after redirects.
+
+  - Prevent path traversal - never join user input straight into a file path; resolve the final path and check it
+  stays inside the allowed directory.
+
+
+  **Trade-offs**
+
+  - Client-side validation is for user experience only; attackers bypass it trivially.
+
+  - Validation alone does not stop SQL injection or XSS; parameterisation and contextual output encoding are the
+  primary defences.'

@@ -1,0 +1,1167 @@
+id: python.type-hints
+concept: python.type-hints
+title: Type Hints
+subtitle: Saying what your code expects — for readers and tools
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  Annotate parameters, return values and variables with types such as list[int], dict[str, float] and
+  str | None. Learn the single most important fact about hints — Python does not enforce them when the
+  program runs — and how type checkers like mypy and pyright use them to find bugs before you run anything.
+objectives:
+  - Write annotations for parameters, defaults, return values (including None) and variables.
+  - Use built-in generics such as list[int], dict[str, float] and tuple[float, float], and unions such as str | None.
+  - Demonstrate that type hints are not enforced at runtime, and add explicit checks where runtime validation is needed.
+  - Read a type checker's error message and decide how to fix the code.
+  - Choose between Any, Callable, TypedDict and type aliases for common situations.
+sources:
+  - title: typing — Support for type hints
+    url: https://docs.python.org/3/library/typing.html
+    publisher: Python Software Foundation
+  - title: "PEP 484: Type Hints"
+    url: https://peps.python.org/pep-0484/
+    publisher: Python Software Foundation
+  - title: "PEP 526: Syntax for Variable Annotations"
+    url: https://peps.python.org/pep-0526/
+    publisher: Python Software Foundation
+  - title: "PEP 585: Type Hinting Generics In Standard Collections"
+    url: https://peps.python.org/pep-0585/
+    publisher: Python Software Foundation
+  - title: "PEP 604: Allow writing union types as X | Y"
+    url: https://peps.python.org/pep-0604/
+    publisher: Python Software Foundation
+  - title: "PEP 649: Deferred Evaluation Of Annotations Using Descriptors"
+    url: https://peps.python.org/pep-0649/
+    publisher: Python Software Foundation
+  - title: Annotations Best Practices
+    url: https://docs.python.org/3/howto/annotations.html
+    publisher: Python Software Foundation
+  - title: mypy documentation
+    url: https://mypy.readthedocs.io/en/stable/
+    publisher: The mypy project
+sections:
+  - id: why
+    title: Why type hints exist
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Look at this function's first line: `def double(x):`. What should `x` be? A number? A string? A
+          list? The name doesn't say, so callers guess — and Python happily runs whatever they pass:
+      - type: code
+        runnable: true
+        code: |
+          def double(x):
+              return x * 2
+
+          print(double(21))
+          print(double("21"))     # e.g. a value that came from input()
+        expectedOutput: |
+          42
+          2121
+        caption: No error — just a silently wrong answer, which is the most expensive kind of bug.
+      - type: markdown
+        body: |
+          A [type hint](glossary:type-hint) (also called a *type annotation*) writes the expectation into
+          the code itself:
+
+          ```python
+          def double(x: int) -> int:
+              return x * 2
+          ```
+
+          Now a reader sees immediately that `double` takes an `int` and returns an `int`. Your editor can
+          warn you as you type, and a [static type checker](glossary:type-checker) such as **mypy** or
+          **pyright** can read the whole program — without running it — and report
+          `double("21")` as an error before the bug ever reaches a user.
+
+          But notice what is *not* on that list: **Python itself.** Hold on to that; it is the most
+          important idea in this lesson.
+
+  - id: syntax
+    title: Annotating functions and variables
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The syntax has three parts:
+
+          | Where | Syntax | Example |
+          |---|---|---|
+          | Parameter | `name: type` | `def greet(name: str)` |
+          | Parameter with a default | `name: type = default` | `punctuation: str = "."` |
+          | Return value | `-> type` before the colon | `def area(w: float, h: float) -> float:` |
+          | Function returning nothing | `-> None` | `def log(message: str) -> None:` |
+          | Variable | `name: type = value` | `count: int = 0` |
+
+          Style ([PEP 8](https://peps.python.org/pep-0008/#function-annotations)): one space after the
+          colon, spaces around `->`, and — unlike a plain default — spaces around `=` when the parameter is
+          annotated.
+      - type: code
+        runnable: true
+        code: |
+          def greet(name: str, punctuation: str = ".") -> str:
+              return "Hello, " + name + punctuation
+
+          def log(message: str) -> None:
+              print("[log]", message)
+
+          count: int = 3
+          names: list[str] = ["Ada", "Grace"]
+
+          log(greet("Ada", "!"))
+          print(count, names)
+        expectedOutput: |
+          [log] Hello, Ada!
+          3 ['Ada', 'Grace']
+        annotations:
+          - line: 1
+            text: Two parameters (one with a default) and a return type.
+          - line: 4
+            text: "-> None documents that log is used for its effect (printing), not its result."
+          - line: 8
+            text: A variable annotation. The value is still just a list.
+      - type: callout
+        variant: tip
+        title: Annotate variables only when it helps
+        body: |
+          `count: int = 3` is legal but adds little — the checker can see that 3 is an int. Annotate
+          variables when the type is not obvious from the value, typically an empty container:
+          `totals: dict[str, float] = {}`. Function signatures are where hints pay off most.
+
+  - id: collections
+    title: Types for collections
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          For containers you usually want to say what is *inside* them. Square brackets after a built-in
+          type give a [generic type](glossary:generic-type):
+
+          | Hint | Means |
+          |---|---|
+          | `list[int]` | a list whose items are ints |
+          | `dict[str, float]` | a dict with str keys and float values |
+          | `set[str]` | a set of strings |
+          | `tuple[int, int]` | a tuple of exactly two ints |
+          | `tuple[str, ...]` | a tuple of any length, all strs |
+          | `dict[str, list[int]]` | nesting works as you'd expect |
+
+          These have worked directly on the built-in types since Python 3.9
+          ([PEP 585](https://peps.python.org/pep-0585/)). Older code imports capitalised versions —
+          `from typing import List, Dict` — which still work but are deprecated aliases.
+      - type: code
+        runnable: true
+        code: |
+          def average_scores(scores: dict[str, list[int]]) -> dict[str, float]:
+              result: dict[str, float] = {}
+              for name, marks in scores.items():
+                  result[name] = sum(marks) / len(marks)
+              return result
+
+          def bounds(values: list[float]) -> tuple[float, float]:
+              return min(values), max(values)
+
+          print(average_scores({"Ada": [90, 80], "Sam": [70]}))
+          print(bounds([3.5, 1.0, 2.25]))
+        expectedOutput: |
+          {'Ada': 85.0, 'Sam': 70.0}
+          (1.0, 3.5)
+        annotations:
+          - line: 1
+            text: The signature alone tells you the input and output shapes.
+          - line: 2
+            text: An empty dict is a good place for a variable annotation — the checker can't guess its contents.
+      - type: callout
+        variant: note
+        title: int is accepted where float is expected
+        body: |
+          Type checkers let you pass an `int` to a parameter hinted `float` (and an `int` or `float` where
+          `complex` is expected), because the numbers behave compatibly. `bounds([1, 2, 3])` is fine;
+          `bounds(["1", "2"])` is reported.
+
+  - id: optional
+    title: Values that might be None
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Many functions return a value *or* `None` — `dict.get()` is one. A
+          [union type](glossary:union-type) written with `|` says "either of these":
+
+          - `str | None` — a string, or None (the older spelling is `Optional[str]` from `typing`);
+          - `int | str` — an int or a string.
+
+          The `|` syntax works since Python 3.10 ([PEP 604](https://peps.python.org/pep-0604/)). A union
+          with `None` is a warning sign for callers: **check before you use the value.** After
+          `if email is None: ...`, a type checker knows that in the `else` branch `email` must be a `str` —
+          this is called [type narrowing](glossary:type-narrowing).
+      - type: code
+        runnable: true
+        code: |
+          def find_email(users: dict[str, str], name: str) -> str | None:
+              return users.get(name)
+
+          users = {"ada": "ada@example.com"}
+          email = find_email(users, "sam")
+          if email is None:
+              print("no email on file")
+          else:
+              print(email.upper())
+          print(find_email(users, "ada"))
+        expectedOutput: |
+          no email on file
+          ada@example.com
+        annotations:
+          - line: 1
+            text: The return hint warns every caller that None is possible.
+          - line: 6
+            text: The check that the hint asks for. Inside else, email is narrowed to str.
+      - type: markdown
+        body: |
+          A parameter whose default is `None` needs `| None` too: `def connect(timeout: float | None = None)`.
+          Writing `timeout: float = None` is rejected by modern type checkers, because `None` is not a
+          `float`.
+      - type: item
+        ref: optional-meaning
+
+  - id: not-enforced
+    title: Hints are not enforced at runtime
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Here is the key fact again, demonstrated: **Python stores type hints but never checks them while
+          the program runs.** A wrong type goes straight through:
+      - type: code
+        runnable: true
+        code: |
+          def double(x: int) -> int:
+              return x * 2
+
+          print(double("ab"))
+          print(double([1, 2]))
+          print(double(2.5))
+
+          age: int = "unknown"
+          print(age)
+        expectedOutput: |
+          abab
+          [1, 2, 1, 2]
+          5.0
+          unknown
+        caption: Every line contradicts a hint, and every line runs.
+      - type: item
+        ref: predict-not-enforced
+      - type: callout
+        variant: analogy
+        title: "Mental model: two different readers"
+        body: |
+          Two programs read your code. The **interpreter** runs it and skips over the hints (it stores them,
+          but never compares a value against them). The **type checker** never runs anything; it reads the
+          code and the hints and reasons about every possible value. A hint is a message to the second
+          reader. Everything in this lesson follows from that split — the deep dive adds only the detail of
+          *when* the interpreter evaluates the hint expressions.
+      - type: markdown
+        body: |
+          This matches what you know from the [variables lesson](concept:python.variables): **names don't
+          have types; objects do.** A hint is a note attached to the function or variable *name*; it does
+          not change the object the name refers to. Step through and compare each hint with the type of the
+          object the name ends up pointing at:
+      - type: visualization
+        component: python-tracer
+        title: A hint does not change the object
+        caption: >-
+          half is hinted to return an int, but n / 2 produces the float 3.5. label is hinted str but refers
+          to the int 42. Nothing complains.
+        props:
+          code: |
+            def half(n: int) -> int:
+                return n / 2
+
+            result = half(7)
+            label: str = 42
+            print(result, label)
+            print(type(result).__name__, type(label).__name__)
+      - type: markdown
+        body: |
+          So where do the hints go? Python keeps them as metadata on the function, which tools can read.
+          `typing.get_type_hints()` returns them as a dictionary:
+      - type: code
+        runnable: true
+        code: |
+          import typing
+
+          def total(prices: list[float], tax: float = 0.0) -> float:
+              return sum(prices) * (1 + tax)
+
+          print(typing.get_type_hints(total))
+        expectedOutput: |
+          {'prices': list[float], 'tax': <class 'float'>, 'return': <class 'float'>}
+        caption: Stored, readable by tools and libraries — but never checked by Python on its own.
+      - type: markdown
+        body: |
+          **When you need runtime checks** — for data typed in by users, read from files or received over a
+          network — you must write them yourself (or use a validation library such as Pydantic, which reads
+          your hints and checks data against them). An explicit check looks like this:
+      - type: code
+        runnable: true
+        code: |
+          def set_quantity(qty: int) -> int:
+              if not isinstance(qty, int):
+                  raise TypeError(f"qty must be an int, not {type(qty).__name__}")
+              if qty < 1:
+                  raise ValueError("qty must be at least 1")
+              return qty
+
+          print(set_quantity(3))
+          try:
+              set_quantity("3")
+          except TypeError as error:
+              print("Rejected:", error)
+        expectedOutput: |
+          3
+          Rejected: qty must be an int, not str
+        annotations:
+          - line: 1
+            text: The hint documents the contract for readers and checkers...
+          - line: 2
+            text: "...the isinstance check enforces it at runtime."
+      - type: callout
+        variant: misconception
+        title: '"Type hints make Python statically typed"'
+        body: |
+          They don't. Python is still [dynamically typed](glossary:dynamic-typing): types belong to
+          objects and are only checked by operations (like `*` or `.upper()`) when they run. Hints add an
+          optional, separate layer of checking performed by tools, before running. This combination is
+          called [gradual typing](glossary:gradual-typing) — you can add hints one function at a time.
+
+  - id: checkers
+    title: How type checkers catch bugs
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A type checker reads your source code, follows every value through every function, and reports
+          places where the hints and the code disagree. It never runs your program, so it finds bugs in
+          code paths your tests might never reach. Here is a small file with three bugs, none of which
+          Python would report until (or unless) that line ran with bad data:
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # shop.py
+          def double(x: int) -> int:
+              return x * 2
+
+          def find_email(users: dict[str, str], name: str) -> str | None:
+              return users.get(name)
+
+          double("21")
+          email = find_email({}, "ada")
+          print(email.upper())
+
+          def total(prices: list[float]) -> float:
+              return str(sum(prices))
+        caption: Not run here — this file is the input to the type checker shown next.
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          $ mypy shop.py
+          shop.py:8: error: Argument 1 to "double" has incompatible type "str"; expected "int"  [arg-type]
+          shop.py:10: error: Item "None" of "str | None" has no attribute "upper"  [union-attr]
+          shop.py:13: error: Incompatible return value type (got "str", expected "float")  [return-value]
+          Found 3 errors in 1 file (checked 1 source file)
+        caption: >-
+          Illustrative mypy output (type checkers are separate programs and cannot run in the browser).
+          Exact wording differs between mypy versions and pyright, but each names the line, what was found
+          and what was expected.
+      - type: markdown
+        body: |
+          Read each message like an exception: **line number, then what was expected versus what was
+          found.**
+
+          1. Line 8 passes a `str` where `int` was promised.
+          2. Line 10 calls `.upper()` on something that might be `None` — the exact crash from the
+             previous section, found without running anything.
+          3. Line 13 returns the wrong type.
+
+          **Using a checker locally:** install it into your project (`pip install mypy`) and run
+          `mypy yourfile.py`; editors such as VS Code run pyright (via Pylance) continuously and underline
+          problems as you type. You will set these up properly in
+          [linters, formatters and type checkers](concept:python.static-analysis).
+      - type: callout
+        variant: note
+        title: Unannotated code is (mostly) left alone
+        body: |
+          Because typing is gradual, mypy by default does not check the *inside* of functions that have no
+          annotations at all — it assumes you have not opted in yet. Values whose type is unknown are
+          treated as `Any`, which is compatible with everything. Adding hints to a function's signature is
+          what switches checking on for it.
+      - type: item
+        ref: when-checked
+
+  - id: typing-basics
+    title: "The typing toolbox: Any, Callable, TypedDict, aliases"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A few more tools cover most everyday code:
+
+          - [`Any`](glossary:any-type) — "any type, don't check". It switches checking off for that
+            value, so use it sparingly (for example for truly arbitrary data at a boundary). If you just
+            mean "any object", `object` is safer: the checker then only allows operations every object
+            supports.
+          - `Callable[[int], int]` — a function taking one int and returning an int. Import it from
+            `collections.abc` (the `typing.Callable` spelling is a deprecated alias). Useful for
+            [higher-order functions](concept:python.higher-order-functions).
+          - [`TypedDict`](glossary:typeddict) — describes the keys of a dictionary, such as a JSON record.
+            At runtime the value is still an ordinary dict. (For records you create yourself, the next
+            lesson's [dataclasses](concept:python.dataclasses) are usually a better fit.)
+          - **Type aliases** — give a long type a name. Python 3.12 added the `type` statement for this.
+      - type: code
+        runnable: true
+        code: |
+          from collections.abc import Callable
+          from typing import Any, TypedDict
+
+          def apply_twice(func: Callable[[int], int], value: int) -> int:
+              return func(func(value))
+
+          def add_three(n: int) -> int:
+              return n + 3
+
+          def describe(value: Any) -> str:
+              return f"{value!r} is a {type(value).__name__}"
+
+          class Movie(TypedDict):
+              title: str
+              year: int
+
+          film: Movie = {"title": "Arrival", "year": 2016}
+
+          print(apply_twice(add_three, 10))
+          print(describe([1, 2]))
+          print(film["title"], type(film).__name__)
+        expectedOutput: |
+          16
+          [1, 2] is a list
+          Arrival dict
+        annotations:
+          - line: 4
+            text: "Callable[[argument types], return type]."
+          - line: 13
+            text: A TypedDict lists the expected keys and their value types.
+          - line: 21
+            text: At runtime film is a plain dict — TypedDict exists for the checker.
+      - type: code
+        runnable: true
+        code: |
+          type Point = tuple[float, float]
+
+          def distance_from_origin(p: Point) -> float:
+              return (p[0] ** 2 + p[1] ** 2) ** 0.5
+
+          print(distance_from_origin((3.0, 4.0)))
+        expectedOutput: |
+          5.0
+        caption: "The type statement (Python 3.12+) names a type. Older code writes Point = tuple[float, float]."
+
+  - id: documentation
+    title: Hints as documentation
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Even with no checker running, hints make code easier to use correctly. Compare two versions of
+          the same signatures:
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          def ship(order, express, notify):
+              ...
+
+          def ship(order: Order, express: bool, notify: Callable[[str], None]) -> str | None:
+              ...
+        caption: Signatures only — the bodies are left out. Order is a class defined elsewhere.
+      - type: markdown
+        body: |
+          The second version answers the questions a caller has: what to pass for each argument, and that
+          the result may be `None`. Editors use the same information for autocomplete and for showing the
+          signature when you hover over a call.
+
+          **Where to start:** annotate the *boundaries* first — public functions, methods that other modules
+          call, and anything that handles external data. Keep using good names and docstrings: a hint says
+          *what type*, a name and a docstring say *what it means*.
+      - type: item
+        ref: explain-why-hints
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Wrong types pass through silently | Expecting Python to enforce hints | Run a type checker; add explicit runtime checks for external data |
+          | `NameError: name 'total' is not defined` after `total: int` | An annotation without a value declares the name but does **not** create it | Assign a value: `total: int = 0` |
+          | `TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'` | A `X \| None` value was used without checking | `if value is None:` handle it first |
+          | `TypeError: isinstance() argument 2 cannot be a parameterized generic` | `isinstance(x, list[int])` | Check the container (`isinstance(x, list)`), then the items if needed |
+          | Checker: `Incompatible default for argument` | `def f(limit: int = None)` | `limit: int \| None = None` |
+          | `TypeError: 'type' object is not subscriptable` | `list[int]` on Python 3.8 or older | Upgrade, or use `typing.List[int]` in legacy code |
+          | Checker stays silent about obvious bugs | Values typed as `Any`, or the function has no annotations | Annotate the signature; avoid `Any` unless you mean it |
+          | Lists shared between calls | `def f(items: list[str] = [])` — hints do not fix the mutable default trap | `items: list[str] \| None = None`, then create the list inside |
+      - type: code
+        runnable: true
+        code: |
+          total: int
+          total += 5
+        expectError: NameError
+        caption: "`total: int` only records an annotation. No object was bound to total, so reading it fails."
+      - type: code
+        runnable: true
+        code: |
+          prices = {"pen": 12.5}
+          price = prices.get("glue")      # dict.get returns float | None
+          print(price * 2)
+        expectError: TypeError
+        caption: A type checker would flag this line before it ever ran; Python only finds out when it crashes.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The first exercise checks your annotations with `typing.get_type_hints()`, exactly as tools read
+          them. The others check behaviour, because hints alone change nothing at runtime.
+      - type: item
+        ref: annotate-cart
+      - type: item
+        ref: debug-optional-price
+      - type: item
+        ref: validate-order
+      - type: item
+        ref: parsons-annotated
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Annotations are evaluated lazily (Python 3.14+).** Before 3.14, the expression after `:` or
+          `->` was evaluated when the `def` ran, so a hint naming a class defined later in the file raised
+          `NameError` (people wrote the hint in quotes, `-> "Node"`, as a workaround). Python 3.14
+          implements [PEP 649](https://peps.python.org/pep-0649/) and
+          [PEP 749](https://peps.python.org/pep-0749/): the compiler wraps annotations in a hidden function
+          (`__annotate__`) that runs only when something asks for them. Forward references now just work:
+      - type: code
+        runnable: true
+        code: |
+          def make_node() -> Node:          # Node is defined further down
+              return Node()
+
+          class Node:
+              def __repr__(self):
+                  return "Node()"
+
+          print(make_node())
+        expectedOutput: |
+          Node()
+      - type: markdown
+        body: |
+          **Reading annotations.** The raw store is the `__annotations__` attribute. Because evaluation is
+          now lazy, and because many existing projects still use `from __future__ import annotations`
+          ([PEP 563](https://peps.python.org/pep-0563/), which stores every annotation as a *string*), the
+          robust way to read them is a helper: `typing.get_type_hints(obj)` (evaluates them into real
+          objects) or the new `annotationlib.get_annotations(obj, format=...)`, which can also return
+          strings or forward references for names that are not defined yet.
+
+          **Runtime users of hints.** Hints are not *only* for checkers: some libraries deliberately read
+          them while the program runs. `dataclasses` reads class annotations to decide which fields exist
+          (next lesson); Pydantic and FastAPI read them to validate and convert incoming data. That is still
+          explicit, library-driven checking — the interpreter itself never checks.
+
+          **Generic aliases are real objects.** `list[int]` creates a `types.GenericAlias`, which remembers
+          its origin (`list`) and arguments (`(int,)`). Calling it creates a plain list. `isinstance` refuses
+          it, because checking every element of a container would be expensive and ambiguous:
+      - type: code
+        runnable: true
+        code: |
+          alias = list[int]
+          print(alias, alias.__origin__, alias.__args__)
+          print(alias("abc"))
+          try:
+              isinstance([1, 2], list[int])
+          except TypeError as error:
+              print("TypeError:", error)
+        expectedOutput: |
+          list[int] <class 'list'> (<class 'int'>,)
+          ['a', 'b', 'c']
+          TypeError: isinstance() argument 2 cannot be a parameterized generic
+        annotations:
+          - line: 3
+            text: "list[int](\"abc\") is just list(\"abc\") — the [int] part is never checked."
+      - type: markdown
+        body: |
+          **Cost.** Because nothing checks hints at call time, annotated functions run exactly as fast as
+          unannotated ones. With lazy evaluation, even defining them is cheap: the annotation expressions are
+          only evaluated if a tool asks.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `def f(name: str, n: int = 1) -> str:` annotates parameters, defaults and the return value;
+            `-> None` for functions that return nothing; `x: int = 0` for variables.
+          - Collections: `list[int]`, `dict[str, float]`, `tuple[int, int]`, `set[str]`; unions: `int | str`,
+            `str | None` (check for None before use).
+          - **Python does not enforce hints at runtime.** Type checkers (mypy, pyright) check them before
+            the program runs; runtime validation must be written explicitly or done by a library.
+          - `Any` disables checking; `Callable[[args], ret]` for functions; `TypedDict` for dict shapes;
+            `type Alias = ...` to name a type.
+          - Hints are documentation that tools can verify — annotate public boundaries first.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "Are type hints enforced in Python?" Answer clearly: no — they are metadata used by static
+          checkers, editors and some libraries, and the interpreter ignores them when running. Strong
+          answers add *why* teams use them anyway (bugs caught before runtime, refactoring safety,
+          documentation) and how to validate external data at runtime (explicit checks or Pydantic).
+
+items:
+  - id: optional-meaning
+    type: mcq
+    skill: explanation
+    prompt: 'A function is declared `def find_user(user_id: int) -> User | None:`. What does the return hint tell the code that calls it?'
+    explanation: >-
+      The union says the result is either a User or None, so a caller must handle the None case (for
+      example with `if user is None:`) before using User attributes. Type checkers enforce exactly that.
+    options:
+      - id: a
+        text: The result may be None, so callers must check for None before using it as a User.
+        correct: true
+        feedback: Yes. After the check, the checker narrows the value to User.
+      - id: b
+        text: Python will raise an error if the function returns anything other than a User or None.
+        feedback: Python never enforces hints at runtime. Only a type checker would report a wrong return.
+      - id: c
+        text: The function returns both a User and None, as a pair.
+        feedback: A pair would be tuple[User, None]. The | means "one or the other".
+      - id: d
+        text: Nothing — None in a hint is ignored.
+        feedback: None in a union is meaningful; it is how optional values are expressed.
+
+  - id: predict-not-enforced
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (If you think it crashes, type the lines printed before the crash.)
+    code: |
+      def label(count: int) -> str:
+          return "items: " + str(count * 2)
+
+      print(label(3))
+      print(label("3"))
+    answer: |
+      items: 6
+      items: 33
+    explanation: >-
+      The hint `count: int` is not checked when the function runs. For "3", `count * 2` repeats the
+      string to "33", and str("33") is "33". A type checker would flag label("3"), but Python does not.
+    wrongAnswers:
+      - answer: "items: 6"
+        feedback: >-
+          You expected a TypeError on the second call. Python does not check hints at runtime, and
+          "3" * 2 is valid (it repeats the string), so no error happens.
+      - answer: |
+          items: 6
+          items: 6
+        feedback: Hints never convert values. "3" stays a string, and "3" * 2 is "33".
+
+  - id: when-checked
+    type: mcq
+    skill: recognition
+    prompt: You run a fully annotated program with `python app.py`. When are its type hints checked?
+    explanation: >-
+      The Python interpreter does not check hints. They are checked only when you run a separate tool such
+      as mypy or pyright (or when your editor runs one in the background), and that happens without
+      running the program.
+    options:
+      - id: a
+        text: Every time a function is called, Python compares each argument with its hint.
+        feedback: That would make every call slower. Python stores hints but never compares arguments against them.
+      - id: b
+        text: Once, when the program starts, before the first line runs.
+        feedback: Python only parses and compiles the code at start-up; it does not type-check it.
+      - id: c
+        text: Never by python itself — only when a separate type checker (mypy, pyright, your editor) analyses the code.
+        correct: true
+        feedback: Right. Checking is a separate step, performed by a tool that reads the code without running it.
+      - id: d
+        text: Only for variables, not for function parameters.
+        feedback: Neither kind is checked at runtime. Both are checked by type checkers.
+
+  - id: explain-why-hints
+    type: explain
+    skill: explanation
+    prompt: >-
+      A colleague says: "If Python ignores type hints when it runs, they're pointless decoration." Explain
+      why professional teams use them anyway, and what they do NOT give you.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Type checkers use hints to find bugs (wrong argument types, unchecked None, wrong returns) before the code runs, including in rarely executed paths.
+      - Hints document the contract of a function for readers and power editor autocomplete and warnings.
+      - Hints make refactoring safer, because the checker reports every caller that no longer matches.
+      - "States the limit: hints do not validate data at runtime, so external input still needs explicit checks or a validation library."
+    modelAnswer: |
+      Hints are input for tools rather than for the interpreter. A type checker such as mypy or pyright
+      reads every function and reports mismatches — passing a str where an int is expected, calling a
+      method on a value that might be None, returning the wrong type — before the program runs, even in
+      error-handling branches tests rarely reach. They also document each function's contract right in the
+      signature, so readers and editors (autocomplete, hover help, warnings) know what to pass. When you
+      change a function, the checker lists every caller that no longer fits, which makes refactoring
+      safer. What they do not give you is runtime validation: data from users, files or APIs can still be
+      the wrong type, so you need explicit checks such as isinstance or a library like Pydantic there.
+
+  - id: annotate-cart
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Add type hints to the three functions — **don't change their bodies**:
+
+      - `cart_total` takes `prices`, a list of floats, and `discount`, a float with default `0.0`, and
+        returns a float;
+      - `item_counts` takes `items`, a list of strings, and returns a dict mapping strings to ints;
+      - `log_total` takes `total`, a float, and returns nothing.
+    starterCode: |
+      def cart_total(prices, discount=0.0):
+          return sum(prices) * (1 - discount)
+
+
+      def item_counts(items):
+          counts = {}
+          for item in items:
+              counts[item] = counts.get(item, 0) + 1
+          return counts
+
+
+      def log_total(total):
+          print(f"Total: {total:.2f}")
+
+
+      log_total(cart_total([10.0, 5.5], 0.1))
+      print(item_counts(["pen", "ink", "pen"]))
+    solution: |
+      def cart_total(prices: list[float], discount: float = 0.0) -> float:
+          return sum(prices) * (1 - discount)
+
+
+      def item_counts(items: list[str]) -> dict[str, int]:
+          counts: dict[str, int] = {}
+          for item in items:
+              counts[item] = counts.get(item, 0) + 1
+          return counts
+
+
+      def log_total(total: float) -> None:
+          print(f"Total: {total:.2f}")
+
+
+      log_total(cart_total([10.0, 5.5], 0.1))
+      print(item_counts(["pen", "ink", "pen"]))
+    expectedOutput: |
+      Total: 13.95
+      {'pen': 2, 'ink': 1}
+    tests:
+      - name: cart_total is annotated
+        code: |
+          import typing
+          hints = typing.get_type_hints(cart_total)
+          assert hints.get("prices") == list[float], f"prices should be hinted list[float], got {hints.get('prices')!r}."
+          assert hints.get("discount") is float, f"discount should be hinted float, got {hints.get('discount')!r}."
+          assert hints.get("return") is float, "cart_total should declare -> float."
+      - name: item_counts is annotated
+        code: |
+          import typing
+          hints = typing.get_type_hints(item_counts)
+          assert hints.get("items") == list[str], f"items should be hinted list[str], got {hints.get('items')!r}."
+          assert hints.get("return") == dict[str, int], f"item_counts should return dict[str, int], got {hints.get('return')!r}."
+      - name: log_total is annotated
+        code: |
+          import typing
+          hints = typing.get_type_hints(log_total)
+          assert hints.get("total") is float, f"total should be hinted float, got {hints.get('total')!r}."
+          assert "return" in hints and hints["return"] is type(None), "log_total returns nothing, so declare -> None."
+      - name: behaviour unchanged
+        code: |
+          assert cart_total([20.0], 0.5) == 10.0, "cart_total's result changed — only add hints, keep the body as it was."
+          assert cart_total([1.0, 2.0]) == 3.0, "discount should still default to 0.0."
+          assert output_lines() == ["Total: 13.95", "{'pen': 2, 'ink': 1}"], f"Your program printed {output()!r}."
+    hints:
+      - "A parameter hint goes after the name: `prices: list[float]`. With a default: `discount: float = 0.0`."
+      - "The return hint goes before the colon: `def cart_total(...) -> float:`."
+      - "A function that only prints returns None, so write `-> None`. A dict from str to int is `dict[str, int]`."
+    feedback:
+      - when: { codeContains: "List[" }
+        message: Use the built-in generic list[float] — the capitalised typing.List is a deprecated alias.
+      - when: { codeMatches: "discount:float=|discount: float=" }
+        message: "PEP 8 style: put spaces around = when a parameter is annotated, e.g. discount: float = 0.0."
+    explanation: >-
+      Each parameter gets `name: type` (with spaces around = for defaults) and each function gets a return
+      hint, including -> None for the one that only prints. The bodies, and so the output, are unchanged —
+      hints never alter behaviour.
+
+  - id: debug-optional-price
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `find_price` is honestly annotated as returning `float | None`, but `line_total` ignores the None
+      case and crashes for an unknown product. Fix `line_total` so the program prints:
+
+      ```text
+      pen: 25.0
+      glue: not available
+      ```
+    starterCode: |
+      def find_price(catalog: dict[str, float], name: str) -> float | None:
+          return catalog.get(name)
+
+
+      def line_total(catalog: dict[str, float], name: str, quantity: int) -> str:
+          price = find_price(catalog, name)
+          return f"{name}: {price * quantity}"
+
+
+      catalog = {"pen": 12.5, "ink": 40.0}
+      print(line_total(catalog, "pen", 2))
+      print(line_total(catalog, "glue", 1))
+    solution: |
+      def find_price(catalog: dict[str, float], name: str) -> float | None:
+          return catalog.get(name)
+
+
+      def line_total(catalog: dict[str, float], name: str, quantity: int) -> str:
+          price = find_price(catalog, name)
+          if price is None:
+              return f"{name}: not available"
+          return f"{name}: {price * quantity}"
+
+
+      catalog = {"pen": 12.5, "ink": 40.0}
+      print(line_total(catalog, "pen", 2))
+      print(line_total(catalog, "glue", 1))
+    expectedOutput: |
+      pen: 25.0
+      glue: not available
+    tests:
+      - name: prints both lines
+        code: |
+          assert output_lines() == ["pen: 25.0", "glue: not available"], f"Your program printed {output()!r}."
+      - name: works for other products
+        code: |
+          assert line_total({"ink": 40.0}, "ink", 3) == "ink: 120.0", "Known products should still be priced: ink x 3 should give 'ink: 120.0'."
+          assert line_total({}, "tape", 5) == "tape: not available", "Any unknown product should give '<name>: not available'."
+      - name: find_price still returns None for unknown products
+        code: |
+          assert find_price({"pen": 1.0}, "glue") is None, "Leave find_price as it is — fix the caller, which must handle None."
+    hints:
+      - Read the error. Which value is NoneType, and where did it come from?
+      - The hint `float | None` warns you that find_price can return None.
+      - "Check `if price is None:` and return the 'not available' text before doing any arithmetic."
+    feedback:
+      - when: { errorMessageContains: "NoneType" }
+        message: find_price returned None for a missing product, and None cannot be multiplied. Check for None first.
+      - when: { outputContains: "glue: 0" }
+        message: 'Don''t invent a price of 0 for a missing product — return the text "glue: not available".'
+    explanation: >-
+      The return hint float | None was a warning: some results are None. Checking `if price is None` before
+      the multiplication handles that case; a type checker would have reported the original line as
+      `Unsupported operand types for * ("None" and "int")` without running it.
+
+  - id: validate-order
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Hints don't validate data at runtime, so this order form must check its input explicitly. Write
+      `make_order(product: str, quantity: int) -> dict[str, str | int]` that:
+
+      - raises `TypeError` if `quantity` is not an int — **including `True`/`False`**, since `bool` is a
+        subclass of `int`;
+      - raises `ValueError` if `quantity` is less than 1;
+      - otherwise returns `{"product": product, "quantity": quantity}`.
+
+      Keep the hints in the signature exactly as shown.
+    starterCode: |
+      def make_order(product: str, quantity: int) -> dict[str, str | int]:
+          return {"product": product, "quantity": quantity}
+
+
+      print(make_order("pen", 3))
+    solution: |
+      def make_order(product: str, quantity: int) -> dict[str, str | int]:
+          if isinstance(quantity, bool) or not isinstance(quantity, int):
+              raise TypeError(f"quantity must be an int, not {type(quantity).__name__}")
+          if quantity < 1:
+              raise ValueError("quantity must be at least 1")
+          return {"product": product, "quantity": quantity}
+
+
+      print(make_order("pen", 3))
+    expectedOutput: |
+      {'product': 'pen', 'quantity': 3}
+    tests:
+      - name: valid orders still work
+        code: |
+          assert make_order("ink", 2) == {"product": "ink", "quantity": 2}, f"make_order('ink', 2) returned {make_order('ink', 2)!r}."
+      - name: rejects non-int quantities with TypeError
+        code: |
+          for bad in ["3", 2.5, None, True]:
+              try:
+                  make_order("pen", bad)
+              except TypeError:
+                  continue
+              except Exception as error:
+                  raise AssertionError(f"make_order('pen', {bad!r}) raised {type(error).__name__}; it should raise TypeError.")
+              raise AssertionError(f"make_order('pen', {bad!r}) should raise TypeError — the hint alone does not reject it.")
+      - name: rejects quantities below 1 with ValueError
+        code: |
+          for bad in [0, -4]:
+              try:
+                  make_order("pen", bad)
+              except ValueError:
+                  continue
+              raise AssertionError(f"make_order('pen', {bad}) should raise ValueError.")
+      - name: hints kept
+        code: |
+          import typing
+          hints = typing.get_type_hints(make_order)
+          assert hints.get("quantity") is int and hints.get("product") is str, "Keep the annotations product: str and quantity: int."
+    hints:
+      - "`isinstance(quantity, int)` tells you whether it is an int — but it is also True for True and False."
+      - "Reject bools first: `if isinstance(quantity, bool) or not isinstance(quantity, int): raise TypeError(...)`."
+      - Check the type before comparing with 1, otherwise "3" < 1 raises a different TypeError message than yours.
+    feedback:
+      - when: { codeContains: "type(quantity) ==" }
+        message: Prefer isinstance() over comparing type() — and remember to exclude bool explicitly.
+    explanation: >-
+      The hint documents that quantity should be an int, and a type checker would flag make_order("pen",
+      "3") in your own code. Data from outside (forms, files, JSON) never passes through the checker, so the
+      function validates at runtime too: isinstance for the type (excluding bool, an int subclass) and a
+      range check for the value.
+
+  - id: parsons-annotated
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a correctly annotated function that returns the mean of a list of floats, or
+      `None` for an empty list, followed by two calls. One line is a distractor with a wrong hint.
+    solution: |
+      def mean(values: list[float]) -> float | None:
+          if not values:
+              return None
+          return sum(values) / len(values)
+      print(mean([2.0, 4.0]))
+      print(mean([]))
+    distractors:
+      - "def mean(values: list[float]) -> float:"
+    explanation: >-
+      The function can return None, so the honest return hint is float | None. The version hinted -> float
+      would run identically — Python ignores hints — but a type checker would report `return None` as an
+      error and callers would not know to check for None.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-annotated-var
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      total: float = 0
+      total += 5
+      name: str = "Ada"
+      name = 42
+      print(total, name, type(name).__name__)
+    answer: "5 42 int"
+    explanation: >-
+      Annotations do not convert or check values. total refers to the int 0, then 5 (still an int, so it
+      prints 5, not 5.0). name is rebound to the int 42 without complaint.
+    wrongAnswers:
+      - answer: "5.0 42 int"
+        feedback: The float hint does not convert 0 into 0.0. The object is the int 0, and 0 + 5 is the int 5.
+      - answer: "5 Ada str"
+        feedback: "Python does not block `name = 42` because of the str hint — the rebinding happens. A type checker would report it."
+      - answer: "5 42 str"
+        feedback: type() reports the object's type, and the object is now the int 42. Hints don't change objects.
+
+  - id: m-mcq-pick-hint
+    type: mcq
+    skill: design
+    prompt: |
+      A function receives data like `{"pen": [12.5, 11.0], "ink": [40.0]}` — product codes mapped to their
+      past prices — and returns the cheapest price per product. Which signature describes it best?
+    explanation: >-
+      The input is a dict with str keys and list-of-float values; the output maps each str to one float.
+      Precise hints let the checker verify both the callers and the body.
+    options:
+      - id: a
+        text: "def cheapest(history: dict[str, list[float]]) -> dict[str, float]:"
+        correct: true
+        feedback: Exactly — the nested generic describes the shape of both the input and the output.
+      - id: b
+        text: "def cheapest(history: dict) -> dict:"
+        feedback: Legal, but it hides the contents, so the checker cannot catch a list of strings or a misused value.
+      - id: c
+        text: "def cheapest(history: list[float]) -> float:"
+        feedback: The input is a dict of lists, not one list, and the result has one price per product.
+      - id: d
+        text: "def cheapest(history: Any) -> Any:"
+        feedback: Any switches checking off entirely. Use it only when the type truly cannot be described.
+
+  - id: m-tf-isinstance-generic
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `isinstance(data, list[int])` checks that data is a list whose items are all ints."
+    answer: false
+    explanation: >-
+      isinstance refuses parameterized generics: it raises TypeError ("isinstance() argument 2 cannot be a
+      parameterized generic"). Check isinstance(data, list) and then the items, for example
+      all(isinstance(x, int) for x in data).
+
+  - id: m-mcq-checker-message
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      mypy reports `error: Incompatible return value type (got "str", expected "int")  [return-value]` for:
+
+      ```python
+      def parse_age(text: str) -> int:
+          return text.strip()
+      ```
+
+      Callers do arithmetic with the result. What is the right fix?
+    explanation: >-
+      The checker found a real bug: strip() returns a str, but the contract (and the callers) expect an int.
+      Fix the code so it honours the hint — convert with int(). Changing or silencing the hint would just
+      move the crash to the callers.
+    options:
+      - id: a
+        text: "Return int(text.strip())."
+        correct: true
+        feedback: The function now does what its name and hint promise.
+      - id: b
+        text: "Change the hint to -> str."
+        feedback: That silences this error but breaks the contract; every caller doing arithmetic would now be reported (or crash).
+      - id: c
+        text: "Add # type: ignore to the return line."
+        feedback: That hides the warning without fixing the bug — the callers would still receive a string.
+      - id: d
+        text: "Nothing — Python ignores hints, so the code is fine."
+        feedback: "Python ignores the hint, but callers do not: age + 1 would raise TypeError at runtime."
+
+  - id: m-code-first-word
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write two fully annotated functions:
+
+      - `first_word(text: str) -> str | None` returns the first whitespace-separated word of `text`, or
+        `None` if there are no words;
+      - `shout(text: str) -> str` returns the first word in upper case followed by `!`, or `(silence)` when
+        `first_word` returns None.
+
+      The program should print `HELLO!` and then `(silence)`.
+    starterCode: |
+      # Write first_word and shout here.
+
+
+      print(shout("hello there"))
+      print(shout("   "))
+    solution: |
+      def first_word(text: str) -> str | None:
+          words = text.split()
+          if not words:
+              return None
+          return words[0]
+
+
+      def shout(text: str) -> str:
+          word = first_word(text)
+          if word is None:
+              return "(silence)"
+          return word.upper() + "!"
+
+
+      print(shout("hello there"))
+      print(shout("   "))
+    expectedOutput: |
+      HELLO!
+      (silence)
+    tests:
+      - name: first_word behaves correctly
+        code: |
+          assert first_word("  data science ") == "data", f"first_word('  data science ') should be 'data', got {first_word('  data science ')!r}."
+          assert first_word("") is None, "first_word('') should return None."
+      - name: shout uses first_word's result safely
+        code: |
+          assert shout("yes please") == "YES!", f"shout('yes please') should be 'YES!', got {shout('yes please')!r}."
+          assert shout("") == "(silence)", "shout('') should be '(silence)'."
+      - name: annotations are complete
+        code: |
+          import typing
+          fw = typing.get_type_hints(first_word)
+          sh = typing.get_type_hints(shout)
+          assert fw.get("text") is str and fw.get("return") == (str | None), "first_word should be annotated (text: str) -> str | None."
+          assert sh.get("text") is str and sh.get("return") is str, "shout should be annotated (text: str) -> str."
+      - name: prints the two lines
+        code: |
+          assert output_lines() == ["HELLO!", "(silence)"], f"Your program printed {output()!r}."
+    hints:
+      - "`text.split()` with no argument splits on any whitespace and drops empty pieces."
+      - "An empty list is falsy, so `if not words: return None` handles 'no words'."
+      - In shout, store the result of first_word and check `is None` before calling .upper().
+    feedback:
+      - when: { errorMessageContains: "'NoneType' object has no attribute 'upper'" }
+        message: shout called .upper() on None. Check whether first_word returned None first.
+      - when: { errorType: IndexError }
+        message: words[0] fails when there are no words. Return None before indexing an empty list.
+    explanation: >-
+      first_word's honest return hint str | None tells shout to handle the None case; shout checks it and
+      only then uses string methods. A type checker would have rejected an unchecked word.upper().
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-annotated-var, m-mcq-pick-hint, m-tf-isinstance-generic, m-mcq-checker-message, m-code-first-word]
+
+cheatsheet: |
+  ```python
+  def greet(name: str, punctuation: str = ".") -> str: ...
+  def log(message: str) -> None: ...
+  count: int = 0
+  totals: dict[str, float] = {}          # annotate empty containers
+  scores: list[int]; pair: tuple[int, int]; rest: tuple[str, ...]
+  email: str | None                      # check `if email is None` before use
+
+  from collections.abc import Callable
+  from typing import Any, TypedDict
+  handler: Callable[[int], str]          # function int -> str
+  type Point = tuple[float, float]       # alias (3.12+)
+
+  typing.get_type_hints(func)            # read hints like tools do
+  ```
+  - Python does **not** enforce hints at runtime — run mypy/pyright; validate external data explicitly
+  - `isinstance(x, list[int])` → TypeError; use `isinstance(x, list)`
+  - `x: int` alone does not create x

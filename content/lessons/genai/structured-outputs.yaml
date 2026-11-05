@@ -1,0 +1,205 @@
+id: genai.structured-outputs
+concept: genai.structured-outputs
+title: Structured outputs
+subtitle: Constrain responses to a JSON schema and validate them (for example with Pydantic) so other code can rely
+  on them
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Constrain responses to a JSON schema and validate them (for example with Pydantic) so other code can rely
+  on them.
+objectives:
+- Explain the role of structured outputs in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: JSON Schema (Pydantic documentation)
+  url: https://pydantic.dev/docs/validation/latest/concepts/json_schema/
+  publisher: Pydantic
+- title: Structured model outputs
+  url: https://developers.openai.com/api/docs/guides/structured-outputs
+  publisher: OpenAI
+- title: GBNF grammars for constrained output
+  url: https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md
+  publisher: ggml-org / llama.cpp
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Constrain responses to a JSON schema and validate them (for example with Pydantic) so other code can rely
+      on them. Code cannot reliably consume free text; schema-shaped, validated output turns an LLM into a component
+      other software can depend on.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape),
+      or use schema-constrained decoding that only allows tokens matching a JSON Schema.
+
+      - Define the schema once in code, for example as a Pydantic model; generate the JSON Schema with `model_json_schema()`
+      and validate replies with `model_validate_json()`.
+
+      - Validate even with constrained decoding — values can still be wrong, enums misapplied, or output cut off
+      at the token limit.
+
+      - On a validation failure, retry with the error message included, fall back, or reject; never pass unvalidated
+      data downstream.
+
+      - Keep schemas simple, with descriptive field names, descriptions and enums; which JSON Schema features are
+      supported varies by provider and version.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Valid JSON is not correct data; matching the schema says nothing about whether the values are true.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "import json\ndef parse_object(text, required):\n    value=json.loads(text)\n    if not isinstance(value,dict)\
+      \ or not set(required).issubset(value): raise ValueError(\"schema mismatch\")\n    return value\n\nprint(parse_object(\"\
+      {\\\"name\\\":\\\"Ada\\\",\\\"score\\\":9}\", [\"name\",\"score\"]))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: structured-outputs-code
+  - type: item
+    ref: structured-outputs-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape), or use
+      schema-constrained decoding that only allows tokens matching a JSON Schema.
+
+      - Define the schema once in code, for example as a Pydantic model; generate the JSON Schema with `model_json_schema()`
+      and validate replies with `model_validate_json()`.
+
+      - Validate even with constrained decoding — values can still be wrong, enums misapplied, or output cut off
+      at the token limit.
+
+      - On a validation failure, retry with the error message included, fall back, or reject; never pass unvalidated
+      data downstream.
+
+      - Keep schemas simple, with descriptive field names, descriptions and enums; which JSON Schema features are
+      supported varies by provider and version.
+
+
+      **Limitations**
+
+      - Valid JSON is not correct data; matching the schema says nothing about whether the values are true.'
+  - type: item
+    ref: structured-outputs-mcq
+  - type: item
+    ref: structured-outputs-tf
+  - type: item
+    ref: structured-outputs-code
+items:
+- id: structured-outputs-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of structured outputs?
+  explanation: From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape),
+    or use schema-constrained decoding that only allows tokens matching a JSON Schema.
+  options:
+  - id: a
+    text: From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape), or
+      use schema-constrained decoding that only allows tokens matching a JSON Schema.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: Valid JSON is not correct data; matching the schema says nothing about whether the values are true.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: structured-outputs-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Valid JSON is not correct data; matching the schema says nothing about whether the values are true.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: structured-outputs-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding structured outputs to an application. Describe the design, one failure mode, and how you
+    would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: structured-outputs-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for structured outputs. The assertions include the normal path and a
+    meaningful edge case.
+  starterCode: "import json\n\ndef parse_object(text, required):\n    raise NotImplementedError('Complete this function')"
+  solution: "import json\ndef parse_object(text, required):\n    value=json.loads(text)\n    if not isinstance(value,dict)\
+    \ or not set(required).issubset(value): raise ValueError(\"schema mismatch\")\n    return value"
+  tests:
+  - name: Core behaviour
+    code: assert parse_object("{\"name\":\"Ada\"}", ["name"])["name"] == "Ada"
+  - name: Edge case
+    code: 'try: parse_object("[]", ["name"])
+
+      except ValueError: pass
+
+      else: raise AssertionError("array must not satisfy object schema")'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - structured-outputs-mcq
+  - structured-outputs-tf
+  - structured-outputs-code
+cheatsheet: '**Key ideas**
+
+  - From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape), or use schema-constrained
+  decoding that only allows tokens matching a JSON Schema.
+
+  - Define the schema once in code, for example as a Pydantic model; generate the JSON Schema with `model_json_schema()`
+  and validate replies with `model_validate_json()`.
+
+  - Validate even with constrained decoding — values can still be wrong, enums misapplied, or output cut off at
+  the token limit.
+
+  - On a validation failure, retry with the error message included, fall back, or reject; never pass unvalidated
+  data downstream.
+
+  - Keep schemas simple, with descriptive field names, descriptions and enums; which JSON Schema features are supported
+  varies by provider and version.
+
+
+  **Failure modes**
+
+  - Valid JSON is not correct data; matching the schema says nothing about whether the values are true.'

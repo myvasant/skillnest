@@ -1,0 +1,563 @@
+id: genai
+order: 13
+title: Generative AI and LLM Engineering
+shortTitle: GenAI & LLMs
+summary: >-
+  How large language models behave and how to build dependable software with them: tokens, context,
+  sampling, prompting, structured outputs, tool calling, local models, evaluation, security and cost.
+why: >-
+  LLMs are powerful but probabilistic components. Engineering with them means designing around their
+  limits — hallucination, injection, cost, latency — and measuring quality instead of trusting demos.
+modules:
+  - id: foundations
+    title: How LLMs behave
+    summary: What LLMs are, tokens and context windows, sampling and limitations.
+  - id: building
+    title: Building with LLMs
+    summary: Prompting, structured outputs, tool calling, APIs and local inference.
+  - id: choosing
+    title: Choosing and adapting models
+    summary: Model selection, licensing, fine-tuning and multimodality.
+  - id: reliability
+    title: Reliability, safety and cost
+    summary: Evaluation, prompt injection, guardrails and cost/latency engineering.
+concepts:
+  # ------------------------------------------------------------- foundations
+  - id: genai.what-are-llms
+    title: What large language models are
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: An LLM is a neural network trained to predict the next token; at scale and with instruction tuning this yields broad but unreliable capabilities.
+    why: Knowing what an LLM actually computes explains both why it is so useful and why it fails confidently — which decides how you should build with it.
+    requires: [ml.what-is-ml]
+    keyIdeas:
+      - An LLM is a Transformer trained to predict the next token from the previous ones; it generates text by repeating that prediction one token at a time.
+      - Pretraining on very large text corpora gives broad language skill and world knowledge up to a training cutoff; post-training (instruction and preference tuning) turns it into an assistant that follows instructions.
+      - The model only sees what is in its context window plus what its weights encode; it has no built-in access to the internet, your data or today's date.
+      - Outputs are sampled, so the same prompt can give different answers, and abilities are broad but uneven — they must be tested for each task.
+      - Chat APIs are stateless between calls; conversation "memory" is the application resending earlier messages.
+    misconceptions:
+      - LLMs do not look facts up in a database; they generate plausible continuations, which may be wrong.
+      - A model saying it "checked" or "searched" something does not mean it did; only an actual tool call does that.
+    interview: Explain at a high level how an LLM is trained and generates text, and where its main limitations come from.
+    sources:
+      - title: "LLM Course, chapter 1: Transformer models"
+        url: https://huggingface.co/learn/llm-course/chapter1/1
+        publisher: Hugging Face
+      - title: Language Models are Few-Shot Learners (GPT-3)
+        url: https://arxiv.org/abs/2005.14165
+        publisher: arXiv (Brown et al.)
+      - title: Training language models to follow instructions with human feedback (InstructGPT)
+        url: https://arxiv.org/abs/2203.02155
+        publisher: arXiv (Ouyang et al.)
+  - id: genai.tokens-context
+    title: Tokens and context windows
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: Models read and write tokens, not characters; the context window caps input plus output, and token counts drive cost and latency.
+    why: Every LLM limit and bill is counted in tokens, so managing them decides what fits in a request, what it costs and how long it takes.
+    requires: [genai.what-are-llms, foundations.text-encoding]
+    keyIdeas:
+      - Text is split by the model's own tokenizer; English averages roughly 4 characters (about three-quarters of a word) per token, while other languages and code often need more.
+      - The context window is the maximum number of tokens in one request — system prompt, conversation history, documents, tool definitions and the generated output together.
+      - APIs bill input and output tokens separately (output usually costs more), and latency grows with the number of output tokens.
+      - Models can use information in the middle of a very long context less reliably than information near its start or end ("lost in the middle").
+      - Applications must budget the window — trim or summarise history, retrieve only relevant chunks and set a maximum output length.
+    misconceptions:
+      - A larger context window does not mean the model uses all of it equally well; more context can even hurt answer quality.
+      - Character counts are a poor proxy for tokens; count with the model's tokenizer or the provider's token-counting tools.
+    tools: [tiktoken, Hugging Face Tokenizers]
+    interview: Explain how you would fit a long conversation or document set into a limited context window.
+    sources:
+      - title: Tokenization algorithms (summary of the tokenizers)
+        url: https://huggingface.co/docs/transformers/tokenizer_summary
+        publisher: Hugging Face
+      - title: "Lost in the Middle: How Language Models Use Long Contexts"
+        url: https://arxiv.org/abs/2307.03172
+        publisher: arXiv (Liu et al.)
+  - id: genai.sampling
+    title: Decoding and sampling
+    module: foundations
+    level: intermediate
+    priority: essential
+    summary: The model outputs a probability distribution over the next token; temperature, top-p and top-k shape how a token is picked, trading creativity for consistency.
+    why: Sampling settings explain why outputs vary between runs and let you tune between creative writing and consistent, repeatable extraction.
+    requires: [genai.tokens-context, math.distributions]
+    keyIdeas:
+      - At each step the model produces logits, and softmax turns them into a probability for every token in the vocabulary.
+      - Greedy decoding always picks the most likely token; sampling draws a token at random according to the probabilities.
+      - Temperature divides the logits before softmax — below 1 sharpens the distribution (more deterministic), above 1 flattens it (more random); 0 is usually treated as greedy.
+      - Top-k keeps only the `k` most likely tokens; top-p (nucleus) keeps the smallest set whose probabilities sum to `p`; the rest are discarded and the remainder renormalised.
+      - Other controls include maximum output tokens, stop sequences, repetition penalties and seeds; which ones exist varies by provider and model, and some reasoning models fix or ignore them.
+    misconceptions:
+      - Temperature 0 does not guarantee identical outputs across calls; server-side batching and floating-point effects can still change results.
+      - Lower temperature makes answers more consistent, not more truthful.
+    interview: Explain temperature and top-p precisely and say which settings you would use for extraction vs brainstorming.
+    sources:
+      - title: Generation strategies
+        url: https://huggingface.co/docs/transformers/generation_strategies
+        publisher: Hugging Face
+      - title: The Curious Case of Neural Text Degeneration (nucleus sampling)
+        url: https://arxiv.org/abs/1904.09751
+        publisher: arXiv (Holtzman et al.)
+  - id: genai.llm-architecture
+    title: LLM architecture in practice
+    module: foundations
+    level: advanced
+    priority: supporting
+    summary: Decoder-only Transformers, parameters vs activations, pretraining vs post-training (instruction tuning, RLHF/DPO), and what "reasoning" models do differently.
+    why: Model cards and release notes describe models in these terms; understanding them lets you predict memory needs, speed and behaviour before you try a model.
+    requires: [genai.what-are-llms, dl.transformer-architecture]
+    keyIdeas:
+      - Most current LLMs are decoder-only Transformers with causal attention, rotary positions, RMSNorm, gated feed-forward layers and grouped-query attention — details vary by model family.
+      - Mixture-of-experts (MoE) layers route each token to a few expert sub-networks, so total parameters (memory needed) far exceed the active parameters per token (compute used).
+      - Training proceeds from pretraining (next-token prediction) to supervised fine-tuning on instructions, then preference optimisation (RLHF, DPO) and reinforcement learning on verifiable tasks.
+      - Reasoning models are trained, often with reinforcement learning, to produce long intermediate reasoning before answering — trading extra output tokens and latency for accuracy on hard problems.
+      - Weight memory scales with total parameters; KV-cache and activation memory scale with context length and the number of concurrent requests.
+    misconceptions:
+      - Parameter count alone does not determine quality; training data, compute and post-training matter as much.
+      - Visible reasoning text is not guaranteed to be a faithful account of how the model reached its answer.
+    interview: Compare dense and mixture-of-experts models, explain what post-training adds, and describe how reasoning models differ.
+    sources:
+      - title: "Llama 2: Open Foundation and Fine-Tuned Chat Models"
+        url: https://arxiv.org/abs/2307.09288
+        publisher: arXiv (Touvron et al.)
+      - title: Mixtral of Experts
+        url: https://arxiv.org/abs/2401.04088
+        publisher: arXiv (Jiang et al.)
+      - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning"
+        url: https://arxiv.org/abs/2501.12948
+        publisher: arXiv (DeepSeek-AI)
+  - id: genai.hallucinations
+    title: Hallucinations and limitations
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: Models produce fluent text whether or not it is true; knowledge cutoffs, missing context and sampling cause confident errors that must be designed around.
+    why: Confident wrong answers — invented facts, citations or APIs — are the biggest risk in LLM products, and they cannot be prompted away entirely.
+    requires: [genai.what-are-llms, genai.sampling]
+    keyIdeas:
+      - A hallucination is fluent, confident output that is unsupported or false, such as invented facts, quotes, citations, URLs or library functions.
+      - Causes include training that rewards plausible guesses over admitting uncertainty, knowledge cutoffs, missing or ambiguous context, and sampling randomness.
+      - Ground answers in supplied sources (RAG) and ask for citations; explicitly allow "I don't know"; use tools for facts, calculations and current data.
+      - Verify outputs in code where possible (links resolve, quotes appear in the source, numbers recompute) and keep humans in the loop for high-stakes decisions.
+      - Measure hallucination rates on your own evaluation set; they vary by model, domain, prompt and context.
+    misconceptions:
+      - RAG reduces hallucination but does not eliminate it; models can still misread, ignore or over-extend retrieved text.
+      - Asking the model "are you sure?" is not verification; it may simply change a correct answer.
+    interview: Describe how you would reduce, detect and handle hallucinations in a customer-facing product.
+    sources:
+      - title: Why Language Models Hallucinate
+        url: https://arxiv.org/abs/2509.04664
+        publisher: arXiv (Kalai et al.)
+      - title: A Survey on Hallucination in Large Language Models
+        url: https://arxiv.org/abs/2311.05232
+        publisher: arXiv (Huang et al.)
+      - title: "LLM09:2025 Misinformation"
+        url: https://genai.owasp.org/llmrisk/llm092025-misinformation/
+        publisher: OWASP Gen AI Security Project
+  # ---------------------------------------------------------------- building
+  - id: genai.prompt-engineering
+    title: Prompt engineering
+    module: building
+    level: beginner
+    priority: essential
+    summary: Clear instructions, roles, examples (few-shot), delimiters, explicit output formats and iterative testing make outputs more reliable.
+    why: The prompt is the main interface to the model; clear, tested prompts are the cheapest way to improve quality before reaching for fine-tuning or bigger models.
+    requires: [genai.tokens-context]
+    keyIdeas:
+      - Be explicit about the task, audience, constraints and output format; the model cannot infer intent you leave out.
+      - Put stable instructions and role in the system prompt, and separate instructions from data with clear delimiters such as XML-style tags or fenced blocks.
+      - Few-shot examples show the expected format and edge cases; make them varied and representative so the model does not copy one pattern.
+      - For complex tasks, ask for step-by-step reasoning (or use a reasoning model) and split big tasks into smaller chained calls.
+      - Treat prompts as code — version them, test them against an evaluation set and change one thing at a time; best practices differ between model families and versions.
+    misconceptions:
+      - Magic phrases, threats or bribes are not reliable techniques; clarity, structure and examples are.
+      - A prompt that works in a few manual tries is not validated; test it on many representative cases.
+    interview: Improve a weak prompt on the spot and explain few-shot prompting and chain-of-thought.
+    sources:
+      - title: Prompt engineering overview
+        url: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview
+        publisher: Anthropic
+      - title: Prompt engineering guide
+        url: https://developers.openai.com/api/docs/guides/prompt-engineering
+        publisher: OpenAI
+      - title: Chain-of-Thought Prompting Elicits Reasoning in Large Language Models
+        url: https://arxiv.org/abs/2201.11903
+        publisher: arXiv (Wei et al.)
+  - id: genai.llm-apis
+    title: Calling LLM APIs
+    module: building
+    level: intermediate
+    priority: essential
+    summary: Chat-style message APIs over HTTP — system/user/assistant messages, streaming, errors, rate limits, retries and keeping keys secret.
+    why: Almost every LLM feature is an HTTP call; robust clients that stream, retry and protect keys are what separate a demo from a product.
+    requires: [genai.tokens-context, networking.http-clients]
+    keyIdeas:
+      - A request sends a model name, a list of role-tagged messages (system or developer, user, assistant, tool) and parameters; the response holds the content, a stop reason and token usage.
+      - The API is stateless unless you use a provider's conversation-state features, so your code resends the relevant history every turn.
+      - Streaming (usually server-sent events) delivers tokens as they are generated, which greatly improves perceived latency.
+      - Retry 429 (rate limit) and 5xx or overloaded errors with exponential backoff and jitter, fix 4xx request errors instead of retrying, and always set timeouts.
+      - Keep API keys on the server in environment variables or a secret manager, never in front-end code or Git; SDKs, endpoints and parameters change, so check the provider's current docs.
+    misconceptions:
+      - Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+      - Calling a provider directly from browser or mobile code exposes your API key to every user.
+    interview: Explain how you would handle rate limits, timeouts, retries and streaming in a production LLM client.
+    production: Log request IDs, model, token usage, latency and errors per call, and enforce per-user rate limits and spending caps.
+    sources:
+      - title: Messages API reference
+        url: https://platform.claude.com/docs/en/api/messages
+        publisher: Anthropic
+      - title: Using server-sent events
+        url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+        publisher: MDN Web Docs
+      - title: Ollama API introduction
+        url: https://docs.ollama.com/api/introduction
+        publisher: Ollama
+  - id: genai.structured-outputs
+    title: Structured outputs
+    module: building
+    level: intermediate
+    priority: essential
+    summary: Constrain responses to a JSON schema and validate them (for example with Pydantic) so other code can rely on them.
+    why: Code cannot reliably consume free text; schema-shaped, validated output turns an LLM into a component other software can depend on.
+    requires: [genai.prompt-engineering, backend.pydantic-validation]
+    keyIdeas:
+      - From weakest to strongest — ask for JSON in the prompt, use a JSON mode (valid JSON of any shape), or use schema-constrained decoding that only allows tokens matching a JSON Schema.
+      - Define the schema once in code, for example as a Pydantic model; generate the JSON Schema with `model_json_schema()` and validate replies with `model_validate_json()`.
+      - Validate even with constrained decoding — values can still be wrong, enums misapplied, or output cut off at the token limit.
+      - On a validation failure, retry with the error message included, fall back, or reject; never pass unvalidated data downstream.
+      - Keep schemas simple, with descriptive field names, descriptions and enums; which JSON Schema features are supported varies by provider and version.
+    misconceptions:
+      - Valid JSON is not correct data; matching the schema says nothing about whether the values are true.
+    tools: [Pydantic, Outlines]
+    interview: Explain how you make LLM output reliably machine-readable and what can still go wrong after it parses.
+    sources:
+      - title: JSON Schema (Pydantic documentation)
+        url: https://pydantic.dev/docs/validation/latest/concepts/json_schema/
+        publisher: Pydantic
+      - title: Structured model outputs
+        url: https://developers.openai.com/api/docs/guides/structured-outputs
+        publisher: OpenAI
+      - title: GBNF grammars for constrained output
+        url: https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md
+        publisher: ggml-org / llama.cpp
+  - id: genai.tool-calling
+    title: Tool calling (function calling)
+    module: building
+    level: intermediate
+    priority: essential
+    summary: The model returns a request to call a function you described with a schema; your code runs it and sends the result back — the basis of agents.
+    why: Tools let a model fetch live data and take actions instead of guessing, which is the foundation of assistants and agents.
+    requires: [genai.structured-outputs, genai.llm-apis]
+    keyIdeas:
+      - You describe each tool with a name, a description and a JSON Schema for its arguments; the model may reply with a tool call (name plus JSON arguments) instead of text.
+      - Your code, not the model, executes the tool and sends the result back as a tool-result message; the model continues and may call more tools — the agent loop.
+      - Validate arguments before executing, treat them as untrusted input, and require human confirmation for destructive or costly actions.
+      - Clear tool descriptions (when to use it, what it returns) matter as much as the prompt; return concise results and helpful error messages, and cap the number of loop iterations.
+      - The Model Context Protocol (MCP) is an open standard for exposing tools and data sources to LLM applications.
+    misconceptions:
+      - The model never runs code or calls your API itself; it only proposes a call that your application chooses to execute.
+      - A schema does not guarantee sensible arguments; models can still pass wrong or invented values.
+    tools: [Model Context Protocol]
+    interview: Walk through the message flow of a tool call and explain the security risks of giving a model tools.
+    production: Log every tool call with inputs, outputs and latency, enforce timeouts, and give each tool only the permissions it needs.
+    sources:
+      - title: Tool use with Claude
+        url: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+        publisher: Anthropic
+      - title: Function calling
+        url: https://developers.openai.com/api/docs/guides/function-calling
+        publisher: OpenAI
+      - title: Model Context Protocol
+        url: https://modelcontextprotocol.io/
+        publisher: Model Context Protocol project
+  - id: genai.local-inference
+    title: Running models locally
+    module: building
+    level: intermediate
+    priority: essential
+    summary: Open-weight models run on your own hardware with runtimes such as Ollama or llama.cpp; quantisation trades quality for memory, and RAM/VRAM decide what fits.
+    why: Local models keep data on your machine, work offline, remove per-token fees and make experimentation cheap — within the limits of your hardware.
+    requires: [genai.llm-apis, foundations.how-computers-work]
+    keyIdeas:
+      - Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for PyTorch-based stacks — that run on your CPU or GPU.
+      - "Rough memory estimate: parameters x bytes per weight, plus KV cache and overhead; an 8B model needs about 5 GB at 4-bit and about 16 GB at 16-bit."
+      - Quantisation levels (for example GGUF `Q4_K_M` or `Q8_0`) cut memory and raise speed; fewer bits lose more quality, especially on small models.
+      - Generation speed is bound by memory bandwidth — GPU VRAM is fastest, Apple unified memory works well, CPU-only is slower; layers can be split between GPU and CPU.
+      - Ollama and llama.cpp's `llama-server` expose local HTTP APIs, including OpenAI-compatible endpoints, so application code can switch between local and hosted models.
+    misconceptions:
+      - Open-weight does not mean licence-free; check the model's licence before commercial use.
+      - A local server is not automatically private or safe; exposing it on a network without authentication lets anyone use it.
+    tools: [Ollama, llama.cpp]
+    interview: Estimate whether a given model fits on given hardware and explain the quantisation trade-off.
+    production: Bind local servers to localhost or put them behind authentication, pin model files by tag or hash, and benchmark tokens per second on the target hardware.
+    sources:
+      - title: llama.cpp
+        url: https://github.com/ggml-org/llama.cpp
+        publisher: ggml-org
+      - title: Ollama documentation
+        url: https://docs.ollama.com/
+        publisher: Ollama
+      - title: GGUF
+        url: https://huggingface.co/docs/hub/gguf
+        publisher: Hugging Face
+  # ---------------------------------------------------------------- choosing
+  - id: genai.model-licensing
+    title: Model licences — open weights vs open source
+    module: choosing
+    level: beginner
+    priority: essential
+    summary: Licences decide what you may do with a model and its outputs; "open-weight" is not the same as open source, and terms vary widely.
+    why: Shipping a model whose licence forbids your use case is a legal risk that no amount of engineering fixes later.
+    requires: [genai.what-are-llms]
+    keyIdeas:
+      - Closed, API-only models are used under the provider's terms of service; you never receive the weights.
+      - Open-weight models publish weights under licences ranging from permissive (Apache 2.0, MIT) to custom licences with acceptable-use policies, user-count thresholds or attribution and naming requirements.
+      - The Open Source Initiative's Open Source AI Definition requires the freedoms to use, study, modify and share, including access to weights, code and sufficiently detailed information about the training data.
+      - Licences may restrict using outputs to train other models, certain domains or certain users, and terms can change between model versions — read the licence for the exact version you deploy.
+      - Check the licences of datasets used for fine-tuning and of the inference code as well.
+    misconceptions:
+      - Being downloadable from Hugging Face does not make a model open source or free for commercial use.
+      - Custom community licences with usage restrictions are not OSI-approved open source licences, even when the weights are free to download.
+    interview: Explain the difference between open-weight and open-source models and what you would check before shipping one commercially.
+    production: Record the licence and version of every model and dataset in a model inventory, and get legal review for custom licences.
+    sources:
+      - title: The Open Source AI Definition 1.0
+        url: https://opensource.org/ai/open-source-ai-definition
+        publisher: Open Source Initiative
+        version: "1.0"
+      - title: Licenses (Hugging Face Hub)
+        url: https://huggingface.co/docs/hub/repositories-licenses
+        publisher: Hugging Face
+      - title: Model cards
+        url: https://huggingface.co/docs/hub/model-cards
+        publisher: Hugging Face
+  - id: genai.model-selection
+    title: Choosing a model
+    module: choosing
+    level: intermediate
+    priority: essential
+    summary: Match capability, context length, latency, cost, privacy and licence to the task, and verify with your own evaluations rather than leaderboards alone.
+    why: Model choice sets the quality ceiling, the unit cost and the latency of a feature — and the right answer changes every few months.
+    requires: [genai.llm-apis, genai.model-licensing, genai.evaluation]
+    keyIdeas:
+      - Start from requirements — quality bar, latency (time to first token and total time), cost per request at expected volume, context length, data privacy or residency, and licence.
+      - Prototype with a strong model to check the task is feasible, then test cheaper and smaller models on your evaluation set to find the cheapest one that passes.
+      - Public leaderboards and benchmarks show general capability but may be contaminated or unrepresentative of your task.
+      - Weigh operational factors too — rate limits, availability, regional hosting, and the provider's model deprecation schedule.
+      - Put the model behind an interface in your code so you can swap or route between models as prices and capabilities change.
+    misconceptions:
+      - The newest or largest model is not automatically best; a smaller model can match it on a narrow task at a fraction of the cost and latency.
+    interview: Walk through how you would choose a model for a product with given quality, latency, cost and privacy constraints.
+    sources:
+      - title: Holistic Evaluation of Language Models (HELM)
+        url: https://crfm.stanford.edu/helm/
+        publisher: Stanford CRFM
+      - title: "Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference"
+        url: https://arxiv.org/abs/2403.04132
+        publisher: arXiv (Chiang et al.)
+  - id: genai.fine-tuning-llms
+    title: Fine-tuning LLMs
+    module: choosing
+    level: advanced
+    priority: supporting
+    summary: Prompting, RAG or fine-tuning? Supervised fine-tuning and LoRA change behaviour and format, rarely knowledge, and need good data and evaluation.
+    why: Fine-tuning can make a small model do one task reliably and cheaply, but it is slower and riskier than prompting or retrieval, so it should be a deliberate choice.
+    requires: [dl.pretraining-finetuning, genai.evaluation]
+    keyIdeas:
+      - Try in order — better prompts, then retrieval for knowledge, then fine-tuning for consistent behaviour, format or style, or to make a smaller model handle a narrow task.
+      - Supervised fine-tuning needs hundreds to thousands of high-quality, consistent examples formatted with the model's chat template.
+      - LoRA and QLoRA train small adapter matrices on a frozen base model, making fine-tuning feasible on a single GPU; adapters can be merged or swapped at serving time.
+      - Preference tuning (for example DPO) uses pairs of preferred and rejected responses to shape behaviour.
+      - Compare against the base model on a held-out set and on general and safety checks, to catch regressions and forgetting.
+    misconceptions:
+      - Fine-tuning on your documents is not a reliable way to make a model know facts; use retrieval for knowledge.
+      - Fine-tuning can weaken a model's safety behaviour even with harmless data; re-test safety after training.
+    tools: [Hugging Face TRL, PEFT]
+    interview: Explain when you would fine-tune instead of using RAG or prompting, and how LoRA keeps fine-tuning cheap.
+    production: Version the dataset, adapter and base model together, and plan to retrain when the base model is deprecated or updated.
+    sources:
+      - title: "LLM Course: Supervised Fine-Tuning"
+        url: https://huggingface.co/learn/llm-course/chapter11/1
+        publisher: Hugging Face
+      - title: TRL documentation
+        url: https://huggingface.co/docs/trl/index
+        publisher: Hugging Face
+      - title: "QLoRA: Efficient Finetuning of Quantized LLMs"
+        url: https://arxiv.org/abs/2305.14314
+        publisher: arXiv (Dettmers et al.)
+  - id: genai.multimodal
+    title: Multimodal and generative media models
+    module: choosing
+    level: intermediate
+    priority: optional
+    summary: Models that read or produce images, audio and video; diffusion models generate images by learning to remove noise.
+    why: Many real inputs are screenshots, scans, photos or recordings, and many products now generate images or speech.
+    requires: [genai.what-are-llms]
+    keyIdeas:
+      - Vision-language models encode images into embeddings (often with a Vision Transformer) that the language model attends to alongside text tokens.
+      - Speech systems pair speech-to-text (for example Whisper) with text-to-speech; some models process audio natively end to end.
+      - Diffusion models learn to remove noise step by step; generation starts from random noise and denoises it, guided by a text embedding, and latent diffusion works in a compressed latent space for speed.
+      - Images, audio and video consume many tokens, so resolution and duration drive cost and latency.
+      - Generated media raises provenance, copyright and deepfake concerns; content credentials (C2PA) and watermarking are emerging responses.
+    misconceptions:
+      - Vision models misread small text, counts and spatial relationships and can hallucinate details just like text models.
+    tools: [Hugging Face Diffusers, Whisper]
+    sources:
+      - title: Denoising Diffusion Probabilistic Models
+        url: https://arxiv.org/abs/2006.11239
+        publisher: arXiv (Ho, Jain and Abbeel)
+      - title: Learning Transferable Visual Models From Natural Language Supervision (CLIP)
+        url: https://arxiv.org/abs/2103.00020
+        publisher: arXiv (Radford et al.)
+      - title: Diffusers documentation
+        url: https://huggingface.co/docs/diffusers/index
+        publisher: Hugging Face
+  # ------------------------------------------------------------- reliability
+  - id: genai.evaluation
+    title: Evaluating LLM applications
+    module: reliability
+    level: intermediate
+    priority: essential
+    summary: Build test sets from real cases, define pass criteria, combine exact checks with rubric or LLM-as-judge scoring (checked against humans), and rerun on every change.
+    why: Without systematic evaluation, every prompt or model change is a guess, and regressions reach users before anyone notices.
+    requires: [genai.prompt-engineering, ml.evaluation-metrics]
+    keyIdeas:
+      - Build an evaluation set from real or realistic inputs, including edge cases and past failures; start with tens of examples and grow it over time.
+      - Define pass criteria per case, using programmatic checks wherever possible (valid JSON, expected label, required citation present) and rubric grading for open-ended answers.
+      - LLM-as-judge scales rubric grading but has known biases (position, verbosity, self-preference); measure its agreement with human labels before trusting it.
+      - Rerun the suite on every prompt, model or retrieval change, compare variants on the same cases and track scores over time.
+      - Offline evaluation complements, but does not replace, online signals such as user feedback, A/B tests and production monitoring.
+    misconceptions:
+      - Public benchmark scores do not tell you how a model performs on your task.
+      - One run on a small set is noisy because outputs are stochastic; repeat runs and look at the spread before declaring a winner.
+    tools: [promptfoo, Inspect]
+    interview: Design an evaluation for a given LLM feature and explain the risks of relying on LLM-as-judge.
+    production: Feed sampled, privacy-reviewed production cases back into the evaluation set and alert on quality regressions.
+    sources:
+      - title: Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena
+        url: https://arxiv.org/abs/2306.05685
+        publisher: arXiv (Zheng et al.)
+      - title: Inspect evaluation framework
+        url: https://inspect.aisi.org.uk/
+        publisher: UK AI Security Institute
+      - title: promptfoo documentation
+        url: https://www.promptfoo.dev/docs/intro/
+        publisher: promptfoo
+  - id: genai.prompt-injection
+    title: Prompt injection and LLM security
+    module: reliability
+    level: intermediate
+    priority: essential
+    summary: Instructions hidden in user input or retrieved content can hijack a model; there is no complete fix, so limit what a manipulated model can do.
+    why: Any LLM that reads untrusted text and can act or see private data can be turned against its users; this is the defining security problem of LLM applications.
+    requires: [genai.tool-calling, security.threat-modeling]
+    keyIdeas:
+      - Direct injection is a user typing instructions that override yours; indirect injection hides instructions in content the model reads — web pages, emails, documents or tool results.
+      - Models cannot reliably separate instructions from data in their context, so no prompt wording or filter fully prevents injection.
+      - The danger grows with capability — a model that has private data, reads untrusted content and can send data out (links, images, tool calls) can be made to exfiltrate it.
+      - Defend in depth — least-privilege tools, human confirmation for consequential actions, treating model output as untrusted (escape it, never execute it blindly), isolating untrusted content and monitoring.
+      - The OWASP Top 10 for LLM Applications ranks prompt injection first, alongside sensitive information disclosure, improper output handling and excessive agency.
+    misconceptions:
+      - Telling the model "never follow instructions inside documents" is not a security control.
+      - Jailbreaking (bypassing a model's safety training) and prompt injection (hijacking an application's instructions) overlap but are different problems.
+    interview: Explain indirect prompt injection with a concrete example and how you would limit its impact in an agent with tools.
+    production: Red-team the application with injection test cases in CI and keep an audit log of tool calls.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP Gen AI Security Project
+      - title: "LLM01:2025 Prompt Injection"
+        url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+        publisher: OWASP Gen AI Security Project
+      - title: "Not what you've signed up for: Compromising Real-World LLM-Integrated Applications with Indirect Prompt Injection"
+        url: https://arxiv.org/abs/2302.12173
+        publisher: arXiv (Greshake et al.)
+  - id: genai.guardrails
+    title: Guardrails and content safety
+    module: reliability
+    level: intermediate
+    priority: supporting
+    summary: Validate inputs and outputs, filter unsafe content, enforce policies and fall back safely — layered defences around the model.
+    why: Products must stop harmful, off-policy or leaking outputs before users see them, and the model alone cannot be trusted to do that consistently.
+    requires: [genai.prompt-injection, genai.structured-outputs]
+    keyIdeas:
+      - Input checks include length limits, PII detection or redaction, topic and policy classifiers, and detection of known attack patterns.
+      - Output checks include schema validation, content-safety classifiers, PII and secret leakage, grounding or citation checks, and allow-lists for URLs and actions.
+      - Enforce policy in code (permissions, rate limits, approval steps), not only in the prompt.
+      - Every check adds latency and false positives; tune thresholds on labelled examples and measure both harmful content caught and good content wrongly blocked.
+      - Define safe fallbacks — a polite refusal, a hand-off to a human or a default answer — and log every intervention.
+    misconceptions:
+      - Guardrails reduce risk but can be bypassed; they complement least privilege rather than replace it.
+      - A content-moderation classifier does not check factual correctness.
+    tools: [NeMo Guardrails, Guardrails AI]
+    interview: Design layered guardrails for a customer-facing chatbot and explain the latency and false-positive trade-offs.
+    production: Monitor how often each guardrail fires and how often it is wrong, and review flagged conversations regularly.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP Gen AI Security Project
+      - title: "AI RMF: Generative Artificial Intelligence Profile (NIST AI 600-1)"
+        url: https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence
+        publisher: NIST
+      - title: NeMo Guardrails documentation
+        url: https://docs.nvidia.com/nemo/guardrails/
+        publisher: NVIDIA
+  - id: genai.cost-latency
+    title: Cost and latency engineering
+    module: reliability
+    level: intermediate
+    priority: essential
+    summary: Token budgets, prompt caching, streaming, smaller or local models, batching and routing reduce cost and waiting time.
+    why: LLM costs scale with every user and every token, and slow responses lose users; both must be engineered, not discovered on the first invoice.
+    requires: [genai.llm-apis, genai.model-selection]
+    keyIdeas:
+      - Cost per request is roughly input tokens times the input price plus output tokens times the output price; output tokens are usually pricier and dominate latency.
+      - Cut tokens with shorter system prompts, fewer but better retrieved chunks, summarised history, a maximum output length and instructions to be concise.
+      - Prompt caching, offered by several providers on varying terms, reuses work for a repeated prompt prefix — put static content first and variable content last.
+      - Stream responses and measure time to first token and total time separately.
+      - Route easy requests to smaller models, use batch APIs for non-urgent work and cache complete responses for repeated queries; check current pricing and discounts.
+    misconceptions:
+      - The cheapest model per token is not always cheapest per task if it needs retries, longer prompts or human correction.
+      - Reasoning models can generate many reasoning tokens that are billed even when they are not shown.
+    interview: Explain how you would cut the cost of an LLM feature several-fold without losing quality.
+    production: Track cost and latency per feature, user and model, and set budgets and alerts.
+    sources:
+      - title: Prompt caching
+        url: https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        publisher: Anthropic
+      - title: Prompt caching
+        url: https://developers.openai.com/api/docs/guides/prompt-caching
+        publisher: OpenAI
+      - title: Automatic Prefix Caching
+        url: https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/
+        publisher: vLLM project
+  - id: genai.data-privacy
+    title: Data privacy in LLM applications
+    module: reliability
+    level: intermediate
+    priority: supporting
+    summary: Decide what data may be sent to which model, minimise and redact personal data, and understand provider retention, training and residency terms — or keep data local.
+    why: Prompts, retrieved documents and logs routinely contain personal or confidential data; sending it to a third-party model is a data transfer with legal and trust consequences.
+    requires: [genai.llm-apis, security.privacy-engineering]
+    keyIdeas:
+      - Everything in a prompt (user input, retrieved chunks, tool results) leaves your system when you call a hosted model; classify data before choosing where it may go.
+      - Minimise first — send only the fields a task needs — then redact or pseudonymise identifiers that are not needed for the answer.
+      - Provider terms differ on retention, use for training, abuse-monitoring access and data location; read the current terms for the exact product tier you use.
+      - Prompts, completions and traces stored in logs and observability tools are personal data too; apply the same access control and retention limits.
+      - Local or self-hosted models keep data on infrastructure you control, trading convenience and quality for control.
+    misconceptions:
+      - '"The provider does not train on API data" does not mean the data is not stored, reviewed or transferred.'
+      - Redaction is not anonymisation; combinations of remaining details can still identify a person.
+    interview: How would you design an LLM feature that handles customer support tickets containing personal data?
+    production: Keep a data-flow inventory of which model providers receive which data categories, and review it when adding features or vendors.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP Foundation
+      - title: General Data Protection Regulation (text)
+        url: https://gdpr-info.eu/
+        publisher: Intersoft Consulting (unofficial consolidated text)

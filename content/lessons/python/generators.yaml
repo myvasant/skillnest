@@ -1,0 +1,1222 @@
+id: python.generators
+concept: python.generators
+title: Generators
+subtitle: yield, lazy sequences and pipelines
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  A function containing `yield` becomes a generator function: calling it returns a generator that
+  produces values one at a time, pausing between them. Learn how execution jumps in and out of a paused
+  generator, write generator expressions, process huge or infinite sequences in constant memory with
+  itertools.islice, chain generators into pipelines, and delegate with `yield from`.
+objectives:
+  - Explain that calling a generator function runs none of its body, and that each next() runs it to the next yield and pauses.
+  - Predict the interleaved output of programs that use generators and generator pipelines.
+  - Write generator functions and generator expressions instead of building full lists when values are used once.
+  - Take a finite number of items from an infinite generator safely with itertools.islice.
+  - Diagnose generator mistakes - exhausted generators, len()/indexing, return instead of yield, closed files - and use yield from.
+sources:
+  - title: "The Python Tutorial: Generators"
+    url: https://docs.python.org/3/tutorial/classes.html#generators
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Generator Expressions"
+    url: https://docs.python.org/3/tutorial/classes.html#generator-expressions
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Yield expressions"
+    url: https://docs.python.org/3/reference/expressions.html#yield-expressions
+    publisher: Python Software Foundation
+  - title: "Functional Programming HOWTO: Generators"
+    url: https://docs.python.org/3/howto/functional.html#generators
+    publisher: Python Software Foundation
+  - title: "itertools.islice"
+    url: https://docs.python.org/3/library/itertools.html#itertools.islice
+    publisher: Python Software Foundation
+  - title: "PEP 380: Syntax for Delegating to a Subgenerator"
+    url: https://peps.python.org/pep-0380/
+    publisher: Python Software Foundation
+  - title: "PEP 479: Change StopIteration handling inside generators"
+    url: https://peps.python.org/pep-0479/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why generators?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A function that returns a list must build the **whole** list before the caller sees the first
+          item. For five values that is fine. For a million values it wastes memory on a list that may be
+          used once and thrown away — and for an endless sequence (every natural number, every line a
+          server will ever log) it is impossible.
+
+          A **generator function** produces its values **one at a time, on demand**. Compare:
+      - type: code
+        runnable: true
+        code: |
+          def squares_list(n):
+              result = []
+              for i in range(n):
+                  result.append(i * i)
+              return result            # the whole list exists before anyone uses it
+
+          def squares_gen(n):
+              for i in range(n):
+                  yield i * i          # hand over one value, then pause
+
+          print(squares_list(5))
+          print(list(squares_gen(5)))
+          print(sum(squares_gen(1_000_000)))   # never holds a million values at once
+        expectedOutput: |
+          [0, 1, 4, 9, 16]
+          [0, 1, 4, 9, 16]
+          333332833333500000
+        annotations:
+          - line: 9
+            text: yield instead of append + return. That single keyword makes this a generator function.
+          - line: 12
+            text: list() pulls every value out of the generator into a list.
+          - line: 13
+            text: sum() consumes the values one by one; each square is created, added, and discarded.
+      - type: markdown
+        body: |
+          A generator is an [iterator](concept:python.iterators) you write as an ordinary-looking
+          function. Everything from the iterators lesson — `next()`, `StopIteration`, single use — applies.
+
+  - id: yield-pauses
+    title: yield pauses a function
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Any function whose body contains the keyword [yield](glossary:yield) is a **generator function**.
+          It behaves very differently from a normal function:
+
+          1. **Calling it runs none of its body.** It immediately returns a [generator](glossary:generator)
+             object, paused before the first line.
+          2. **`next(gen)` runs the body** until it reaches a `yield`. The yielded value becomes the result
+             of `next()`, and the function **pauses right there** — with all its local variables intact.
+          3. **The next `next(gen)` resumes** just after that `yield` and runs to the following one.
+          4. When the body **finishes** (falls off the end or hits `return`), `next()` raises
+             `StopIteration` — the normal iterator signal for "no more values".
+
+          The prints below make the order visible:
+      - type: code
+        runnable: true
+        code: |
+          def countdown(n):
+              print("  [body starts]")
+              while n > 0:
+                  yield n
+                  n -= 1
+              print("  [body ends]")
+
+          gen = countdown(2)
+          print("generator created:", type(gen).__name__)
+          print(next(gen))
+          print(next(gen))
+          print(next(gen, "no more values"))
+        expectedOutput: |
+          generator created: generator
+            [body starts]
+          2
+          1
+            [body ends]
+          no more values
+        annotations:
+          - line: 8
+            text: Nothing is printed by countdown yet — the body has not started.
+          - line: 10
+            text: The first next() runs from the top to the first yield and hands back 2.
+          - line: 11
+            text: Resumes after the yield (n -= 1), loops, and yields 1.
+          - line: 12
+            text: Resumes, n becomes 0, the loop ends, "[body ends]" prints, and the generator finishes — so next() returns the default.
+      - type: callout
+        variant: misconception
+        title: '"Calling the function runs it up to the first yield"'
+        body: |
+          No — calling a generator function runs **nothing**. `countdown(2)` only creates the generator
+          object. This matters when the body has side effects (opening files, printing, sending requests):
+          they happen only when someone starts iterating.
+      - type: item
+        ref: predict-order
+
+  - id: walkthrough
+    title: Watch execution jump in and out
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Step through the same countdown. Watch the **countdown frame** appear when `next()` resumes the
+          generator and disappear from the stack when it yields — then reappear with `n` exactly as it was
+          left.
+      - type: visualization
+        component: python-tracer
+        title: A generator's frame is paused, not destroyed
+        caption: >-
+          When the generator yields, the tracer describes it as "returns 2 to its caller" because control
+          goes back to the caller like a return. But the frame is only suspended, not discarded — on the next
+          next() it comes back on line 4 with the same n, then continues with n -= 1.
+        props:
+          code: |
+            def countdown(n):
+                print("start")
+                while n > 0:
+                    yield n
+                    n -= 1
+                print("done")
+
+            gen = countdown(2)
+            print("created")
+            print(next(gen))
+            print(next(gen))
+            print(next(gen, "finished"))
+      - type: callout
+        variant: analogy
+        title: A bookmark in a recipe
+        body: |
+          A normal function is like cooking a whole recipe in one go. A generator is a cook who prepares
+          one plate, hands it over, puts a bookmark in the recipe and waits. When you ask for the next plate,
+          the cook continues from the bookmark — the ingredients already chopped (the local variables) are
+          still on the counter.
+      - type: item
+        ref: explain-pause
+
+  - id: using-generators
+    title: Generators are iterators
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You rarely call `next()` by hand. Because a generator is an iterator, anything that iterates
+          consumes it: `for` loops, `list()`, `sum()`, `max()`, `sorted()`, `in`, unpacking. And like every
+          iterator it is **single-use** — once exhausted, it stays exhausted.
+      - type: code
+        runnable: true
+        code: |
+          def even_numbers(limit):
+              n = 0
+              while n <= limit:
+                  yield n
+                  n += 2
+
+          for n in even_numbers(6):
+              print(n, end=" ")
+          print()
+
+          evens = even_numbers(6)
+          print(sum(evens))
+          print(sum(evens))                # already exhausted
+          print(max(even_numbers(6)))      # a new generator starts over
+        expectedOutput: |
+          0 2 4 6
+          12
+          0
+          6
+        annotations:
+          - line: 11
+            text: sum() runs the generator to the end.
+          - line: 12
+            text: The same generator object has nothing left, so the sum of no numbers is 0.
+          - line: 13
+            text: Calling the generator function again creates a fresh, independent generator.
+      - type: callout
+        variant: tip
+        title: When to write a generator
+        body: |
+          Write a generator when the caller will **loop over the values once**, especially if there are
+          many of them, they are expensive to compute, or you may stop early. Return a list when the caller
+          needs `len()`, indexing, or several passes over the same data.
+
+  - id: generator-expressions
+    title: Generator expressions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [generator expression](glossary:generator-expression) looks like a list comprehension with
+          round brackets. It builds a generator instead of a list:
+
+          ```python
+          [n * n for n in nums]   # list: all values computed now, stored in memory
+          (n * n for n in nums)   # generator: values computed one at a time, when asked
+          ```
+
+          When a generator expression is the only argument to a function, you can drop its own brackets:
+          `sum(n * n for n in nums)`.
+      - type: code
+        runnable: true
+        code: |
+          prices = [4.50, 12.00, 3.25, 20.00]
+
+          print(sum(p * 1.2 for p in prices if p > 4))   # no intermediate list
+          print(max(len(w) for w in ["tea", "coffee", "milk"]))
+
+          cheap = (p for p in prices if p < 5)
+          print(next(cheap))
+          print(list(cheap))
+          print(list(cheap))
+        expectedOutput: |
+          43.8
+          6
+          4.5
+          [3.25]
+          []
+        annotations:
+          - line: 3
+            text: 4.5, 12.0 and 20.0 pass the filter; 36.5 * 1.2 = 43.8.
+          - line: 6
+            text: cheap is a generator; next() takes its first value, 4.5.
+          - line: 8
+            text: Single-use, like every iterator.
+      - type: item
+        ref: mcq-brackets
+      - type: item
+        ref: predict-genexp-once
+
+  - id: memory-infinite
+    title: Memory, laziness and infinite sequences
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A list holds all its items at once; a generator holds only its current state. That difference is
+          called [lazy evaluation](glossary:lazy-evaluation):
+      - type: code
+        runnable: true
+        code: |
+          import sys
+
+          as_list = [n * n for n in range(100_000)]
+          as_gen = (n * n for n in range(100_000))
+
+          print(sys.getsizeof(as_list) > 100_000)   # hundreds of kilobytes
+          print(sys.getsizeof(as_gen) < 500)        # a few hundred bytes, whatever the range
+          print(sum(as_gen) == sum(as_list))
+        expectedOutput: |
+          True
+          True
+          True
+        caption: >-
+          Exact sizes depend on the platform (sys.getsizeof is an implementation detail and counts only the
+          object itself), so we compare instead of printing numbers.
+      - type: markdown
+        body: |
+          Because a generator computes values only when asked, it can describe a sequence that **never
+          ends**. That is safe as long as you only ask for a finite number of values. The standard tool is
+          `itertools.islice(iterable, n)`, which takes the first `n` items (or `islice(iterable, start,
+          stop)` for a slice) — think of it as slicing for iterators.
+      - type: code
+        runnable: true
+        code: |
+          from itertools import islice
+
+          def naturals():
+              n = 1
+              while True:          # never finishes on its own...
+                  yield n
+                  n += 1
+
+          print(list(islice(naturals(), 5)))       # ...so take only what you need
+
+          def fibonacci():
+              a, b = 0, 1
+              while True:
+                  yield a
+                  a, b = b, a + b
+
+          print(list(islice(fibonacci(), 10)))
+          print(list(islice(fibonacci(), 10, 13)))  # items 10, 11 and 12
+        expectedOutput: |
+          [1, 2, 3, 4, 5]
+          [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+          [55, 89, 144]
+        annotations:
+          - line: 5
+            text: An infinite loop is fine inside a generator — it pauses at every yield.
+          - line: 9
+            text: islice stops asking after 5 values, so the generator is never driven forever.
+      - type: callout
+        variant: warning
+        title: Never consume an infinite generator completely
+        body: |
+          `list(naturals())`, `sum(naturals())`, `sorted(naturals())` or a `for` loop without a `break` never
+          finish — they keep asking for the next value and memory fills up. (This browser stops a program
+          after 8 seconds.) Always limit infinite generators with `islice`, `itertools.takewhile`, `zip` with
+          a finite iterable, or a `break`.
+
+  - id: pipelines
+    title: Generator pipelines
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Generators can feed each other: each stage takes an iterable and yields transformed items. Chained
+          together they form a **pipeline**, like an assembly line. Nothing happens when you build it; when
+          the final consumer asks for a value, that request travels back through every stage and **one item
+          at a time** flows forward through all of them.
+      - type: code
+        runnable: true
+        code: |
+          def read(lines):
+              for line in lines:
+                  print("  read ", line)
+                  yield line
+
+          def parse(lines):
+              for line in lines:
+                  print("  parse", line)
+                  yield int(line)
+
+          pipeline = parse(read(["10", "20"]))
+          print("pipeline built - nothing has run yet")
+
+          for value in pipeline:
+              print("use", value)
+        expectedOutput: |
+          pipeline built - nothing has run yet
+            read  10
+            parse 10
+          use 10
+            read  20
+            parse 20
+          use 20
+        caption: Each item passes through read and parse before the next item is read.
+      - type: item
+        ref: predict-pipeline
+      - type: visualization
+        component: python-tracer
+        title: Frames stack up when one generator pulls from another
+        caption: >-
+          When the for loop asks doubled for a value, doubled resumes and asks numbers — so the stack shows
+          Global frame → doubled → numbers. Each yield pops back one level; each next() pushes forward again.
+        props:
+          code: |
+            def numbers():
+                for n in [1, 2]:
+                    yield n
+
+            def doubled(source):
+                for n in source:
+                    yield n * 2
+
+            for value in doubled(numbers()):
+                print(value)
+      - type: markdown
+        body: |
+          This is how you process files far bigger than memory. The file object is itself a lazy iterator of
+          lines, so a pipeline over it handles one line at a time — a 50 GB log uses no more memory than a
+          50-line one:
+      - type: code
+        runnable: true
+        code: |
+          with open("server.log", "w", encoding="utf-8") as f:
+              f.write("INFO start\nERROR disk full\nINFO retry\nERROR timeout\n")
+
+          with open("server.log", encoding="utf-8") as f:
+              lines = (line.rstrip("\n") for line in f)
+              errors = (line for line in lines if line.startswith("ERROR"))
+              messages = (line.removeprefix("ERROR ") for line in errors)
+              for message in messages:
+                  print(message)
+        expectedOutput: |
+          disk full
+          timeout
+        annotations:
+          - line: 5
+            text: Three generator expressions, each consuming the previous one. None of them stores a list.
+          - line: 8
+            text: The loop drives the whole pipeline — and it runs inside the with block, while the file is still open.
+
+  - id: yield-from
+    title: Delegating with yield from
+    kind: concept
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          `yield from iterable` yields every item of another iterable, as if you had written
+          `for item in iterable: yield item`. It is especially handy for **recursive** generators, where a
+          generator delegates to a copy of itself:
+      - type: code
+        runnable: true
+        code: |
+          def letters_then_numbers():
+              yield from "ab"
+              yield from range(2)
+
+          print(list(letters_then_numbers()))
+
+          def flatten(items):
+              for item in items:
+                  if isinstance(item, list):
+                      yield from flatten(item)   # delegate the nested list
+                  else:
+                      yield item
+
+          print(list(flatten([1, [2, [3, 4]], 5])))
+        expectedOutput: |
+          ['a', 'b', 0, 1]
+          [1, 2, 3, 4, 5]
+        annotations:
+          - line: 10
+            text: Every value the inner generator yields passes straight through to our caller.
+      - type: markdown
+        body: |
+          `yield from` does more than a loop ([PEP 380](https://peps.python.org/pep-0380/)): it also passes
+          values sent with `.send()` and exceptions thrown with `.throw()` through to the inner generator,
+          and it evaluates to the inner generator's `return` value. A generator's `return value` is carried by
+          the `StopIteration` exception (`err.value`). These features turned generators into *coroutines* —
+          the foundation that [asyncio](concept:python.asyncio)'s `async`/`await` grew out of.
+      - type: code
+        runnable: true
+        code: |
+          def inner():
+              yield 1
+              yield 2
+              return "inner finished"
+
+          def outer():
+              result = yield from inner()
+              print("outer got:", result)
+              yield 3
+
+          print(list(outer()))
+        expectedOutput: |
+          outer got: inner finished
+          [1, 2, 3]
+        caption: The print runs while list() is consuming outer, before list() returns the finished list.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Prints `<generator object squares at 0x…>` | Printing the generator, not its values | `print(list(gen))`, or loop over it |
+          | The function "does nothing" — no output, no file written | Calling a generator function only creates the generator | Iterate over it (`for`, `list()`) |
+          | Second loop over a generator is empty | Generators are single-use | Call the generator function again, or store `list(gen)` |
+          | `TypeError: object of type 'generator' has no len()` / `'generator' object is not subscriptable` | Generators have no length or indexes | `list(gen)` first, or count while iterating |
+          | Only the first value comes back | `return` used where `yield` was meant | `yield` each value |
+          | Program hangs / runs out of memory | Consuming an infinite generator completely | `itertools.islice(gen, n)` or a `break` |
+          | `ValueError: I/O operation on closed file.` | A generator over a file is consumed after the `with` block closed the file | Consume it inside the `with`, or put the `with` inside a generator function |
+          | `RuntimeError: generator raised StopIteration` | `next()` inside a generator ran out and its `StopIteration` escaped | Use `next(it, default)` or catch it, then `return` |
+      - type: code
+        runnable: true
+        code: |
+          def squares(n):
+              for i in range(n):
+                  yield i * i
+
+          result = squares(4)
+          print(type(result).__name__)
+          print(list(result))
+          print(len(squares(4)))
+        expectError: TypeError
+        expectedOutput: |
+          generator
+          [0, 1, 4, 9]
+        caption: list() gives you the values; len() is not available on a generator.
+      - type: callout
+        variant: deep-dive
+        title: Why StopIteration became a RuntimeError
+        depth: deep
+        body: |
+          Before Python 3.7, a `StopIteration` that accidentally escaped from code inside a generator (for
+          example from a bare `next()` call) silently ended the generator, hiding bugs. Since
+          [PEP 479](https://peps.python.org/pep-0479/) it is converted into
+          `RuntimeError: generator raised StopIteration`. To finish a generator on purpose, just `return`.
+      - type: item
+        ref: debug-return-yield
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks confirm that your functions really are generators (they contain `yield`) and that they
+          work lazily — some of them feed in an endless input.
+      - type: item
+        ref: running-total
+      - type: item
+        ref: error-lines
+      - type: item
+        ref: parsons-pipeline
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Compile-time decision.** Whether a function is a generator function is decided when it is
+          compiled: one `yield` anywhere in the body — even in a branch that never runs — makes it one.
+          `inspect.isgeneratorfunction(f)` tells you, and `inspect.getgeneratorstate(gen)` reports
+          `GEN_CREATED`, `GEN_RUNNING`, `GEN_SUSPENDED` or `GEN_CLOSED`.
+
+          **A frame that outlives its call.** For a normal call, CPython creates a frame (local variables
+          plus the position in the bytecode) and discards it on return. A generator object owns its frame;
+          `yield` saves the instruction position and leaves the frame intact, so resuming is cheap — no
+          copying of locals.
+
+          **Two-way communication.** `value = yield x` is an expression: `gen.send(v)` resumes the generator
+          and makes the paused `yield` evaluate to `v` (the first resume must be `next(gen)` or
+          `gen.send(None)`). `gen.close()` raises `GeneratorExit` at the paused `yield` so `finally` blocks
+          and `with` statements inside the generator can clean up.
+      - type: code
+        runnable: true
+        code: |
+          import inspect
+
+          def averager():
+              total = count = 0
+              average = None
+              while True:
+                  value = yield average      # pause; resume with the sent value
+                  total += value
+                  count += 1
+                  average = total / count
+
+          avg = averager()
+          print(inspect.getgeneratorstate(avg))
+          next(avg)                            # run to the first yield
+          print(avg.send(10), avg.send(20), avg.send(60))
+          avg.close()
+          print(inspect.getgeneratorstate(avg))
+        expectedOutput: |
+          GEN_CREATED
+          10.0 15.0 30.0
+          GEN_CLOSED
+      - type: markdown
+        body: |
+          **The itertools toolbox.** `itertools` provides fast lazy building blocks that combine with
+          generators: `count`, `islice`, `takewhile`, `chain`, `zip_longest`, `groupby`, `batched` (3.12+)
+          and more — see the [standard library lesson](concept:python.stdlib).
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A function containing `yield` is a **generator function**; calling it returns a **generator** and
+            runs **none** of the body.
+          - Each `next()` runs the body to the next `yield`, hands over the value and **pauses** with all
+            locals kept; finishing raises `StopIteration`.
+          - Generators are single-use iterators: `for`, `list()`, `sum()` etc. consume them.
+          - `(expr for x in items if cond)` is a lazy generator expression; `sum(x * x for x in nums)`
+            needs no extra brackets.
+          - Lazy = constant memory and possible infinity — take from infinite generators with
+            `itertools.islice`.
+          - Chain generators into pipelines; one item at a time flows through every stage.
+          - `yield from iterable` delegates to another iterable or generator.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What's the difference between a list comprehension and a generator expression, and when would you
+          use a generator?" — eager vs lazy, memory, single-use; then walk through what `next()` does to a
+          paused frame. Senior candidates mention pipelines over large files, `yield from`, and that
+          generators were the basis of coroutines.
+
+items:
+  - id: predict-order
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Four lines — think about when the body runs.)
+    code: |
+      def greet():
+          print("hello from the body")
+          yield "first"
+          yield "second"
+
+      g = greet()
+      print("created")
+      print(next(g))
+      print(next(g))
+    answer: |
+      created
+      hello from the body
+      first
+      second
+    explanation: >-
+      Calling greet() runs nothing, so "created" prints first. The first next() starts the body: it prints
+      "hello from the body" and pauses at yield "first". The second next() resumes after that yield and
+      stops at yield "second".
+    wrongAnswers:
+      - answer: |
+          hello from the body
+          created
+          first
+          second
+        feedback: Calling a generator function does not run its body. It only creates the generator; the body starts at the first next().
+      - answer: |
+          created
+          hello from the body
+          first
+          hello from the body
+          second
+        feedback: The second next() resumes after the first yield — it does not restart the function from the top.
+      - answer: |
+          created
+          first
+          second
+        feedback: The print inside the body does run — at the first next(), just before the first yield.
+
+  - id: explain-pause
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain, step by step, what happens to a generator function's code and its local variables when you
+      call the function, then call next() on the result twice. Use countdown(2) from this lesson as your
+      example.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Calling the function creates a generator object without running any of the body.
+      - The first next() runs the body from the top until the first yield, which hands its value to the caller.
+      - At a yield the function is paused, not finished - its local variables (like n) are kept.
+      - The next next() resumes right after the yield; when the body ends, next() raises StopIteration.
+    modelAnswer: |
+      `gen = countdown(2)` only creates a generator object; not a single line of countdown has run. The
+      first `next(gen)` starts the body: it prints "start", checks n > 0 and reaches `yield n`, so next()
+      returns 2 and the function pauses there — its frame, with n = 2, is kept inside the generator. The
+      second `next(gen)` resumes immediately after the yield: n -= 1 makes n 1, the loop condition is still
+      true, and `yield n` hands back 1 and pauses again. One more next() would let the loop end, print
+      "done", and finish the function, which next() reports by raising StopIteration.
+
+  - id: mcq-brackets
+    type: mcq
+    skill: recognition
+    prompt: "What is the difference between `[n * n for n in nums]` and `(n * n for n in nums)`?"
+    explanation: >-
+      Square brackets make a list comprehension: all values are computed immediately and stored. Round
+      brackets make a generator expression: a lazy, single-use iterator that computes each value when asked.
+    options:
+      - id: a
+        text: The first builds a list of every value right away; the second creates a generator that computes values one at a time when asked.
+        correct: true
+        feedback: Right — eager list versus lazy, single-use generator.
+      - id: b
+        text: The second builds a tuple.
+        feedback: There is no tuple comprehension. Round brackets around a comprehension create a generator; use tuple(...) to get a tuple.
+      - id: c
+        text: There is no difference; the brackets are a matter of style.
+        feedback: The results behave differently — a list has len() and indexing and can be reused; a generator does not and cannot.
+      - id: d
+        text: The second is faster in every situation.
+        feedback: Generators save memory, but if you need all values several times, a list is simpler and often faster.
+
+  - id: predict-genexp-once
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? (Three lines.)
+    code: |
+      nums = [1, 2, 3]
+      doubled = (n * 2 for n in nums)
+      print(2 in doubled)
+      print(list(doubled))
+      print(nums)
+    answer: |
+      True
+      [4, 6]
+      [1, 2, 3]
+    explanation: >-
+      The in test pulls values from the generator until it finds 2 — consuming the first value. list()
+      collects the remaining two values. The original list is untouched.
+    wrongAnswers:
+      - answer: |
+          True
+          [2, 4, 6]
+          [1, 2, 3]
+        feedback: The `in` test consumed the first value (2) while searching, so only 4 and 6 are left.
+      - answer: |
+          True
+          []
+          [1, 2, 3]
+        feedback: The search stops as soon as it finds 2, so the later values are still in the generator.
+      - answer: |
+          True
+          [4, 6]
+          [2, 4, 6]
+        feedback: A generator expression creates new values; it never modifies the list it reads from.
+
+  - id: predict-pipeline
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this print? (Five lines.)
+    code: |
+      def source():
+          for word in ["a", "b"]:
+              print("make", word)
+              yield word
+
+      def shout(words):
+          for w in words:
+              yield w.upper()
+
+      pipeline = shout(source())
+      print("ready")
+      for w in pipeline:
+          print("use", w)
+    answer: |
+      ready
+      make a
+      use A
+      make b
+      use B
+    explanation: >-
+      Building the pipeline runs nothing, so "ready" comes first. Each time the for loop asks for a value,
+      shout asks source for one word: source prints "make a" and yields it, shout yields "A", the loop prints
+      "use A" — and only then is the second word made.
+    wrongAnswers:
+      - answer: |
+          make a
+          make b
+          ready
+          use A
+          use B
+        feedback: Calling generator functions runs none of their code — nothing is made before "ready".
+      - answer: |
+          ready
+          make a
+          make b
+          use A
+          use B
+        feedback: Stages do not finish one at a time. Each word travels through the whole pipeline before the next word is made.
+
+  - id: debug-return-yield
+    type: debug
+    skill: debugging
+    prompt: |
+      `squares(n)` should be a generator producing `1, 4, 9, ..., n*n`, so the program prints
+      `[1, 4, 9, 16]`. Instead it crashes with `TypeError: 'int' object is not iterable`. Fix the function.
+    starterCode: |
+      def squares(n):
+          for i in range(1, n + 1):
+              return i * i
+
+
+      print(list(squares(4)))
+    solution: |
+      def squares(n):
+          for i in range(1, n + 1):
+              yield i * i
+
+
+      print(list(squares(4)))
+    expectedOutput: |
+      [1, 4, 9, 16]
+    tests:
+      - name: produces the squares
+        code: |
+          assert list(squares(4)) == [1, 4, 9, 16], f"list(squares(4)) should be [1, 4, 9, 16], got {list(squares(4))!r}."
+          assert list(squares(1)) == [1], "list(squares(1)) should be [1]."
+      - name: squares is a generator function
+        code: |
+          import inspect
+          assert inspect.isgeneratorfunction(squares), "squares should contain yield, so that calling it returns a generator."
+    hints:
+      - What does return do to a function — and to the loop inside it?
+      - "return ends the function on the first pass and hands back one int; list() cannot loop over an int."
+      - Replace return with yield.
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "not iterable" }
+        message: squares still returns a single int. Use yield to hand back each value and keep going.
+      - when: { outputEquals: "[1]\n" }
+        message: Only one value is produced. Is something still ending the function after the first value?
+    explanation: >-
+      return ends the function immediately, so the loop ran once and returned the int 1 — and list(1)
+      fails. yield hands over a value and pauses, so the loop continues on the next request and every
+      square is produced.
+
+  - id: running-total
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a generator function `running_total(numbers)` that yields the running total after each number:
+      for `[5, 3, 2]` it yields `5`, `8`, `10`. It must work lazily — even on an endless input.
+    starterCode: |
+      def running_total(numbers):
+          # Keep a total; after adding each number, yield the total so far.
+          pass
+
+
+      print(list(running_total([5, 3, 2])))
+    solution: |
+      def running_total(numbers):
+          total = 0
+          for n in numbers:
+              total += n
+              yield total
+
+
+      print(list(running_total([5, 3, 2])))
+    expectedOutput: |
+      [5, 8, 10]
+    tests:
+      - name: running totals of a list
+        code: |
+          assert list(running_total([5, 3, 2])) == [5, 8, 10], f"Got {list(running_total([5, 3, 2]))!r}."
+          assert list(running_total([])) == [], "An empty input gives no totals."
+      - name: is a generator function
+        code: |
+          import inspect
+          assert inspect.isgeneratorfunction(running_total), "Use yield inside running_total so it is a generator function."
+      - name: works on an endless input
+        code: |
+          from itertools import count, islice
+          result = list(islice(running_total(count(1)), 4))
+          assert result == [1, 3, 6, 10], f"The first four totals of 1, 2, 3, 4, ... should be [1, 3, 6, 10], got {result!r}. Yield as you go instead of building a list first."
+    hints:
+      - Start with total = 0, then loop over numbers.
+      - After adding each number to total, yield total.
+      - Don't build a list and return it — that would never finish on an endless input.
+    feedback:
+      - when: { outputEquals: "[10]\n" }
+        message: Only the final total appears. Yield inside the loop, after each addition.
+      - when: { errorType: TypeError, errorMessageContains: "NoneType" }
+        message: running_total returned None. It needs a yield so that calling it creates a generator.
+    explanation: >-
+      The generator keeps total in its paused frame between values, so each yield reports the total so
+      far. Because it never builds a list, islice can take the first few totals from an infinite input.
+
+  - id: error-lines
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Write a generator function `error_messages(path)` that opens the log file at `path` and yields, one
+      at a time, the message part of every line that starts with `"ERROR "` — without the `"ERROR "` prefix
+      and without the newline. Keep the file open only while the generator is running by putting the
+      `with` statement **inside** the generator function.
+    starterCode: |
+      with open("app.log", "w", encoding="utf-8") as f:
+          f.write("INFO boot\nERROR disk full\nWARN slow\nERROR timeout\n")
+
+
+      def error_messages(path):
+          # Open the file with `with`, loop over its lines, and yield the message of each ERROR line.
+          pass
+
+
+      for message in error_messages("app.log"):
+          print(message)
+    solution: |
+      with open("app.log", "w", encoding="utf-8") as f:
+          f.write("INFO boot\nERROR disk full\nWARN slow\nERROR timeout\n")
+
+
+      def error_messages(path):
+          with open(path, encoding="utf-8") as f:
+              for line in f:
+                  if line.startswith("ERROR "):
+                      yield line.removeprefix("ERROR ").rstrip("\n")
+
+
+      for message in error_messages("app.log"):
+          print(message)
+    expectedOutput: |
+      disk full
+      timeout
+    tests:
+      - name: yields the error messages
+        code: |
+          result = list(error_messages("app.log"))
+          assert result == ["disk full", "timeout"], f"Expected ['disk full', 'timeout'], got {result!r}."
+      - name: works for another file
+        code: |
+          with open("check.log", "w", encoding="utf-8") as setup:
+              setup.write("ERROR a\nINFO ERROR not at the start\nERROR b c\n")
+          result = list(error_messages("check.log"))
+          assert result == ["a", "b c"], f"For the check file expected ['a', 'b c'], got {result!r}. Only lines that START with 'ERROR ' count."
+      - name: is a lazy generator
+        code: |
+          import inspect
+          assert inspect.isgeneratorfunction(error_messages), "error_messages must contain yield."
+          gen = error_messages("app.log")
+          assert next(gen) == "disk full", "The first value from the generator should be 'disk full'."
+      - name: opens the file inside the generator with encoding
+        code: |
+          import ast
+          tree = ast.parse(source)
+          funcs = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "error_messages"]
+          assert funcs and any(isinstance(n, ast.With) for n in ast.walk(funcs[0])), "Put the with open(...) statement inside error_messages."
+          opens = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+          assert all(any(k.arg == "encoding" for k in n.keywords) for n in opens), 'Pass encoding="utf-8" to every open() call.'
+    hints:
+      - Inside the function, `with open(path, encoding="utf-8") as f:` and then `for line in f:`.
+      - 'line.startswith("ERROR ") checks the prefix; line.removeprefix("ERROR ") removes it.'
+      - Yield the message with .rstrip("\n") so the newline is gone.
+    feedback:
+      - when: { outputContains: "ERROR" }
+        message: The "ERROR " prefix is still there. Remove it, for example with line.removeprefix("ERROR ").
+      - when: { errorType: ValueError, errorMessageContains: "closed file" }
+        message: >-
+          The file was closed before the lines were read. Put the with statement inside the generator
+          function and yield from within it, so the file stays open while values are requested.
+    explanation: >-
+      With the with statement inside the generator function, the file is opened on the first next() and
+      stays open while the generator is paused between values; it closes when the loop over the file ends
+      (or when the generator is closed). Only one line is in memory at a time, whatever the file's size.
+
+  - id: parsons-pipeline
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a two-stage pipeline that prints the squares of the odd numbers below 8.
+      One line is a distractor.
+    solution: |
+      def odds(limit):
+          for n in range(limit):
+              if n % 2 == 1:
+                  yield n
+      def squared(nums):
+          for n in nums:
+              yield n * n
+      for value in squared(odds(8)):
+          print(value)
+    distractors:
+      - "            return n"
+    expectedOutput: |
+      1
+      9
+      25
+      49
+    explanation: >-
+      odds yields 1, 3, 5, 7 one at a time; squared consumes that generator and yields each square; the
+      final for loop drives the pipeline. return n would end odds after its first value.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-state
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Two lines.)
+    code: |
+      def tickets(start):
+          current = start
+          while True:
+              yield current
+              current += 10
+
+      t = tickets(100)
+      print(next(t), next(t))
+      u = tickets(5)
+      print(next(u), next(t))
+    answer: |
+      100 110
+      5 120
+    explanation: >-
+      Each generator keeps its own paused frame. t yields 100 and 110. u is a separate generator starting at
+      5. t resumes where it stopped and yields 120.
+    wrongAnswers:
+      - answer: |
+          100 110
+          5 15
+        feedback: The last call is next(t), not next(u). t carries on from its own state (110 → 120).
+      - answer: |
+          100 100
+          5 100
+        feedback: A generator resumes after the yield, so current += 10 runs between values.
+      - answer: |
+          100 110
+          5 100
+        feedback: Creating a new generator u does not reset t. Each generator object has independent local variables.
+
+  - id: m-tf-body
+    type: true-false
+    skill: recognition
+    prompt: "True or false: calling a generator function runs its body up to the first `yield`."
+    answer: false
+    explanation: >-
+      Calling a generator function runs none of its body; it only creates a generator object. The body
+      starts running at the first next() (or when a loop starts consuming the generator).
+
+  - id: m-mcq-big-file
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      You must count the lines containing "ERROR" in a 20 GB log file on a machine with 8 GB of memory.
+      Which approach works?
+    explanation: >-
+      Iterating over the file object (directly or through generator expressions) reads one line at a time,
+      so memory use stays tiny no matter how large the file is. The other options load the whole file.
+    options:
+      - id: a
+        text: 'sum(1 for line in f if "ERROR" in line), inside a with block'
+        correct: true
+        feedback: Right. The file iterator and the generator expression are both lazy, so only one line is in memory at a time.
+      - id: b
+        text: 'len([line for line in f.readlines() if "ERROR" in line])'
+        feedback: readlines() builds a list of every line — about 20 GB of strings — before filtering.
+      - id: c
+        text: 'f.read().count("ERROR")'
+        feedback: read() loads the whole file into one string, which does not fit in memory. (It would also count several errors on one line separately.)
+      - id: d
+        text: "lines = list(f), then a for loop over lines"
+        feedback: list(f) materialises every line in memory first — exactly what a lazy approach avoids.
+
+  - id: m-code-chunked
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write a generator function `chunked(items, size)` that yields lists of `size` consecutive items from
+      any iterable; the last chunk may be shorter. For example, `chunked(range(7), 3)` yields `[0, 1, 2]`,
+      `[3, 4, 5]`, `[6]`. It must work lazily on endless inputs.
+    starterCode: |
+      def chunked(items, size):
+          # Collect items into a list; when it reaches size, yield it and start a new one.
+          # Don't forget the last, shorter chunk.
+          pass
+
+
+      print(list(chunked(range(7), 3)))
+    solution: |
+      def chunked(items, size):
+          chunk = []
+          for item in items:
+              chunk.append(item)
+              if len(chunk) == size:
+                  yield chunk
+                  chunk = []
+          if chunk:
+              yield chunk
+
+
+      print(list(chunked(range(7), 3)))
+    expectedOutput: |
+      [[0, 1, 2], [3, 4, 5], [6]]
+    tests:
+      - name: splits into chunks
+        code: |
+          assert list(chunked(range(7), 3)) == [[0, 1, 2], [3, 4, 5], [6]], f"Got {list(chunked(range(7), 3))!r}."
+          assert list(chunked("abcd", 2)) == [["a", "b"], ["c", "d"]], "chunked('abcd', 2) should give [['a', 'b'], ['c', 'd']] with no empty chunk at the end."
+          assert list(chunked([], 3)) == [], "An empty input gives no chunks."
+      - name: is a generator function
+        code: |
+          import inspect
+          assert inspect.isgeneratorfunction(chunked), "chunked must use yield."
+      - name: works on an endless input
+        code: |
+          from itertools import count, islice
+          result = list(islice(chunked(count(), 2), 3))
+          assert result == [[0, 1], [2, 3], [4, 5]], f"The first three chunks of 0, 1, 2, ... should be [[0, 1], [2, 3], [4, 5]], got {result!r}."
+      - name: chunks are separate lists
+        code: |
+          a, b = list(chunked([1, 2, 3, 4], 2))
+          assert a is not b and a == [1, 2], "Start a new list after yielding each chunk — otherwise every chunk is the same list object."
+    hints:
+      - Keep a list chunk; append each item to it.
+      - When len(chunk) == size, yield chunk, then rebind chunk to a new empty list (don't clear() the yielded one).
+      - After the loop, yield the leftover chunk only if it is not empty.
+    feedback:
+      - when: { outputContains: "[[0, 1, 2], [3, 4, 5]]" }
+        message: The last, shorter chunk is missing. After the loop, yield chunk if it still has items.
+      - when: { outputContains: "[]]" }
+        message: An empty chunk was yielded at the end. Only yield the leftover chunk when it is not empty.
+      - when: { outputContains: "[[6], [6]" }
+        message: All chunks are the same list. Create a new list (chunk = []) after each yield instead of calling chunk.clear().
+    explanation: >-
+      The generator accumulates items and yields a chunk whenever it is full, then starts a fresh list so
+      yielded chunks are independent. Because it yields as soon as each chunk is ready, it works with
+      islice on an infinite input. (Python 3.12 added itertools.batched, which does the same with tuples.)
+
+  - id: m-debug-closed-file
+    type: debug
+    skill: debugging
+    difficulty: 3
+    prompt: |
+      `read_numbers(path)` should lazily yield each number in a file, so the program prints `60`. Instead
+      it crashes with `ValueError: I/O operation on closed file.` Fix `read_numbers` so it stays lazy and
+      the file is open while the numbers are being read.
+    starterCode: |
+      with open("numbers.txt", "w", encoding="utf-8") as f:
+          f.write("10\n20\n30\n")
+
+
+      def read_numbers(path):
+          with open(path, encoding="utf-8") as f:
+              return (int(line) for line in f)
+
+
+      print(sum(read_numbers("numbers.txt")))
+    solution: |
+      with open("numbers.txt", "w", encoding="utf-8") as f:
+          f.write("10\n20\n30\n")
+
+
+      def read_numbers(path):
+          with open(path, encoding="utf-8") as f:
+              for line in f:
+                  yield int(line)
+
+
+      print(sum(read_numbers("numbers.txt")))
+    expectedOutput: |
+      60
+    tests:
+      - name: prints 60
+        code: |
+          assert output().strip() == "60", f"Expected 60, got {output()!r}."
+      - name: works for another file
+        code: |
+          with open("check-numbers.txt", "w", encoding="utf-8") as setup:
+              setup.write("1\n2\n")
+          assert sum(read_numbers("check-numbers.txt")) == 3, "read_numbers should read the file it is given."
+      - name: read_numbers is a generator function
+        code: |
+          import inspect
+          assert inspect.isgeneratorfunction(read_numbers), "Make read_numbers a generator function (use yield inside the with block) so it stays lazy."
+    hints:
+      - When does the with block close the file — before or after sum() starts reading the generator expression?
+      - The generator expression escapes the with block; by the time it runs, the file is closed.
+      - Make read_numbers itself a generator - loop over f inside the with block and yield int(line).
+    feedback:
+      - when: { errorType: ValueError, errorMessageContains: "closed file" }
+        message: >-
+          The file is still closed before the numbers are read. Move the iteration inside the with block by
+          yielding from read_numbers itself.
+    explanation: >-
+      return hands the generator expression back and immediately leaves the with block, closing the file.
+      sum() then tries to read a closed file. When read_numbers is itself a generator, the with block stays
+      active while the generator is paused, and it closes the file when the loop finishes.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-state, m-tf-body, m-mcq-big-file, m-code-chunked, m-debug-closed-file]
+
+cheatsheet: |
+  ```python
+  def countdown(n):            # contains yield -> generator function
+      while n > 0:
+          yield n              # hand over n, pause here
+          n -= 1
+
+  gen = countdown(3)           # runs NOTHING yet
+  next(gen)                    # 3 (runs to the first yield)
+  list(gen)                    # [2, 1]  (then exhausted)
+
+  squares = (x * x for x in nums)       # generator expression (lazy)
+  total = sum(x * x for x in nums)      # no extra brackets needed
+
+  from itertools import islice
+  list(islice(endless(), 5))            # take 5 from an infinite generator
+
+  def walk(nested):
+      for item in nested:
+          if isinstance(item, list):
+              yield from walk(item)     # delegate
+          else:
+              yield item
+  ```
+  - Single-use · no len() / indexing · `print(gen)` shows the object, not values
+  - Keep `with open(...)` INSIDE the generator function that reads the file

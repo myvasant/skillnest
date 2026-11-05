@@ -1,0 +1,1091 @@
+id: ml.what-is-ml
+concept: ml.what-is-ml
+title: What Machine Learning Is (and Isn't)
+subtitle: From hand-written rules to rules learned from examples
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  Write a spam filter by hand, watch it fail, then let the computer choose the decision rule from
+  labelled examples. Along the way you learn how AI, machine learning, deep learning and generative AI
+  relate, what features, labels, models, training and prediction mean, and when ML is the wrong tool.
+objectives:
+  - Explain how machine learning differs from traditional programming using rules, data and answers.
+  - Place AI, machine learning, deep learning and generative AI correctly relative to each other, with examples.
+  - Identify the features, label, model, parameters, training step and prediction step in a concrete problem.
+  - Implement a tiny learning algorithm that chooses a decision threshold from labelled examples.
+  - Compare a learned model against a simple baseline and decide whether ML is appropriate for a problem.
+  - Name the main learning types (supervised, unsupervised, self-supervised, reinforcement) and what data each needs.
+sources:
+  - title: Machine Learning Crash Course
+    url: https://developers.google.com/machine-learning/crash-course
+    publisher: Google for Developers
+  - title: Rules of Machine Learning
+    url: https://developers.google.com/machine-learning/guides/rules-of-ml
+    publisher: Google for Developers
+  - title: An Introduction to Statistical Learning (free book)
+    url: https://www.statlearning.com/
+    publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - title: DummyClassifier
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyClassifier.html
+    publisher: scikit-learn
+  - title: Decision trees
+    url: https://scikit-learn.org/stable/modules/tree.html
+    publisher: scikit-learn
+sections:
+  - id: why
+    title: Some rules are hard to write
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Suppose you must flag spam messages. The obvious approach is the one you already know from
+          [algorithmic thinking](concept:foundations.algorithmic-thinking): write the rule yourself.
+          "If the message contains a suspicious word, it is spam."
+      - type: code
+        runnable: true
+        code: |
+          SPAM_WORDS = {"free", "winner", "prize", "urgent", "cash"}
+
+          def is_spam(message):
+              words = message.lower().split()
+              return any(word in SPAM_WORDS for word in words)
+
+          print(is_spam("You are a winner claim your prize"))
+          print(is_spam("Lunch at 1pm tomorrow?"))
+          print(is_spam("Are you free this evening?"))
+          print(is_spam("WIN CA$H NOW!!!"))
+        expectedOutput: |
+          True
+          False
+          True
+          False
+        caption: A hand-written rule. The third answer is a false alarm and the fourth is a miss.
+        annotations:
+          - line: 4
+            text: Lower-casing means "FREE" and "free" are treated the same.
+          - line: 9
+            text: '"free" here means "available", but the rule cannot tell the difference.'
+          - line: 10
+            text: '"CA$H" and "WIN" are not in the word list, so obvious spam slips through.'
+      - type: markdown
+        body: |
+          You could keep patching: add "win", strip punctuation, add a list of exceptions for "free for
+          lunch"... Real spammers change their wording every week, and every patch can break something
+          else. After a while nobody understands the rule list any more.
+
+          **Machine learning** takes a different route. Instead of writing the decision rule, you collect
+          **examples with the right answers** — messages that people have already marked as spam or not
+          spam — and let a program **choose the rule that best fits those examples**. When spammers
+          change tactics, you collect new examples and fit again.
+
+          Google's internal guidance puts the trade-off bluntly: Rule #1 of its
+          [Rules of Machine Learning](https://developers.google.com/machine-learning/guides/rules-of-ml)
+          is "Don't be afraid to launch a product without machine learning", and Rule #3 is "Choose
+          machine learning over a complex heuristic". Simple rules first; ML when the rules become a
+          tangle.
+      - type: item
+        ref: predict-rule
+
+  - id: rules-vs-learning
+    title: Traditional programming vs machine learning
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The difference fits in two lines:
+
+          | Approach | You provide | The computer produces |
+          |---|---|---|
+          | Traditional programming | **rules** + data | answers |
+          | [Machine learning](glossary:machine-learning) | data + **example answers** | rules (a **model**) |
+
+          The output of machine learning is itself a program — usually a function with some numbers
+          inside it — that you then run on new data like any other function. A precise definition:
+
+          > **Machine learning** is building a function from examples: an algorithm adjusts the
+          > function's adjustable numbers (its *parameters*) so that its outputs match the known answers
+          > as closely as possible, in the hope that it also gives good answers for inputs it has never seen.
+
+          The last part — *inputs it has never seen* — is the whole point, and also the hard part. A
+          function that only reproduces answers you already have is useless. You will learn how to
+          measure this honestly in [training, validation and test sets](concept:ml.train-val-test).
+      - type: callout
+        variant: analogy
+        title: Learning to recognise ripe mangoes
+        body: |
+          Nobody teaches a child a written rule like "ripe if the skin is 63% yellow and it yields 2 mm to
+          gentle pressure". They are shown many mangoes — "this one is ripe, this one isn't" — and work out
+          the pattern themselves. Machine learning is the same idea made precise: examples in, pattern out.
+          (The analogy stops there: a model's "pattern" is just numbers tuned to its examples, with none
+          of a child's understanding.)
+
+  - id: landscape
+    title: AI, machine learning, deep learning and generative AI
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          These four terms are used loosely in the news. They are **nested**, not synonyms:
+
+          ```text
+          +-- Artificial intelligence ---------------------------------------+
+          |  search, planning, hand-written expert rules ...                 |
+          |  +-- Machine learning ----------------------------------------+  |
+          |  |  linear models, decision trees, clustering ...             |  |
+          |  |  +-- Deep learning -------------------------------------+  |  |
+          |  |  |  neural networks with many layers                    |  |  |
+          |  |  |  +-- (most of) generative AI ---------------------+  |  |  |
+          |  |  |  |  LLMs, image and audio generators              |  |  |  |
+          |  |  |  +------------------------------------------------+  |  |  |
+          |  |  +------------------------------------------------------+  |  |
+          |  +------------------------------------------------------------+  |
+          +------------------------------------------------------------------+
+          ```
+
+          - **[Artificial intelligence](glossary:artificial-intelligence) (AI)** is the broad *goal*:
+            computers doing tasks we associate with intelligence — playing chess, planning a route,
+            understanding speech. Its boundary is fuzzy and definitions vary. Much classic AI involves
+            **no learning at all**: a route planner that searches a road graph, or an expert system made
+            of hand-written if/then rules.
+          - **Machine learning** is the part of AI where behaviour is **learned from data** rather than
+            written by hand. Spam filters, credit-risk scores, demand forecasts and recommendation systems
+            are usually ML.
+          - **[Deep learning](glossary:deep-learning)** is machine learning with **neural networks of many
+            layers**, which learn useful features directly from raw inputs such as pixels, audio or text.
+            You will build one from scratch in [neurons, weights and layers](concept:dl.neurons-layers).
+          - **[Generative AI](glossary:generative-ai)** means models that **produce new content** — text,
+            images, audio, code — rather than a label or a number. Today's generative systems, including
+            [large language models](concept:genai.what-are-llms), are almost all deep-learning models.
+            (Simple generative models without deep learning exist too, such as a Markov-chain text
+            generator, which is why the inner box says "most of".)
+      - type: callout
+        variant: misconception
+        title: '"AI" does not mean "a chatbot"'
+        body: |
+          A chess engine that searches millions of positions with a hand-written evaluation function is AI
+          but not ML. A spreadsheet-style churn model fitted to customer data is ML but not deep learning.
+          A chatbot is generative AI built on deep learning. Being precise about which one you mean helps
+          you pick the right tools and set the right expectations.
+      - type: item
+        ref: mcq-nesting
+
+  - id: learn-threshold
+    title: "Walkthrough: learning a rule from labelled examples"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Let's turn the spam problem into a learning problem in three steps.
+
+          **Step 1 — describe each message with a number.** A model cannot read text the way you do, so we
+          compute a measurable property of each message: a [feature](glossary:feature-ml). Our single
+          feature, `spam_signals`, counts suspicious words plus exclamation marks. Each message also has a
+          [label](glossary:label-ml): `1` for spam, `0` for not spam, assigned by a person.
+      - type: code
+        runnable: true
+        code: |
+          SUSPICIOUS = {"free", "winner", "prize", "urgent", "cash", "claim", "win", "won"}
+
+          def spam_signals(message):
+              """One number per message: suspicious words plus exclamation marks."""
+              words = [w.strip(".,!?:").lower() for w in message.split()]
+              return sum(w in SUSPICIOUS for w in words) + message.count("!")
+
+          training = [
+              ("Claim your free prize now!!!", 1),
+              ("Winner! Urgent: claim your cash today", 1),
+              ("Free entry: win a prize", 1),
+              ("URGENT!! Your account is locked", 1),
+              ("You won a free cruise! Reply now", 1),
+              ("Are you free for lunch?", 0),
+              ("Meeting moved to 3pm", 0),
+              ("Great game last night!", 0),
+              ("Can you send the report?", 0),
+              ("Happy birthday!! Have a great day!", 0),
+          ]
+          for message, label in training:
+              print(spam_signals(message), label, message)
+        expectedOutput: |
+          6 1 Claim your free prize now!!!
+          5 1 Winner! Urgent: claim your cash today
+          3 1 Free entry: win a prize
+          3 1 URGENT!! Your account is locked
+          3 1 You won a free cruise! Reply now
+          1 0 Are you free for lunch?
+          0 0 Meeting moved to 3pm
+          1 0 Great game last night!
+          0 0 Can you send the report?
+          3 0 Happy birthday!! Have a great day!
+        caption: Ten labelled examples. Each row is the feature value, the label, and the original message.
+        annotations:
+          - line: 6
+            text: "`True` counts as 1 when summed, so this counts the suspicious words."
+          - line: 9
+            text: Each example is a pair (input, correct answer). Someone had to label these by hand.
+      - type: markdown
+        body: |
+          **Step 2 — choose a family of rules with a knob.** Our model will be "spam if
+          `spam_signals >= t`". The number `t`, the threshold, is a [parameter](glossary:model-parameter):
+          the part of the rule that is **not** written by hand.
+
+          **Step 3 — let the data turn the knob.** Try every threshold, count how many training examples
+          each one gets wrong, and keep the best. That search *is* the training.
+      - type: code
+        runnable: true
+        code: |
+          xs = [6, 5, 3, 3, 3, 1, 0, 1, 0, 3]   # spam_signals of each training message
+          ys = [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]   # labels: 1 = spam, 0 = not spam
+
+          def errors_for(threshold):
+              predictions = [1 if x >= threshold else 0 for x in xs]
+              return sum(p != y for p, y in zip(predictions, ys))
+
+          for t in range(0, 8):
+              print("threshold", t, "errors", errors_for(t))
+
+          best = min(range(0, 8), key=errors_for)
+          print("learned threshold:", best)
+        expectedOutput: |
+          threshold 0 errors 5
+          threshold 1 errors 3
+          threshold 2 errors 1
+          threshold 3 errors 1
+          threshold 4 errors 3
+          threshold 5 errors 3
+          threshold 6 errors 4
+          threshold 7 errors 5
+          learned threshold: 2
+        caption: Training by brute-force search. min() returns the first threshold with the fewest errors.
+        annotations:
+          - line: 5
+            text: The model's predictions for every training example, for this candidate threshold.
+          - line: 6
+            text: Count mismatches between prediction and label — the training error.
+          - line: 11
+            text: "`key=errors_for` makes min() compare thresholds by their error count."
+      - type: markdown
+        body: |
+          Read the table. A threshold of 0 calls everything spam (5 mistakes); 7 calls nothing spam
+          (also 5). Thresholds 2 and 3 both make only one mistake — the enthusiastic birthday message.
+          No threshold gets all ten right, because one feature cannot capture everything. That is normal:
+          **a model is a simplification, and some error is expected.**
+
+          Notice that thresholds 2 and 3 are equally good on the training data, yet they disagree about a
+          new message with exactly 2 signals. The data simply cannot tell them apart; `min()` broke the
+          tie by picking the smaller one. Choices like this are why we judge models on **new** data.
+      - type: item
+        ref: predict-threshold
+
+  - id: vocabulary
+    title: Features, labels, models, training and prediction
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The spam example contains every core term of machine learning:
+
+          | Term | Meaning | In the spam example |
+          |---|---|---|
+          | **Example** (row, sample) | One case you have data about | One message |
+          | **[Feature](glossary:feature-ml)** | A measurable input property of an example | `spam_signals` (real systems use hundreds or millions) |
+          | **[Label](glossary:label-ml)** (target) | The answer you want to predict | 1 = spam, 0 = not spam |
+          | **[Model](glossary:ml-model)** | A function from features to a prediction, with adjustable parts | "spam if signals >= t" |
+          | **[Parameter](glossary:model-parameter)** | A number inside the model that training chooses | the threshold `t` |
+          | **[Training](glossary:model-training)** (fitting) | Choosing parameters that minimise error on labelled examples | trying every `t` and keeping the best |
+          | **[Prediction](glossary:prediction-inference)** (inference) | Running the trained model on a new input | classifying tomorrow's messages |
+
+          Many ML libraries — scikit-learn most famously — package a model as an object with two methods:
+          `fit(X, y)` for training and `predict(X)` for prediction. You already know classes, so you can
+          write the same shape yourself:
+      - type: code
+        runnable: true
+        code: |
+          class ThresholdClassifier:
+              """Predict 1 when the feature is at least a threshold learned from examples."""
+
+              def fit(self, xs, ys):
+                  def errors(t):
+                      return sum((1 if x >= t else 0) != y for x, y in zip(xs, ys))
+                  self.threshold = min(range(0, max(xs) + 2), key=errors)
+                  return self
+
+              def predict(self, xs):
+                  return [1 if x >= self.threshold else 0 for x in xs]
+
+          model = ThresholdClassifier().fit([6, 5, 3, 3, 3, 1, 0, 1, 0, 3], [1, 1, 1, 1, 1, 0, 0, 0, 0, 0])
+          print("threshold:", model.threshold)
+          print(model.predict([0, 2, 4, 9]))
+        expectedOutput: |
+          threshold: 2
+          [0, 1, 1, 1]
+        annotations:
+          - line: 4
+            text: "Training: the parameter is computed from the data and stored on the object."
+          - line: 7
+            text: Candidate thresholds run from 0 to one past the largest feature value ("never spam").
+          - line: 10
+            text: "Prediction: only the stored parameter is used — the training data is no longer needed."
+      - type: markdown
+        body: |
+          Two more distinctions you will meet constantly:
+
+          - **Parameters vs hyperparameters.** Parameters are learned by `fit` (our threshold; the weights
+            of a neural network). *Hyperparameters* are settings you choose before training, such as the
+            range of thresholds to try or how deep a decision tree may grow. Choosing them well is the
+            topic of [hyperparameter tuning](concept:ml.hyperparameter-tuning).
+          - **Classification vs regression.** Predicting a category (spam / not spam) is
+            *classification*; predicting a number (delivery time in minutes) is *regression*. Both are
+            supervised learning, previewed below.
+      - type: item
+        ref: mcq-feature-label
+
+  - id: mental-model
+    title: "Mental model: a model is a learned function"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Hold on to this picture — it stays accurate all the way up to large language models:
+
+          ```text
+          prediction = f(features; parameters)
+
+          training:   examples + labels  ──►  choose parameters that make f's errors small
+          prediction: new features       ──►  f(new features; chosen parameters)
+          ```
+
+          What changes between methods is only **the shape of f** and **how the parameters are searched
+          for**. Our spam model has one parameter found by trying every value. Linear regression has a
+          handful found by calculus ([gradient descent](concept:math.optimization)). An LLM has billions
+          of parameters found by gradient descent on enormous amounts of text — but it is still a
+          function whose numbers were tuned to make errors on training examples small.
+      - type: callout
+        variant: warning
+        title: Models learn correlations, not causes
+        body: |
+          The spam model learned "many exclamation marks tend to go with spam *in these examples*". It did
+          not learn *why*. If spammers stop using exclamation marks, or your users start sending excited
+          birthday wishes, the pattern breaks. A model is only as good as the match between its training
+          examples and the world it is used in — and that match decays as the world changes.
+      - type: visualization
+        component: step-diagram
+        title: The machine learning workflow
+        caption: Step through how labelled examples become a model, and how that model is checked and used.
+        props:
+          width: 760
+          height: 260
+          nodes:
+            - { id: examples, label: Labelled examples, x: 90, y: 70, shape: store }
+            - { id: features, label: Extract features, x: 280, y: 70 }
+            - { id: train, label: Train (fit), x: 470, y: 70 }
+            - { id: model, label: Model, x: 660, y: 70, shape: pill }
+            - { id: newmsg, label: New message, x: 90, y: 200, shape: actor }
+            - { id: holdout, label: Held-out examples, x: 470, y: 200, shape: store }
+            - { id: predict, label: Prediction, x: 660, y: 200 }
+          edges:
+            - { id: e1, from: examples, to: features }
+            - { id: e2, from: features, to: train, label: "(x, y) pairs" }
+            - { id: e3, from: train, to: model, label: parameters }
+            - { id: e4, from: holdout, to: model, label: evaluate }
+            - { id: e5, from: newmsg, to: features, label: same code }
+            - { id: e6, from: model, to: predict }
+          steps:
+            - title: Collect labelled examples
+              body: Gather inputs together with the correct answers. Labels usually come from people, logs (did the user mark it as spam?) or later outcomes (did the loan default?).
+              active: [examples]
+              payload: '("Claim your free prize now!!!", 1)'
+            - title: Turn each example into features
+              body: Compute the measurable properties the model can use. Feature code is part of the model — it must run identically at training and prediction time.
+              active: [examples, e1, features]
+              payload: "spam_signals = 6, label = 1"
+            - title: Train
+              body: Search for the parameter values that make the fewest (or smallest) errors on the training examples.
+              active: [features, e2, train]
+              payload: "threshold 2 → 1 error   threshold 3 → 1 error   threshold 4 → 3 errors"
+            - title: The model is the function plus its learned parameters
+              body: Training ends with a concrete rule you can store, version and ship.
+              active: [train, e3, model]
+              payload: "predict spam if spam_signals >= 2"
+            - title: Evaluate on examples the model never saw
+              body: Score the model on held-out labelled data, and compare it with a simple baseline. Scores on the training data are optimistic.
+              active: [holdout, e4, model]
+            - title: Predict for new inputs
+              body: New messages go through the same feature code, then the model. No label is available — that is why we needed a model.
+              active: [newmsg, e5, features, model, e6, predict]
+            - title: Monitor and retrain
+              body: Track how predictions perform over time. When the world changes (new spam tactics), collect fresh labelled examples and train again.
+              active: [model, predict, examples]
+
+  - id: when-ml
+    title: When ML is (and is not) the right tool
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          ML is a powerful tool with real costs: data collection and labelling, evaluation, monitoring,
+          retraining and errors you must design around. It fits when **most** of these hold:
+
+          1. **The rules are hard to write down** — the pattern is fuzzy, has many interacting factors, or
+             keeps changing (spam, fraud, image recognition, demand forecasting).
+          2. **There are plenty of representative examples**, and labels (or another learning signal)
+             can be obtained.
+          3. **Occasional errors are acceptable**, or can be caught (human review, confidence thresholds).
+          4. **There is a measurable target** — you can say exactly what is being predicted and how success
+             will be scored.
+
+          Prefer something simpler when:
+
+          | Situation | Better tool |
+          |---|---|
+          | The rule is known and exact (tax calculation, sorting, unit conversion) | Ordinary code |
+          | You need to look something up (a customer's plan, today's price) | A database query or a dictionary |
+          | A few clear conditions cover almost all cases | A short, tested rule |
+          | Every answer must be guaranteed correct and auditable | Code with tests, or a human |
+          | You have no examples, or labels are unreliable | Collect data first; start with rules |
+
+          And whichever tool you choose, start with a **[baseline](glossary:baseline-model)**: the simplest
+          possible predictor, such as "always predict the most common class" or "always predict the mean".
+          A model is only useful if it beats the baseline by enough to justify its cost.
+      - type: code
+        runnable: true
+        code: |
+          # A realistic inbox: 5 spam messages out of 20.
+          ys = [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          majority = max(set(ys), key=ys.count)
+          baseline_preds = [majority] * len(ys)
+          accuracy = sum(p == y for p, y in zip(baseline_preds, ys)) / len(ys)
+          print("majority class:", majority)
+          print("baseline accuracy:", accuracy)
+        expectedOutput: |
+          majority class: 0
+          baseline accuracy: 0.75
+        caption: '"Never spam" is right 75% of the time and catches no spam at all. Any real model must beat it.'
+        annotations:
+          - line: 3
+            text: The label value that occurs most often. `ys.count` is called once per distinct label.
+      - type: callout
+        variant: production
+        title: Frame the problem before choosing a model
+        body: |
+          "Use AI to improve support" is not an ML problem yet. "Predict, when a ticket arrives, whether it
+          will be escalated within 48 hours, so it can be routed to a senior agent; success = fewer
+          escalations at the same staffing" is. A good framing names the prediction, the moment it is made,
+          the label, the decision it drives and the metric — and often reveals that a rule would do.
+      - type: item
+        ref: explain-not-ml
+
+  - id: learning-types
+    title: A preview of the learning types
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Our spam filter learned from inputs paired with correct answers. That is only one way to learn;
+          the kind of data you have decides which one you can use. The details are in
+          [learning types](concept:ml.learning-types):
+
+          | Type | Data needed | Example |
+          |---|---|---|
+          | **Supervised** | Inputs **with** labels | Spam or not (classification); delivery time (regression) |
+          | **Unsupervised** | Inputs **without** labels | Group customers into segments; flag unusual transactions |
+          | **Self-supervised** | Unlabelled data whose own parts become the targets | Predict the next word of a sentence — how LLMs are pretrained |
+          | **Reinforcement** | Actions and the **rewards** they earn | A game-playing agent; tuning chat models with feedback |
+      - type: item
+        ref: mcq-learning-type
+
+  - id: mistakes
+    title: Common mistakes and how to spot them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | "Our model is 95% accurate!" but it is useless | The baseline is also ~95% (rare positives) | Always report the baseline next to the model; see [evaluation metrics](concept:ml.evaluation-metrics) |
+          | Great score in the notebook, poor in production | Scored on the training examples, or the training data does not match real traffic | Evaluate on held-out data that looks like production ([train/val/test](concept:ml.train-val-test)) |
+          | Predictions change for no visible reason | Feature code differs between training and prediction | Share one feature function and test it |
+          | Months spent, no improvement over rules | ML was not needed, or the target was never defined | Frame the problem and build the baseline first |
+          | Silent nonsense from a training loop | Features and labels misaligned (lists of different lengths) | Use `zip(..., strict=True)` so mismatches raise an error |
+
+          The last row is worth seeing. `zip` stops at the **shorter** list without complaint, so a missing
+          feature value silently shifts every pair after it. Since Python 3.10, `strict=True` turns that
+          into a loud error:
+      - type: code
+        runnable: true
+        code: |
+          features = [6, 5, 3, 3, 3, 1, 0, 1, 0]       # one value is missing!
+          labels = [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]
+          pairs = list(zip(features, labels))
+          print(len(pairs), "pairs from", len(labels), "labels")
+          pairs = list(zip(features, labels, strict=True))
+        expectedOutput: |
+          9 pairs from 10 labels
+        expectError: ValueError
+        caption: "Plain zip() silently drops the last label; strict=True raises ValueError: zip() argument 2 is longer than argument 1."
+      - type: item
+        ref: debug-signals
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Implement the learning step yourself, then assemble a baseline. The checks re-run your code on
+          new datasets, so a hard-coded answer will not pass.
+      - type: item
+        ref: code-learn-threshold
+      - type: item
+        ref: parsons-baseline
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Learning is search.** Every ML method defines (1) a family of candidate functions — the
+          *hypothesis space* — and (2) a way to score candidates against the training data, usually a
+          *loss function*, and (3) a search procedure. Our classifier's family is "threshold rules on one
+          feature", its score is the error count, and its search is exhaustive: try them all. That only
+          works because there are a handful of candidates. A model with a million real-valued parameters
+          has infinitely many candidates, so methods use calculus instead — the gradient of the loss tells
+          you which way to nudge each parameter. You will do exactly that in
+          [linear regression](concept:ml.linear-regression).
+
+          **A one-split decision tree is our model.** scikit-learn's `DecisionTreeClassifier(max_depth=1)`
+          (a "decision stump") also learns a single threshold on a single feature. Two differences: it
+          scores splits by *impurity* (Gini by default) rather than raw error count, and it places the
+          threshold halfway between neighbouring feature values. Full trees repeat the split recursively;
+          see [decision trees](concept:ml.decision-trees).
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install scikit-learn   (then: python stump.py)
+          from sklearn.dummy import DummyClassifier
+          from sklearn.tree import DecisionTreeClassifier
+
+          X = [[6], [5], [3], [3], [3], [1], [0], [1], [0], [3]]   # 2-D: one row per example, one column per feature
+          y = [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]
+
+          baseline = DummyClassifier(strategy="most_frequent").fit(X, y)
+          stump = DecisionTreeClassifier(max_depth=1, random_state=0).fit(X, y)
+
+          print(stump.tree_.threshold[0])        # 2.0: halfway between the feature values 1 and 3
+          print(stump.predict([[0], [2], [5]]))  # rows with x <= 2.0 go left (not spam), so 2 -> 0 here
+          print(baseline.score(X, y), stump.score(X, y))   # accuracy on the training data: 0.5 and 0.9
+        caption: >-
+          Illustrative: scikit-learn is not available in the browser. Install it locally with pip and run
+          the file to compare with the pure-Python version. Note that the stump sends x = 2 to "not spam",
+          while our rule (threshold 2, x >= t) calls it spam: both make one training error, and the data
+          cannot decide between them.
+      - type: markdown
+        body: |
+          **Why "most of" generative AI is deep learning.** A generative model learns the *distribution*
+          of its training data well enough to sample new examples from it. Counting which word follows
+          which (an n-gram model) is a generative model with no neural network at all. Modern systems —
+          Transformers for text, diffusion models for images — are deep networks because they capture far
+          richer structure. "Generative" describes *what the model outputs*; "deep" describes *how it is
+          built*.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Traditional programming: **rules + data → answers**. Machine learning: **data + answers →
+            rules** (a model), which then produces answers for new data.
+          - AI ⊃ machine learning ⊃ deep learning; generative AI produces new content and today is almost
+            always deep learning.
+          - **Features** describe an example, the **label** is the answer, the **model** is a function with
+            **parameters**, **training** chooses the parameters, **prediction** applies them to new inputs.
+          - Training is a search for parameters that minimise error on labelled examples; what matters is
+            performance on **new** data.
+          - Use ML when rules are hard to write, examples are plentiful and representative, errors are
+            tolerable and the target is measurable. Always compare against a **baseline**.
+          - Models learn correlations in their training data, not causes.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "When would you **not** use machine learning?" — Give concrete cases: an exact known rule, a
+          lookup, no reliable labels, zero tolerance for unexplained errors. Then show how you would frame
+          a vague request as a prediction task: the prediction, when it is made, the label, the decision it
+          drives, the metric, and the baseline it must beat.
+
+items:
+  - id: predict-rule
+    type: predict-output
+    skill: prediction
+    prompt: Using the hand-written rule from above, what does this program print?
+    code: |
+      SPAM_WORDS = {"free", "winner", "prize", "urgent", "cash"}
+
+      def is_spam(message):
+          words = message.lower().split()
+          return any(word in SPAM_WORDS for word in words)
+
+      print(is_spam("FREE prize inside"))
+      print(is_spam("Free!!! Prize!!!"))
+    answer: |
+      True
+      False
+    explanation: >-
+      `lower()` turns "FREE prize inside" into "free prize inside", and the word "free" is in the set, so
+      the first call returns True. In the second message `split()` produces "free!!!" and "prize!!!" —
+      the exclamation marks are part of each word, so neither exactly matches a set entry. Exact string
+      matching is brittle, which is one reason hand-written rules keep needing patches.
+    wrongAnswers:
+      - answer: |
+          True
+          True
+        feedback: >-
+          Set membership needs an exact match. `split()` keeps punctuation attached, so the words are
+          "free!!!" and "prize!!!", which are not in the set.
+      - answer: |
+          False
+          False
+        feedback: >-
+          The message is lower-cased before splitting, so "FREE" becomes "free", which is in the set.
+          Capital letters do not matter here.
+
+  - id: mcq-nesting
+    type: mcq
+    skill: recognition
+    prompt: Which statement about AI, machine learning, deep learning and generative AI is correct?
+    explanation: >-
+      Deep learning is a subset of machine learning (ML with many-layered neural networks), and machine
+      learning is a subset of AI. Plenty of AI involves no learning, and plenty of ML is not deep.
+      Generative AI describes models that produce new content, and today those are mostly deep-learning
+      models.
+    options:
+      - id: a
+        text: Every AI system learns from data.
+        feedback: >-
+          Route planners that search a graph and expert systems built from hand-written rules are AI but
+          learn nothing from data.
+      - id: b
+        text: Deep learning is a kind of machine learning that uses neural networks with many layers.
+        correct: true
+        feedback: Correct. It sits inside ML, which sits inside AI.
+      - id: c
+        text: Generative AI is the general term that contains all of machine learning.
+        feedback: >-
+          It is the other way round: generative AI is one kind of (mostly deep) machine learning. A spam
+          classifier is ML but generates nothing.
+      - id: d
+        text: Machine learning and deep learning are two names for the same thing.
+        feedback: >-
+          Linear regression, decision trees and k-means are machine learning without any neural network,
+          so they are not deep learning.
+
+  - id: predict-threshold
+    type: predict-output
+    skill: prediction
+    prompt: A trained spam model uses threshold 3 and the rule "spam if signals >= threshold". What does this print?
+    code: |
+      xs = [0, 2, 5, 3]
+      threshold = 3
+      print([1 if x >= threshold else 0 for x in xs])
+    answer: "[0, 0, 1, 1]"
+    explanation: >-
+      Each feature value is compared with the learned threshold: 0 and 2 are below 3 (not spam), 5 is
+      above, and 3 equals the threshold, which counts as spam because the rule uses >=.
+    wrongAnswers:
+      - answer: "[0, 0, 1, 0]"
+        feedback: >-
+          The comparison is `>=`, so a value equal to the threshold (3) is classified as spam. With `>` you
+          would get this answer.
+      - answer: "[1, 1, 0, 0]"
+        feedback: >-
+          The expression produces 1 when the condition is true. High signal counts mean spam, so 5 and 3
+          map to 1.
+
+  - id: mcq-feature-label
+    type: mcq
+    skill: recognition
+    prompt: |
+      A model will estimate a flat's monthly rent from its floor area, number of bedrooms and distance to
+      the nearest station, using past listings where the rent is known. Which statement is correct?
+    explanation: >-
+      The label (target) is what you want to predict and know for past examples: the rent. The inputs
+      describing each flat — area, bedrooms, distance — are features. Because the label is a number, this
+      is regression, a kind of supervised learning.
+    options:
+      - id: a
+        text: The rent is the label; area, bedrooms and distance are features; it is a regression problem.
+        correct: true
+        feedback: Right — known answers for past flats make it supervised, and a numeric target makes it regression.
+      - id: b
+        text: Floor area is the label because it is the most important input.
+        feedback: >-
+          The label is what you predict, not the most informative input. You already know a flat's area
+          when you make the prediction.
+      - id: c
+        text: The rent is a feature, because it appears in every past listing.
+        feedback: >-
+          The rent is known for past listings, but it is exactly what is unknown for a new flat. That makes
+          it the label.
+      - id: d
+        text: It is classification, because a flat is either expensive or cheap.
+        feedback: >-
+          The target is a number of currency units, so it is regression. You could turn it into a
+          category, but that throws information away.
+
+  - id: explain-not-ml
+    type: explain
+    skill: explanation
+    prompt: >-
+      Your manager asks you to "use machine learning" to calculate the delivery charge for each order. The
+      charge is defined by a published table: a fixed fee per distance band plus a surcharge for heavy
+      parcels. Explain whether ML is appropriate, and what you would build instead.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - States that ML is not appropriate because the rule is already known exactly.
+      - Notes that an ML model would add errors (approximating a known rule) and extra cost (data, training, monitoring).
+      - Proposes ordinary code (or a lookup table) that implements the published rule, with tests.
+      - Mentions when ML could become relevant (for example predicting something unknown, such as delivery time or demand).
+    modelAnswer: |
+      ML learns a rule from examples when nobody can write the rule down. Here the rule is published and
+      exact: a distance-band lookup plus a weight surcharge. A model trained on past orders could only
+      approximate it, would sometimes be wrong, and would need data, training and monitoring. I would
+      implement the table directly in code (or a lookup table in the database) with unit tests for each
+      band and the surcharge. ML might help elsewhere — for example predicting delivery time or demand,
+      where the answer is unknown in advance and depends on many fuzzy factors.
+
+  - id: mcq-learning-type
+    type: mcq
+    skill: transfer
+    prompt: |
+      A shop has two years of purchase records but no labels of any kind. It wants to discover groups of
+      customers who buy in similar ways, to design marketing campaigns. Which type of learning fits?
+    explanation: >-
+      There is no target to predict and no reward signal — the goal is to find structure in unlabelled
+      data. That is unsupervised learning, specifically clustering.
+    options:
+      - id: a
+        text: Supervised learning
+        feedback: Supervised learning needs a label for each example (a known answer). Here there are none.
+      - id: b
+        text: Unsupervised learning
+        correct: true
+        feedback: Correct — grouping unlabelled customers by similarity is clustering, a classic unsupervised task.
+      - id: c
+        text: Reinforcement learning
+        feedback: >-
+          Reinforcement learning needs an agent taking actions and receiving rewards over time. Nothing
+          here acts or is rewarded.
+      - id: d
+        text: It cannot be done without labels.
+        feedback: Discovering structure without labels is exactly what unsupervised methods do.
+
+  - id: debug-signals
+    type: debug
+    skill: debugging
+    prompt: |
+      The feature function below should give **6** for "Claim your FREE prize now!!!" (claim, free and
+      prize are suspicious, plus three exclamation marks) but it prints **4**. Find and fix the bug so the
+      feature does not depend on capital letters.
+    starterCode: |
+      SUSPICIOUS = {"free", "winner", "prize", "urgent", "cash", "claim", "win", "won"}
+
+      def spam_signals(message):
+          words = [w.strip(".,!?:") for w in message.split()]
+          return sum(w in SUSPICIOUS for w in words) + message.count("!")
+
+      print(spam_signals("Claim your FREE prize now!!!"))
+    solution: |
+      SUSPICIOUS = {"free", "winner", "prize", "urgent", "cash", "claim", "win", "won"}
+
+      def spam_signals(message):
+          words = [w.strip(".,!?:").lower() for w in message.split()]
+          return sum(w in SUSPICIOUS for w in words) + message.count("!")
+
+      print(spam_signals("Claim your FREE prize now!!!"))
+    expectedOutput: |
+      6
+    tests:
+      - name: Counts the example message correctly
+        code: |
+          got = spam_signals("Claim your FREE prize now!!!")
+          assert got == 6, f"spam_signals('Claim your FREE prize now!!!') should be 6, but it is {got!r}."
+      - name: Ignores capitalisation in other messages
+        code: |
+          got = spam_signals("URGENT: You WON cash")
+          assert got == 3, f"'URGENT: You WON cash' has three suspicious words (urgent, won, cash), so expect 3, not {got!r}. Compare words in lower case."
+          got = spam_signals("Meeting at noon")
+          assert got == 0, f"'Meeting at noon' has no signals, so expect 0, not {got!r}."
+      - name: Still counts exclamation marks
+        code: |
+          got = spam_signals("Wow!!")
+          assert got == 2, f"'Wow!!' has two exclamation marks, so expect 2, not {got!r}."
+    hints:
+      - Which words in "Claim your FREE prize now!!!" are not being counted? What is different about them?
+      - The set contains only lower-case words, and `"FREE" == "free"` is False.
+      - Convert each word to lower case before checking membership, for example with `.lower()`.
+    feedback:
+      - when: { outputEquals: "4\n" }
+        message: >-
+          "Claim" and "FREE" are still not matched. Set membership is case-sensitive — convert each word
+          with .lower() before the check.
+    explanation: >-
+      The set holds lower-case words, but the message contains "Claim" and "FREE". String comparison is
+      case-sensitive, so those words were not counted. Adding `.lower()` normalises every word before the
+      lookup. Bugs like this matter in ML because the model is trained on whatever the feature code
+      produces; if training and prediction code normalise text differently, the model silently degrades.
+
+  - id: code-learn-threshold
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `learn_threshold(xs, ys)`, the training step of the spam model.
+
+      - `xs` is a list of whole-number feature values; `ys` holds the matching labels (0 or 1).
+      - Try every whole-number threshold `t` from `0` up to and including `max(xs) + 1`.
+      - For each `t`, the model predicts `1` when `x >= t`, otherwise `0`. Count the errors.
+      - Return the `t` with the **fewest** errors. If several are tied, return the **smallest**.
+    starterCode: |
+      def learn_threshold(xs, ys):
+          # Try every threshold from 0 to max(xs) + 1 and return the best one.
+          pass
+
+      print(learn_threshold([6, 5, 3, 3, 3, 1, 0, 1, 0, 3], [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]))
+    solution: |
+      def learn_threshold(xs, ys):
+          best_t = None
+          best_errors = None
+          for t in range(0, max(xs) + 2):
+              errors = sum((1 if x >= t else 0) != y for x, y in zip(xs, ys))
+              if best_errors is None or errors < best_errors:
+                  best_t = t
+                  best_errors = errors
+          return best_t
+
+      print(learn_threshold([6, 5, 3, 3, 3, 1, 0, 1, 0, 3], [1, 1, 1, 1, 1, 0, 0, 0, 0, 0]))
+    expectedOutput: |
+      2
+    tests:
+      - name: Learns 2 on the lesson's data
+        code: |
+          got = learn_threshold([6, 5, 3, 3, 3, 1, 0, 1, 0, 3], [1, 1, 1, 1, 1, 0, 0, 0, 0, 0])
+          assert got == 2, f"Thresholds 2 and 3 both make 1 error; the smallest is 2. Your function returned {got!r}."
+      - name: Works on a dataset with a perfect split
+        code: |
+          got = learn_threshold([10, 20, 30, 40], [0, 0, 1, 1])
+          assert got == 21, f"Every t from 21 to 30 makes 0 errors, so the smallest, 21, should be returned. Got {got!r}. Are you trying every whole number, not only the values in xs?"
+      - name: Considers max(xs) + 1 ("never predict 1")
+        code: |
+          got = learn_threshold([1, 2, 3], [0, 0, 0])
+          assert got == 4, f"With no positive labels, only t = max(xs) + 1 = 4 makes 0 errors. Got {got!r}. Make sure your range includes max(xs) + 1."
+      - name: Breaks ties towards the smallest threshold
+        code: |
+          got = learn_threshold([1, 2, 2, 5, 7], [0, 1, 0, 1, 1])
+          assert got == 2, f"t = 2 and t = 3 both make 1 error; return the smaller one, 2. Got {got!r}. Only replace the best threshold when the new one is strictly better (<, not <=)."
+    hints:
+      - "Loop with `for t in range(0, max(xs) + 2):` — the end of a range is excluded, so + 2 reaches max(xs) + 1."
+      - "Inside the loop, count errors with `sum((1 if x >= t else 0) != y for x, y in zip(xs, ys))`."
+      - Keep the best threshold and its error count in two variables, and replace them only when a new threshold has strictly fewer errors.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Did you forget the `return` statement at the end?
+      - when: { outputEquals: "3\n" }
+        message: >-
+          You returned 3, which ties with 2. Either you only try values that appear in xs, or you replace
+          the best threshold on ties (<=). Try every whole number and use a strict < comparison.
+    explanation: >-
+      The function is a complete (tiny) learning algorithm: a family of rules (thresholds), a score (the
+      number of training errors) and a search (try them all, keep the best). Using a strict `<` means the
+      first, smallest threshold wins ties, which makes the result deterministic.
+
+  - id: parsons-baseline
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to compute a **majority-class baseline**: find the most common label, predict it
+      for every example, and print the label and the baseline's accuracy. One line is a distractor.
+    solution: |
+      labels = [0, 0, 1, 0, 0, 1, 0, 0]
+      majority = max(set(labels), key=labels.count)
+      predictions = [majority] * len(labels)
+      correct = sum(p == y for p, y in zip(predictions, labels))
+      print(majority, correct / len(labels))
+    distractors:
+      - predictions = [1] * len(labels)
+    expectedOutput: |
+      0 0.75
+    explanation: >-
+      The labels must exist before you can count them; the majority label must be known before building
+      the predictions; and the predictions are needed to count correct answers. Hard-coding `[1] * len(labels)`
+      would predict the minority class, which is not a majority baseline (and scores only 0.25 here).
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-errors
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      xs = [1, 2, 4, 5]
+      ys = [0, 0, 1, 1]
+
+      def errors(t):
+          return sum((1 if x >= t else 0) != y for x, y in zip(xs, ys))
+
+      print([errors(t) for t in range(0, 7)])
+    answer: "[2, 2, 1, 0, 0, 1, 2]"
+    explanation: >-
+      t = 0 and t = 1 predict 1 for everything (2 errors); t = 2 also flags x = 2 (1 error); t = 3 and
+      t = 4 split perfectly (0 errors); t = 5 misses x = 4 (1 error); t = 6 predicts 0 for everything
+      (2 errors).
+    wrongAnswers:
+      - answer: "[2, 1, 0, 0, 1, 2, 2]"
+        feedback: >-
+          This is what `x > t` would give. With `x >= t`, a value equal to the threshold is predicted as 1,
+          so t = 1 still flags x = 1 and makes 2 errors.
+      - answer: "[2, 2, 1, 0, 1, 2, 2]"
+        feedback: >-
+          Check t = 4: x = 4 and x = 5 are both >= 4, so both are predicted 1, which matches their labels —
+          0 errors, not 1.
+
+  - id: m-mcq-framing
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A hospital asks your team to "use AI to reduce missed appointments". What is the best **first**
+      step?
+    explanation: >-
+      Before any model, frame the problem as a concrete prediction with a label, a moment of prediction, a
+      decision it drives and a metric, and build a simple baseline. This often shows whether ML is needed
+      at all and what data must be collected.
+    options:
+      - id: a
+        text: >-
+          Define the prediction (will this booked appointment be missed?), when it is made (two days
+          before), the label from past records, the action (a reminder call) and how success is measured,
+          then build a simple baseline.
+        correct: true
+        feedback: Correct. A measurable target and a baseline come before any model choice.
+      - id: b
+        text: Train the largest neural network available on all hospital data.
+        feedback: >-
+          Without a defined target and metric there is nothing to train towards, and a large model is
+          rarely the right first step.
+      - id: c
+        text: Add every column of every hospital table as a feature so nothing is missed.
+        feedback: >-
+          Features only make sense relative to a defined prediction, and some columns (for example ones
+          recorded after the appointment) would leak the answer.
+      - id: d
+        text: Buy a generative AI chatbot.
+        feedback: The problem is a yes/no prediction to drive reminders, not content generation.
+
+  - id: m-tf-correlation
+    type: true-false
+    skill: explanation
+    prompt: >-
+      True or false: if a trained model relies heavily on a feature, that shows the feature *causes* the
+      outcome, so changing the feature will change the outcome.
+    answer: false
+    explanation: >-
+      Models learn correlations present in their training data. A feature can predict an outcome because
+      both are driven by something else, or by coincidence in the sample. Showing causation needs
+      experiments or careful causal analysis, not a fitted model.
+
+  - id: m-code-mean-baseline
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      For **regression** (predicting a number) the usual baseline is "always predict the mean of the
+      training labels". Write `mean_baseline_mae(train_ys, test_ys)` that:
+
+      1. computes the mean of `train_ys`,
+      2. predicts that mean for every value in `test_ys`,
+      3. returns the **mean absolute error**: the average of `abs(actual - prediction)` over `test_ys`.
+    starterCode: |
+      def mean_baseline_mae(train_ys, test_ys):
+          pass
+
+      print(mean_baseline_mae([30, 40, 50], [35, 45, 50, 30]))
+    solution: |
+      def mean_baseline_mae(train_ys, test_ys):
+          prediction = sum(train_ys) / len(train_ys)
+          errors = [abs(y - prediction) for y in test_ys]
+          return sum(errors) / len(errors)
+
+      print(mean_baseline_mae([30, 40, 50], [35, 45, 50, 30]))
+    expectedOutput: |
+      7.5
+    tests:
+      - name: Correct on the example
+        code: |
+          import math
+          got = mean_baseline_mae([30, 40, 50], [35, 45, 50, 30])
+          assert got is not None, "Your function returned None. Add a return statement."
+          assert math.isclose(got, 7.5), f"The training mean is 40; the errors are 5, 5, 10, 10, so the MAE is 7.5. Got {got!r}."
+      - name: Uses the training mean, not the test mean
+        code: |
+          import math
+          got = mean_baseline_mae([10, 10], [20, 30])
+          assert math.isclose(got, 15.0), f"Predict the TRAINING mean (10) for each test value: errors 10 and 20, MAE 15.0. Got {got!r}. Did you average test_ys instead?"
+      - name: Works for other data
+        code: |
+          import math
+          got = mean_baseline_mae([1, 2, 3, 4], [2.5, 0.5])
+          assert math.isclose(got, 1.0), f"Training mean 2.5; errors 0 and 2; MAE 1.0. Got {got!r}."
+    hints:
+      - The mean is `sum(train_ys) / len(train_ys)`.
+      - Build a list of `abs(y - prediction)` for each y in test_ys, then average it.
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Return the mean absolute error at the end.
+    explanation: >-
+      The baseline's only parameter is the training mean; it is learned from the training labels and then
+      applied unchanged to the test examples. Any real regression model must achieve a lower MAE than this
+      to be worth its cost.
+
+  - id: m-mcq-ai-not-ml
+    type: mcq
+    skill: recognition
+    prompt: Which of these systems is AI but **not** machine learning?
+    explanation: >-
+      A route planner that searches a road network with an algorithm such as A* behaves intelligently, but
+      its behaviour is fully specified by hand-written code and the map — nothing is learned from labelled
+      examples.
+    options:
+      - id: a
+        text: A route planner that finds the shortest path by searching a road graph
+        correct: true
+        feedback: Correct — search is classic AI, and no parameters are fitted to data.
+      - id: b
+        text: An email filter trained on messages users marked as spam
+        feedback: Its rule is learned from labelled examples, so it is (supervised) machine learning.
+      - id: c
+        text: A chatbot built on a large language model
+        feedback: LLMs are deep-learning models trained on huge amounts of text — ML, deep learning and generative AI.
+      - id: d
+        text: A model that forecasts tomorrow's sales from past sales
+        feedback: Fitting a forecast to historical data is machine learning (regression).
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-errors, m-mcq-framing, m-tf-correlation, m-code-mean-baseline, m-mcq-ai-not-ml]
+
+cheatsheet: |
+  ```text
+  traditional:  rules + data         -> answers
+  ML:           data + answers       -> rules (a model)
+  model:        prediction = f(features; parameters)
+  training:     choose parameters that minimise error on labelled examples
+  prediction:   apply the trained f to NEW inputs
+  ```
+  - AI ⊃ ML ⊃ deep learning; generative AI = produces content, today mostly deep learning
+  - Supervised (labels) · unsupervised (no labels) · self-supervised (targets from the data) · reinforcement (rewards)
+  - Baselines: most frequent class (classification), training mean (regression)
+  - Use ML when: rules are hard, examples plentiful, errors tolerable, target measurable
+  - `zip(xs, ys, strict=True)` catches misaligned features and labels

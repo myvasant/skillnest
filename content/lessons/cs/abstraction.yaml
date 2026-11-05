@@ -1,0 +1,443 @@
+id: cs.abstraction
+concept: cs.abstraction
+title: Abstraction, Encapsulation and Interfaces
+subtitle: Hide changeable details behind clear contracts
+estimatedMinutes: 55
+reviewedOn: 2026-11-04
+summary: >-
+  Learn how abstraction reduces the amount of detail a caller must understand, how encapsulation protects
+  object invariants, and how interfaces let components work together without depending on concrete
+  implementations. Use Python properties, abstract base classes and Protocols without adding unnecessary
+  classes or pretending Python has strict private fields.
+objectives:
+  - Distinguish abstraction, encapsulation, interface and implementation.
+  - Design a small public API that hides changeable internal decisions.
+  - Use properties and methods to keep object invariants valid.
+  - Explain Python's underscore convention and double-underscore name mangling accurately.
+  - Compare abstract base classes (ABC) with structural typing through typing.Protocol.
+  - Recognise high cohesion, low coupling and cases where a function or module is simpler than a class.
+sources:
+  - title: The Python Tutorial — Classes and private variables
+    url: https://docs.python.org/3.14/tutorial/classes.html#private-variables
+    publisher: Python Software Foundation
+    version: "3.14"
+  - title: abc — Abstract Base Classes
+    url: https://docs.python.org/3.14/library/abc.html
+    publisher: Python Software Foundation
+    version: "3.14"
+  - title: typing — Support for type hints (Protocol)
+    url: https://docs.python.org/3.14/library/typing.html#typing.Protocol
+    publisher: Python Software Foundation
+    version: "3.14"
+  - title: "PEP 544 — Protocols: Structural subtyping"
+    url: https://peps.python.org/pep-0544/
+    publisher: Python Software Foundation
+sections:
+  - id: why-abstraction
+    title: Why hide implementation details?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Imagine a program that sends notifications. One version of the program knows how to connect to an
+          email server, format a message, retry failures and write logs. Every part of the application that
+          wants to send a notification now needs to understand those details.
+
+          A better design exposes a small operation such as `send(message)`. The caller knows what the
+          component promises to do, while the component owns the details of how it does it. That separation
+          is the starting point for **abstraction**.
+      - type: callout
+        variant: analogy
+        title: A light switch hides the wiring
+        body: |
+          A person uses a switch to turn a light on or off. They do not need to know the wire layout, relay
+          design or electrical path. The switch is a simple interface over a more complicated implementation.
+          Good software interfaces work in the same way: they make the needed action clear without exposing
+          every internal step.
+
+  - id: four-terms
+    title: Abstraction, encapsulation, interface and implementation
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          These terms are related, but they are not interchangeable:
+
+          - **Abstraction** presents the essential behaviour and hides details that callers do not need.
+          - **Encapsulation** keeps related state and behaviour together, and controls how state can change.
+          - **Interface** is the visible contract: the operations, inputs, outputs and errors a caller may rely on.
+          - **Implementation** is the internal code and data structures that make the contract work.
+
+          A class can provide an abstraction, but so can a function or a module. The goal is not to create more
+          layers. The goal is to reduce the knowledge one part of the program needs about another part.
+      - type: item
+        ref: abstraction-terms-mcq
+
+  - id: invariants-and-properties
+    title: Encapsulation protects invariants
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An **invariant** is a rule that must remain true for an object to be valid. A bank account balance
+          might never be negative. If callers can freely change the balance, every caller must remember that
+          rule. Encapsulation puts the rule next to the state it protects.
+
+          In Python, a leading underscore such as `_balance` means "internal; do not use this from outside the
+          class" by convention. A `property` can expose a read-only view, while methods validate changes:
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, opening_balance):
+                  if opening_balance < 0:
+                      raise ValueError("opening balance cannot be negative")
+                  self._balance = opening_balance
+
+              @property
+              def balance(self):
+                  return self._balance
+
+              def deposit(self, amount):
+                  if amount <= 0:
+                      raise ValueError("deposit must be positive")
+                  self._balance += amount
+
+              def withdraw(self, amount):
+                  if amount <= 0:
+                      raise ValueError("withdrawal must be positive")
+                  if amount > self._balance:
+                      raise ValueError("insufficient funds")
+                  self._balance -= amount
+
+          account = BankAccount(100)
+          account.deposit(25)
+          account.withdraw(40)
+          print(account.balance)
+        expectedOutput: |
+          85
+        annotations:
+          - line: 3
+            text: The constructor refuses an invalid starting state.
+          - line: 9
+            text: Callers can read the balance through a stable property.
+          - line: 11
+            text: The deposit method checks the rule before changing the internal state.
+      - type: callout
+        variant: warning
+        title: Python does not enforce strict private fields
+        body: |
+          `_balance` is still accessible to code that deliberately reaches into it. The underscore is a
+          convention, not an access-control barrier. Encapsulation makes the intended API clear and gives
+          normal callers one safe route; it is not a security boundary against hostile Python code.
+
+  - id: name-mangling
+    title: One underscore, two underscores and name mangling
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A single leading underscore (`_value`) communicates that a name is internal. Python does not block
+          access to it.
+
+          A double leading underscore (`__value`) inside a class triggers **name mangling**: Python rewrites
+          the attribute name to include the class name, approximately `_ClassName__value`. This helps avoid
+          accidental clashes with attributes in subclasses. It does not make the value secret or inaccessible.
+      - type: code
+        runnable: true
+        code: |
+          class Device:
+              def __init__(self):
+                  self.__serial = "A1"
+
+          device = Device()
+          print(device.__dict__["_Device__serial"])
+        expectedOutput: |
+          A1
+        caption: The double underscore changes the stored attribute name. It is not encryption or a permission check.
+      - type: item
+        ref: abstraction-name-mangling-predict
+
+  - id: interfaces-with-protocols
+    title: Describe behaviour with an interface
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An interface describes the operations a caller needs. Python offers two useful approaches:
+
+          - An **abstract base class (ABC)** uses inheritance and `@abstractmethod` to prevent a subclass from
+            being instantiated until required methods are implemented. It is useful when you want a shared
+            nominal base class or shared implementation.
+          - A **Protocol** describes a required set of methods or attributes. A class can satisfy it by having
+            the right shape; it does not need to inherit from the Protocol. Static type checkers can use this
+            structural relationship to catch incompatible implementations.
+
+          Type annotations and Protocols do not automatically validate values at runtime. A Protocol decorated
+          with `@runtime_checkable` can support limited runtime structural checks, but it checks attribute
+          presence, not full method signatures or business correctness.
+      - type: code
+        runnable: true
+        code: |
+          from typing import Protocol
+
+          class Notifier(Protocol):
+              def send(self, message: str) -> str:
+                  ...
+
+          class ConsoleNotifier:
+              def send(self, message: str) -> str:
+                  return f"sent: {message}"
+
+          def alert(notifier: Notifier, message: str) -> str:
+              return notifier.send(message)
+
+          print(alert(ConsoleNotifier(), "Build passed"))
+        expectedOutput: |
+          sent: Build passed
+        caption: ConsoleNotifier does not inherit from Notifier. It still provides the operation that alert needs; a static type checker can verify the shape.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          from abc import ABC, abstractmethod
+
+          class Storage(ABC):
+              @abstractmethod
+              def save(self, key: str, value: str) -> None:
+                  ...
+
+          class MemoryStorage(Storage):
+              def __init__(self):
+                  self.data = {}
+
+              def save(self, key: str, value: str) -> None:
+                  self.data[key] = value
+        caption: >-
+          This ABC example is also valid in the browser runtime, but it is marked illustrative to keep the lesson
+          focused on the Protocol example above. Run it locally if you want to experiment with abstract-class
+          instantiation errors.
+      - type: item
+        ref: abstraction-protocol-tf
+
+  - id: boundaries-and-design
+    title: "Good boundaries: high cohesion and low coupling"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A module or class has **high cohesion** when its responsibilities belong together. It has **low
+          coupling** when it depends on relatively few details of other modules.
+
+          Good abstraction creates a stable boundary around decisions that may change. For example, a report
+          generator should depend on a `Storage` interface rather than knowing whether the report is written to
+          a file, SQLite or a remote service. Then the storage implementation can change without rewriting
+          the report logic.
+
+          Keep the interface as small as the caller needs. A huge interface that exposes every internal detail
+          does not hide complexity. A wrapper that only forwards every call without reducing knowledge is not
+          automatically a useful abstraction.
+      - type: callout
+        variant: misconception
+        title: Not every operation needs a class
+        body: |
+          A pure transformation such as `normalise_email(value)` is often clearer as a function. A module can
+          group related functions and constants. Use a class when state, identity, invariants or a family of
+          interchangeable behaviours make it useful—not because every noun needs a class.
+      - type: item
+        ref: abstraction-explain-boundary
+
+  - id: mistakes-and-summary
+    title: Common mistakes and summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          Common mistakes:
+
+          - Calling a field private when it is only protected by an underscore convention.
+          - Using double underscores as if they were encryption or authorisation.
+          - Adding an ABC or Protocol when one simple function would do.
+          - Exposing mutable internal collections and allowing callers to break invariants.
+          - Creating a large interface that couples callers to implementation details.
+          - Assuming type annotations are runtime validation.
+
+          A good abstraction lets a caller express what it needs, protects important rules, and leaves the
+          implementation free to change. Prefer small contracts, cohesive modules and dependencies on
+          behaviour rather than concrete details.
+      - type: item
+        ref: abstraction-temperature-code
+      - type: item
+        ref: abstraction-explain-boundary
+      - type: item
+        ref: abstraction-protocol-tf
+items:
+  - id: abstraction-terms-mcq
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: Which statement best distinguishes abstraction from encapsulation?
+    options:
+      - id: expose-hide
+        text: Abstraction exposes essential behaviour; encapsulation groups state and behaviour and controls how state changes.
+        correct: true
+        feedback: Abstraction reduces what a caller needs to know. Encapsulation protects the internal state and the rules for changing it.
+      - id: same-thing
+        text: They are exactly the same idea and can always be used interchangeably.
+        correct: false
+        feedback: "They are related but answer different questions: what should a caller see, and how should internal state be protected?"
+      - id: abstraction-security
+        text: Abstraction encrypts internal data, while encapsulation authenticates users.
+        correct: false
+        feedback: Neither term means encryption or authentication. They are software design concepts.
+      - id: class-only
+        text: Abstraction is possible only through inheritance from an abstract base class.
+        correct: false
+        feedback: Functions, modules and simple APIs can provide abstractions too.
+    explanation: Abstraction is about the essential contract visible to a caller. Encapsulation keeps state and behaviour together and controls how state changes.
+  - id: abstraction-name-mangling-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? It reads the name-mangled attribute from the instance dictionary.
+    code: |
+      class Device:
+          def __init__(self):
+              self.__serial = "A1"
+
+      device = Device()
+      print(device.__dict__["_Device__serial"])
+    answer: A1
+    wrongAnswers:
+      - answer: AttributeError
+        feedback: The dictionary contains the mangled name. Direct access through device.__serial would fail, but the actual stored key is visible here.
+      - answer: __serial
+        feedback: Name mangling changes the attribute name to include the class name; it does not store the literal double-underscore name.
+    explanation: A double-leading-underscore attribute is mangled to `_Device__serial` in this class. This reduces accidental name clashes but does not create true privacy.
+  - id: abstraction-protocol-tf
+    type: true-false
+    skill: recognition
+    prompt: A typing.Protocol automatically checks every method signature and business rule at runtime whenever an object is passed to a function.
+    answer: false
+    explanation: Protocols primarily support static structural type checking. Runtime-checkable Protocols perform limited structural checks; they do not validate full signatures or business rules.
+  - id: abstraction-temperature-code
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Implement a `Temperature` class that stores Celsius in `_celsius`. The `celsius` property must accept
+      finite int or float values (but not bool), reject values below absolute zero (-273.15), and expose the
+      current value. Add `to_fahrenheit()` using F = C * 9 / 5 + 32.
+    explanation: >-
+      The property setter is the boundary that enforces the class invariant: values must be finite numbers, bool is rejected even though it subclasses int, and temperatures cannot fall below absolute zero. The conversion method then uses the validated stored value.
+    starterCode: |
+      import math
+
+      class Temperature:
+          def __init__(self, celsius):
+              self.celsius = celsius
+
+          @property
+          def celsius(self):
+              return self._celsius
+
+          @celsius.setter
+          def celsius(self, value):
+              # TODO: validate the type, finiteness and absolute-zero boundary
+              self._celsius = value
+
+          def to_fahrenheit(self):
+              # TODO: convert the stored Celsius value
+              return 0
+    solution: |
+      import math
+
+      class Temperature:
+          def __init__(self, celsius):
+              self.celsius = celsius
+
+          @property
+          def celsius(self):
+              return self._celsius
+
+          @celsius.setter
+          def celsius(self, value):
+              if isinstance(value, bool) or not isinstance(value, (int, float)):
+                  raise TypeError("temperature must be a number")
+              if not math.isfinite(value):
+                  raise ValueError("temperature must be finite")
+              if value < -273.15:
+                  raise ValueError("temperature cannot be below absolute zero")
+              self._celsius = float(value)
+
+          def to_fahrenheit(self):
+              return self._celsius * 9 / 5 + 32
+    tests:
+      - name: converts the freezing point
+        code: |
+          temperature = Temperature(0)
+          assert temperature.celsius == 0.0, "the property should expose the stored Celsius value."
+          assert temperature.to_fahrenheit() == 32.0, "0 Celsius is 32 Fahrenheit."
+      - name: property validates updates
+        code: |
+          temperature = Temperature(20)
+          temperature.celsius = 100
+          assert temperature.to_fahrenheit() == 212.0, "100 Celsius is 212 Fahrenheit."
+      - name: rejects absolute-zero violations
+        code: |
+          try:
+              Temperature(-273.16)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("a value below absolute zero must be rejected.")
+      - name: rejects booleans as numbers
+        code: |
+          try:
+              Temperature(True)
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("bool must not be accepted as a temperature number.")
+    hints:
+      - Remember that bool is a subclass of int, so exclude bool explicitly.
+      - Use math.isfinite() to reject NaN and infinity.
+      - Validate before changing _celsius so a failed update leaves the previous value intact.
+    feedback:
+      - when:
+          codeContains: self._celsius = value
+        message: Store the value only after validating it. A property setter is a good place to preserve the object's invariant.
+  - id: abstraction-explain-boundary
+    type: explain
+    skill: design
+    difficulty: 3
+    prompt: A report service should save output to either a local file or a database. Explain how an interface can reduce coupling, and state when a simple function or module would be better than a class hierarchy.
+    explanation: >-
+      An interface describes the operations a caller needs without exposing the concrete implementation. A local-file adapter and database adapter can satisfy the same contract, allowing the report service to depend on the abstraction. If there is only one simple operation and no meaningful variation, a function or module is often clearer than an inheritance hierarchy.
+    rubric:
+      - Describes a small storage contract in terms of behaviour such as save or load.
+      - Explains that the report service depends on the contract rather than a concrete file/database implementation.
+      - Identifies how this reduces coupling and allows implementation changes behind the boundary.
+      - Recognises that functions or modules are preferable when there is no meaningful state or interchangeable behaviour.
+    modelAnswer: |
+      I would define a small storage interface with the operations the report service needs, such as save. A
+      file-backed adapter and a database-backed adapter can each provide that behaviour. The report service
+      then depends on the interface rather than importing a concrete database client. If the task is only a
+      simple transformation with no state or interchangeable implementation, a function in a module is
+      simpler than introducing an abstract class and a hierarchy.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+    - abstraction-terms-mcq
+    - abstraction-name-mangling-predict
+    - abstraction-protocol-tf
+    - abstraction-temperature-code
+    - abstraction-explain-boundary
+cheatsheet: |
+  - **Abstraction:** show essential behaviour; hide details the caller does not need.
+  - **Encapsulation:** keep state and behaviour together and control changes to preserve invariants.
+  - **Interface:** the contract callers rely on; **implementation:** the code behind it.
+  - `_name` is an internal-use convention, not enforced privacy.
+  - `__name` triggers name mangling to reduce accidental subclass collisions, not to protect secrets.
+  - **ABC:** nominal inheritance plus abstract methods; **Protocol:** structural interface checked by static type tools.
+  - Aim for small interfaces, high cohesion and low coupling; use functions/modules when a class adds no value.

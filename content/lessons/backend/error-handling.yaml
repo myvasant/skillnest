@@ -1,0 +1,228 @@
+id: backend.error-handling
+concept: backend.error-handling
+title: API error handling
+subtitle: Map failures to correct status codes and structured error bodies (RFC 9457 problem details) without leaking
+  internals
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Map failures to correct status codes and structured error bodies (RFC 9457 problem details) without leaking
+  internals.
+objectives:
+- Explain the core model behind api error handling.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'RFC 9457: Problem Details for HTTP APIs'
+  url: https://www.rfc-editor.org/rfc/rfc9457
+  publisher: IETF
+- title: Handling Errors
+  url: https://fastapi.tiangolo.com/tutorial/handling-errors/
+  publisher: FastAPI
+- title: Error Handling Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
+  publisher: OWASP
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Map failures to correct status codes and structured error bodies (RFC 9457 problem details) without leaking
+      internals. Clients need to know whether to fix their request, retry or give up; a correct status code and
+      a machine-readable body tell them, while stack traces in responses hand attackers a map of your system.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- 4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed,
+      404 not found, 409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and
+      a retry may succeed.
+
+      - RFC 9457 (which replaced RFC 7807) defines problem details: an `application/problem+json` body with `type`,
+      `title`, `status`, `detail` and `instance`, plus your own extension members.
+
+      - In FastAPI, raise `HTTPException(status_code=404, detail=...)` for expected failures and register `@app.exception_handler(MyError)`
+      to map domain exceptions to responses in one place.
+
+      - FastAPI answers invalid requests with 422 and a list of field errors; override the `RequestValidationError`
+      handler if you need one consistent error format.
+
+      - Catch unexpected exceptions at the edge - log the full traceback with a correlation ID and return a generic
+      500 that contains only that ID.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status
+      codes.
+
+      - 401 means the caller is not authenticated; 403 means they are authenticated but not permitted. They are
+      not interchangeable.
+
+      - Different login errors for "unknown user" and "wrong password" let attackers enumerate accounts; return
+      one generic message.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def status_for_error(kind):\n    return {\"invalid\": 422, \"unauthenticated\": 401, \"forbidden\": 403,\
+      \ \"missing\": 404, \"conflict\": 409}.get(kind, 500)\n\nprint(status_for_error(\"forbidden\"))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: error-handling-code
+  - type: item
+    ref: error-handling-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - 4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed, 404 not
+      found, 409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and a retry
+      may succeed.
+
+      - RFC 9457 (which replaced RFC 7807) defines problem details: an `application/problem+json` body with `type`,
+      `title`, `status`, `detail` and `instance`, plus your own extension members.
+
+      - In FastAPI, raise `HTTPException(status_code=404, detail=...)` for expected failures and register `@app.exception_handler(MyError)`
+      to map domain exceptions to responses in one place.
+
+      - FastAPI answers invalid requests with 422 and a list of field errors; override the `RequestValidationError`
+      handler if you need one consistent error format.
+
+      - Catch unexpected exceptions at the edge - log the full traceback with a correlation ID and return a generic
+      500 that contains only that ID.
+
+
+      **Avoid**
+
+      - Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status
+      codes.
+
+      - 401 means the caller is not authenticated; 403 means they are authenticated but not permitted. They are
+      not interchangeable.
+
+      - Different login errors for "unknown user" and "wrong password" let attackers enumerate accounts; return
+      one generic message.'
+  - type: item
+    ref: error-handling-mcq
+  - type: item
+    ref: error-handling-tf
+  - type: item
+    ref: error-handling-code
+items:
+- id: error-handling-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of api error handling?
+  explanation: 4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed,
+    404 not found, 409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and
+    a retry may succeed.
+  options:
+  - id: a
+    text: 4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed, 404
+      not found, 409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and a
+      retry may succeed.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status
+      codes.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: error-handling-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status
+    codes.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: error-handling-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing api error handling in a real application. What design decisions would you make, what
+    failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: error-handling-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for api error handling. Implement the stated rule and make sure both ordinary and
+    edge-case tests pass.
+  starterCode: "def status_for_error(kind):\n    raise NotImplementedError('Complete this function')"
+  solution: "def status_for_error(kind):\n    return {\"invalid\": 422, \"unauthenticated\": 401, \"forbidden\"\
+    : 403, \"missing\": 404, \"conflict\": 409}.get(kind, 500)"
+  tests:
+  - name: Core behaviour
+    code: assert status_for_error("unauthenticated") == 401
+  - name: Edge cases
+    code: 'assert status_for_error("forbidden") == 403
+
+      assert status_for_error("unknown") == 500'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - error-handling-mcq
+  - error-handling-tf
+  - error-handling-code
+cheatsheet: '**Core model**
+
+  - 4xx means the client must change something (400 malformed, 401 not authenticated, 403 not allowed, 404 not found,
+  409 conflict, 422 validation failed, 429 too many requests); 5xx means the server failed and a retry may succeed.
+
+  - RFC 9457 (which replaced RFC 7807) defines problem details: an `application/problem+json` body with `type`,
+  `title`, `status`, `detail` and `instance`, plus your own extension members.
+
+  - In FastAPI, raise `HTTPException(status_code=404, detail=...)` for expected failures and register `@app.exception_handler(MyError)`
+  to map domain exceptions to responses in one place.
+
+  - FastAPI answers invalid requests with 422 and a list of field errors; override the `RequestValidationError`
+  handler if you need one consistent error format.
+
+  - Catch unexpected exceptions at the edge - log the full traceback with a correlation ID and return a generic
+  500 that contains only that ID.
+
+
+  **Common mistakes**
+
+  - Returning 200 with an error object in the body breaks clients, caches and monitoring that rely on status codes.
+
+  - 401 means the caller is not authenticated; 403 means they are authenticated but not permitted. They are not
+  interchangeable.
+
+  - Different login errors for "unknown user" and "wrong password" let attackers enumerate accounts; return one
+  generic message.'

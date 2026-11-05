@@ -1,0 +1,241 @@
+id: networking.dns
+concept: networking.dns
+title: 'DNS: Names, Records and Resolution'
+subtitle: How a name becomes a network destination
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: DNS is a distributed naming system that resolves domain names into records such as IPv4 and IPv6 addresses.
+  Learn the resolver hierarchy, common record types, caching and practical diagnosis.
+objectives:
+- Explain the roles of stub, recursive and authoritative DNS resolvers.
+- Trace a typical recursive lookup through root, TLD and authoritative servers.
+- Distinguish A, AAAA, CNAME, MX, TXT and NS records.
+- Explain TTL caching and why DNS changes are not instantly visible everywhere.
+- Use DNS query tools to form a testable diagnosis.
+sources:
+- title: 'RFC 1034: Domain Names — Concepts and Facilities'
+  url: https://www.rfc-editor.org/rfc/rfc1034
+  publisher: IETF
+- title: 'RFC 1035: Domain Names — Implementation and Specification'
+  url: https://www.rfc-editor.org/rfc/rfc1035
+  publisher: IETF
+- title: DNS overview
+  url: https://www.cloudflare.com/learning/dns/what-is-dns/
+  publisher: Cloudflare Learning Center
+sections:
+- id: why
+  title: Why DNS exists
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'Humans use names such as `api.example.com`; IP routing uses numeric addresses. **DNS (Domain Name System)**
+      is the distributed naming system that lets a client discover records associated with a name. It is not a permanent
+      phone book: one name can return multiple addresses, and answers can change for load balancing, failover or
+      content delivery networks.'
+  - type: callout
+    variant: misconception
+    title: DNS does not move your request
+    body: DNS lookup returns data such as an IP address. Your HTTP client then uses that result to establish a network
+      connection. DNS is not the transport for the later HTTP response.
+- id: hierarchy
+  title: The lookup hierarchy
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A typical lookup involves a **stub resolver** on your device asking a **recursive resolver** to find
+      an answer. If the recursive resolver has no cached answer, it follows referrals: root servers direct it to
+      the top-level domain (TLD) servers, and TLD servers direct it to the domain’s authoritative name servers.
+      The authoritative server supplies the zone data.'
+  - type: markdown
+    body: The recursive resolver usually caches the result. Each record has a **TTL (time to live)** measured in
+      seconds. A low TTL can make planned changes visible sooner, but it increases query traffic. A high TTL reduces
+      repeated lookups but keeps old answers cached longer after a change.
+  - type: code
+    language: python
+    runnable: true
+    code: "records = {\"A\": \"203.0.113.10\", \"AAAA\": \"2001:db8::10\", \"MX\": \"mail.example.com\"}\nfor record_type,\
+      \ value in records.items():\n    print(f\"{record_type}: {value}\")"
+    expectedOutput: 'A: 203.0.113.10
+
+      AAAA: 2001:db8::10
+
+      MX: mail.example.com'
+    caption: Illustrative record values from documentation address space; this code demonstrates record categories,
+      not a live DNS lookup.
+  - type: item
+    ref: dns-record-mcq
+- id: records
+  title: Common record types
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '| Type | Purpose | Example use |
+
+      |---|---|---|
+
+      | `A` | IPv4 address | Host points to an IPv4 endpoint |
+
+      | `AAAA` | IPv6 address | Host points to an IPv6 endpoint |
+
+      | `CNAME` | Alias to another name | `www` aliases the canonical host |
+
+      | `MX` | Mail exchanger | Directs domain email |
+
+      | `TXT` | Text data | Domain verification and email policy data |
+
+      | `NS` | Name-server delegation | Identifies authoritative name servers |'
+  - type: markdown
+    body: A CNAME is an alias, not an address. It points to another domain name, which must then be resolved. DNS
+      zone rules restrict combining a CNAME with other data at the same owner name; providers may offer flattening
+      or ALIAS-like features at a zone apex.
+- id: debug
+  title: Diagnose DNS instead of guessing
+  kind: debugging
+  blocks:
+  - type: markdown
+    body: Useful commands include `dig example.com A`, `dig example.com AAAA`, `dig +trace example.com`, and `nslookup
+      example.com`. Compare the answer from your configured recursive resolver with the authoritative answer. Check
+      the queried record type, TTL, nameserver delegation and whether the application is using a different resolver
+      or cached result.
+  - type: callout
+    variant: production
+    title: Do not call every DNS delay propagation
+    body: A changed record can be correct at the authoritative server while recursive resolvers still serve cached
+      values. Record the resolver, query type, answer and TTL when debugging.
+  - type: item
+    ref: dns-ttl-tf
+  - type: item
+    ref: dns-resolution-explain
+- id: practice
+  title: 'Practice: classify DNS records'
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Write a small helper that classifies the record types your monitoring tool understands. It should not
+      crash when it encounters a newer or less common type.
+  - type: item
+    ref: dns-parse-code
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- DNS resolves names to records; it does not carry the subsequent HTTP response.
+
+      - Recursive resolvers follow the DNS hierarchy and cache answers.
+
+      - TTL controls how long cached data may be reused.
+
+      - A/AAAA are IPv4/IPv6, CNAME is an alias, MX is mail routing, TXT is text and NS is delegation.'
+  - type: item
+    ref: dns-record-mcq
+  - type: item
+    ref: dns-ttl-tf
+  - type: item
+    ref: dns-parse-code
+items:
+- id: dns-record-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Which DNS record type maps a hostname to an IPv6 address?
+  explanation: AAAA records contain IPv6 address data; A records contain IPv4 addresses.
+  options:
+  - id: a
+    text: A
+    feedback: A maps a name to an IPv4 address.
+  - id: b
+    text: AAAA
+    correct: true
+    feedback: 'Correct: AAAA stores IPv6 address records.'
+  - id: c
+    text: MX
+    feedback: MX identifies mail exchangers.
+  - id: d
+    text: TXT
+    feedback: TXT stores text data such as verification records.
+- id: dns-ttl-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: A DNS TTL is the maximum time a resolver may cache a record before it should query again.
+  answer: true
+  explanation: TTL is a cache lifetime in seconds. It does not push changes to every resolver; cached answers expire
+    according to their TTL.
+- id: dns-resolution-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: A user says a website is down immediately after its DNS record changed. Explain two reasons some users
+    may still reach the old address and one diagnostic step.
+  rubric:
+  - Explain that recursive resolvers or operating systems may still have a cached answer until its TTL expires.
+  - Mention that different resolvers can have different cache states or that authoritative records may be inconsistent.
+  - Suggest checking authoritative and recursive answers with tools such as dig or nslookup.
+  modelAnswer: A resolver may still have the old answer cached until its TTL expires, and different recursive resolvers
+    can therefore return different addresses temporarily. Compare an authoritative answer with answers from multiple
+    recursive resolvers using dig; also verify the record at the DNS provider.
+  explanation: A strong answer separates what the protocol guarantees from what remains the application or operator
+    responsibility, then proposes a diagnostic based on observable evidence.
+- id: dns-parse-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete `classify_record` so it returns a short explanation for A, AAAA, CNAME, MX and TXT records. Unknown
+    types should return "Other record type".
+  starterCode: "def classify_record(record_type: str) -> str:\n    # Return a useful description for each supported\
+    \ record type.\n    pass\n\nfor kind in [\"A\", \"AAAA\", \"CNAME\", \"MX\", \"TXT\", \"NS\"]:\n    print(kind,\
+    \ classify_record(kind))"
+  solution: "def classify_record(record_type: str) -> str:\n    descriptions = {\n        \"A\": \"IPv4 address\"\
+    ,\n        \"AAAA\": \"IPv6 address\",\n        \"CNAME\": \"Canonical name alias\",\n        \"MX\": \"Mail\
+    \ exchanger\",\n        \"TXT\": \"Text data\",\n    }\n    return descriptions.get(record_type.upper(), \"\
+    Other record type\")\n\nfor kind in [\"A\", \"AAAA\", \"CNAME\", \"MX\", \"TXT\", \"NS\"]:\n    print(kind,\
+    \ classify_record(kind))"
+  expectedOutput: 'A IPv4 address
+
+    AAAA IPv6 address
+
+    CNAME Canonical name alias
+
+    MX Mail exchanger
+
+    TXT Text data
+
+    NS Other record type'
+  tests:
+  - name: Recognises common DNS records
+    code: 'assert classify_record("A") == "IPv4 address"
+
+      assert classify_record("aaaa") == "IPv6 address"
+
+      assert classify_record("CNAME") == "Canonical name alias"
+
+      assert classify_record("MX") == "Mail exchanger"
+
+      assert classify_record("TXT") == "Text data"'
+  - name: Unknown type has a safe fallback
+    code: 'assert classify_record("NS") == "Other record type"
+
+      assert classify_record("") == "Other record type"'
+  hints:
+  - Use a dictionary to map record types to descriptions.
+  - Normalize the input with `.upper()` before looking it up.
+  - Use `.get(key, fallback)` for unknown types.
+  feedback:
+  - when:
+      outputContains: KeyError
+    message: A DNS record type can be unfamiliar. Prefer dictionary `.get()` with a fallback instead of indexing
+      directly.
+  explanation: A and AAAA records carry address data; CNAME is an alias, MX points to mail exchangers and TXT stores
+    text. DNS is extensible, so robust tools must handle record types they do not explicitly understand.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - dns-record-mcq
+  - dns-ttl-tf
+  - dns-parse-code
+cheatsheet: 'DNS = name-to-record lookup. Recursive resolver follows root → TLD → authoritative server and caches
+  answers by TTL. A = IPv4; AAAA = IPv6; CNAME = alias; MX = mail; TXT = text; NS = delegation.
+
+
+  Useful commands: `dig example.com A`, `dig +trace example.com`, `nslookup example.com`.'

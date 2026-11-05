@@ -1,0 +1,227 @@
+id: reproducible-experiment
+title: "Reproducible Experiments: Configs, Seeds and Run Tracking"
+track: data-ml
+level: advanced
+estimatedHours: 9
+environment: local
+starterKit: projects/reproducible-experiment
+summary: >-
+  Build an experiment runner that reads a TOML config, derives fixed seeds, logs params, metrics and
+  artefacts to a local run folder as JSON, and compares runs in a Markdown report — with optional
+  MLflow tracking.
+concepts:
+  - ml.reproducibility
+  - mlops.experiment-tracking
+  - ml.ml-pipelines
+  - ml.cross-validation
+  - python.configuration
+  - python.csv-json
+problem: |
+  Your team keeps saying "the model got 0.97 last week" — but nobody can say which settings, which
+  data split or which library versions produced it, and rerunning gives a different number. You will
+  build the small tool that ends those conversations: an experiment runner where **the same config
+  always produces byte-identical results**, and every run leaves a complete, comparable record. This
+  is [reproducibility](concept:ml.reproducibility) and
+  [experiment tracking](concept:mlops.experiment-tracking) from first principles — the ideas tools
+  like MLflow implement.
+
+  **Input.** A TOML file such as:
+
+  ```toml
+  name = "logreg-breast-cancer"
+  seed = 42
+
+  [data]
+  dataset = "breast_cancer"   # or "synthetic"
+  test_size = 0.25
+
+  [model]
+  type = "logistic_regression"  # or "random_forest"
+  C = 1.0
+
+  [evaluation]
+  cv_folds = 5
+  ```
+
+  **Output.** A run folder per run (`runs/<name>-<first 8 chars of the config hash>/`) containing
+  `params.json`, `metrics.json`, `meta.json` and `artefacts/` (predictions, confusion matrix, a
+  deterministic log), plus a comparison report across runs.
+
+  **Example session** (after you finish):
+
+  ```text
+  $ python starter/experiment_runner.py run experiment.toml --runs-dir runs
+  logreg-breast-cancer-8c9e4de7: cv_roc_auc_mean=0.9923, cv_roc_auc_std=0.0066, test_accuracy=0.9860, ...
+  $ python starter/experiment_runner.py run experiment.toml --runs-dir runs --seed 7
+  logreg-breast-cancer-3c02c7c6: cv_roc_auc_mean=0.9925, cv_roc_auc_std=0.0070, test_accuracy=0.9650, ...
+  $ python starter/experiment_runner.py run experiment.toml --runs-dir runs
+  error: run 'logreg-breast-cancer-8c9e4de7' already exists in runs; pass overwrite=True to replace it
+  $ python starter/experiment_runner.py compare --runs-dir runs
+  # Experiment comparison
+
+  2 run(s), ranked by `test_roc_auc`. Varying settings: `seed`
+
+  | run_id | seed | cv_roc_auc_mean | ... | test_roc_auc |
+  |---|---|---|---|---|
+  | logreg-breast-cancer-8c9e4de7 | 42 | 0.9923 | ... | 0.9985 |
+  | logreg-breast-cancer-3c02c7c6 | 7 | 0.9925 | ... | 0.9966 |
+
+  **Best run:** `logreg-breast-cancer-8c9e4de7` with test_roc_auc = 0.9985.
+  ```
+
+  Notice what the comparison teaches: changing only the seed moved test accuracy by two points. A
+  single run is an anecdote.
+acceptanceCriteria:
+  - "`load_config` reads TOML with the standard library, rejects unknown keys (typos) and invalid values with a `ValueError` that names the field."
+  - "`config_hash` is the SHA-256 of canonical JSON, so two files with the same settings in a different key order get the same hash and run id."
+  - "Every random component gets its own seed from `derive_seed(seed, label)`; running the same config twice gives identical metrics and byte-identical `params.json`, `metrics.json`, `predictions.csv` and `run.log`."
+  - "`run_experiment` writes `params.json`, `metrics.json`, `meta.json` (with library versions) and the artefacts; it refuses to overwrite an existing run unless asked, and records a start time only through an injected clock."
+  - "`log_artefact` rejects names that could escape the artefacts folder (`../x`, `a/b`, hidden files)."
+  - "`compare_runs` ranks runs by any metric (higher or lower is better), skips unfinished run folders, and `comparison_report` names the settings that varied and the best run."
+  - "MLflow is optional: the solution imports it only inside `log_to_mlflow`, and its test is skipped when MLflow is not installed."
+architecture: |
+  ```text
+                 ┌───────────── ExperimentConfig (frozen dataclass) ─────────────┐
+  experiment.toml│ name, seed, dataset, test_size, cv_folds, model, params       │
+     tomllib ───►│ config_hash = sha256(canonical JSON)  → run_id = name-hash8   │
+                 └───────────────┬───────────────────────────────────────────────┘
+                                 ▼
+          derive_seed(seed, "data" | "split" | "cv" | "model")
+                                 ▼
+     load_dataset ─► train_test_split ─► cross_val_score(StratifiedKFold) ─► fit ─► test metrics
+                                 ▼
+     run_experiment ─► start_run ─► log_params / log_metrics / log_artefact ─► meta.json
+                                 ▼
+     runs/ ─► load_runs (flatten) ─► compare_runs ─► comparison_report      [optional] log_to_mlflow
+  ```
+
+  Design choices worth noticing:
+
+  * **Config is data.** A frozen dataclass, validated once, hashed canonically. Overrides
+    (`with_overrides(cfg, {"params.C": 0.1})`) create new configs instead of mutating one.
+  * **Derived seeds.** One seed in the config, independent sub-seeds per component, so changing
+    the number of CV folds never changes the train/test split.
+  * **No hidden inputs.** No global random state, no wall-clock timestamps in results; library
+    versions are recorded because they can change results.
+  * **Append-only runs.** A run folder is never silently replaced.
+setup: |
+  You need Python 3.11+ (for `tomllib`) and the folder `projects/reproducible-experiment`.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/reproducible-experiment
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/reproducible-experiment
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  ```
+
+  `requirements.txt` installs numpy, pandas, scikit-learn and pytest; both datasets ship with
+  scikit-learn. **Optional:** `python -m pip install mlflow` (large: roughly 100 MB of dependencies)
+  enables milestone 5; `mlflow ui --backend-store-uri ./mlruns` then shows runs on
+  `http://127.0.0.1:5000`, on your machine only.
+milestones:
+  - id: config
+    title: A validated, hashable config
+    description: |
+      Implement `config_from_dict`, `validate_config`, `load_config`, `config_to_dict`,
+      `config_hash`, `make_run_id` and `with_overrides`. Unknown keys must fail loudly — a typo
+      like `datset` silently falling back to a default is how irreproducible results start.
+
+      **Tests check** loading the example TOML, the round trip, that key order does not change the
+      hash, the exact hash definition, ten invalid configs, and that overrides return a new config.
+  - id: seeds-and-training
+    title: Seeds and deterministic training
+    description: |
+      Implement `derive_seed`, `build_model` (seeded logistic-regression pipeline or random forest,
+      rejecting unknown parameters) and `train_and_evaluate`: stratified split, cross-validated
+      ROC-AUC on the training split, fit, then test metrics and predictions.
+
+      **Tests check** the seed derivation, that `model__random_state` comes from the derived seed,
+      identical metrics and predictions for repeated runs (both models), different predictions for a
+      different seed, and a sanity quality level.
+  - id: tracking
+    title: Track runs in a folder
+    description: |
+      Implement `start_run`, `log_params`, `log_metrics`, `log_artefact`, `run_experiment` and
+      `sweep`. Write JSON with sorted keys so files are diffable; record library versions in
+      `meta.json`; accept an injected `clock` instead of reading the time.
+
+      **Tests check** the folder layout, file contents, byte-identical reruns in two folders, the
+      injected clock, refusal to overwrite, artefact types, and that `../outside`, `a/b`, `a\b` and
+      `.hidden` are rejected as artefact names.
+  - id: comparison
+    title: Compare runs
+    description: |
+      Implement `flatten`, `load_runs`, `compare_runs`, `varying_columns` and
+      `comparison_report`.
+
+      **Tests check** a three-run sweep over `C` (plus an unfinished run folder that must be
+      skipped), ranking by a higher-is-better and a lower-is-better metric, that `model.C` is the
+      only varying setting, and the report's table order and best-run line.
+  - id: optional-mlflow
+    title: "Optional: mirror runs into MLflow"
+    description: |
+      Implement `log_to_mlflow(result, tracking_uri)`: import MLflow inside the function, log
+      flattened params, metrics, artefacts and a tag with your run id.
+
+      **Tests check** (only when MLflow is installed; otherwise skipped) that the MLflow run has the
+      same metrics, the `model.C` param and the tag.
+testing: |
+  From `projects/reproducible-experiment` with your virtual environment active:
+
+  ```bash
+  python -m pytest                  # tests your code in starter/
+  python -m pytest -k Milestone2    # one milestone
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Every test writes runs under pytest's `tmp_path`. The MLflow test is skipped unless MLflow is
+  installed, so the default run needs no extra packages, accounts or network.
+security:
+  - "Configs and run names become folder names: validate them (no `..`, separators or hidden names) so a crafted config cannot write outside the runs folder."
+  - "Never log secrets. Configs, params and run logs are shared and committed; keep API keys and passwords in environment variables, out of `params.json`."
+  - "Artefacts can contain personal data (predictions keyed by row ids). Keep `runs/` out of version control (`.gitignore`) when the data is sensitive, and avoid copying raw feature values into artefacts."
+  - "If you add model files to artefacts, prefer formats that cannot execute code, or only unpickle files from runs you created and whose hash you recorded."
+  - "`mlflow ui` binds to 127.0.0.1 by default; do not expose it on a network without authentication."
+extensions:
+  - "Record the data version: hash the training data (for example SHA-256 of the CSV bytes) into `meta.json`, and refuse to compare runs with different data hashes."
+  - "Run the same config with 10 seeds via `sweep` and report the mean and standard deviation of each metric; flag differences between configs smaller than the seed noise."
+  - "Record the code version (`git rev-parse HEAD` and whether the working tree is dirty) in `meta.json`."
+  - "Add a `--dry-run` that prints the resolved config, hash and run id without training."
+  - "Add `environment.lock` capture (`python -m pip freeze`) as an artefact and a `verify` command that reruns a stored run and checks the metrics match exactly."
+rubric:
+  - criterion: Reproducibility
+    needsWork: Repeated runs differ, or seeds come from global state.
+    meets: Identical configs give byte-identical metrics and artefacts; seeds are derived per component.
+    exceeds: Data and code versions are recorded too, and a verify command proves a stored run can be reproduced.
+  - criterion: Tracking completeness
+    needsWork: Only metrics are saved, or files are overwritten silently.
+    meets: Params, metrics, metadata (library versions) and artefacts are saved per run; runs are append-only.
+    exceeds: Runs are self-describing enough that a colleague can rerun one with a single command.
+  - criterion: Comparison and judgement
+    needsWork: Runs are compared by eye from console output.
+    meets: The report ranks runs by a chosen metric and names what varied.
+    exceeds: The report quantifies seed noise and warns when a "win" is within it.
+  - criterion: Safety and code quality
+    needsWork: Names and paths are used unchecked; functions mix I/O and computation.
+    meets: Validated names and artefact paths, frozen config, small typed functions with clear errors.
+    exceeds: Optional dependencies are isolated, and the tool degrades gracefully without them.

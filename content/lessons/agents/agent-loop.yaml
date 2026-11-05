@@ -1,0 +1,1417 @@
+id: agents.agent-loop
+concept: agents.agent-loop
+title: The Agent Loop
+subtitle: Observe, decide, act — and know when to stop
+estimatedMinutes: 55
+reviewedOn: 2026-10-23
+summary: >-
+  Every agent framework hides the same loop: send the conversation and tool descriptions to a model,
+  execute the tool call it proposes, feed the result back, repeat until a final answer or a stop
+  condition. You will build that loop in pure Python around a scripted fake model, with a tool registry,
+  argument validation, error feedback, a step budget and a transcript — and learn when a fixed workflow
+  is the better choice.
+objectives:
+  - Describe the observe–decide–act loop and the message flow between model, agent code and tools.
+  - Implement a tool registry with argument validation that turns bad calls into helpful error messages.
+  - Implement an agent loop that feeds tool results and errors back to the model and stops on a final answer or a step budget.
+  - Explain why real models make the loop non-deterministic, and how to test agent code with scripted fakes.
+  - Decide when a fixed workflow is better than an agent loop.
+sources:
+  - title: Building effective agents
+    url: https://www.anthropic.com/research/building-effective-agents
+    publisher: Anthropic
+  - title: "ReAct: Synergizing Reasoning and Acting in Language Models"
+    url: https://arxiv.org/abs/2210.03629
+    publisher: arXiv (Yao et al.)
+  - title: Effective context engineering for AI agents
+    url: https://www.anthropic.com/research/effective-context-engineering-for-ai-agents
+    publisher: Anthropic
+  - title: Tool use with Claude
+    url: https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+    publisher: Anthropic
+  - title: Function calling
+    url: https://developers.openai.com/api/docs/guides/function-calling
+    publisher: OpenAI
+sections:
+  - id: why
+    title: Why a loop?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A customer asks: *"What is the total of order A-1042 in euros?"* Answering takes several
+          actions: look up the order, convert its total from dollars to euros, then reply. A single model
+          call cannot do it — the model has no access to your order database — and you saw in
+          [tool calling](concept:genai.tool-calling) that a model can only *propose* a tool call that
+          your code executes.
+
+          If you always knew the steps in advance, you would just write them as code (a **workflow**).
+          An **[agent loop](glossary:agent-loop)** is for when the model must **decide the next step
+          based on what it has seen so far**: which tool to call, with which arguments, whether to retry
+          after an error, and when it is done. As defined in [what an agent is](concept:agents.what-is-an-agent),
+          an agent is a model using tools in a loop.
+
+          Every agent framework — whatever it calls its classes — runs this loop. Building it yourself is
+          the best way to understand runaway costs, endless tool calls and silent failures, because they
+          all come down to how the loop feeds results back and how it **stops**.
+
+  - id: the-loop
+    title: Observe, decide, act
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The loop has three moves, repeated:
+
+          1. **Observe** — the model receives the conversation so far: the goal, every earlier tool call
+             and every result, plus a description of the available tools.
+          2. **Decide** — the model returns either a **tool call** (a tool name plus arguments, as
+             structured data) or a **final answer**.
+          3. **Act** — *your code* validates the call, executes the tool, and appends the result (or an
+             error message) to the conversation. Then back to step 1.
+
+          It stops when the model gives a final answer — or when **your code** stops it: a maximum
+          number of steps, a token or cost budget, a timeout, or a detected loop. The "reason, act,
+          observe" pattern was popularised by ReAct ([Yao et al., 2022](https://arxiv.org/abs/2210.03629)),
+          and native tool calling in model APIs now builds it in.
+      - type: callout
+        variant: misconception
+        title: The model does not run anything
+        body: |
+          The model only produces text — in this case, structured data naming a tool and arguments. Your
+          code (or a framework, or for provider-hosted tools the provider's servers) executes it and
+          decides what to feed back. That is where you enforce validation, permissions and budgets.
+      - type: item
+        ref: mcq-who-executes
+
+  - id: registry
+    title: A tool registry with argument validation
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A **[tool registry](glossary:tool-registry)** maps tool names to the function that implements
+          each tool, a description for the model, and the expected parameters. Real tool definitions
+          describe parameters with JSON Schema; here we keep just a name → type mapping
+          (`"string"`, `"number"`).
+
+          The model's arguments are **untrusted input**: the tool may not exist, arguments may be
+          missing, misnamed or the wrong type. Validate before executing, and turn every problem into an
+          error message the model can act on.
+      - type: code
+        runnable: true
+        id: validate
+        code: |
+          def get_order(order_id):
+              return {"status": "delivered", "total_usd": 120.0}
+
+          def convert_currency(amount, from_currency, to_currency):
+              return round(amount * 0.9, 2)
+
+          TOOLS = {
+              "get_order": {"function": get_order, "params": {"order_id": "string"}},
+              "convert_currency": {
+                  "function": convert_currency,
+                  "params": {"amount": "number", "from_currency": "string", "to_currency": "string"},
+              },
+          }
+          JSON_TYPES = {"string": str, "number": (int, float)}
+
+          def validate_call(call, tools):
+              """Return None if the call is valid, otherwise an error message for the model."""
+              name = call.get("name")
+              if name not in tools:
+                  return f"unknown tool {name!r}; available tools: {sorted(tools)}"
+              params = tools[name]["params"]
+              args = call.get("arguments", {})
+              missing = sorted(set(params) - set(args))
+              if missing:
+                  return f"missing argument(s) {missing} for {name}"
+              extra = sorted(set(args) - set(params))
+              if extra:
+                  return f"unexpected argument(s) {extra} for {name}"
+              for arg, type_name in params.items():
+                  if not isinstance(args[arg], JSON_TYPES[type_name]):
+                      return f"argument {arg!r} must be a {type_name}"
+              return None
+
+          print(validate_call({"name": "get_order", "arguments": {"order_id": "A-1042"}}, TOOLS))
+          print(validate_call({"name": "get_ordr", "arguments": {"order_id": "A-1042"}}, TOOLS))
+          print(validate_call({"name": "get_order", "arguments": {"id": "A-1042"}}, TOOLS))
+          print(validate_call({"name": "convert_currency",
+                               "arguments": {"amount": "120", "from_currency": "USD", "to_currency": "EUR"}}, TOOLS))
+        expectedOutput: |
+          None
+          unknown tool 'get_ordr'; available tools: ['convert_currency', 'get_order']
+          missing argument(s) ['order_id'] for get_order
+          argument 'amount' must be a number
+        annotations:
+          - line: 14
+            text: Maps the schema's type names to Python types. JSON numbers can arrive as int or float.
+          - line: 19
+            text: An unknown tool name gets a message listing the real tools, so the model can correct itself.
+          - line: 23
+            text: Set difference finds parameters the model forgot; sorted() makes the message deterministic.
+        caption: Each message says what was wrong and how to fix it — the model will read these.
+      - type: callout
+        variant: production
+        title: Validation is necessary, not sufficient
+        body: |
+          Valid arguments can still be wrong or dangerous (a real but different customer's order ID).
+          Production loops also check **permissions** (may this user see that order?), require **human
+          approval** for consequential actions, and run tools with **timeouts** — see
+          [designing tools](concept:agents.tool-design) and later lessons on human-in-the-loop and
+          sandboxing.
+
+  - id: walkthrough
+    title: Build the loop
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          No real model can run here, so we use a **scripted fake model**: an object that replays
+          pre-written responses (tool-call dicts or a final answer) in order and records how many
+          messages it was shown on each call. This is a toy stand-in — a real model would *choose* these
+          responses by reading the messages — but it is also exactly how professionals unit-test agent
+          code: deterministic fakes make the loop's own behaviour checkable.
+
+          The script below makes one realistic mistake (a wrong argument name), recovers after seeing
+          the error, calls a second tool and answers.
+      - type: code
+        runnable: true
+        id: agent-loop
+        code: |
+          import json
+
+          ORDERS = {"A-1042": {"status": "delivered", "total_usd": 120.0}}
+          RATES = {("USD", "EUR"): 0.9}                  # a made-up exchange rate
+
+          def get_order(order_id):
+              if order_id not in ORDERS:
+                  raise ValueError(f"no order with id {order_id!r}")
+              return ORDERS[order_id]
+
+          def convert_currency(amount, from_currency, to_currency):
+              rate = RATES.get((from_currency, to_currency))
+              if rate is None:
+                  raise ValueError(f"no exchange rate for {from_currency} -> {to_currency}")
+              return round(amount * rate, 2)
+
+          TOOLS = {
+              "get_order": {"function": get_order, "params": {"order_id": "string"}},
+              "convert_currency": {"function": convert_currency,
+                                   "params": {"amount": "number", "from_currency": "string", "to_currency": "string"}},
+          }
+          JSON_TYPES = {"string": str, "number": (int, float)}
+
+          def validate_call(call, tools):
+              name = call.get("name")
+              if name not in tools:
+                  return f"unknown tool {name!r}; available tools: {sorted(tools)}"
+              params, args = tools[name]["params"], call.get("arguments", {})
+              missing = sorted(set(params) - set(args))
+              if missing:
+                  return f"missing argument(s) {missing} for {name}"
+              extra = sorted(set(args) - set(params))
+              if extra:
+                  return f"unexpected argument(s) {extra} for {name}"
+              for arg, type_name in params.items():
+                  if not isinstance(args[arg], JSON_TYPES[type_name]):
+                      return f"argument {arg!r} must be a {type_name}"
+              return None
+
+          class ScriptedModel:
+              """A stand-in for an LLM: replays pre-written responses in order (a toy, and a test fake)."""
+              def __init__(self, script):
+                  self.script = script
+                  self.calls = 0
+                  self.seen = []                  # how many messages it was shown on each call
+
+              def respond(self, messages):
+                  self.seen.append(len(messages))
+                  response = self.script[self.calls]
+                  self.calls += 1
+                  return response
+
+          def run_agent(model, tools, goal, max_steps=5):
+              messages = [{"role": "user", "content": goal}]
+              for step in range(1, max_steps + 1):
+                  response = model.respond(messages)                    # observe + decide
+                  if response["type"] == "final":
+                      messages.append({"role": "assistant", "content": response["text"]})
+                      print(f"[{step}] final answer: {response['text']}")
+                      return response["text"], messages
+                  messages.append({"role": "assistant", "tool_call": response})
+                  print(f"[{step}] model -> {response['name']}({json.dumps(response['arguments'])})")
+                  error = validate_call(response, tools)                # act
+                  if error is None:
+                      try:
+                          result = tools[response["name"]]["function"](**response["arguments"])
+                          content, is_error = json.dumps(result), False
+                      except ValueError as exc:                         # expected tool failure
+                          content, is_error = f"error: {exc}", True
+                  else:
+                      content, is_error = f"error: {error}", True
+                  messages.append({"role": "tool", "name": response["name"],
+                                   "content": content, "is_error": is_error})
+                  print(f"    tool  -> {content}")
+              print(f"stopped: no final answer after {max_steps} steps")
+              return None, messages
+
+          script = [
+              {"type": "tool_call", "name": "get_order", "arguments": {"id": "A-1042"}},
+              {"type": "tool_call", "name": "get_order", "arguments": {"order_id": "A-1042"}},
+              {"type": "tool_call", "name": "convert_currency",
+               "arguments": {"amount": 120.0, "from_currency": "USD", "to_currency": "EUR"}},
+              {"type": "final", "text": "Order A-1042 was delivered. Its total is 108.0 EUR (120.0 USD)."},
+          ]
+          model = ScriptedModel(script)
+          answer, messages = run_agent(model, TOOLS, "What is the total of order A-1042 in euros?")
+          print("messages seen by the model on each call:", model.seen)
+        expectedOutput: |
+          [1] model -> get_order({"id": "A-1042"})
+              tool  -> error: missing argument(s) ['order_id'] for get_order
+          [2] model -> get_order({"order_id": "A-1042"})
+              tool  -> {"status": "delivered", "total_usd": 120.0}
+          [3] model -> convert_currency({"amount": 120.0, "from_currency": "USD", "to_currency": "EUR"})
+              tool  -> 108.0
+          [4] final answer: Order A-1042 was delivered. Its total is 108.0 EUR (120.0 USD).
+          messages seen by the model on each call: [1, 3, 5, 7]
+        annotations:
+          - line: 55
+            text: The step budget is built into the loop itself — the loop cannot run more than max_steps model calls.
+          - line: 56
+            text: The model sees the whole message list every time. Our fake only counts it; a real model reads it to decide.
+          - line: 68
+            text: Expected, recoverable failures (bad ID, missing rate) become error results the model can react to.
+          - line: 71
+            text: Validation errors are fed back too, which is how step 2 could fix step 1's argument name.
+          - line: 74
+            text: Every call and result is printed — this transcript is what you debug and evaluate.
+      - type: markdown
+        body: |
+          Read the transcript from top to bottom — it is the agent's **[trajectory](glossary:trajectory)**:
+
+          - Step 1's bad argument never reached `get_order`; validation turned it into an error message.
+          - Step 2 is the "recovery" (scripted here; a real model would read the error and fix the call).
+          - `seen = [1, 3, 5, 7]`: every tool step adds **two** messages (the call and its result), so
+            the context grows each turn. Long loops need trimming or summarising to stay inside the
+            [context window](concept:genai.tokens-context) — and every resent token costs money.
+      - type: visualization
+        component: step-diagram
+        title: The run, step by step
+        caption: Adapted from the agent-loop reference diagram. Click through to follow the scripted run above.
+        props:
+          width: 760
+          height: 320
+          nodes:
+            - { id: user, label: User goal, x: 90, y: 60, shape: actor }
+            - { id: llm, label: Model (scripted), x: 330, y: 60, shape: pill }
+            - { id: loop, label: Agent loop (your code), x: 330, y: 190 }
+            - { id: validate, label: Validate arguments, x: 600, y: 60 }
+            - { id: tools, label: Tool registry, x: 600, y: 190 }
+            - { id: transcript, label: Messages / transcript, x: 110, y: 270, shape: store }
+          edges:
+            - { id: u-l, from: user, to: llm, label: goal }
+            - { id: l-r, from: llm, to: loop, label: tool call or final }
+            - { id: r-v, from: loop, to: validate, label: check }
+            - { id: r-t, from: loop, to: tools, label: execute }
+            - { id: r-s, from: loop, to: transcript, label: append }
+            - { id: s-l, from: transcript, to: llm, label: next turn }
+          steps:
+            - title: Goal and tools
+              body: The first request holds the user's goal plus a description of each tool (name, purpose, parameters).
+              active: [user, llm, u-l]
+              payload: "goal: What is the total of order A-1042 in euros?\ntools: get_order(order_id), convert_currency(amount, from_currency, to_currency)"
+            - title: The model proposes a call
+              body: It returns structured data, not an action. This one uses the wrong argument name.
+              active: [llm, l-r, loop]
+              payload: '{"type": "tool_call", "name": "get_order", "arguments": {"id": "A-1042"}}'
+            - title: Validation rejects it
+              body: The registry says get_order needs order_id. The tool is never executed.
+              active: [loop, r-v, validate]
+              payload: "error: missing argument(s) ['order_id'] for get_order"
+            - title: The error goes back to the model
+              body: The call and the error are appended to the messages, so the model sees them on its next turn.
+              active: [loop, r-s, transcript, s-l, llm]
+              payload: '{"role": "tool", "name": "get_order", "content": "error: missing argument(s) [''order_id''] for get_order", "is_error": true}'
+            - title: A corrected call is executed
+              body: This time validation passes and your code runs the real function.
+              active: [llm, l-r, loop, r-t, tools]
+              payload: '{"status": "delivered", "total_usd": 120.0}'
+            - title: A second tool
+              body: With the order total in its context, the model asks for a currency conversion.
+              active: [llm, l-r, loop, r-t, tools, r-s, transcript]
+              payload: 'convert_currency(amount=120.0, from_currency="USD", to_currency="EUR") -> 108.0'
+            - title: Final answer
+              body: The model has what it needs and returns a final answer instead of a tool call. The loop returns it.
+              active: [llm, l-r, loop, user]
+              payload: "Order A-1042 was delivered. Its total is 108.0 EUR (120.0 USD)."
+            - title: Or your code stops it
+              body: If no final answer arrives within the step budget (or cost budget, or time limit), the loop stops with a defined fallback instead of running forever.
+              active: [loop]
+              payload: "stopped: no final answer after 5 steps"
+      - type: visualization
+        component: python-tracer
+        title: The loop in miniature
+        caption: The smallest possible loop. Watch `messages` grow by one tool result, then the final answer ends the loop.
+        props:
+          code: |
+            def get_time():
+                return "09:00"
+
+            tools = {"get_time": get_time}
+            script = [{"tool": "get_time"}, {"final": "It is 09:00."}]
+            messages = ["user: what time is it?"]
+            for step, response in enumerate(script, start=1):
+                if "final" in response:
+                    print(response["final"])
+                    break
+                result = tools[response["tool"]]()
+                messages.append(f"tool: {result}")
+      - type: item
+        ref: predict-seen
+
+  - id: errors
+    title: Feeding results and errors back
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two kinds of failure need different handling:
+
+          | Failure | Example | Handling |
+          |---|---|---|
+          | **Expected** — the call was well-formed but cannot succeed | Unknown order ID, no exchange rate, invalid arguments, a 404 from an API | Return it to the model as a tool result with `is_error`, written so the model can recover (ask the user, try another ID). |
+          | **Unexpected** — a bug in your code or infrastructure | `TypeError` inside the tool, a crashed database driver | Let it fail the run visibly (log, alert). Hiding it from you — or showing it to the model — just makes failures silent. |
+
+          That is why the loop above catches `ValueError` (the tools' documented failure) and nothing
+          else. A bare `except Exception` that feeds every error to the model can turn your bugs into the
+          model's confusion.
+      - type: item
+        ref: mcq-error-handling
+
+  - id: stopping
+    title: Step budgets and stopping conditions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A loop that relies only on the model to say "I'm done" can run forever — repeating a failing
+          call, or wandering between tools — and every iteration costs tokens. Always add hard stops in
+          **your code**:
+
+          - a **[step budget](glossary:step-budget)** (maximum model calls or tool calls);
+          - a **token or cost budget** for the whole run;
+          - a **wall-clock timeout**;
+          - **loop detection**, such as the same tool call with the same arguments twice in a row;
+
+          and decide the **fallback** when one triggers: return a partial answer, ask the user, or hand
+          off to a human. Here a model keeps asking for an order that does not exist:
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          def get_order(order_id):
+              raise ValueError(f"no order with id {order_id!r}")
+
+          class ScriptedModel:
+              def __init__(self, script):
+                  self.script, self.calls = script, 0
+              def respond(self, messages):
+                  self.calls += 1
+                  return self.script[self.calls - 1]
+
+          def run_agent(model, max_steps):
+              messages = [{"role": "user", "content": "Where is order B-7?"}]
+              for step in range(1, max_steps + 1):
+                  response = model.respond(messages)
+                  if response["type"] == "final":
+                      return response["text"]
+                  try:
+                      content = json.dumps(get_order(**response["arguments"]))
+                  except ValueError as exc:
+                      content = f"error: {exc}"
+                  messages.append({"role": "tool", "content": content})
+                  print(f"[{step}] {content}")
+              return None
+
+          stubborn = ScriptedModel([{"type": "tool_call", "arguments": {"order_id": "B-7"}}] * 100)
+          print("answer:", run_agent(stubborn, max_steps=3), "| model calls:", stubborn.calls)
+        expectedOutput: |
+          [1] error: no order with id 'B-7'
+          [2] error: no order with id 'B-7'
+          [3] error: no order with id 'B-7'
+          answer: None | model calls: 3
+        caption: The script would repeat 100 times; the budget stops it after 3 model calls. A loop detector would have stopped it after 2.
+      - type: callout
+        variant: production
+        title: Make the budget visible
+        body: |
+          Log the reason each run ended (final answer, step budget, cost budget, timeout, loop detected)
+          and alert on budget exhaustion rates. A rising rate usually means a tool changed, a prompt
+          regressed, or users are asking for something the agent cannot do.
+
+  - id: non-determinism
+    title: Why real agents take different paths
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With a real model, the same goal does not always produce the same trajectory. The model
+          [samples](concept:genai.sampling) its output, so it may call tools in a different order, make
+          a mistake on one run and not another, or answer before it has everything it needs. Tool
+          results can change too (live data). And because each step's output becomes the next step's
+          input, small differences compound.
+
+          The toy below replaces the script with a fake model that *randomly* chooses between plausible
+          actions — sometimes it uses the wrong argument name, sometimes it answers in dollars without
+          converting. Same goal, ten seeded runs:
+      - type: code
+        runnable: true
+        code: |
+          import json
+          import random
+
+          def get_order(order_id):
+              return {"status": "delivered", "total_usd": 120.0}
+
+          def convert_currency(amount, from_currency, to_currency):
+              return round(amount * 0.9, 2)
+
+          TOOLS = {"get_order": (get_order, {"order_id"}),
+                   "convert_currency": (convert_currency, {"amount", "from_currency", "to_currency"})}
+
+          class SamplingModel:
+              """Toy stand-in: picks among plausible next actions at random, like a sampled LLM might."""
+              def __init__(self, rng):
+                  self.rng = rng
+              def respond(self, messages):
+                  ok = [m for m in messages if m["role"] == "tool" and not m["is_error"]]
+                  if not ok:
+                      key = "id" if self.rng.random() < 0.4 else "order_id"     # sometimes a wrong name
+                      return {"type": "tool_call", "name": "get_order", "arguments": {key: "A-1042"}}
+                  if len(ok) == 1:
+                      if self.rng.random() < 0.3:                                # sometimes answers too early
+                          return {"type": "final", "text": "The total is 120.0 USD."}
+                      return {"type": "tool_call", "name": "convert_currency",
+                              "arguments": {"amount": 120.0, "from_currency": "USD", "to_currency": "EUR"}}
+                  return {"type": "final", "text": "The total is 108.0 EUR."}
+
+          def run_agent(model, max_steps=6):
+              messages = [{"role": "user", "content": "What is the total of order A-1042 in euros?"}]
+              for step in range(1, max_steps + 1):
+                  response = model.respond(messages)
+                  if response["type"] == "final":
+                      return response["text"], step
+                  function, params = TOOLS[response["name"]]
+                  if set(response["arguments"]) == params:
+                      content, is_error = json.dumps(function(**response["arguments"])), False
+                  else:
+                      content, is_error = "error: wrong arguments", True
+                  messages.append({"role": "tool", "content": content, "is_error": is_error})
+              return "(stopped: step budget)", max_steps
+
+          for seed in range(10):
+              answer, steps = run_agent(SamplingModel(random.Random(seed)))
+              print(f"run {seed}: {steps} model calls -> {answer}")
+        expectedOutput: |
+          run 0: 3 model calls -> The total is 108.0 EUR.
+          run 1: 4 model calls -> The total is 108.0 EUR.
+          run 2: 3 model calls -> The total is 108.0 EUR.
+          run 3: 4 model calls -> The total is 108.0 EUR.
+          run 4: 6 model calls -> (stopped: step budget)
+          run 5: 3 model calls -> The total is 108.0 EUR.
+          run 6: 3 model calls -> The total is 108.0 EUR.
+          run 7: 4 model calls -> The total is 120.0 USD.
+          run 8: 3 model calls -> The total is 120.0 USD.
+          run 9: 3 model calls -> The total is 108.0 EUR.
+        caption: "A toy, but the pattern is real: varying cost (3 to 6 calls), an occasional budget stop, and sometimes a plausible but wrong answer (USD instead of EUR)."
+      - type: markdown
+        body: |
+          Consequences for engineering:
+
+          - **Test the loop deterministically** with scripted or seeded fakes, as in this lesson: does it
+            validate, feed errors back, stop on budget, log everything?
+          - **Evaluate the agent statistically**: run each test case several times with the real model
+            and measure success rate, steps and cost — one good demo proves little.
+          - **Check outcomes in code** where possible (is the answer in EUR? did it call the converter?)
+            rather than trusting the final text.
+      - type: item
+        ref: tf-temp-zero-agent
+
+  - id: workflow-instead
+    title: When a fixed workflow is better
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Look at the order question again. The steps are *always* the same: look up the order, convert
+          the total, answer. When you know the steps, write them as code:
+      - type: code
+        runnable: true
+        code: |
+          ORDERS = {"A-1042": {"status": "delivered", "total_usd": 120.0}}
+
+          def get_order(order_id):
+              return ORDERS[order_id]
+
+          def convert_currency(amount, from_currency, to_currency):
+              return round(amount * 0.9, 2)
+
+          def order_total_in_eur(order_id):
+              order = get_order(order_id)
+              return convert_currency(order["total_usd"], "USD", "EUR")
+
+          print(order_total_in_eur("A-1042"))
+        expectedOutput: |
+          108.0
+        caption: Deterministic, testable, instant and free. An LLM might still be used once — to extract the order ID from the user's message or to phrase the reply — but it no longer controls the flow.
+      - type: markdown
+        body: |
+          This is the core of [workflows vs agents](concept:agents.workflows-vs-agents): a **workflow**
+          is code-defined control flow with LLM calls as steps; an **agent** lets the model choose the
+          control flow. Prefer a workflow when the steps are known and stable; reach for an agent loop
+          when the number and order of steps genuinely depend on what is discovered along the way
+          (debugging a failing build, researching an open question), and when mistakes are recoverable.
+          Hybrids — a workflow with one bounded agentic step — are common.
+      - type: item
+        ref: explain-workflow
+
+  - id: real-apis
+    title: The same loop with a real model API
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          With a hosted model, the "script" is replaced by an API call that includes your tool
+          definitions. Each tool is described by a name, a description and a JSON Schema for its
+          arguments. The shape below is provider-neutral; field names differ between providers (for
+          example, some call the schema `parameters` and others `input_schema`), so check the current
+          reference for the one you use.
+      - type: code
+        language: json
+        status: illustrative
+        code: |
+          {
+            "name": "get_order",
+            "description": "Look up one order by its ID. Use when the user mentions an order number such as A-1042. Returns status and total in USD.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "order_id": {"type": "string", "description": "Order ID, for example A-1042"}
+              },
+              "required": ["order_id"]
+            }
+          }
+        caption: Illustrative tool definition (not executed). The description is written for the model — when to use the tool and what it returns.
+      - type: code
+        status: pseudocode
+        code: |
+          messages = [user_goal]
+          for step in range(MAX_STEPS):
+              response = call_model(messages, tools=TOOL_DEFINITIONS)   # provider SDK or HTTP call
+              messages.append(response.message)                          # keep the model's own turn
+              if not response.tool_calls:                                # no tool requested -> final answer
+                  return response.text
+              for call in response.tool_calls:                           # some models request several at once
+                  result = run_tool_safely(call)                         # validate, check permissions, timeout
+                  messages.append(tool_result(call.id, result))          # the id links the result to the call
+          return fallback("step budget exhausted")
+        caption: >-
+          Pseudocode of a production loop. Differences from our toy: results are linked to calls by an
+          ID, a single response can contain several tool calls, the model's own turn is kept verbatim,
+          and budgets often also count tokens and time. Frameworks implement this loop for you; knowing
+          it lets you debug them.
+      - type: markdown
+        body: |
+          **Context management.** Every iteration resends the growing history. Long-running agents trim
+          old tool results, summarise earlier steps, or write notes to files or memory and re-read only
+          what they need — what Anthropic calls *context engineering*
+          ([2025](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents)).
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | The run never ends; the bill spikes | No step/cost budget; relying on the model to stop | Add `max_steps`, a token budget and a timeout, with a fallback. |
+          | The model repeats the same failing call | Errors are not fed back (or not clearly), or no loop detection | Append an error result that explains the fix; stop on repeated identical calls. |
+          | `KeyError: 'get_ordr'` crashes the loop | Dispatching `tools[name]` without checking the name | Validate the tool name and return an error message listing real tools. |
+          | `TypeError: get_order() got an unexpected keyword argument 'id'` | Calling `function(**arguments)` without validating arguments | Validate names and types against the schema first. |
+          | Bugs silently "handled" by the model | `except Exception` feeds every crash to the model | Catch only expected tool errors; let bugs fail loudly and log them. |
+          | Impossible to tell what happened | No transcript | Log each step: model output, tool, arguments, result, tokens, time. |
+
+          The two crashes from the table, reproduced:
+      - type: code
+        runnable: true
+        code: |
+          def get_order(order_id):
+              return {"status": "delivered"}
+
+          tools = {"get_order": get_order}
+          call = {"name": "get_ordr", "arguments": {"order_id": "A-1042"}}
+          result = tools[call["name"]](**call["arguments"])
+        expectError: KeyError
+        caption: "KeyError: 'get_ordr' — the model misspelled the tool name and the loop trusted it."
+      - type: code
+        runnable: true
+        code: |
+          def get_order(order_id):
+              return {"status": "delivered"}
+
+          call = {"name": "get_order", "arguments": {"id": "A-1042"}}
+          result = get_order(**call["arguments"])
+        expectError: TypeError
+        caption: "TypeError: get_order() got an unexpected keyword argument 'id' — validation would have turned this into a helpful message for the model."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build the loop's parts yourself. The checks drive your code with several scripted models,
+          including ones that make mistakes and ones that never stop.
+      - type: item
+        ref: code-validate-call
+      - type: item
+        ref: parsons-loop
+      - type: item
+        ref: debug-errors-not-fed-back
+      - type: item
+        ref: code-run-agent
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - The agent loop: send messages + tool descriptions → model returns a tool call or a final
+            answer → your code validates, executes and appends the result → repeat.
+          - A **tool registry** maps names to functions and parameter schemas; **validate** every call
+            and turn problems into actionable error messages.
+          - Feed **expected** tool errors back to the model; let **unexpected** errors fail visibly.
+          - Always stop in code: step budget, cost budget, timeout, loop detection — with a fallback.
+          - Keep a **transcript** (trajectory) of every step for debugging and evaluation.
+          - Real models make paths vary: test the loop with scripted fakes, evaluate the agent over
+            many runs, and prefer a fixed **workflow** when the steps are known.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Write a minimal tool-calling loop and explain how it stops." — Sketch the loop (call model,
+          branch on tool call vs final, validate, execute, append result, repeat), then list the hard
+          stops (max steps, cost/token budget, timeout, repeated-call detection) and the fallback, how
+          errors are fed back, and how you would test it with a scripted fake model.
+
+items:
+  - id: mcq-who-executes
+    type: mcq
+    skill: recognition
+    prompt: In a tool-calling agent built on a model API, what actually runs `get_order("A-1042")` for a tool you defined?
+    explanation: >-
+      The model returns a structured request naming the tool and arguments. Your application (or the
+      framework you use) validates it, executes the function and sends the result back. That is where
+      validation, permissions and budgets are enforced.
+    options:
+      - id: a
+        text: Your agent code, after validating the call the model proposed.
+        correct: true
+        feedback: Right — the model only proposes; your code decides and acts.
+      - id: b
+        text: The model, which executes the function inside its neural network.
+        feedback: A model produces tokens. It cannot reach your database or run your Python function.
+      - id: c
+        text: The user's browser, which receives the tool call directly.
+        feedback: Tool calls go to your application, which keeps credentials and permissions on the server side.
+      - id: d
+        text: Nobody — the model imagines the result and continues.
+        feedback: If no code executes the tool, any "result" the model writes is invented. That is why the loop must run the tool and return the real output.
+
+  - id: predict-seen
+    type: predict-output
+    skill: prediction
+    prompt: Each tool step appends the model's call and the tool's result. How many messages does the model see on each call?
+    code: |
+      script = [{"type": "tool_call"}, {"type": "tool_call"}, {"type": "final"}]
+      messages = ["user goal"]
+      seen = []
+      for response in script:
+          seen.append(len(messages))
+          if response["type"] == "final":
+              break
+          messages.append("assistant: tool call")
+          messages.append("tool: result")
+      print(seen)
+    answer: "[1, 3, 5]"
+    explanation: >-
+      The first call sees only the goal (1 message). Each tool step adds two messages, so the second call
+      sees 3 and the third sees 5. The context — and the cost of each call — grows every turn.
+    wrongAnswers:
+      - answer: "[1, 2, 3]"
+        feedback: Each tool step appends two messages (the model's call and the tool result), not one.
+      - answer: "[1, 1, 1]"
+        feedback: The messages list keeps growing; the model is sent the whole history every time.
+      - answer: "[1, 3]"
+        feedback: "`seen` is updated before the final-answer check, so the third call (which returns the final answer) is recorded too."
+
+  - id: mcq-error-handling
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      `get_order` raises `ValueError("no order with id 'B-7'")` because the user gave a wrong order
+      number. What should the agent loop do?
+    explanation: >-
+      This is an expected, recoverable failure. Returning it to the model as a tool result marked as an
+      error lets the model ask the user for the right number or try something else, while the step budget
+      still limits retries.
+    options:
+      - id: a
+        text: Append the error as a tool result (marked as an error) so the model can recover, and keep counting steps.
+        correct: true
+        feedback: Right — expected errors are information for the model.
+      - id: b
+        text: Crash the whole run with the exception.
+        feedback: That is right for unexpected bugs, but a wrong order number is a normal situation the model can handle.
+      - id: c
+        text: Skip the step silently and call the model again.
+        feedback: The model would not know the call failed and would likely repeat it.
+      - id: d
+        text: Retry the same call automatically until it succeeds.
+        feedback: The order does not exist, so retrying the identical call can never succeed — it only burns budget.
+
+  - id: tf-temp-zero-agent
+    type: true-false
+    skill: recognition
+    prompt: "True or false: if you set the model's temperature to 0, an agent given the same goal will always make exactly the same sequence of tool calls."
+    answer: false
+    explanation: >-
+      Temperature 0 removes most sampling randomness, but hosted models are not guaranteed to be
+      bit-for-bit deterministic, tool results can change between runs (live data, time), and any small
+      difference in context changes later decisions. Test the loop with fakes and evaluate the agent over
+      repeated runs.
+
+  - id: explain-workflow
+    type: explain
+    skill: design
+    prompt: >-
+      Your agent always ends up doing the same three steps for order questions: look up the order,
+      convert the currency, answer. Argue for replacing the agent loop with a fixed workflow here, and
+      name one situation in which you would keep an agent loop.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Notes that the steps are known and stable, so code can define the control flow.
+      - Names benefits of the workflow — deterministic and testable, fewer model calls, lower cost and latency, fewer failure modes.
+      - Mentions that an LLM can still be used for a step (extracting the order ID, phrasing the reply).
+      - Gives a fitting case for an agent — the steps depend on what is discovered (e.g. investigating a failure) and mistakes are recoverable.
+    modelAnswer: |
+      The path never changes, so letting the model choose it adds cost and risk without benefit. A
+      workflow — get_order, then convert_currency, then answer — runs the same way every time, is easy to
+      unit-test, needs at most one model call (to extract the order ID or phrase the reply) instead of
+      several, and cannot loop or skip the conversion. I would keep an agent loop for open-ended tasks
+      where the next step depends on what the previous one revealed, such as diagnosing why a deployment
+      failed by reading logs and running checks, as long as mistakes are recoverable and budgets are in
+      place.
+
+  - id: code-validate-call
+    type: code
+    skill: implementation
+    prompt: |
+      Write `validate_call(call, tools)`. `call` looks like `{"name": "get_order", "arguments": {...}}`;
+      each registry entry has `"params"` mapping argument names to `"string"` or `"number"`. Return
+      `None` if the call is valid, otherwise an error **string**, checking in this order:
+
+      1. unknown tool name → message containing the bad name;
+      2. missing arguments → message naming each missing argument;
+      3. unexpected arguments → message naming each extra argument;
+      4. wrong type → message naming the argument (`"number"` accepts int or float; `"string"` accepts str).
+    starterCode: |
+      TOOLS = {
+          "get_order": {"params": {"order_id": "string"}},
+          "convert_currency": {"params": {"amount": "number", "from_currency": "string", "to_currency": "string"}},
+      }
+
+      def validate_call(call, tools):
+          # Return None if valid, otherwise a helpful error message.
+          return None
+
+      print(validate_call({"name": "get_order", "arguments": {"id": "A-1042"}}, TOOLS))
+    solution: |
+      TOOLS = {
+          "get_order": {"params": {"order_id": "string"}},
+          "convert_currency": {"params": {"amount": "number", "from_currency": "string", "to_currency": "string"}},
+      }
+      JSON_TYPES = {"string": str, "number": (int, float)}
+
+      def validate_call(call, tools):
+          name = call.get("name")
+          if name not in tools:
+              return f"unknown tool {name!r}; available tools: {sorted(tools)}"
+          params = tools[name]["params"]
+          args = call.get("arguments", {})
+          missing = sorted(set(params) - set(args))
+          if missing:
+              return f"missing argument(s) {missing} for {name}"
+          extra = sorted(set(args) - set(params))
+          if extra:
+              return f"unexpected argument(s) {extra} for {name}"
+          for arg, type_name in params.items():
+              if not isinstance(args[arg], JSON_TYPES[type_name]):
+                  return f"argument {arg!r} must be a {type_name}"
+          return None
+
+      print(validate_call({"name": "get_order", "arguments": {"id": "A-1042"}}, TOOLS))
+    expectedOutput: |
+      missing argument(s) ['order_id'] for get_order
+    tests:
+      - name: valid calls return None
+        code: |
+          assert validate_call({"name": "get_order", "arguments": {"order_id": "A-1042"}}, TOOLS) is None, "A correct get_order call should return None."
+          ok = {"name": "convert_currency", "arguments": {"amount": 120, "from_currency": "USD", "to_currency": "EUR"}}
+          assert validate_call(ok, TOOLS) is None, "An int amount is a valid number; this call should return None."
+      - name: unknown tool
+        code: |
+          msg = validate_call({"name": "get_ordr", "arguments": {}}, TOOLS)
+          assert isinstance(msg, str) and "get_ordr" in msg, f"For an unknown tool, return a message that mentions 'get_ordr'; got {msg!r}."
+      - name: missing and unexpected arguments
+        code: |
+          msg = validate_call({"name": "get_order", "arguments": {}}, TOOLS)
+          assert isinstance(msg, str) and "order_id" in msg, f"A missing argument should be named in the message; got {msg!r}."
+          msg = validate_call({"name": "get_order", "arguments": {"order_id": "A-1", "verbose": True}}, TOOLS)
+          assert isinstance(msg, str) and "verbose" in msg, f"An unexpected argument should be named in the message; got {msg!r}."
+      - name: wrong types
+        code: |
+          bad = {"name": "convert_currency", "arguments": {"amount": "120", "from_currency": "USD", "to_currency": "EUR"}}
+          msg = validate_call(bad, TOOLS)
+          assert isinstance(msg, str) and "amount" in msg, f"amount='120' is a string, not a number; the message should name 'amount'. Got {msg!r}."
+          bad = {"name": "get_order", "arguments": {"order_id": 1042}}
+          msg = validate_call(bad, TOOLS)
+          assert isinstance(msg, str) and "order_id" in msg, f"order_id=1042 is not a string; got {msg!r}."
+      - name: works with another registry
+        code: |
+          reg = {"search": {"params": {"query": "string", "limit": "number"}}}
+          assert validate_call({"name": "search", "arguments": {"query": "x", "limit": 5}}, reg) is None, "A valid search call should return None."
+          msg = validate_call({"name": "search", "arguments": {"query": "x"}}, reg)
+          assert isinstance(msg, str) and "limit" in msg, f"The missing 'limit' argument should be reported; got {msg!r}."
+    hints:
+      - "Check `name not in tools` first and return a message straight away."
+      - "Set differences find problems: `set(params) - set(args)` is what is missing; `set(args) - set(params)` is extra."
+      - 'Map type names to Python types: `{"string": str, "number": (int, float)}` and use `isinstance`.'
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: The example call uses "id" instead of "order_id", so it is invalid. Your function should return an error message, not None.
+      - when: { errorType: KeyError }
+        message: You looked up something that does not exist (an unknown tool name or a missing argument). Check membership first and return an error message.
+    explanation: >-
+      Each check turns a crash you would otherwise get at `function(**arguments)` into a precise message
+      the model can act on. Checking in a fixed order and sorting names keeps the messages deterministic,
+      which makes the loop easy to test.
+
+  - id: parsons-loop
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a tiny loop that executes a scripted tool call and then prints the final
+      answer. It should print `tool result: 5` and then `done`. Two lines are distractors.
+    solution: |
+      def add(a, b):
+          return a + b
+      tools = {"add": add}
+      script = [{"type": "tool_call", "name": "add", "arguments": {"a": 2, "b": 3}}, {"type": "final", "text": "done"}]
+      for response in script:
+          if response["type"] == "final":
+              print(response["text"])
+              break
+          result = tools[response["name"]](**response["arguments"])
+          print("tool result:", result)
+    distractors:
+      - "    result = tools[response[\"name\"]](response[\"arguments\"])"
+      - "tools = {\"add\": add()}"
+    expectedOutput: |
+      tool result: 5
+      done
+    explanation: >-
+      Look up the function by name in the registry and call it with the arguments unpacked as keyword
+      arguments (`**`). Passing the whole dict as one positional argument, or calling `add()` while
+      building the registry, raises a TypeError.
+
+  - id: debug-errors-not-fed-back
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This loop runs out of steps instead of answering. The fake model fixes its argument name **only
+      after it sees an error message** — but the loop never shows it one. Fix the loop so validation
+      errors are appended as tool results (`{"role": "tool", "content": "error: ...", "is_error": True}`).
+      The program should print `Order status: delivered`.
+    starterCode: |
+      import json
+
+      def get_order(order_id):
+          return {"status": "delivered"}
+
+      def validate(call):
+          if set(call["arguments"]) != {"order_id"}:
+              return "get_order needs exactly one argument: order_id"
+          return None
+
+      class FakeModel:
+          """Stand-in for an LLM: corrects its call only after it sees an error result."""
+          def respond(self, messages):
+              last = messages[-1]
+              if last["role"] == "tool" and not last["is_error"]:
+                  return {"type": "final", "text": "Order status: " + json.loads(last["content"])["status"]}
+              if last["role"] == "tool" and last["is_error"]:
+                  return {"type": "tool_call", "arguments": {"order_id": "A-1042"}}
+              return {"type": "tool_call", "arguments": {"id": "A-1042"}}
+
+      def run_agent(model, max_steps=4):
+          messages = [{"role": "user", "content": "What is the status of order A-1042?"}]
+          for step in range(max_steps):
+              response = model.respond(messages)
+              if response["type"] == "final":
+                  return response["text"], messages
+              messages.append({"role": "assistant", "tool_call": response})
+              error = validate(response)
+              if error is not None:
+                  continue
+              result = get_order(**response["arguments"])
+              messages.append({"role": "tool", "content": json.dumps(result), "is_error": False})
+          return "Stopped: step budget exhausted", messages
+
+      answer, messages = run_agent(FakeModel())
+      print(answer)
+    solution: |
+      import json
+
+      def get_order(order_id):
+          return {"status": "delivered"}
+
+      def validate(call):
+          if set(call["arguments"]) != {"order_id"}:
+              return "get_order needs exactly one argument: order_id"
+          return None
+
+      class FakeModel:
+          """Stand-in for an LLM: corrects its call only after it sees an error result."""
+          def respond(self, messages):
+              last = messages[-1]
+              if last["role"] == "tool" and not last["is_error"]:
+                  return {"type": "final", "text": "Order status: " + json.loads(last["content"])["status"]}
+              if last["role"] == "tool" and last["is_error"]:
+                  return {"type": "tool_call", "arguments": {"order_id": "A-1042"}}
+              return {"type": "tool_call", "arguments": {"id": "A-1042"}}
+
+      def run_agent(model, max_steps=4):
+          messages = [{"role": "user", "content": "What is the status of order A-1042?"}]
+          for step in range(max_steps):
+              response = model.respond(messages)
+              if response["type"] == "final":
+                  return response["text"], messages
+              messages.append({"role": "assistant", "tool_call": response})
+              error = validate(response)
+              if error is not None:
+                  messages.append({"role": "tool", "content": f"error: {error}", "is_error": True})
+                  continue
+              result = get_order(**response["arguments"])
+              messages.append({"role": "tool", "content": json.dumps(result), "is_error": False})
+          return "Stopped: step budget exhausted", messages
+
+      answer, messages = run_agent(FakeModel())
+      print(answer)
+    expectedOutput: |
+      Order status: delivered
+    tests:
+      - name: the agent answers
+        code: |
+          assert output().strip() == "Order status: delivered", f"Expected 'Order status: delivered', got {output()!r}."
+      - name: the error was shown to the model
+        code: |
+          answer, msgs = run_agent(FakeModel())
+          errors = [m for m in msgs if m.get("role") == "tool" and m.get("is_error")]
+          assert len(errors) == 1, f"Exactly one error tool message should be in the conversation; found {len(errors)}."
+          assert errors[0]["content"].startswith("error:"), f"The error message content should start with 'error:'; got {errors[0]['content']!r}."
+      - name: the budget still applies
+        code: |
+          class Stubborn:
+              def respond(self, messages):
+                  return {"type": "tool_call", "arguments": {"id": "X"}}
+          answer, msgs = run_agent(Stubborn(), max_steps=3)
+          assert answer == "Stopped: step budget exhausted", f"A model that never fixes its call should hit the step budget; got {answer!r}."
+          assert sum(1 for m in msgs if m.get("role") == "tool") == 3, "Each of the 3 steps should add one error tool message."
+    hints:
+      - "Print `messages` after the run. What is the last message the model sees before its second call?"
+      - "The fake model checks whether the last message has role 'tool' and is_error True."
+      - "Before `continue`, append `{\"role\": \"tool\", \"content\": f\"error: {error}\", \"is_error\": True}`."
+    feedback:
+      - when: { outputEquals: "Stopped: step budget exhausted\n" }
+        message: The model never sees an error, so it repeats the same bad call. Append the validation error as a tool message before continuing.
+      - when: { errorType: TypeError }
+        message: The invalid call reached get_order. Keep the validation check and the continue — just append the error message first.
+    explanation: >-
+      Skipping a failed call silently leaves the model with no signal, so it makes the same mistake until
+      the budget runs out. Feeding the error back as a tool result is what lets the model recover — and
+      the step budget still protects you when it does not.
+
+  - id: code-run-agent
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Write `run_agent(model, tools, goal, max_steps)` returning `(answer, messages)`:
+
+      - start with `messages = [{"role": "user", "content": goal}]`;
+      - call `model.respond(messages)` at most `max_steps` times;
+      - a response `{"type": "final", "text": ...}` → append `{"role": "assistant", "content": text}` and
+        return `(text, messages)`;
+      - a response `{"type": "tool_call", "name": ..., "arguments": {...}}` → append
+        `{"role": "assistant", "tool_call": response}`, then append **one** tool message
+        `{"role": "tool", "name": name, "content": ..., "is_error": ...}` where content is
+        - `"error: " + message` (is_error True) if `validate_call` returns a message,
+        - `"error: " + str(exc)` (is_error True) if the tool raises `ValueError`,
+        - otherwise `json.dumps(result)` (is_error False);
+      - if the budget runs out, return `(None, messages)`.
+    starterCode: |
+      import json
+
+      def get_order(order_id):
+          orders = {"A-1042": {"status": "delivered", "total_usd": 120.0}}
+          if order_id not in orders:
+              raise ValueError(f"no order with id {order_id!r}")
+          return orders[order_id]
+
+      TOOLS = {"get_order": {"function": get_order, "params": {"order_id": "string"}}}
+
+      def validate_call(call, tools):
+          if call.get("name") not in tools:
+              return f"unknown tool {call.get('name')!r}"
+          if set(call.get("arguments", {})) != set(tools[call["name"]]["params"]):
+              return f"arguments must be {sorted(tools[call['name']]['params'])}"
+          return None
+
+      class ScriptedModel:
+          def __init__(self, script):
+              self.script, self.calls, self.seen = script, 0, []
+          def respond(self, messages):
+              self.seen.append(len(messages))
+              self.calls += 1
+              return self.script[self.calls - 1]
+
+      def run_agent(model, tools, goal, max_steps):
+          messages = [{"role": "user", "content": goal}]
+          # Loop at most max_steps times: ask the model, then answer or run a tool.
+          return None, messages
+
+      model = ScriptedModel([
+          {"type": "tool_call", "name": "get_order", "arguments": {"order_id": "A-1042"}},
+          {"type": "final", "text": "It was delivered."},
+      ])
+      answer, messages = run_agent(model, TOOLS, "Status of A-1042?", max_steps=5)
+      print(answer, model.seen)
+    solution: |
+      import json
+
+      def get_order(order_id):
+          orders = {"A-1042": {"status": "delivered", "total_usd": 120.0}}
+          if order_id not in orders:
+              raise ValueError(f"no order with id {order_id!r}")
+          return orders[order_id]
+
+      TOOLS = {"get_order": {"function": get_order, "params": {"order_id": "string"}}}
+
+      def validate_call(call, tools):
+          if call.get("name") not in tools:
+              return f"unknown tool {call.get('name')!r}"
+          if set(call.get("arguments", {})) != set(tools[call["name"]]["params"]):
+              return f"arguments must be {sorted(tools[call['name']]['params'])}"
+          return None
+
+      class ScriptedModel:
+          def __init__(self, script):
+              self.script, self.calls, self.seen = script, 0, []
+          def respond(self, messages):
+              self.seen.append(len(messages))
+              self.calls += 1
+              return self.script[self.calls - 1]
+
+      def run_agent(model, tools, goal, max_steps):
+          messages = [{"role": "user", "content": goal}]
+          for _ in range(max_steps):
+              response = model.respond(messages)
+              if response["type"] == "final":
+                  messages.append({"role": "assistant", "content": response["text"]})
+                  return response["text"], messages
+              messages.append({"role": "assistant", "tool_call": response})
+              error = validate_call(response, tools)
+              if error is not None:
+                  content, is_error = "error: " + error, True
+              else:
+                  try:
+                      result = tools[response["name"]]["function"](**response["arguments"])
+                      content, is_error = json.dumps(result), False
+                  except ValueError as exc:
+                      content, is_error = "error: " + str(exc), True
+              messages.append({"role": "tool", "name": response["name"], "content": content, "is_error": is_error})
+          return None, messages
+
+      model = ScriptedModel([
+          {"type": "tool_call", "name": "get_order", "arguments": {"order_id": "A-1042"}},
+          {"type": "final", "text": "It was delivered."},
+      ])
+      answer, messages = run_agent(model, TOOLS, "Status of A-1042?", max_steps=5)
+      print(answer, model.seen)
+    expectedOutput: |
+      It was delivered. [1, 3]
+    tests:
+      - name: immediate final answer
+        code: |
+          m = ScriptedModel([{"type": "final", "text": "Hi!"}])
+          answer, msgs = run_agent(m, TOOLS, "hello", max_steps=5)
+          assert answer == "Hi!", f"A final response should be returned immediately; got {answer!r}."
+          assert m.calls == 1 and len(msgs) == 2, f"Expected 1 model call and 2 messages (user + assistant); got {m.calls} calls and {len(msgs)} messages."
+      - name: tool result is fed back
+        code: |
+          import json
+          m = ScriptedModel([
+              {"type": "tool_call", "name": "get_order", "arguments": {"order_id": "A-1042"}},
+              {"type": "final", "text": "done"},
+          ])
+          answer, msgs = run_agent(m, TOOLS, "status?", max_steps=5)
+          assert m.seen == [1, 3], f"The second model call should see 3 messages (goal, call, result); seen = {m.seen}."
+          tool_msgs = [x for x in msgs if x.get("role") == "tool"]
+          assert len(tool_msgs) == 1 and tool_msgs[0]["is_error"] is False, f"Expected one successful tool message; got {tool_msgs}."
+          assert json.loads(tool_msgs[0]["content"]) == {"status": "delivered", "total_usd": 120.0}, "The tool message content should be json.dumps(result)."
+      - name: validation errors are fed back
+        code: |
+          m = ScriptedModel([
+              {"type": "tool_call", "name": "get_ordr", "arguments": {"order_id": "A-1042"}},
+              {"type": "final", "text": "sorry"},
+          ])
+          answer, msgs = run_agent(m, TOOLS, "status?", max_steps=5)
+          tool_msgs = [x for x in msgs if x.get("role") == "tool"]
+          assert answer == "sorry", "After an invalid call the loop should continue and return the final answer."
+          assert tool_msgs and tool_msgs[0]["is_error"] is True and tool_msgs[0]["content"].startswith("error: "), f"An invalid call should add a tool message with is_error True and content starting 'error: '; got {tool_msgs}."
+      - name: tool ValueError is fed back, not raised
+        code: |
+          m = ScriptedModel([
+              {"type": "tool_call", "name": "get_order", "arguments": {"order_id": "Z-9"}},
+              {"type": "final", "text": "not found"},
+          ])
+          answer, msgs = run_agent(m, TOOLS, "status?", max_steps=5)
+          tool_msgs = [x for x in msgs if x.get("role") == "tool"]
+          assert answer == "not found", "A ValueError from the tool should become an error message, not crash the loop."
+          assert "no order with id" in tool_msgs[0]["content"] and tool_msgs[0]["is_error"] is True, f"The tool's error text should be in the message; got {tool_msgs[0]}."
+      - name: the step budget stops the loop
+        code: |
+          m = ScriptedModel([{"type": "tool_call", "name": "get_order", "arguments": {"order_id": "A-1042"}}] * 50)
+          answer, msgs = run_agent(m, TOOLS, "status?", max_steps=3)
+          assert answer is None, f"Without a final answer the loop should return None; got {answer!r}."
+          assert m.calls == 3, f"The model should be called exactly max_steps = 3 times; it was called {m.calls} times."
+    hints:
+      - "Use `for _ in range(max_steps):` so the budget is enforced by the loop itself."
+      - Branch on `response["type"]`. For a tool call, append the assistant message first, then exactly one tool message.
+      - "Wrap only the tool execution in `try/except ValueError as exc:`; return `(None, messages)` after the loop."
+    feedback:
+      - when: { outputEquals: "None [1]\n" }
+        message: The model was called once and its tool call was not handled. Loop, execute tool calls and keep calling the model until a final answer.
+      - when: { errorType: IndexError }
+        message: The scripted model ran out of responses — your loop called it more times than it should. Return as soon as you get a final answer, and never exceed max_steps.
+      - when: { errorType: ValueError }
+        message: A tool's ValueError escaped the loop. Catch it and append it to messages as an error tool result.
+    explanation: >-
+      This is the core of every agent framework: a bounded loop that branches on the model's response,
+      validates and executes tool calls, feeds back results and errors in a fixed message format, and
+      stops on a final answer or the budget. Scripted models make each behaviour testable.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-steps
+    type: predict-output
+    skill: prediction
+    prompt: The model would answer on its third turn, but the budget is 2. What does this print?
+    code: |
+      script = [
+          {"type": "tool_call", "name": "search", "arguments": {"q": "refund"}},
+          {"type": "tool_call", "name": "search", "arguments": {"q": "refund policy"}},
+          {"type": "final", "text": "Refunds take 14 days."},
+      ]
+      max_steps = 2
+      answer = None
+      for step, response in enumerate(script[:max_steps], start=1):
+          if response["type"] == "final":
+              answer = response["text"]
+              break
+      print(step, answer)
+    answer: "2 None"
+    explanation: >-
+      Only the first two responses are processed; both are tool calls, so the loop ends with step = 2 and
+      no final answer. The budget stopped the run one turn before the answer — which is why budgets need a
+      sensible size and a fallback.
+    wrongAnswers:
+      - answer: "3 Refunds take 14 days."
+        feedback: "`script[:max_steps]` keeps only the first 2 responses, so the final answer is never reached."
+      - answer: "2 Refunds take 14 days."
+        feedback: The final answer is the third response; with a budget of 2 the loop never sees it, so answer stays None.
+
+  - id: m-stop-conditions
+    type: mcq
+    skill: design
+    prompt: Which stopping design is most appropriate for a production agent loop?
+    explanation: >-
+      The model's final answer is the normal exit, but code-enforced limits are needed for every other
+      case — step and cost budgets, a timeout, loop detection — each with a defined fallback such as a
+      partial answer or a hand-off to a human.
+    options:
+      - id: a
+        text: Stop on a final answer, or when code-enforced limits trigger (max steps, token/cost budget, timeout, repeated calls), then use a defined fallback.
+        correct: true
+        feedback: Right — the model decides when it is done; your code decides when it must stop.
+      - id: b
+        text: Stop only when the model says it is finished; it knows best when the task is complete.
+        feedback: A model can loop or stall indefinitely. Without code-enforced limits, cost and time are unbounded.
+      - id: c
+        text: Instruct the model in the system prompt to use at most 5 tools.
+        feedback: An instruction is not a control; nothing enforces it. Count steps in code.
+      - id: d
+        text: Stop after exactly 5 tool calls every time, even if the model has already answered.
+        feedback: A fixed count ignores the final answer and wastes calls; budgets are upper limits, not targets.
+
+  - id: m-loop-detection
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `stop_reason(calls, max_steps)`. `calls` is the list of tool-call dicts the model has made so
+      far (each with `"name"` and `"arguments"`), in order. Return:
+
+      - `"max_steps"` if `len(calls) >= max_steps` (check this first);
+      - `"repeated_call"` if there are at least two calls and the **last two** have the same `name` and
+        the same `arguments`;
+      - otherwise `None`.
+    starterCode: |
+      def stop_reason(calls, max_steps):
+          # Return "max_steps", "repeated_call" or None.
+          return None
+
+      calls = [
+          {"name": "get_order", "arguments": {"order_id": "B-7"}},
+          {"name": "get_order", "arguments": {"order_id": "B-7"}},
+      ]
+      print(stop_reason(calls, max_steps=5))
+    solution: |
+      def stop_reason(calls, max_steps):
+          if len(calls) >= max_steps:
+              return "max_steps"
+          if len(calls) >= 2:
+              last, previous = calls[-1], calls[-2]
+              if last["name"] == previous["name"] and last["arguments"] == previous["arguments"]:
+                  return "repeated_call"
+          return None
+
+      calls = [
+          {"name": "get_order", "arguments": {"order_id": "B-7"}},
+          {"name": "get_order", "arguments": {"order_id": "B-7"}},
+      ]
+      print(stop_reason(calls, max_steps=5))
+    expectedOutput: |
+      repeated_call
+    tests:
+      - name: detects a repeated call
+        code: |
+          calls = [{"name": "a", "arguments": {"x": 1}}, {"name": "a", "arguments": {"x": 1}}]
+          assert stop_reason(calls, 5) == "repeated_call", f"Two identical calls in a row should give 'repeated_call'; got {stop_reason(calls, 5)!r}."
+      - name: different arguments are not a repeat
+        code: |
+          calls = [{"name": "a", "arguments": {"x": 1}}, {"name": "a", "arguments": {"x": 2}}]
+          assert stop_reason(calls, 5) is None, "Same tool with different arguments is progress, not a repeat."
+          calls = [{"name": "a", "arguments": {"x": 1}}, {"name": "b", "arguments": {"x": 1}}]
+          assert stop_reason(calls, 5) is None, "Different tools with the same arguments are not a repeat."
+      - name: only the last two calls matter
+        code: |
+          calls = [{"name": "a", "arguments": {}}, {"name": "b", "arguments": {}}, {"name": "a", "arguments": {}}]
+          assert stop_reason(calls, 5) is None, "a, b, a is not two identical calls in a row."
+      - name: budget is checked first
+        code: |
+          calls = [{"name": "a", "arguments": {}}] * 3
+          assert stop_reason(calls, 3) == "max_steps", f"With 3 calls and max_steps=3 the answer is 'max_steps' (checked first); got {stop_reason(calls, 3)!r}."
+          assert stop_reason([], 3) is None and stop_reason([{"name": "a", "arguments": {}}], 3) is None, "No calls or one call within budget should give None."
+    hints:
+      - Check the budget first with `len(calls) >= max_steps`.
+      - "`calls[-1]` and `calls[-2]` are the last two calls; dicts compare equal when they have the same keys and values."
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: The example has two identical calls in a row, so the result should be "repeated_call".
+      - when: { errorType: IndexError }
+        message: calls[-2] fails when there are fewer than two calls. Check len(calls) >= 2 first.
+    explanation: >-
+      A repeated identical call means the agent is not making progress — the result cannot change.
+      Checking it each iteration (alongside the step budget) stops stuck runs early and cheaply; the loop
+      then applies its fallback.
+
+  - id: m-tf-model-runs-tools
+    type: true-false
+    skill: recognition
+    prompt: "True or false: for a tool that you define and implement in your own application, the model executes the function itself and returns its real result in the response."
+    answer: false
+    explanation: >-
+      For client-side tools the model only returns a request (tool name and arguments). Your application
+      validates and executes it and sends the result back in the next request. (Some providers also offer
+      server-side tools they run themselves, but your own functions run only in your code.)
+
+  - id: m-design-workflow
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: Which task most justifies an agent loop rather than a fixed workflow?
+    explanation: >-
+      Investigating a failing build is open-ended: which logs to read and which checks to run depend on
+      what each step reveals, and mistakes are recoverable. The other tasks have known, stable steps that
+      code can define.
+    options:
+      - id: a
+        text: Investigating why a CI build fails, where each next check depends on what the previous logs showed.
+        correct: true
+        feedback: Right — the path cannot be known in advance, so letting the model choose the next step pays off.
+      - id: b
+        text: Translating every new support ticket into English.
+        feedback: One model call per ticket. No loop or tool choice is needed.
+      - id: c
+        text: Extracting the date, amount and vendor from each uploaded invoice.
+        feedback: A fixed extract-then-validate workflow is cheaper and more reliable.
+      - id: d
+        text: Sending a weekly sales summary built from the same three database queries.
+        feedback: The steps never change, so code should define them; at most one LLM call writes the summary.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-steps, m-stop-conditions, m-loop-detection, m-tf-model-runs-tools, m-design-workflow]
+
+cheatsheet: |
+  ```python
+  messages = [{"role": "user", "content": goal}]
+  for step in range(max_steps):                         # hard budget in code
+      response = model.respond(messages)                # observe + decide
+      if response["type"] == "final":
+          return response["text"], messages
+      messages.append({"role": "assistant", "tool_call": response})
+      error = validate_call(response, tools)            # unknown tool, missing/extra args, types
+      if error:
+          content, is_error = f"error: {error}", True
+      else:
+          try:
+              content, is_error = json.dumps(tools[name]["function"](**args)), False
+          except ValueError as exc:                     # expected tool failure -> feed back
+              content, is_error = f"error: {exc}", True
+      messages.append({"role": "tool", "name": name, "content": content, "is_error": is_error})
+  return None, messages                                 # budget exhausted -> fallback
+  ```
+  - Stops: final answer · max steps · token/cost budget · timeout · repeated identical call.
+  - Expected errors → back to the model; bugs → fail loudly. Log every step (the trajectory).
+  - Test with scripted fakes; evaluate real agents over many runs. Known steps → write a workflow.

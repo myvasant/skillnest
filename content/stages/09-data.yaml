@@ -1,0 +1,340 @@
+id: data
+order: 9
+title: Data Analysis with Python
+shortTitle: Data Analysis
+summary: >-
+  NumPy and pandas for loading, cleaning, transforming, exploring and visualising real data, and turning it
+  into features that models can learn from.
+why: >-
+  Most of the work in data science and ML is understanding and preparing data. Models trained on badly
+  understood data fail silently.
+modules:
+  - id: tools
+    title: NumPy, pandas and notebooks
+    summary: Arrays, DataFrames, loading data and the notebook workflow.
+  - id: analysis
+    title: Cleaning and exploring data
+    summary: Cleaning, quality checks, exploratory analysis and visualisation.
+  - id: features
+    title: Features
+    summary: Feature engineering and time series.
+concepts:
+  - id: data.notebooks
+    title: Jupyter notebooks
+    module: tools
+    level: beginner
+    priority: supporting
+    summary: Notebooks mix code, output and notes for exploration; hidden state and out-of-order execution are their classic reproducibility traps.
+    why: Exploring data is iterative (load, look, plot, adjust), and notebooks keep code, results and explanation side by side; used carelessly, they also produce analyses nobody can reproduce.
+    requires: [python.setup, python.virtual-environments]
+    keyIdeas:
+      - A notebook (`.ipynb`, a JSON file) is a list of code and Markdown cells; code runs in a kernel, a separate Python process that keeps variables in memory between cells.
+      - Cells can run in any order, so what is on screen may not match the kernel's state; use "Restart kernel and run all" before trusting or sharing results.
+      - "Run the kernel from your project's virtual environment (select it in VS Code or JupyterLab, or register it with `python -m ipykernel install --user --name myproj`) so imports match the project."
+      - "`%timeit` and `%%time` measure code, and `%pip install ...` installs into the running kernel's environment, unlike a bare `!pip`, which may target a different Python."
+      - Move reusable code into `.py` modules and import it; notebooks are for exploration and reporting, not for production pipelines.
+    misconceptions:
+      - A notebook that ran once is not reproducible; hidden state from deleted or re-run cells can make results impossible to recreate.
+      - Committing notebooks with outputs is not harmless; it bloats diffs and can leak data, so strip outputs or pair notebooks with text formats such as Jupytext.
+    tools: [JupyterLab]
+    interview: Expect to explain how you keep notebook analyses reproducible and when code should move out of a notebook.
+    sources:
+      - title: Project Jupyter Documentation
+        url: https://docs.jupyter.org/en/latest/
+        publisher: Project Jupyter
+      - title: JupyterLab Documentation
+        url: https://jupyterlab.readthedocs.io/en/stable/
+        publisher: Project Jupyter
+      - title: Ten simple rules for writing and sharing computational analyses in Jupyter Notebooks
+        url: https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1007007
+        publisher: PLOS Computational Biology (Rule et al., 2019)
+  - id: data.numpy
+    title: NumPy arrays and vectorisation
+    module: tools
+    level: intermediate
+    priority: essential
+    summary: N-dimensional arrays with a fixed dtype and shape; vectorised operations and broadcasting replace slow Python loops.
+    why: Python loops over millions of numbers are slow; NumPy stores numbers in compact typed arrays and runs operations in compiled code, and pandas, scikit-learn and PyTorch all build on its array model.
+    requires: [math.vectors, python.lists, python.virtual-environments]
+    keyIdeas:
+      - "An `ndarray` has a `shape` such as `(1000, 3)` and one `dtype` such as `float64`; create arrays with `np.array`, `np.zeros`, `np.arange` or `np.linspace`."
+      - "Vectorised operations apply element-wise without Python loops, as in `(x - x.mean()) / x.std()`; reductions take an `axis`, so `X.sum(axis=0)` sums down the columns."
+      - "Broadcasting compares shapes from the right; two dimensions are compatible when they are equal or one of them is 1, so `(1000, 3) - (3,)` subtracts a per-column value from every row."
+      - "Basic slices such as `x[1:5]` return views that share memory with the original; boolean masks (`x[x > 0]`) and integer-array indexing return copies."
+      - "Use `rng = np.random.default_rng(seed)` for reproducible random numbers."
+    misconceptions:
+      - "Changing a slice changes the original array, because slices are views; call `.copy()` when you need an independent array."
+      - "Fixed-width integer arrays can overflow silently (an `int8` wraps around past 127), unlike Python's unbounded `int`."
+    tools: [NumPy]
+    interview: Expect to explain broadcasting and views versus copies, and to vectorise a loop.
+    sources:
+      - title: "NumPy: the absolute basics for beginners"
+        url: https://numpy.org/doc/stable/user/absolute_beginners.html
+        publisher: NumPy
+      - title: Broadcasting
+        url: https://numpy.org/doc/stable/user/basics.broadcasting.html
+        publisher: NumPy
+      - title: Copies and views
+        url: https://numpy.org/doc/stable/user/basics.copies.html
+        publisher: NumPy
+  - id: data.pandas-basics
+    title: pandas Series and DataFrames
+    module: tools
+    level: intermediate
+    priority: essential
+    summary: Labelled one- and two-dimensional data with indexes; select, filter and compute columns with vectorised expressions.
+    why: Real data has named columns, mixed types, missing values and row labels; pandas adds these to NumPy-style arrays and is the default tool for tabular data in Python.
+    requires: [data.numpy, python.dictionaries]
+    keyIdeas:
+      - "A `Series` is a labelled 1-D array and a `DataFrame` is a table of Series sharing one index; inspect them with `df.head()`, `df.info()`, `df.describe()` and `df.dtypes`."
+      - "Select a column with `df[\"col\"]` or several with `df[[\"a\", \"b\"]]`; select by label with `df.loc[rows, cols]` and by position with `df.iloc[rows, cols]`."
+      - "Filter with boolean masks such as `df[(df[\"age\"] > 30) & (df[\"country\"] == \"FR\")]`, using `&`, `|` and `~` with parentheses rather than `and`, `or` and `not`."
+      - "Create columns with vectorised expressions (`df[\"total\"] = df[\"price\"] * df[\"qty\"]`) or `df.assign(...)`; avoid row loops and `apply` with Python functions when a vectorised method exists."
+      - "In pandas 3.0 and later, Copy-on-Write is the only mode - derived objects behave as copies and chained assignment such as `df[\"a\"][mask] = 0` never changes `df`; write `df.loc[mask, \"a\"] = 0` instead."
+    misconceptions:
+      - "`.loc` slicing by label includes the end label, while `.iloc` slicing by position excludes it, like Python slices."
+      - Arithmetic between two Series aligns them by index label, not by position, and labels missing from either side produce NaN.
+    tools: [pandas]
+    interview: Expect questions on `loc` versus `iloc`, boolean indexing and why vectorised operations beat `apply` and loops.
+    sources:
+      - title: 10 minutes to pandas
+        url: https://pandas.pydata.org/docs/user_guide/10min.html
+        publisher: pandas
+      - title: Indexing and selecting data
+        url: https://pandas.pydata.org/docs/user_guide/indexing.html
+        publisher: pandas
+      - title: Copy-on-Write (CoW)
+        url: https://pandas.pydata.org/docs/user_guide/copy_on_write.html
+        publisher: pandas
+  - id: data.data-loading
+    title: Loading data from files and databases
+    module: tools
+    level: intermediate
+    priority: essential
+    summary: Read CSV, JSON, Excel, Parquet and SQL into DataFrames while controlling types, encodings, dates and memory.
+    why: Many data bugs start at load time (wrong types, mangled dates, broken encodings), and loading large files carelessly runs out of memory.
+    requires: [data.pandas-basics, python.csv-json]
+    keyIdeas:
+      - "`pd.read_csv(path, dtype={...}, parse_dates=[\"created_at\"], usecols=[...], encoding=\"utf-8\")` controls types, dates, columns and encoding."
+      - "Parquet (`pd.read_parquet`, via PyArrow) is a columnar, compressed and typed format; it is much faster and smaller than CSV and keeps dtypes intact."
+      - "Read from a database with `pd.read_sql(query, engine, params=...)` using a SQLAlchemy engine or connection, passing values as parameters rather than formatting them into the SQL."
+      - "For big files, load only the columns you need, use compact dtypes (`category`, smaller integers) or read in pieces with `chunksize=`; for data larger than memory consider DuckDB or Polars."
+      - "Since pandas 3.0, text columns are inferred as the dedicated `str` dtype (backed by PyArrow when it is installed) instead of `object`."
+    misconceptions:
+      - CSV has no types - leading zeros in IDs and postcodes vanish and dates stay strings unless you specify dtypes and date parsing.
+      - Spreadsheets are not a reliable interchange format; they can silently convert values such as long IDs, gene names and dates.
+    tools: [pandas, PyArrow]
+    interview: Expect to explain how you would load a file that does not fit in memory and why Parquet is preferred to CSV in pipelines.
+    production: Pin and check the expected schema (columns and types) at ingestion, so an upstream format change fails loudly instead of corrupting downstream data.
+    sources:
+      - title: IO tools (text, CSV, HDF5, ...)
+        url: https://pandas.pydata.org/docs/user_guide/io.html
+        publisher: pandas
+      - title: Scaling to large datasets
+        url: https://pandas.pydata.org/docs/user_guide/scale.html
+        publisher: pandas
+      - title: Apache Parquet documentation
+        url: https://parquet.apache.org/docs/
+        publisher: Apache Software Foundation
+  - id: data.pandas-transform
+    title: Grouping, joining and reshaping
+    module: tools
+    level: intermediate
+    priority: essential
+    summary: groupby/aggregate, merge, concat, pivot and melt — the DataFrame equivalents of SQL aggregation and joins.
+    why: Real questions need summaries by group and combinations of tables; doing that correctly in pandas mirrors SQL and avoids error-prone loops.
+    requires: [data.pandas-basics]
+    keyIdeas:
+      - "Split-apply-combine: `df.groupby(\"country\").agg(revenue=(\"amount\", \"sum\"), users=(\"user_id\", \"nunique\"))` returns one row per group with named result columns."
+      - "`transform` returns a result aligned to the original rows (for example each row's share of its group total), whereas `agg` returns one row per group."
+      - "`pd.merge(left, right, on=\"id\", how=\"left\", validate=\"many_to_one\")` is a SQL-style join; `validate=` and `indicator=True` expose duplicate keys and unmatched rows."
+      - "`pd.concat` stacks frames vertically or side by side; `pivot_table` reshapes long data to wide with aggregation, and `melt` turns wide data back into long form."
+      - Compare row counts before and after every merge; an unexpected increase means duplicated keys.
+    misconceptions:
+      - "`groupby` drops rows whose key is missing (NaN) by default; pass `dropna=False` to keep them."
+      - A left merge does not guarantee the original row count; duplicate keys on the right multiply rows.
+    interview: Expect to translate a SQL GROUP BY or JOIN into pandas and explain `agg` versus `transform`.
+    sources:
+      - title: "Group by: split-apply-combine"
+        url: https://pandas.pydata.org/docs/user_guide/groupby.html
+        publisher: pandas
+      - title: Merge, join, concatenate and compare
+        url: https://pandas.pydata.org/docs/user_guide/merging.html
+        publisher: pandas
+      - title: Comparison with SQL
+        url: https://pandas.pydata.org/docs/getting_started/comparison/comparison_with_sql.html
+        publisher: pandas
+  - id: data.data-cleaning
+    title: Data cleaning
+    module: analysis
+    level: intermediate
+    priority: essential
+    summary: Handle missing values, duplicates, wrong types, inconsistent categories and outliers deliberately, documenting every decision.
+    why: Models and dashboards faithfully learn from whatever you feed them, including duplicates, typos and placeholder values, so cleaning choices directly change results and must be deliberate and recorded.
+    requires: [data.pandas-transform, data.data-loading]
+    keyIdeas:
+      - "Count missing values with `df.isna().sum()`, then decide per column whether to drop, fill (median, mode, a sentinel category) or keep missingness as its own feature."
+      - "Watch for disguised missing values such as `-1`, `999`, `\"N/A\"` or empty strings, and convert them with `na_values=` at load time or `replace`."
+      - "Fix types explicitly with `pd.to_numeric(..., errors=\"coerce\")`, `pd.to_datetime(...)` and `astype(\"category\")` for low-cardinality text."
+      - "Normalise categories (`.str.strip().str.lower()`, mapping synonyms) and remove duplicate records with `drop_duplicates(subset=[...])`."
+      - Write cleaning as a script or function that goes from raw data to clean data, so every step can be rerun and reviewed.
+    misconceptions:
+      - Dropping every row with any missing value is not neutral; it can discard most of the data and bias what remains.
+      - Outliers are not automatically errors; investigate them first, because some are the most important records (fraud, failures).
+      - Computing fill values on the whole dataset leaks test information; fit imputation on the training split only.
+    interview: Expect to walk through cleaning a messy dataset and justify your choices for missing values and outliers.
+    sources:
+      - title: Working with missing data
+        url: https://pandas.pydata.org/docs/user_guide/missing_data.html
+        publisher: pandas
+      - title: pandas.DataFrame.drop_duplicates
+        url: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.drop_duplicates.html
+        publisher: pandas
+      - title: Imputation of missing values
+        url: https://scikit-learn.org/stable/modules/impute.html
+        publisher: scikit-learn
+  - id: data.data-quality
+    title: Data quality checks
+    module: analysis
+    level: intermediate
+    priority: supporting
+    summary: Encode expectations about data (ranges, uniqueness, schemas) as automated checks so bad data is caught before it reaches a model.
+    why: Upstream systems change without warning; automated checks catch a renamed column, a unit change or a flood of nulls before it quietly degrades a model or report.
+    requires: [data.data-cleaning]
+    keyIdeas:
+      - Write expectations as code - required columns and dtypes, non-null keys, unique IDs, value ranges, allowed categories and references between tables.
+      - Check volume and freshness too - row counts within an expected band and a latest timestamp that is recent enough.
+      - Libraries such as pandera (DataFrame schemas) and Great Expectations run these checks and report which rows fail.
+      - Run checks at boundaries (after ingestion, after each transformation, before training or serving) and stop the pipeline or quarantine bad rows instead of carrying on.
+      - Track distributions over time (means, null rates, category frequencies) to spot drift that no single rule catches.
+    misconceptions:
+      - Passing schema checks does not mean the data is right; well-typed values can still be wrong, so also test business rules and distributions.
+      - Data quality is not a one-off cleaning step; checks must run on every new batch.
+    tools: [pandera, Great Expectations]
+    interview: Expect to list the checks you would put on an incoming dataset and say what happens when one fails.
+    production: Alert the owning team with the failing check and sample rows, and keep a history of check results to see quality trends.
+    sources:
+      - title: pandera documentation
+        url: https://pandera.readthedocs.io/en/stable/
+        publisher: pandera project
+      - title: Great Expectations documentation
+        url: https://docs.greatexpectations.io/docs/home/
+        publisher: Great Expectations
+      - title: Data Validation for Machine Learning (MLSys 2019)
+        url: https://mlsys.org/Conferences/2019/doc/2019/167.pdf
+        publisher: Breck et al., Google
+  - id: data.eda
+    title: Exploratory data analysis
+    module: analysis
+    level: intermediate
+    priority: essential
+    summary: A systematic first look — distributions, relationships, anomalies, leakage hints and questions to ask before modelling.
+    why: Modelling before understanding the data wastes time and hides problems such as leakage, skew and bad labels; EDA tells you which models, features and metrics make sense.
+    requires: [data.data-cleaning, math.descriptive-statistics, data.visualization]
+    keyIdeas:
+      - "Start with shape, dtypes, missingness and `describe()`, then look at each variable's distribution (histograms, `value_counts()`) before relationships."
+      - Examine relationships with correlations, scatter plots, group comparisons and cross-tabulations, especially between each feature and the target.
+      - Inspect the target itself - class balance, label noise and how it was defined; an imbalanced target changes which metrics are meaningful.
+      - Look for leakage hints - features that predict the target suspiciously well, IDs or timestamps correlated with the label, or values recorded after the outcome.
+      - Write down questions and findings as you go, and keep the held-out test set untouched during EDA so it does not bias later evaluation.
+    misconceptions:
+      - Summary statistics alone are not enough; always plot, because very different data can share the same summaries.
+      - A strong correlation found during EDA is a hypothesis to test, not a causal conclusion.
+    interview: Expect to describe your first hour with a new dataset and how you would spot data leakage.
+    sources:
+      - title: "NIST/SEMATECH e-Handbook: Exploratory Data Analysis"
+        url: https://www.itl.nist.gov/div898/handbook/eda/eda.htm
+        publisher: NIST
+      - title: Common pitfalls and recommended practices (data leakage)
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+        publisher: scikit-learn
+      - title: pandas.DataFrame.describe
+        url: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.describe.html
+        publisher: pandas
+  - id: data.visualization
+    title: Data visualisation
+    module: analysis
+    level: intermediate
+    priority: essential
+    summary: Choose chart types for the question, label honestly, avoid misleading axes, and use matplotlib/seaborn to explore and communicate.
+    why: A good chart reveals patterns and problems in seconds that tables hide, and a misleading one drives wrong decisions; engineers need charts both to explore data and to communicate results.
+    requires: [data.pandas-basics, math.descriptive-statistics]
+    keyIdeas:
+      - Match the chart to the question - histograms, box or violin plots for distributions; scatter plots for relationships; line charts for trends over time; bar charts for comparing categories.
+      - "Use matplotlib's object-oriented API (`fig, ax = plt.subplots()`, `ax.plot(...)`, `ax.set_xlabel(...)`) for control; seaborn draws statistical plots straight from DataFrames, as in `sns.histplot(data=df, x=\"price\", hue=\"type\")`."
+      - Bar charts must start at zero; line charts may zoom in but should say so. Label axes with units and give each chart a title that states its takeaway.
+      - Use colour-blind-friendly palettes (for example viridis), and avoid 3-D effects and pie charts when readers need precise comparisons.
+      - For large datasets use transparency, hexbin or 2-D histograms, or sampling to avoid overplotting.
+    misconceptions:
+      - Default chart settings are not neutral; axis limits, bin widths and aggregation choices can change the story.
+      - Dual y-axes often suggest relationships that are artefacts of how each axis was scaled.
+    tools: [matplotlib, seaborn]
+    interview: Expect to choose a chart for a given question and critique a misleading chart.
+    sources:
+      - title: Quick start guide
+        url: https://matplotlib.org/stable/users/explain/quick_start.html
+        publisher: Matplotlib
+      - title: User guide and tutorial
+        url: https://seaborn.pydata.org/tutorial.html
+        publisher: seaborn
+      - title: Fundamentals of Data Visualization (free online book)
+        url: https://clauswilke.com/dataviz/
+        publisher: Claus O. Wilke
+  - id: data.feature-engineering
+    title: Feature engineering
+    module: features
+    level: intermediate
+    priority: essential
+    summary: Turn raw columns into model inputs — encoding categories, scaling, binning, date parts, text features and interaction terms.
+    why: Models only see numbers in the form you give them; good features often improve results more than a fancier model, and leaky features produce models that fail in production.
+    requires: [data.data-cleaning, math.distributions, data.eda]
+    keyIdeas:
+      - "One-hot encode low-cardinality categories (`OneHotEncoder(handle_unknown=\"ignore\")`); for high-cardinality ones consider frequency or target encoding (fitted inside cross-validation) or hashing."
+      - "Standardise numeric features (`StandardScaler`) for distance- and gradient-based models, log-transform heavily skewed values, and remember that tree models usually need no scaling."
+      - Extract date parts (hour, day of week, days since an event) and turn text into counts, TF-IDF vectors or embeddings.
+      - "Fit every transformation on training data only and apply it to validation and test data; a scikit-learn `Pipeline` with a `ColumnTransformer` does this automatically."
+      - Use only information that will be available at prediction time; features computed from the future or from the target itself are leakage.
+    misconceptions:
+      - Scaling or encoding the whole dataset before splitting is not harmless; it leaks test-set information into training.
+      - More features are not always better; noisy or redundant ones can hurt generalisation and slow training.
+    tools: [scikit-learn]
+    interview: Expect to explain how you would encode categorical and date features and prevent leakage during preprocessing.
+    production: Run exactly the same feature code in training and serving (one saved pipeline or a feature store); any mismatch causes training-serving skew.
+    sources:
+      - title: Preprocessing data
+        url: https://scikit-learn.org/stable/modules/preprocessing.html
+        publisher: scikit-learn
+      - title: Common pitfalls and recommended practices
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+        publisher: scikit-learn
+      - title: "Feature Engineering and Selection: A Practical Approach for Predictive Models (free online)"
+        url: https://feat.engineering/
+        publisher: Max Kuhn and Kjell Johnson
+  - id: data.time-series
+    title: Working with time series
+    module: features
+    level: intermediate
+    priority: supporting
+    summary: Datetime indexes, time zones, resampling, rolling windows and lag features — and why random train/test splits break on time-ordered data.
+    why: Sales, sensor readings, logs and prices are ordered in time; ignoring that order produces leaky features, misleading validation and forecasts that fail as soon as they are used.
+    requires: [data.pandas-transform]
+    keyIdeas:
+      - "Parse timestamps with `pd.to_datetime` and use them as a `DatetimeIndex`; store moments in UTC and convert with `tz_convert` only for display or calendar features."
+      - "`resample(\"D\").sum()` changes the frequency; downsampling aggregates, while upsampling needs filling or interpolation."
+      - "`rolling(7).mean()` computes moving windows and `shift(1)` creates lag features; shift before rolling so a feature never includes the value you are predicting."
+      - "Validate with time-ordered splits (train on the past, test on the future), for example scikit-learn's `TimeSeriesSplit`, never with a random shuffle."
+      - Look for trend, seasonality (daily, weekly, yearly) and gaps in the timestamps before modelling.
+    misconceptions:
+      - A random train/test split is not valid for time series; it lets the model peek at the future and overstates accuracy.
+      - Not every local day has 24 hours; daylight-saving changes create 23- and 25-hour days, so naive local timestamps can repeat or skip an hour.
+    interview: Expect to explain how you would build lag features and validate a forecasting model without leakage.
+    sources:
+      - title: Time series / date functionality
+        url: https://pandas.pydata.org/docs/user_guide/timeseries.html
+        publisher: pandas
+      - title: TimeSeriesSplit
+        url: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+        publisher: scikit-learn
+      - title: "Forecasting: Principles and Practice (3rd edition, free online)"
+        url: https://otexts.com/fpp3/
+        publisher: Rob J Hyndman and George Athanasopoulos

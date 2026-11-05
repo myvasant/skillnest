@@ -1,0 +1,415 @@
+id: python.stdlib
+concept: python.stdlib
+title: Essential Python Standard Library Modules
+subtitle: Use the tools included with Python before adding dependencies
+estimatedMinutes: 50
+reviewedOn: 2026-11-04
+summary: >-
+  Explore useful modules included with Python, including collections, itertools, functools, datetime,
+  math, statistics, re and secrets. Learn how to discover module capabilities, choose the right tool for
+  common tasks, handle dates with time zones and avoid using random for security-sensitive tokens.
+objectives:
+  - Explain what the Python standard library is and why it reduces unnecessary dependencies.
+  - Use Counter, defaultdict and deque for common collection tasks.
+  - Use math, statistics and itertools for numerical and iterable operations.
+  - Distinguish naive and timezone-aware datetime values.
+  - Use regular expressions for structured text patterns and understand when simpler string methods are clearer.
+  - Choose secrets rather than random when generating security-sensitive tokens.
+sources:
+  - title: The Python Standard Library
+    url: https://docs.python.org/3/library/index.html
+    publisher: Python Software Foundation
+  - title: collections — Container datatypes
+    url: https://docs.python.org/3/library/collections.html
+    publisher: Python Software Foundation
+  - title: itertools — Functions creating iterators for efficient looping
+    url: https://docs.python.org/3/library/itertools.html
+    publisher: Python Software Foundation
+  - title: datetime — Basic date and time types
+    url: https://docs.python.org/3/library/datetime.html
+    publisher: Python Software Foundation
+  - title: secrets — Generate secure random numbers for managing secrets
+    url: https://docs.python.org/3/library/secrets.html
+    publisher: Python Software Foundation
+  - title: re — Regular expression operations
+    url: https://docs.python.org/3/library/re.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why the standard library matters
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Python comes with a large collection of modules called the **standard library**. These modules
+          provide tested building blocks for dates, file paths, data formats, statistics, collections,
+          text processing, cryptography-related utilities and much more.
+
+          Before installing a third-party package, ask whether the standard library already solves the
+          problem. Fewer dependencies usually mean fewer installation steps, fewer version conflicts and
+          a smaller supply-chain surface. A third-party package is still appropriate when it provides a
+          capability that the standard library does not or when it is clearly better suited to the task.
+      - type: callout
+        variant: note
+        title: Standard library does not mean every module is simple
+        body: |
+          Some standard-library modules have advanced APIs and important edge cases. Read the official
+          documentation and test the behaviour you rely on; being included with Python does not remove the
+          need to understand a tool.
+
+  - id: collections
+    title: collections for common data structures
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The `collections` module provides specialised containers:
+
+          - **Counter** counts how often values appear.
+          - **defaultdict** creates a default value when a missing key is first accessed.
+          - **deque** supports efficient additions and removals at both ends.
+
+          These are useful when a plain list or dictionary would require repeated manual bookkeeping.
+      - type: code
+        runnable: true
+        code: |
+          from collections import Counter, defaultdict, deque
+
+          words = ["red", "blue", "red", "green", "blue", "red"]
+          counts = Counter(words)
+          groups = defaultdict(list)
+          groups["warm"].append("red")
+          queue = deque(["task-1", "task-2"])
+          queue.append("task-3")
+          print(counts["red"], counts.most_common(1))
+          print(groups["warm"])
+          print(queue.popleft())
+        expectedOutput: |
+          3 [('red', 3)]
+          ['red']
+          task-1
+        annotations:
+          - line: 4
+            text: Counter counts each distinct value without a manual if-and-increment loop.
+          - line: 5
+            text: defaultdict(list) creates an empty list for a missing key the first time it is accessed.
+          - line: 7
+            text: deque supports efficient operations at both ends, which makes it useful for queues.
+      - type: item
+        ref: collections-prediction
+
+  - id: math-and-statistics
+    title: math and statistics
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The `math` module provides mathematical functions and constants such as `sqrt`, `ceil`, `floor`,
+          `log` and `pi`. The `statistics` module provides common descriptive measures such as `mean`,
+          `median` and `mode`.
+
+          Use the module that matches the meaning of the calculation. For money, do not assume binary
+          floating-point arithmetic follows decimal rounding rules; use `decimal.Decimal` when exact decimal
+          business rules are required.
+      - type: code
+        runnable: true
+        code: |
+          import math
+          import statistics
+
+          values = [10, 20, 20, 30]
+          print(math.sqrt(81))
+          print(statistics.mean(values))
+          print(statistics.median(values))
+        expectedOutput: |
+          9.0
+          20
+          20.0
+        annotations:
+          - line: 5
+            text: sqrt returns the square root as a floating-point number.
+          - line: 6
+            text: mean computes the arithmetic average.
+          - line: 7
+            text: median returns the middle value or the average of the two middle values.
+      - type: item
+        ref: math-prediction
+
+  - id: iterators
+    title: itertools and functools
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `itertools` provides efficient building blocks for iterator pipelines. For example, `chain` treats
+          several iterables as one sequence, while `islice` takes a selected portion without first building
+          a complete list. `functools` provides tools such as `partial` and `lru_cache`.
+
+          These helpers are most useful when they make intent clearer. Do not use a complex iterator chain
+          when a straightforward loop is easier to understand.
+      - type: code
+        runnable: true
+        code: |
+          from itertools import chain, islice
+          from functools import partial
+
+          combined = chain([1, 2], [3, 4], [5])
+          print(list(islice(combined, 3)))
+
+          def multiply(value, factor):
+              return value * factor
+
+          double = partial(multiply, factor=2)
+          print(double(7))
+        expectedOutput: |
+          [1, 2, 3]
+          14
+        annotations:
+          - line: 4
+            text: chain produces values from each iterable in sequence without concatenating the lists first.
+          - line: 5
+            text: islice takes only the first three values from the iterator.
+          - line: 10
+            text: partial creates a new callable with factor fixed at two.
+      - type: item
+        ref: iterator-exercise
+
+  - id: dates-and-time
+    title: Dates, time zones and regular expressions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The `datetime` module represents dates and times. A **naive datetime** has no time-zone
+          information. An **aware datetime** identifies a specific moment relative to a time zone or UTC.
+          For timestamps that cross systems, prefer aware values so that comparisons and conversions have
+          a clear reference.
+
+          `re` provides regular-expression matching for structured text patterns. Use simple string methods
+          when they are enough; regular expressions are powerful but can become difficult to read.
+      - type: code
+        runnable: true
+        code: |
+          from datetime import datetime, timezone
+          import re
+
+          created_at = datetime(2026, 11, 4, 9, 30, tzinfo=timezone.utc)
+          match = re.fullmatch(r"INV-(\d{4})", "INV-2048")
+          print(created_at.isoformat())
+          print(match.group(1) if match else "no match")
+        expectedOutput: |
+          2026-11-04T09:30:00+00:00
+          2048
+        annotations:
+          - line: 4
+            text: timezone.utc makes the datetime aware and identifies UTC as its time zone.
+          - line: 5
+            text: fullmatch requires the entire input to follow the pattern.
+          - line: 7
+            text: The first capture group contains the four digits after INV-.
+      - type: callout
+        variant: warning
+        title: Avoid ambiguous timestamps
+        body: |
+          Do not store an important event as a naive local datetime when the value will cross system or
+          geographic boundaries. Use an explicit time zone or UTC, and convert to a user's local zone only
+          for display. Daylight-saving transitions can make local wall-clock times ambiguous or nonexistent.
+      - type: item
+        ref: datetime-regex-explain
+
+  - id: randomness
+    title: random versus secrets
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The `random` module generates pseudo-random values suitable for simulations, games and many
+          non-security tasks. Its generator is deterministic when seeded, which is useful for reproducible
+          experiments.
+
+          The `secrets` module is designed for values that must be difficult to guess, such as password-reset
+          tokens. Do not use `random` to generate authentication tokens, password-reset links or other
+          security-sensitive values.
+      - type: code
+        runnable: true
+        code: |
+          import random
+          import secrets
+
+          random.seed(7)
+          print(random.randint(1, 10))
+          print(len(secrets.token_urlsafe(16)) > 0)
+        expectedOutput: |
+          6
+          True
+        annotations:
+          - line: 4
+            text: A fixed seed makes the pseudo-random sequence reproducible for the same Python implementation and version.
+          - line: 5
+            text: randint includes both endpoints, one and ten.
+          - line: 6
+            text: token_urlsafe uses a cryptographically strong source and returns a URL-safe token string.
+      - type: item
+        ref: random-secrets-check
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Check the standard library before adding a third-party dependency.
+          - Counter, defaultdict and deque solve common collection problems.
+          - math, statistics, itertools and functools provide useful building blocks.
+          - Use aware datetimes for timestamps that cross system boundaries.
+          - Use regular expressions when a structured pattern is needed, but prefer simpler string methods when possible.
+          - Use random for simulations and secrets for security-sensitive tokens.
+      - type: item
+        ref: mastery-stdlib
+      - type: item
+        ref: mastery-stdlib-code
+      - type: item
+        ref: mastery-stdlib-explain
+
+items:
+  - id: collections-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does the Counter expression print?
+    code: |
+      from collections import Counter
+      counts = Counter(["a", "b", "a", "c", "a"])
+      print(counts.most_common(1))
+    answer: "[('a', 3)]"
+    explanation: Counter records how often each value appears; most_common(1) returns the highest-frequency pair.
+  - id: math-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this code print?
+    code: |
+      import statistics
+      print(statistics.mean([2, 4, 6]))
+    answer: "4"
+    explanation: The arithmetic mean is (2 + 4 + 6) / 3 = 4.
+  - id: iterator-exercise
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `first_values(iterable, count)` using `itertools.islice`. Return a list with at most count values and do not consume more values than needed.
+    explanation: islice takes only the requested number of values from an iterator, so the function can return a short prefix without first building the entire input.
+    starterCode: |
+      from itertools import islice
+
+      def first_values(iterable, count):
+          pass
+    solution: |
+      from itertools import islice
+
+      def first_values(iterable, count):
+          return list(islice(iterable, count))
+    tests:
+      - name: takes the requested number
+        code: assert first_values(iter([1, 2, 3, 4]), 2) == [1, 2]
+      - name: accepts fewer available values
+        code: assert first_values([7], 3) == [7]
+      - name: zero count
+        code: assert first_values([1, 2], 0) == []
+    hints:
+      - "`islice(iterable, count)` yields no more than count values."
+      - Convert the resulting iterator to a list for this function's return contract.
+  - id: datetime-regex-explain
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: Why is an aware datetime usually safer than a naive datetime when storing an event that may be viewed in another time zone?
+    rubric:
+      - Explains that an aware datetime includes time-zone information or an explicit UTC offset.
+      - Explains that a naive datetime does not identify an unambiguous moment across locations.
+    modelAnswer: An aware datetime includes time-zone information or an offset, so it can identify a specific moment and be converted for another location. A naive datetime has no such context; the same clock reading can mean different moments in different time zones.
+    explanation: Time-zone context is necessary when timestamps move between systems or locations.
+  - id: random-secrets-check
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: Which module should you use to generate a password-reset token?
+    options:
+      - id: a
+        text: secrets
+        correct: true
+        feedback: Correct. secrets is designed for security-sensitive random values.
+      - id: b
+        text: random
+        correct: false
+        feedback: random is intended for simulations and general pseudo-random tasks, not security tokens.
+      - id: c
+        text: statistics
+        correct: false
+        feedback: statistics calculates descriptive measures; it does not generate secure tokens.
+    explanation: Use secrets for tokens that must be difficult to guess.
+  - id: mastery-stdlib
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: What is a good first step before installing a third-party package for a common task?
+    options:
+      - id: a
+        text: Check whether the Python standard library already provides a suitable module.
+        correct: true
+        feedback: Correct. This may avoid an unnecessary dependency.
+      - id: b
+        text: Install the largest package available.
+        correct: false
+        feedback: More dependencies do not automatically improve a solution.
+      - id: c
+        text: Copy a random implementation from a forum.
+        correct: false
+        feedback: Prefer documented and maintained tools with known behaviour.
+    explanation: The standard library should be considered before adding external dependencies.
+  - id: mastery-stdlib-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `word_counts(text)` using `collections.Counter`. Return a dictionary-like Counter of lowercase words separated by whitespace.
+    explanation: Counter counts each word occurrence; lowercasing first makes words with different capitalisation share the same count.
+    starterCode: |
+      from collections import Counter
+
+      def word_counts(text):
+          pass
+    solution: |
+      from collections import Counter
+
+      def word_counts(text):
+          return Counter(text.lower().split())
+    tests:
+      - name: counts repeated words
+        code: |
+          assert word_counts("red blue red") == {"red": 2, "blue": 1}
+      - name: normalises case
+        code: |
+          assert word_counts("AI ai") == {"ai": 2}
+      - name: empty text
+        code: |
+          assert word_counts("") == {}
+    hints:
+      - Convert the text to lowercase before splitting.
+      - Counter accepts an iterable of values and counts their frequency.
+  - id: mastery-stdlib-explain
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A production service stores a password-reset token using `random.choice`. Why should it use `secrets` instead?
+    rubric:
+      - Identifies that random is not intended for cryptographic security and may be predictable.
+      - Identifies secrets as designed for security-sensitive values.
+    modelAnswer: The random module uses a pseudo-random generator intended for simulation and general tasks, not security. A token must be difficult to predict, so the secrets module is the appropriate standard-library tool.
+    explanation: The module choice depends on the security requirement, not only on whether the result looks random.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-stdlib, mastery-stdlib-code, mastery-stdlib-explain]
+cheatsheet: |
+  collections: Counter, defaultdict, deque. itertools: chain, islice. functools: partial, lru_cache.
+  math/statistics: numeric tools. datetime: use timezone-aware timestamps for cross-system events.
+  re: structured text patterns. random: simulations. secrets: security-sensitive tokens.

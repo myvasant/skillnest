@@ -1,0 +1,1222 @@
+id: python.parameters
+concept: python.parameters
+title: Parameters and Arguments in Depth
+subtitle: Keywords, defaults, *args, **kwargs - and what really gets passed
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Make functions easy to call correctly: keyword arguments, default values (and the famous mutable
+  default trap), *args and **kwargs, keyword-only and positional-only parameters, and argument
+  unpacking. Finish with an accurate model of how Python passes arguments - by object reference.
+objectives:
+  - Call functions with positional and keyword arguments and predict how arguments are matched to parameters.
+  - Use default parameter values, and explain why defaults are evaluated once when the function is defined.
+  - Recognise and fix the mutable default argument bug with the None sentinel pattern.
+  - Write functions that accept any number of arguments with *args and **kwargs, and unpack sequences and dicts into calls.
+  - Design signatures with keyword-only (*) and positional-only (/) parameters.
+  - Explain "pass by object reference" and predict when a caller sees changes made inside a function.
+sources:
+  - title: "The Python Tutorial: More on Defining Functions"
+    url: https://docs.python.org/3/tutorial/controlflow.html#more-on-defining-functions
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Calls"
+    url: https://docs.python.org/3/reference/expressions.html#calls
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Function definitions"
+    url: https://docs.python.org/3/reference/compound_stmts.html#function-definitions
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: How do I write a function with output parameters (call by reference)?"
+    url: https://docs.python.org/3/faq/programming.html#how-do-i-write-a-function-with-output-parameters-call-by-reference
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: Why are default values shared between objects?"
+    url: https://docs.python.org/3/faq/programming.html#why-are-default-values-shared-between-objects
+    publisher: Python Software Foundation
+  - title: "PEP 3102: Keyword-Only Arguments"
+    url: https://peps.python.org/pep-3102/
+    publisher: Python Software Foundation
+  - title: "PEP 570: Python Positional-Only Parameters"
+    url: https://peps.python.org/pep-0570/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why calls need more than position
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          With the [functions](concept:python.functions) you have written so far, arguments are matched to
+          parameters purely by **position**. That is fine for `area(3, 4)`, but it breaks down quickly.
+          Read this call and say what `True` and `False` mean:
+      - type: code
+        runnable: true
+        code: |
+          def book_ticket(name, seats, window, meal):
+              print(name, "booked", seats, "seat(s); window:", window, "meal:", meal)
+
+          book_ticket("Ada", 2, True, False)
+        expectedOutput: |
+          Ada booked 2 seat(s); window: True meal: False
+        caption: You have to open the function to find out - and swapping True and False would not raise any error.
+      - type: markdown
+        body: |
+          Two features fix this. **Keyword arguments** name each value at the call site, and
+          **default values** let callers leave out what is usually the same:
+      - type: code
+        runnable: true
+        code: |
+          def book_ticket(name, seats=1, window=False, meal=False):
+              print(name, "booked", seats, "seat(s); window:", window, "meal:", meal)
+
+          book_ticket("Ada", seats=2, window=True)
+          book_ticket("Grace")
+        expectedOutput: |
+          Ada booked 2 seat(s); window: True meal: False
+          Grace booked 1 seat(s); window: False meal: False
+        annotations:
+          - line: 1
+            text: Every parameter after name has a default, so callers may omit it.
+          - line: 4
+            text: The call now documents itself. meal is left out, so it uses its default, False.
+      - type: markdown
+        body: |
+          This lesson covers every way Python can match arguments to parameters, and finishes with the
+          question every Python developer eventually asks: *when a function changes its parameter, does
+          the caller see it?*
+
+  - id: positional-keyword
+    title: Positional and keyword arguments
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          - A [positional argument](glossary:positional-argument) is matched by its **position**: the first
+            argument goes to the first parameter, and so on.
+          - A [keyword argument](glossary:keyword-argument) is written `parameter=value` and is matched by
+            **name**, so its position does not matter.
+
+          You can mix them in one call, with one rule: **all positional arguments come first**. Each
+          parameter must receive exactly one value.
+      - type: code
+        runnable: true
+        code: |
+          def divide(dividend, divisor):
+              return dividend / divisor
+
+          print(divide(10, 4))
+          print(divide(divisor=4, dividend=10))
+          print(divide(10, divisor=4))
+        expectedOutput: |
+          2.5
+          2.5
+          2.5
+        annotations:
+          - line: 5
+            text: Keyword arguments in any order - they are matched by name.
+          - line: 6
+            text: Mixed - 10 fills dividend by position, then divisor is given by name.
+      - type: markdown
+        body: |
+          Breaking the rules gives errors that say exactly what went wrong:
+      - type: code
+        runnable: true
+        code: |
+          def divide(dividend, divisor):
+              return dividend / divisor
+
+          print(divide(10, dividend=4))
+        expectError: TypeError
+        caption: "TypeError: divide() got multiple values for argument 'dividend' - 10 already filled dividend by position."
+      - type: code
+        runnable: true
+        code: |
+          def divide(dividend, divisor):
+              return dividend / divisor
+
+          print(divide(dividend=10, 4))
+        expectError: SyntaxError
+        caption: "SyntaxError: positional argument follows keyword argument. Python refuses to read the program at all."
+      - type: callout
+        variant: tip
+        title: When to use keywords
+        body: |
+          Use keyword arguments whenever the meaning of a value is not obvious from the call: booleans
+          (`window=True`), numbers with units (`timeout=30`), and functions with more than two or three
+          parameters. Built-ins do this too: `print(a, b, sep=", ", end="")`, `sorted(names, reverse=True)`.
+      - type: item
+        ref: predict-keyword-match
+
+  - id: defaults
+    title: Default values are evaluated once
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [default parameter value](glossary:default-argument) is written `parameter=value` in the `def`
+          line. If the caller does not supply that argument, the default is used.
+
+          Two rules:
+
+          1. Parameters **with** defaults must come **after** parameters without them:
+             `def f(a, b=2)` is fine; `def f(a=1, b)` is a `SyntaxError`.
+          2. The default expression is evaluated **once, when the `def` statement runs** - not each time
+             the function is called. Python stores the resulting object on the function and reuses it.
+
+          Rule 2 is easy to see with a name that changes after the definition:
+      - type: code
+        runnable: true
+        code: |
+          rate = 18
+
+          def add_tax(price, percent=rate):
+              return price + price * percent / 100
+
+          rate = 5
+          print(add_tax(100))
+          print(add_tax(100, rate))
+        expectedOutput: |
+          118.0
+          105.0
+        annotations:
+          - line: 3
+            text: When def runs, rate refers to 18, so the default becomes the object 18.
+          - line: 6
+            text: Rebinding rate later does not change the stored default.
+          - line: 8
+            text: Passing rate explicitly evaluates it now, at the call, giving 5.
+      - type: item
+        ref: predict-default-time
+
+  - id: mutable-default
+    title: "The mutable default trap"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          "Evaluated once" has a famous consequence. If the default is a **mutable** object such as a list,
+          every call that uses the default shares **the same list** - and changes made in one call are
+          still there in the next. Predict the output, then step through it.
+      - type: visualization
+        component: python-tracer
+        title: Two calls, one default list
+        caption: >-
+          Watch the basket name in each add_item frame. Both calls point at the same list object, which was
+          created once when def ran. first and second end up as two names for that one list.
+        props:
+          code: |
+            def add_item(item, basket=[]):
+                basket.append(item)
+                return basket
+
+            first = add_item("apple")
+            second = add_item("bread")
+            print(first)
+            print(second)
+            print(first is second)
+      - type: markdown
+        body: |
+          The output is `['apple', 'bread']` twice, then `True`. This is the
+          [mutable default argument](glossary:mutable-default-argument) bug, and the official tutorial
+          carries an "Important warning" about it.
+
+          **The fix - the `None` sentinel.** Use `None` as the default and create a fresh object inside
+          the function, where it runs on every call:
+      - type: code
+        runnable: true
+        code: |
+          def add_item(item, basket=None):
+              if basket is None:
+                  basket = []
+              basket.append(item)
+              return basket
+
+          first = add_item("apple")
+          second = add_item("bread")
+          print(first)
+          print(second)
+          print(add_item("cheese", ["milk"]))
+        expectedOutput: |
+          ['apple']
+          ['bread']
+          ['milk', 'cheese']
+        annotations:
+          - line: 2
+            text: "`is None` checks identity with the single None object. It is the idiomatic test for \"no argument given\"."
+          - line: 3
+            text: This line runs on each call, so each call gets a new list.
+      - type: callout
+        variant: production
+        title: Tools catch this for you
+        body: |
+          Linters such as Ruff and pylint warn about mutable defaults. Treat the warning as a bug report.
+          Immutable defaults (`0`, `""`, `None`, `False`, tuples) are always safe because they can never be
+          changed in place.
+      - type: item
+        ref: predict-mutable-default
+
+  - id: star-args
+    title: "*args - any number of positional arguments"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Some functions should accept as many values as the caller likes - think of `print(a, b, c)` or
+          `max(3, 8, 1)`. A parameter written with one star, conventionally
+          [`*args`](glossary:args-kwargs), **collects every extra positional argument into a tuple**. The name after the star can be anything; choose a
+          meaningful one such as `*numbers`.
+      - type: code
+        runnable: true
+        code: |
+          def total(*numbers):
+              print("numbers is", numbers)
+              result = 0
+              for n in numbers:
+                  result += n
+              return result
+
+          print(total(1, 2, 3))
+          print(total())
+        expectedOutput: |
+          numbers is (1, 2, 3)
+          6
+          numbers is ()
+          0
+        annotations:
+          - line: 1
+            text: The star means "pack the remaining positional arguments into one tuple".
+          - line: 9
+            text: With no arguments, numbers is an empty tuple - never None.
+      - type: markdown
+        body: |
+          `*args` can follow ordinary parameters. The ordinary ones are filled first; only the leftovers
+          are packed:
+      - type: code
+        runnable: true
+        code: |
+          def report(title, *lines):
+              print(title.upper())
+              for line in lines:
+                  print("-", line)
+
+          report("Shopping", "milk", "eggs")
+          report("Empty list")
+        expectedOutput: |
+          SHOPPING
+          - milk
+          - eggs
+          EMPTY LIST
+
+  - id: star-kwargs
+    title: "**kwargs - any number of keyword arguments"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two stars, conventionally `**kwargs` ("keyword arguments"), **collect every extra keyword
+          argument into a new dictionary**: the keys are the argument names (as strings), the values are
+          the argument objects. The dict keeps the order in which the caller wrote the arguments.
+      - type: code
+        runnable: true
+        code: |
+          def describe(name, **details):
+              print(name)
+              for key, value in details.items():
+                  print(f"  {key}: {value}")
+
+          describe("Ada Lovelace", born=1815, field="mathematics")
+          describe("Unknown")
+        expectedOutput: |
+          Ada Lovelace
+            born: 1815
+            field: mathematics
+          Unknown
+        annotations:
+          - line: 1
+            text: name is filled normally; any other keyword arguments land in the dict details.
+          - line: 6
+            text: "details is {'born': 1815, 'field': 'mathematics'} for this call."
+      - type: markdown
+        body: |
+          All the kinds of parameter can be combined. When they are, they must appear in this order:
+
+          ```text
+          def f(positional_only, /, normal, *args, keyword_only, **kwargs):
+          ```
+
+          You will rarely need all of them at once. `*args` and `**kwargs` shine when a function forwards
+          arguments to another function, or genuinely accepts open-ended input - but explicit parameters
+          are clearer whenever you know the names in advance.
+
+  - id: special-parameters
+    title: Keyword-only and positional-only parameters
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You can also **force** callers to use one style.
+
+          **[Keyword-only](glossary:keyword-only-parameter) (`*`).** Parameters after a bare `*` (or after
+          `*args`) can only be passed by keyword. Use this for flags and options whose meaning would be unclear as a bare value
+          ([PEP 3102](https://peps.python.org/pep-3102/)). The built-in `sorted` does exactly this: its
+          `key` and `reverse` parameters are keyword-only.
+      - type: code
+        runnable: true
+        code: |
+          def connect(host, port, *, timeout=10, retries=3):
+              return f"{host}:{port} timeout={timeout} retries={retries}"
+
+          print(connect("example.com", 443))
+          print(connect("example.com", 443, timeout=5))
+          print(connect("example.com", 443, 5))
+        expectError: TypeError
+        expectedOutput: |
+          example.com:443 timeout=10 retries=3
+          example.com:443 timeout=5 retries=3
+        caption: "The last call fails with: connect() takes 2 positional arguments but 3 were given. A bare 5 could mean timeout or retries, so Python refuses to guess."
+      - type: markdown
+        body: |
+          **[Positional-only](glossary:positional-only-parameter) (`/`).** Parameters before a `/` can only
+          be passed by position
+          ([PEP 570](https://peps.python.org/pep-0570/)). Use this when the parameter names are not
+          meaningful to callers, so you remain free to rename them later. Many built-ins work this way:
+          `len(obj=[1, 2])` raises `TypeError: len() takes no keyword arguments`.
+      - type: code
+        runnable: true
+        code: |
+          def distance(x, y, /):
+              return (x ** 2 + y ** 2) ** 0.5
+
+          print(distance(3, 4))
+          print(distance(x=3, y=4))
+        expectError: TypeError
+        expectedOutput: |
+          5.0
+        caption: "TypeError: distance() got some positional-only arguments passed as keyword arguments: 'x, y'"
+      - type: item
+        ref: mcq-keyword-only
+
+  - id: unpacking
+    title: "Unpacking arguments: f(*items) and f(**options)"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The stars also work **in a call**, where they do the opposite of what they do in a definition:
+
+          | Where | `*` | `**` |
+          |---|---|---|
+          | In a `def` (parameters) | **pack** extra positional arguments into a tuple | **pack** extra keyword arguments into a dict |
+          | In a call (arguments) | **spread** a sequence into separate positional arguments | **spread** a dict into keyword arguments |
+
+          This is [argument unpacking](glossary:argument-unpacking):
+      - type: code
+        runnable: true
+        code: |
+          def volume(length, width, height):
+              return length * width * height
+
+          dims = [2, 3, 4]
+          print(volume(*dims))
+
+          box = {"height": 4, "length": 2, "width": 3}
+          print(volume(**box))
+
+          print(*dims)
+          print(*dims, sep="-")
+        expectedOutput: |
+          24
+          24
+          2 3 4
+          2-3-4
+        annotations:
+          - line: 5
+            text: "*dims spreads the list, so this call is volume(2, 3, 4)."
+          - line: 8
+            text: "**box becomes volume(height=4, length=2, width=3); keys are matched to parameter names."
+          - line: 10
+            text: print receives three separate arguments, not one list.
+      - type: callout
+        variant: misconception
+        title: A list is one argument
+        body: |
+          `volume(dims)` passes **one** argument - the list - so Python reports
+          `volume() missing 2 required positional arguments: 'width' and 'height'`. Python never unpacks a
+          list for you; write the `*` to ask for it.
+
+  - id: passing
+    title: "Mental model: arguments are passed by object reference"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          You may hear that some languages pass arguments "by value" (the function gets a **copy**) or "by
+          reference" (the function gets access to the caller's **variable** itself, and can make it refer
+          to something else). Python does neither. Python passes arguments
+          [by object reference](glossary:pass-by-object-reference):
+
+          > Calling `f(x)` binds the parameter to **the same object** that the argument expression
+          > evaluated to - exactly like the assignment `parameter = argument`, done in the function's new
+          > frame.
+
+          Two consequences follow, for **every** type of object:
+
+          1. **No copy is made.** If the function **mutates** the object (appends to a list, sets a dict
+             key), the caller sees the change, because it is the same object.
+          2. **The parameter is a separate name.** If the function **rebinds** the parameter
+             (`items = []`, `n = n + 1`), only its local name moves. The caller's variable still refers to
+             the original object.
+
+          The official tutorial puts it this way: arguments are passed "using call by value (where the
+          value is always an object reference, not the value of the object)", and adds that "call by object
+          reference would be a better description". The Programming FAQ puts it even more briefly:
+          "arguments are passed by assignment in Python".
+      - type: visualization
+        component: python-tracer
+        title: Rebinding vs mutating a parameter
+        caption: >-
+          Inside change, number = number + 1 rebinds only the local name (n is still 10). items.append(...)
+          mutates the shared list, so data sees it. items = [...] then rebinds only the local name.
+        props:
+          code: |
+            def change(number, items):
+                number = number + 1
+                items.append(number)
+                items = ["replaced"]
+
+            n = 10
+            data = [1]
+            change(n, data)
+            print(n, data)
+      - type: callout
+        variant: misconception
+        title: '"Numbers are passed by value, lists by reference"'
+        body: |
+          The mechanism is the same for both. Integers only *look* copied because they are
+          [immutable](glossary:immutable): `n += 1` cannot change the object 10, so it creates 11 and
+          rebinds the local name. A list *can* be changed in place, so the caller notices. Want a function
+          to "change" a caller's number? Return the new value and let the caller rebind:
+          `count = increment(count)`.
+      - type: item
+        ref: explain-pass-by
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How a call fills the parameters.** The language reference
+          ([Calls](https://docs.python.org/3/reference/expressions.html#calls)) describes it as filling
+          slots, one per parameter:
+
+          1. Positional arguments fill slots left to right. Extra ones go into `*args`, or raise
+             `TypeError: ... takes N positional arguments but M were given`.
+          2. Keyword arguments fill slots by name. A slot that is already full raises "got multiple values";
+             an unknown name goes into `**kwargs`, or raises "got an unexpected keyword argument".
+          3. Empty slots take their default. Any slot still empty raises "missing ... required argument".
+
+          **Where defaults live.** The default objects are stored on the function object: positional
+          defaults in the tuple `__defaults__`, keyword-only defaults in the dict `__kwdefaults__`. That
+          is the precise reason a mutable default is shared - it is one object stored in one place.
+      - type: code
+        runnable: true
+        code: |
+          import inspect
+
+          def f(a, b=2, *args, c, d=4, **kw):
+              pass
+
+          print(f.__defaults__)
+          print(f.__kwdefaults__)
+          print(inspect.signature(f))
+        expectedOutput: |
+          (2,)
+          {'d': 4}
+          (a, b=2, *args, c, d=4, **kw)
+        annotations:
+          - line: 3
+            text: c is keyword-only and required; d is keyword-only with a default.
+      - type: markdown
+        body: |
+          **Packing always builds new objects.** Each call creates a fresh tuple for `*args` and a fresh
+          dict for `**kwargs`. So a function that receives `**options` cannot add keys to the caller's
+          dict - it only has a copy of the top level (the *values* are still shared objects, as always).
+          Since Python 3.6 the order of `**kwargs` is guaranteed to match the order of the keyword
+          arguments in the call ([PEP 468](https://peps.python.org/pep-0468/)).
+      - type: code
+        runnable: true
+        code: |
+          def tweak(**options):
+              options["debug"] = True
+              return options
+
+          settings = {"level": 3}
+          result = tweak(**settings)
+          print(settings)
+          print(result)
+          print(result is settings)
+        expectedOutput: |
+          {'level': 3}
+          {'level': 3, 'debug': True}
+          False
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: f() missing 1 required positional argument: 'b'` | No value for a parameter without a default | Pass it, or give the parameter a default. |
+          | `TypeError: f() takes 2 positional arguments but 3 were given` | Too many positional arguments - or a keyword-only parameter passed by position | Check the `def` line; pass options by keyword. |
+          | `TypeError: f() got an unexpected keyword argument 'colour'` | The keyword does not match any parameter name (often spelling) | Use the exact parameter name from the `def` line. |
+          | `TypeError: f() got multiple values for argument 'a'` | The same parameter given by position **and** by keyword | Give each parameter one value. |
+          | `SyntaxError: positional argument follows keyword argument` | `f(a=1, 2)` | Put positional arguments first. |
+          | `SyntaxError: parameter without a default follows parameter with a default` | `def f(a=1, b):` | Put parameters with defaults last. |
+          | A default list or dict "remembers" earlier calls | Mutable default evaluated once | Default to `None`; create the object inside. |
+          | `missing 2 required positional arguments` when passing a list | You passed the list as one argument | Unpack it: `f(*values)`. |
+          | The caller's variable did not change after the function "changed" it | The function rebound its parameter | Return the new value and rebind in the caller. |
+      - type: code
+        runnable: true
+        code: |
+          def order(item, quantity=1):
+              return f"{quantity} x {item}"
+
+          print(order("tea", quantity=2))
+          print(order("tea", qty=2))
+        expectError: TypeError
+        expectedOutput: |
+          2 x tea
+        caption: "TypeError: order() got an unexpected keyword argument 'qty' - keyword names must match the parameter names exactly."
+      - type: item
+        ref: debug-mutable-default
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: make-greeting
+      - type: item
+        ref: average-args
+      - type: item
+        ref: transfer-signature
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - **Positional** arguments match by position; **keyword** arguments (`name=value`) match by name.
+            Positional ones come first; each parameter gets exactly one value.
+          - **Defaults** (`def f(x, y=0)`) are evaluated **once**, when `def` runs. Never use a mutable
+            default; use `None` and create the object inside.
+          - `*args` packs extra positional arguments into a **tuple**; `**kwargs` packs extra keyword
+            arguments into a **dict**.
+          - After `*` (or `*args`): **keyword-only**. Before `/`: **positional-only**.
+          - In a call, `f(*seq)` spreads a sequence and `f(**d)` spreads a dict.
+          - Arguments are passed **by object reference**: the parameter is bound to the caller's object.
+            Mutation is visible to the caller; rebinding the parameter is not.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Expect "What is wrong with `def f(items=[])`?" and "Is Python pass-by-value or pass-by-reference?".
+          For the first, explain that defaults are evaluated once and stored on the function, show the
+          shared list, and give the `None` sentinel fix. For the second, say "neither - by object
+          reference", then demonstrate mutation (visible) versus rebinding (not visible).
+
+items:
+  - id: predict-keyword-match
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      def describe(name, role, years):
+          print(name, "-", role, "-", years)
+
+      describe("Ada", years=12, role="engineer")
+      describe(role="analyst", name="Grace", years=3)
+    answer: |
+      Ada - engineer - 12
+      Grace - analyst - 3
+    explanation: >-
+      "Ada" fills name by position; years and role are matched by name, whatever order they are written
+      in. The second call uses keywords only. The function always prints in parameter order.
+    wrongAnswers:
+      - answer: |
+          Ada - 12 - engineer
+          analyst - Grace - 3
+        feedback: >-
+          Keyword arguments are matched by parameter name, not by the order you write them. years=12
+          always goes to the years parameter.
+      - answer: |
+          Ada - engineer - 12
+          analyst - Grace - 3
+        feedback: In the second call name="Grace" is a keyword argument, so Grace is bound to name even though it is written second.
+
+  - id: predict-default-time
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      greeting = "Hello"
+
+      def greet(name, word=greeting):
+          return word + ", " + name
+
+      greeting = "Goodbye"
+      print(greet("Ada"))
+      print(greet("Ada", greeting))
+    answer: |
+      Hello, Ada
+      Goodbye, Ada
+    explanation: >-
+      The default for word was evaluated when def ran, while greeting referred to "Hello". Rebinding
+      greeting afterwards does not change the stored default. The second call passes greeting explicitly,
+      which is evaluated at the call: "Goodbye".
+    wrongAnswers:
+      - answer: |
+          Goodbye, Ada
+          Goodbye, Ada
+        feedback: >-
+          Defaults are not looked up at each call. The expression `greeting` was evaluated once, when the
+          def statement ran, and the object "Hello" was stored.
+      - answer: |
+          Hello, Ada
+          Hello, Ada
+        feedback: In the second call an argument is supplied, so the default is not used. The argument greeting refers to "Goodbye" by then.
+
+  - id: predict-mutable-default
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print? (The arguments of print are evaluated left to right.)
+    code: |
+      def log(message, history=[]):
+          history.append(message)
+          return len(history)
+
+      print(log("a"), log("b"), log("c", []), log("d"))
+    answer: "1 2 1 3"
+    explanation: >-
+      log("a") appends to the shared default list (length 1); log("b") appends to the same list (2);
+      log("c", []) uses the new list passed in (1) and leaves the default alone; log("d") is back on the
+      shared default, which now holds a, b, d (3).
+    wrongAnswers:
+      - answer: "1 1 1 1"
+        feedback: >-
+          This assumes a fresh empty list on every call. The default list is created once, when def runs,
+          and every call that omits history reuses it.
+      - answer: "1 2 3 4"
+        feedback: >-
+          log("c", []) receives its own new list, so it appends there (length 1) and does not touch the
+          shared default.
+      - answer: "1 2 1 1"
+        feedback: Passing a list in one call does not reset the default. The last call uses the shared list that already holds "a" and "b".
+
+  - id: mcq-keyword-only
+    type: mcq
+    skill: recognition
+    prompt: |
+      Given this definition, which call is **valid**?
+
+      ```python
+      def connect(host, port, *, timeout=10):
+          ...
+      ```
+    explanation: >-
+      host and port can be passed by position; timeout comes after the bare *, so it must be passed by
+      keyword. Positional arguments must also come before keyword arguments, and every required
+      parameter needs a value.
+    options:
+      - id: a
+        text: 'connect("db.local", 5432, 30)'
+        feedback: "timeout is keyword-only, so the third positional value has nowhere to go: TypeError, takes 2 positional arguments but 3 were given."
+      - id: b
+        text: 'connect("db.local", 5432, timeout=30)'
+        correct: true
+        feedback: Correct. Two positional arguments for host and port, and timeout by keyword.
+      - id: c
+        text: 'connect(host="db.local", 5432)'
+        feedback: A positional argument may not follow a keyword argument. This is a SyntaxError before anything runs.
+      - id: d
+        text: 'connect("db.local", timeout=30)'
+        feedback: "port has no default, so this raises TypeError: missing 1 required positional argument: 'port'."
+
+  - id: explain-pass-by
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: >-
+      A colleague says: "Python passes numbers by value and lists by reference." Explain what Python
+      actually does when it calls a function, using the change(number, items) example above.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says each parameter is bound to the same object the argument refers to - no copy - and that this rule is the same for every type.
+      - Explains that rebinding a parameter (number = number + 1, items = [...]) moves only the function's local name and never changes the caller's variable.
+      - Explains that mutating a mutable object through the parameter (items.append) is visible to the caller because it is the same object.
+      - Explains that numbers only seem to be passed by value because they are immutable, so the function can only rebind, not change them.
+    modelAnswer: |
+      Python binds each parameter to the very object the argument evaluated to, like an assignment in the
+      new frame; nothing is copied, whatever the type. In change(n, data), number and n both refer to 10,
+      and items and data both refer to the list. `number = number + 1` creates 11 and moves only the local
+      name number, so n is still 10. `items.append(number)` changes the shared list in place, so data now
+      shows [1, 11]. `items = ["replaced"]` moves only the local name. Ints look "passed by value" just
+      because they are immutable: a function can never change the object 10, only rebind its own name.
+      The accurate term is pass by object reference (or pass by assignment).
+
+  - id: debug-mutable-default
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Each call to `add_student` without a roster should start a **new** class list, but the second
+      class also contains Ada. Fix the function so the program prints `['Ada']` and then `['Alan']`,
+      while a roster passed in explicitly is still used.
+    starterCode: |
+      def add_student(name, roster=[]):
+          roster.append(name)
+          return roster
+
+      class_a = add_student("Ada")
+      class_b = add_student("Alan")
+      print(class_a)
+      print(class_b)
+    solution: |
+      def add_student(name, roster=None):
+          if roster is None:
+              roster = []
+          roster.append(name)
+          return roster
+
+      class_a = add_student("Ada")
+      class_b = add_student("Alan")
+      print(class_a)
+      print(class_b)
+    expectedOutput: |
+      ['Ada']
+      ['Alan']
+    tests:
+      - name: each call without a roster gets a new list
+        code: |
+          a = add_student("X")
+          b = add_student("Y")
+          assert a == ["X"], f"add_student('X') returned {a!r}; a call without a roster should return a new list containing only 'X'."
+          assert b == ["Y"], f"add_student('Y') returned {b!r}; it still shares a list with earlier calls."
+      - name: an explicit roster is used
+        code: |
+          r = ["Grace"]
+          out = add_student("Linus", r)
+          assert out is r and r == ["Grace", "Linus"], "When a roster is passed in, append to that list and return it."
+      - name: the default is not a mutable list
+        code: |
+          defaults = add_student.__defaults__ or ()
+          assert not any(isinstance(d, (list, dict, set)) for d in defaults), "The default value is still a mutable object created once at definition time. Use roster=None and create the list inside the function."
+      - name: prints the two classes
+        code: |
+          assert output_lines() == ["['Ada']", "['Alan']"], f"Expected ['Ada'] then ['Alan'], but your program printed {output()!r}."
+    hints:
+      - "When is the list in `roster=[]` created: once, or on every call?"
+      - Use None as the default, because None can never be changed in place.
+      - "Inside the function: `if roster is None:` then `roster = []` - this line runs on every call."
+    feedback:
+      - when: { outputContains: "'Ada', 'Alan'" }
+        message: >-
+          Both calls are still sharing one list. The default [] is created once when def runs; create a new
+          list inside the function instead.
+    explanation: >-
+      The default list was created once and stored on the function, so both calls appended to it. With
+      roster=None, the `if roster is None: roster = []` line runs on every call that omits the argument,
+      giving each call its own list, while an explicitly passed list is used unchanged.
+
+  - id: make-greeting
+    type: code
+    skill: implementation
+    prompt: |
+      Change `make_greeting` so that it takes `name`, plus two parameters with defaults:
+      `greeting="Hello"` and `punctuation="!"`. It returns text like `Hello, Ada!`. The three calls at the
+      bottom must then print:
+
+      ```text
+      Hello, Ada!
+      Welcome, Grace!
+      Hello, Alan?
+      ```
+    starterCode: |
+      def make_greeting(name):
+          return "Hello, " + name + "!"
+
+      print(make_greeting("Ada"))
+      print(make_greeting("Grace", "Welcome"))
+      print(make_greeting("Alan", punctuation="?"))
+    solution: |
+      def make_greeting(name, greeting="Hello", punctuation="!"):
+          return greeting + ", " + name + punctuation
+
+      print(make_greeting("Ada"))
+      print(make_greeting("Grace", "Welcome"))
+      print(make_greeting("Alan", punctuation="?"))
+    expectedOutput: |
+      Hello, Ada!
+      Welcome, Grace!
+      Hello, Alan?
+    tests:
+      - name: parameters are name, greeting, punctuation
+        code: |
+          import inspect
+          params = list(inspect.signature(make_greeting).parameters.values())
+          names = [p.name for p in params]
+          assert names == ["name", "greeting", "punctuation"], f"The parameters should be name, greeting, punctuation (in that order); yours are {names}."
+          assert params[1].default == "Hello" and params[2].default == "!", 'Give greeting the default "Hello" and punctuation the default "!".'
+      - name: uses the defaults
+        code: |
+          r = make_greeting("Ada")
+          assert r == "Hello, Ada!", f"make_greeting('Ada') returned {r!r}; expected 'Hello, Ada!'."
+      - name: greeting by position, punctuation by keyword
+        code: |
+          r = make_greeting("Grace", "Welcome")
+          assert r == "Welcome, Grace!", f"make_greeting('Grace', 'Welcome') returned {r!r}."
+          r = make_greeting("Alan", punctuation="?")
+          assert r == "Hello, Alan?", f"make_greeting('Alan', punctuation='?') returned {r!r}."
+      - name: all keywords in any order
+        code: |
+          r = make_greeting(punctuation=".", greeting="Hi", name="Lin")
+          assert r == "Hi, Lin.", f"make_greeting(punctuation='.', greeting='Hi', name='Lin') returned {r!r}; build the text from all three parameters."
+      - name: prints the three greetings
+        code: |
+          assert output_lines() == ["Hello, Ada!", "Welcome, Grace!", "Hello, Alan?"], f"Your program printed {output()!r}."
+    hints:
+      - "Defaults go in the def line: `def make_greeting(name, greeting=\"Hello\", punctuation=\"!\"):`"
+      - Build the result from all three parameters, e.g. `greeting + ", " + name + punctuation`.
+    feedback:
+      - when: { errorType: TypeError }
+        message: A call passes an argument the function does not accept yet. Add the greeting and punctuation parameters with their defaults.
+    explanation: >-
+      Defaults make the common case short (make_greeting("Ada")) while callers can override any part,
+      by position or by keyword. Building the string from the parameters - instead of fixed text - is
+      what makes the overrides work.
+
+  - id: average-args
+    type: code
+    skill: implementation
+    prompt: |
+      Rewrite `average` so it accepts **any number of numbers as separate arguments** -
+      `average(4, 8, 6)` - and returns their mean. With no arguments at all it should return `None`
+      (instead of crashing). The program should print `6.0`, `10.0` and `None`.
+    starterCode: |
+      def average(numbers):
+          return sum(numbers) / len(numbers)
+
+      print(average(4, 8, 6))
+      print(average(10))
+      print(average())
+    solution: |
+      def average(*numbers):
+          if len(numbers) == 0:
+              return None
+          return sum(numbers) / len(numbers)
+
+      print(average(4, 8, 6))
+      print(average(10))
+      print(average())
+    expectedOutput: |
+      6.0
+      10.0
+      None
+    tests:
+      - name: accepts any number of arguments
+        code: |
+          import ast
+          defs = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "average"]
+          assert defs, "Define a function named average."
+          assert defs[0].args.vararg is not None, "Put a star before the parameter - def average(*numbers): - so it collects every argument into a tuple."
+      - name: returns the mean
+        code: |
+          for args, expected in [((4, 8, 6), 6.0), ((10,), 10.0), ((1, 2), 1.5), ((-3, 3, 0, 4), 1.0)]:
+              r = average(*args)
+              assert r == expected, f"average{args} returned {r!r}; expected {expected}."
+      - name: no arguments gives None
+        code: |
+          r = average()
+          assert r is None, f"average() returned {r!r}; with no numbers it should return None instead of dividing by zero."
+      - name: prints the three results
+        code: |
+          assert output_lines() == ["6.0", "10.0", "None"], f"Your program printed {output()!r}."
+    hints:
+      - "`def average(*numbers):` packs all the arguments into a tuple called numbers."
+      - sum() and len() work on tuples just as they do on lists.
+      - Check for an empty tuple before dividing, and return None in that case.
+    feedback:
+      - when: { errorType: ZeroDivisionError }
+        message: With no arguments the tuple is empty, so len(numbers) is 0. Return None before dividing.
+    explanation: >-
+      The star packs every positional argument into the tuple numbers - (4, 8, 6), (10,) or (). The guard
+      clause handles the empty case before the division that would otherwise raise ZeroDivisionError.
+
+  - id: transfer-signature
+    type: code
+    skill: design
+    difficulty: 2
+    prompt: |
+      Calls like `transfer(500, "ACC-1", "ACC-2", True)` are error-prone: nobody remembers what `True`
+      means, and people have swapped the two accounts. Redesign the **def line** so that:
+
+      - `amount` is still passed by position,
+      - `source`, `target` and `notify` must be passed **by keyword**,
+      - `notify` defaults to `False`.
+
+      Then update the call at the bottom so the program prints
+      `Moved 500 from ACC-1 to ACC-2 (customer notified)`.
+    starterCode: |
+      def transfer(amount, source, target, notify):
+          message = f"Moved {amount} from {source} to {target}"
+          if notify:
+              message += " (customer notified)"
+          return message
+
+      print(transfer(500, "ACC-1", "ACC-2", True))
+    solution: |
+      def transfer(amount, *, source, target, notify=False):
+          message = f"Moved {amount} from {source} to {target}"
+          if notify:
+              message += " (customer notified)"
+          return message
+
+      print(transfer(500, source="ACC-1", target="ACC-2", notify=True))
+    expectedOutput: |
+      Moved 500 from ACC-1 to ACC-2 (customer notified)
+    tests:
+      - name: accounts cannot be passed by position
+        code: |
+          try:
+              transfer(500, "A", "B")
+          except TypeError:
+              pass
+          else:
+              raise AssertionError("transfer(500, 'A', 'B') still works. Put a bare * after amount so source and target must be passed by keyword.")
+      - name: works with keyword arguments and the notify default
+        code: |
+          r = transfer(10, source="A", target="B")
+          assert r == "Moved 10 from A to B", f"transfer(10, source='A', target='B') returned {r!r}. Give notify the default False."
+          r = transfer(10, target="B", source="A", notify=True)
+          assert r == "Moved 10 from A to B (customer notified)", f"With notify=True it returned {r!r}."
+      - name: prints the notified transfer
+        code: |
+          assert output().strip() == "Moved 500 from ACC-1 to ACC-2 (customer notified)", f"Update the call at the bottom to use keywords. Your program printed {output()!r}."
+    hints:
+      - A bare `*` in the parameter list means "everything after this is keyword-only".
+      - Give notify a default by writing `notify=False` in the def line.
+      - "The call at the bottom must now name the arguments: `source=\"ACC-1\"`, and so on."
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "positional argument" }
+        message: The def line is right, but the call at the bottom still passes the accounts by position. Name them with keywords.
+    explanation: >-
+      With `def transfer(amount, *, source, target, notify=False)`, every call must say which account is
+      which, and the flag explains itself. Swapping two positional values is a silent bug; misspelling or
+      omitting a keyword is a loud TypeError.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-pass
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      def update(count, log):
+          count += 1
+          log += ["seen"]
+          return count
+
+      n = 0
+      history = []
+      result = update(n, history)
+      print(n, result, history)
+    answer: "0 1 ['seen']"
+    explanation: >-
+      count += 1 creates a new int and rebinds only the local name, so n stays 0 while the function
+      returns 1. For a list, += extends the same list in place, so history - the same object as log - now
+      contains "seen".
+    wrongAnswers:
+      - answer: "1 1 ['seen']"
+        feedback: count += 1 rebinds the local name count to a new int. The caller's n still refers to 0.
+      - answer: "0 1 []"
+        feedback: On a list, += mutates the existing list in place (like extend), so the caller's list changes.
+
+  - id: m-predict-star
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      def show(first, *rest, sep="-", **options):
+          print(first, rest, sep, options)
+
+      show(1, 2, 3, sep="+", color="red")
+      show("a")
+    answer: |
+      1 (2, 3) + {'color': 'red'}
+      a () - {}
+    explanation: >-
+      first takes 1; the extra positional arguments 2 and 3 are packed into the tuple rest; sep is
+      keyword-only (it comes after *rest) and is given "+"; the unknown keyword color goes into the dict
+      options. With only "a", rest is an empty tuple, sep uses its default and options is an empty dict.
+    wrongAnswers:
+      - answer: |
+          1 [2, 3] + {'color': 'red'}
+          a [] - {}
+        feedback: "*rest packs the extra arguments into a tuple, which prints with parentheses."
+      - answer: |
+          1 (2, 3) + {'color': 'red'}
+          a None - None
+        feedback: When nothing is left over, *rest is an empty tuple and **options an empty dict - never None.
+
+  - id: m-mcq-default-time
+    type: mcq
+    skill: explanation
+    prompt: "Why does `def add(x, items=[])` keep values from earlier calls?"
+    explanation: >-
+      The default expression [] is evaluated once, when the def statement runs. The resulting list is
+      stored on the function object (in __defaults__) and reused by every call that omits items, so
+      mutations accumulate.
+    options:
+      - id: a
+        text: The default list is created once, when def runs, and every call without items reuses that same object.
+        correct: true
+        feedback: Correct. That is why the fix creates the list inside the function body.
+      - id: b
+        text: Python caches the return value of each call.
+        feedback: Python does not cache return values. The shared state is the single default object.
+      - id: c
+        text: Lists are passed by reference, so the caller's list is modified.
+        feedback: No list is passed by the caller here at all; the shared object is the stored default.
+      - id: d
+        text: The items parameter is global.
+        feedback: Parameters are always local names. The surprise comes from which object the local name is bound to.
+
+  - id: m-build-url
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `build_url(base, **params)`. It returns `base` followed by `?` and the keyword arguments as
+      `key=value` pairs joined by `&`, in the order they were passed. With no keyword arguments, return
+      `base` unchanged. For example:
+
+      ```python
+      build_url("https://example.com/search", q="python", page=2)
+      # 'https://example.com/search?q=python&page=2'
+      ```
+
+      Print that example.
+    starterCode: |
+      def build_url(base):
+          return base
+
+      print(build_url("https://example.com/search", q="python", page=2))
+    solution: |
+      def build_url(base, **params):
+          if not params:
+              return base
+          parts = []
+          for key, value in params.items():
+              parts.append(f"{key}={value}")
+          return base + "?" + "&".join(parts)
+
+      print(build_url("https://example.com/search", q="python", page=2))
+    expectedOutput: |
+      https://example.com/search?q=python&page=2
+    tests:
+      - name: collects keyword arguments with **
+        code: |
+          import ast
+          defs = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == "build_url"]
+          assert defs and defs[0].args.kwarg is not None, "Add **params to the def line so build_url accepts any keyword arguments."
+      - name: no parameters returns base
+        code: |
+          r = build_url("https://x.org")
+          assert r == "https://x.org", f"build_url('https://x.org') returned {r!r}; with no keyword arguments return base unchanged."
+      - name: joins pairs in call order
+        code: |
+          r = build_url("https://x.org/a", page=2)
+          assert r == "https://x.org/a?page=2", f"build_url('https://x.org/a', page=2) returned {r!r}."
+          r = build_url("https://x.org/b", sort="new", limit=5, q="hi")
+          assert r == "https://x.org/b?sort=new&limit=5&q=hi", f"With three keywords it returned {r!r}; keep the call order and join with &."
+      - name: prints the example
+        code: |
+          assert output().strip() == "https://example.com/search?q=python&page=2", f"Your program printed {output()!r}."
+    hints:
+      - "`**params` gives you a dict such as {'q': 'python', 'page': 2}."
+      - "Loop over params.items(), build \"key=value\" strings, then join them with \"&\".join(...)."
+      - "An empty dict is falsy, so `if not params: return base` handles the no-arguments case."
+    explanation: >-
+      **params packs the keyword arguments into a dict whose order matches the call. Each pair is
+      formatted as key=value and the pieces are joined with &. The guard clause keeps the plain base URL
+      when no parameters were given.
+
+  - id: m-debug-unpack
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `24`, the volume of a box whose dimensions are stored in a list, but it
+      raises a `TypeError`. Fix the **call** using argument unpacking (do not change `volume`).
+    starterCode: |
+      def volume(length, width, height):
+          return length * width * height
+
+      box = [2, 3, 4]
+      print(volume(box))
+    solution: |
+      def volume(length, width, height):
+          return length * width * height
+
+      box = [2, 3, 4]
+      print(volume(*box))
+    expectedOutput: |
+      24
+    tests:
+      - name: prints 24
+        code: |
+          assert output().strip() == "24", f"Expected 24, but your program printed {output()!r}."
+      - name: unpacks the list in the call
+        code: |
+          assert uses("Starred"), "Spread the list into three arguments with a star: volume(*box)."
+      - name: still uses the box list
+        code: |
+          import ast
+          calls = [c for c in ast.walk(ast.parse(source)) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "volume"]
+          assert any(isinstance(a, ast.Starred) and isinstance(a.value, ast.Name) and a.value.id == "box" for c in calls for a in c.args), "Call volume(*box) so the program works for whatever dimensions are stored in box."
+    hints:
+      - Read the error message. How many arguments did volume receive?
+      - A list is one object, so volume(box) passes one argument. A star in the call spreads it out.
+    feedback:
+      - when: { errorMessageContains: "missing 2 required positional arguments" }
+        message: The whole list is still being passed as the single argument length. Write volume(*box).
+    explanation: >-
+      volume(box) passes one argument (the list) to length, leaving width and height empty. volume(*box)
+      spreads the list into three positional arguments, exactly like volume(2, 3, 4).
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-pass, m-predict-star, m-mcq-default-time, m-build-url, m-debug-unpack]
+
+cheatsheet: |
+  ```python
+  def f(a, b=2):           # b has a default (evaluated ONCE, at def time)
+  f(1), f(1, 3), f(b=3, a=1)   # positional / keyword (positional first)
+
+  def f(items=None):       # never items=[] - use the None sentinel
+      if items is None:
+          items = []
+
+  def f(*args, **kwargs):  # args: tuple of extra positionals, kwargs: dict of extra keywords
+  def f(pos, /, normal, *, kw):   # / -> positional-only before it; * -> keyword-only after it
+
+  f(*[1, 2, 3])            # spread a sequence into positional arguments
+  f(**{"a": 1, "b": 2})    # spread a dict into keyword arguments
+  ```
+  - Passing = binding the parameter to the caller's object (pass by object reference)
+  - Mutating a parameter's object → caller sees it · rebinding the parameter → caller doesn't

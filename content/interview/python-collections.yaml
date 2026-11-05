@@ -1,0 +1,363 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ------------------------------------------------------------------ tuples
+  - id: python.tuples.tuple-vs-list
+    level: junior
+    kind: conceptual
+    concepts: [python.tuples]
+    question: When would you use a tuple instead of a list?
+    answer: |
+      Use a tuple for a fixed-size record where each position has its own meaning — an (x, y) point, a
+      (year, month, day) date, a (name, score) pair — and a list for a collection of similar items that may
+      grow, shrink or be reordered. Tuples are immutable, so code receiving one can rely on it not changing,
+      and a tuple whose items are all hashable is itself hashable, so it can be a dictionary key or set
+      member; lists can never be. A list of tuples (a growing collection of fixed records) is a very common
+      combination. Performance differences (tuples are slightly smaller; constant tuples are built once at
+      compile time) are real but rarely the reason to choose.
+    keyPoints:
+      - Tuple = fixed record with positional meaning; list = homogeneous, variable-length collection.
+      - Tuples are immutable; lists support append, remove, sort and item assignment.
+      - Tuples of hashable items are hashable and can be dict keys or set members; lists cannot.
+      - Choose by meaning and safety; the speed and memory difference is small.
+    followUps:
+      - Is `(1, [2, 3])` hashable? Why not?
+      - How does a function "return multiple values" in Python?
+    pitfalls:
+      - Saying tuples are chosen mainly because they are faster.
+      - Claiming tuples can always be dictionary keys, ignoring unhashable contents.
+
+  - id: python.tuples.single-element
+    level: junior
+    kind: debugging
+    concepts: [python.tuples]
+    question: |
+      A colleague writes `colors = ("red")` and then `for c in colors: print(c)`, expecting one line, but gets
+      `r`, `e`, `d` on three lines. What happened, and how do you fix it? What would `price = 9.99,` do?
+    answer: |
+      Parentheses don't create tuples; commas do. `("red")` is just the string "red" in grouping parentheses,
+      and looping over a string yields its characters. A one-item tuple needs a trailing comma: `("red",)` or
+      `"red",`. The opposite mistake, a stray trailing comma as in `price = 9.99,`, silently creates the
+      one-item tuple `(9.99,)`; arithmetic like `price * 2` then repeats the tuple instead of raising an error,
+      so the bug travels far before anyone notices.
+    keyPoints:
+      - Commas make tuples; parentheses only group (except the empty tuple `()`).
+      - "`(\"red\")` is a str, so iteration yields characters."
+      - "A one-item tuple is written `(\"red\",)`."
+      - A stray trailing comma creates an accidental tuple, often without an immediate error.
+    followUps:
+      - Why does `print((1, 2))` differ from `print(1, 2)`?
+
+  - id: python.tuples.augmented-assignment-puzzle
+    level: senior
+    kind: conceptual
+    concepts: [python.tuples, python.mutability]
+    question: "Given `t = (1, [2])`, what happens when you run `t[1] += [3]`, and why?"
+    answer: |
+      It raises `TypeError: 'tuple' object does not support item assignment` — and yet afterwards `t` is
+      `(1, [2, 3])`. Augmented assignment on a subscription is two operations: first Python evaluates
+      `t[1].__iadd__([3])`, which mutates the list in place (lists implement in-place `+=` like `extend`) and
+      returns the same list; then it performs `t[1] = result`, which is item assignment on a tuple and fails.
+      The mutation happened before the failure. The tuple itself never changed — it still holds the same list
+      object — but tuple immutability is shallow. Using `t[1].extend([3])` or `t[1].append(3)` mutates the
+      list without the failing store. This is documented in the Python Programming FAQ.
+    keyPoints:
+      - Raises TypeError but the list inside the tuple is still modified.
+      - "`x[i] += y` = `x[i] = x[i].__iadd__(y)`: in-place add first, then item assignment."
+      - list.__iadd__ mutates in place; the tuple item store then fails.
+      - Tuple immutability is shallow - it fixes which objects it holds, not their contents.
+    followUps:
+      - Would the same happen with `t[1] = t[1] + [3]`?
+      - Is `t` hashable?
+    pitfalls:
+      - Saying the operation has no effect because it raised an exception.
+
+  # ------------------------------------------------------------ dictionaries
+  - id: python.dictionaries.get-vs-index
+    level: junior
+    kind: conceptual
+    concepts: [python.dictionaries]
+    question: "What's the difference between `d[key]` and `d.get(key)`, and when would you use each?"
+    answer: |
+      `d[key]` returns the value or raises `KeyError` if the key is missing. `d.get(key)` returns `None` for a
+      missing key, and `d.get(key, default)` returns the given default. Use `d[key]` when the key must exist
+      and a missing key indicates a bug — failing loudly, with the key in the message, is better than
+      continuing with bad data. Use `.get(key, default)` when absence is normal and there is a sensible
+      default, such as counting with `counts.get(word, 0) + 1`. Use `key in d` when absence needs its own
+      branch. Beware `.get()` without a default: the `None` it returns often causes a confusing TypeError
+      later.
+    keyPoints:
+      - "`d[key]` raises KeyError for missing keys; `.get` returns None or a default."
+      - Use brackets when the key must exist (fail fast); .get when missing is normal.
+      - "`key in d` checks keys (not values) for explicit branching."
+      - .get without a default can propagate None and fail later.
+    followUps:
+      - How would you count word frequencies? What does collections.Counter add?
+      - What does `d.setdefault(key, [])` do?
+
+  - id: python.dictionaries.hash-table
+    level: mid
+    kind: conceptual
+    concepts: [python.dictionaries]
+    question: Why is looking up a key in a dict fast, and why must dictionary keys be hashable?
+    answer: |
+      A dict is a hash table. To look up a key, Python computes `hash(key)`, uses its low bits to pick a slot
+      in a table whose size is a power of two, and checks the entry there: if it is the same object, or has
+      the same hash and compares equal, the value is returned. If another key occupies the slot (a collision),
+      CPython probes further slots using more bits of the hash; reaching an empty slot means the key is
+      absent. The table is resized before it becomes about two-thirds full, so probe sequences stay short and
+      lookup, insertion and deletion are O(1) on average (O(n) only in pathological collision cases).
+      Keys must be hashable — their hash must never change and equal objects must have equal hashes —
+      because the slot is chosen from the hash at insertion time. If a key's value (and thus hash) could
+      change, later lookups would search the wrong slot. That's why mutable built-ins like list, dict and set
+      are unhashable, while int, str, tuples of hashables and frozenset are hashable.
+    keyPoints:
+      - hash(key) selects a slot directly; no scan over entries.
+      - Collisions are resolved by probing other slots; key equality is confirmed with identity or ==.
+      - The table is kept sparse by resizing, giving O(1) average operations.
+      - Keys must have stable hashes, so mutable containers are unhashable.
+      - Equal objects must hash equally (1, 1.0 and True are the same key).
+    followUps:
+      - What happens if you define __eq__ on a class but not __hash__?
+      - Why are string hashes different between runs?
+    pitfalls:
+      - Claiming dict lookup is O(1) in every case.
+      - Saying a list can be a key "if you don't modify it".
+
+  - id: python.dictionaries.ordering
+    level: mid
+    kind: conceptual
+    concepts: [python.dictionaries]
+    question: Are Python dictionaries ordered? Since when, and is that a guarantee or an implementation detail?
+    answer: |
+      Yes: dicts preserve insertion order. CPython 3.6 introduced a compact dict layout (a dense entries array
+      in insertion order plus a sparse index table) that preserved order as an implementation detail, and
+      Python 3.7 made insertion-order preservation an official part of the language specification. Iteration
+      over keys, values and items follows the order keys were first inserted; updating an existing key's
+      value doesn't move it, while deleting and re-inserting a key moves it to the end. Equality between
+      dicts ignores order (`{"a": 1, "b": 2} == {"b": 2, "a": 1}` is True). collections.OrderedDict still
+      exists for order-sensitive equality and operations like move_to_end.
+    keyPoints:
+      - Insertion order is guaranteed by the language since Python 3.7 (CPython detail in 3.6).
+      - Updating a value keeps the key's position; delete + re-insert moves it to the end.
+      - dict equality is order-insensitive.
+      - OrderedDict adds order-sensitive equality and move_to_end.
+    followUps:
+      - Are sets ordered too?
+
+  # ------------------------------------------------------------------- sets
+  - id: python.sets.dedupe-preserve-order
+    level: mid
+    kind: coding
+    concepts: [python.sets]
+    question: Remove duplicates from a list while keeping the order in which items first appeared. What is the complexity of your solution?
+    answer: |
+      Use a set for fast "seen before?" checks and a list to keep the order:
+
+      ```python
+      seen = set()
+      unique = []
+      for item in items:
+          if item not in seen:
+              seen.add(item)
+              unique.append(item)
+      ```
+
+      Each `in` check and `add` is O(1) on average, so the whole loop is O(n). An equivalent one-liner is
+      `list(dict.fromkeys(items))`, which relies on dicts preserving insertion order. `list(set(items))` is
+      also O(n) but loses the order, and checking `item not in unique` against the result list is O(n²) in
+      the worst case. All set- or dict-based versions require the items to be hashable.
+    keyPoints:
+      - Seen-set plus result list gives O(n) and preserves order.
+      - "`list(dict.fromkeys(items))` is an idiomatic shortcut."
+      - "`list(set(items))` loses the original order."
+      - Checking membership in the result list is O(n²).
+      - Items must be hashable.
+    followUps:
+      - How would you dedupe a list of dictionaries?
+
+  - id: python.sets.membership-performance
+    level: junior
+    kind: scenario
+    concepts: [python.sets]
+    question: |
+      A script checks 1,000,000 incoming usernames against a list of 50,000 banned names with
+      `if name in banned_list:` and takes far too long. What would you change?
+    answer: |
+      `in` on a list is a linear scan, so each check can take up to 50,000 comparisons — tens of billions in
+      total. Convert the banned list to a set once, before the loop: `banned = set(banned_list)`. Set
+      membership hashes the name and jumps to its slot, which is O(1) on average, so the million checks become
+      roughly a million hash lookups. Building the set costs one O(n) pass and extra memory, which is
+      worthwhile because it is reused for every lookup. Don't build the set inside the loop, and remember the
+      items must be hashable (strings are).
+    keyPoints:
+      - List membership is O(n); set membership is O(1) on average.
+      - Convert once outside the loop; reuse the set.
+      - Trade-off is extra memory and a one-time build cost.
+    followUps:
+      - When would a list still be the better choice?
+
+  - id: python.sets.frozenset
+    level: mid
+    kind: conceptual
+    concepts: [python.sets]
+    question: Why can't you put a set inside another set, and what can you use instead?
+    answer: |
+      Set items (like dict keys) must be hashable, and a set is mutable, so it has no stable hash: Python
+      raises a TypeError. Use frozenset, the immutable counterpart of set. It supports all non-mutating
+      operations (membership, union, intersection, comparisons) and is hashable, so frozensets can be set
+      items or dict keys. A typical use is representing unordered pairs or groups:
+      `frozenset({"a", "b"}) == frozenset({"b", "a"})`, so a set of frozensets stores each friendship once.
+    keyPoints:
+      - Set items must be hashable; set is mutable and unhashable.
+      - frozenset is immutable and hashable.
+      - Useful for unordered pairs/groups as keys or set items.
+    followUps:
+      - Why is `{}` an empty dict instead of an empty set?
+
+  # ------------------------------------------------------------- mutability
+  - id: python.mutability.function-modifies-list
+    level: junior
+    kind: conceptual
+    concepts: [python.mutability]
+    question: Why does modifying a list inside a function affect the caller's list, but reassigning the parameter doesn't?
+    answer: |
+      Python passes references to objects (often described as "call by sharing" or "pass by object
+      reference"). When you call `f(items)`, the parameter inside f becomes a new name bound to the same list
+      object the caller has — exactly like `b = a`. Mutating that object (`append`, item assignment, `sort`)
+      changes the one shared list, so the caller sees it. Rebinding the parameter (`items = [1, 2]`) only
+      points the function's local name at a different object; the caller's name still refers to the
+      original. With immutable arguments (ints, strings, tuples) nothing can be mutated, so callers never see
+      changes. Good practice is to document whether a function mutates its arguments, and follow the
+      convention that mutating functions return None (like list.sort) while others return new objects (like
+      sorted).
+    keyPoints:
+      - Arguments are passed as references to objects; the parameter is an alias.
+      - Mutation of a shared mutable object is visible to the caller.
+      - Rebinding the parameter doesn't affect the caller's name.
+      - Immutable arguments can't be changed, so the distinction doesn't arise.
+      - Document mutation; mutators conventionally return None.
+    followUps:
+      - What goes wrong with `def add(item, bucket=[])`?
+      - How would you make the function avoid changing the caller's list?
+    pitfalls:
+      - Saying Python is "pass by reference" in the C++ sense (rebinding would then affect the caller).
+      - Saying Python is "pass by value" and copies lists.
+
+  - id: python.mutability.is-vs-equals
+    level: junior
+    kind: conceptual
+    concepts: [python.mutability]
+    question: What is the difference between `is` and `==`, and when should you use `is`?
+    answer: |
+      `==` compares values (it calls `__eq__`), while `is` checks identity — whether both operands are the
+      very same object (equivalent to comparing `id()` values of live objects). Two separate lists `[1, 2]`
+      are `==` but not `is`. Use `is` for singletons such as `None` (`x is None`, as PEP 8 recommends) and for
+      deliberate identity checks; use `==` for everything else. Don't use `is` with numbers or strings:
+      CPython caches small integers (-5 to 256) and interns some strings, so `is` may appear to work for some
+      values and fail for others — an implementation detail. CPython even emits a SyntaxWarning for `is`
+      with a literal.
+    keyPoints:
+      - "== compares values; is compares identity."
+      - Use `is` for None and other singletons.
+      - Small-int caching and string interning make `is` on values unreliable.
+      - "`a is b` is equivalent to `id(a) == id(b)` while both objects are alive."
+    followUps:
+      - Why might `id()` values repeat over a program's lifetime?
+
+  - id: python.mutability.grid-trap
+    level: mid
+    kind: debugging
+    concepts: [python.mutability]
+    question: |
+      `board = [[0] * 3] * 3` followed by `board[0][0] = 1` prints `[[1, 0, 0], [1, 0, 0], [1, 0, 0]]`.
+      Explain the bug and fix it.
+    answer: |
+      Sequence repetition with `*` copies references, not objects. `[0] * 3` makes a list whose three slots
+      refer to the int 0, which is fine because ints are immutable (assigning to a slot rebinds it). But the
+      outer `* 3` creates a list whose three slots all refer to the same inner list object, so
+      `board[0][0] = 1` mutates that single list and every "row" shows it; `board[0] is board[1]` is True.
+      Fix it by creating a new inner list per row: `board = [[0] * 3 for _ in range(3)]`, or an explicit loop
+      appending `[0] * 3` each time. Note that `[row.copy()] * 3` doesn't help — the copy happens once and is
+      then repeated by reference.
+    keyPoints:
+      - "* on a list repeats references."
+      - All rows are the same mutable list; mutation through one shows in all.
+      - Sharing immutable ints is harmless; sharing a mutable list is not.
+      - Build each row separately (comprehension or loop).
+    followUps:
+      - How would you check whether two rows are the same object?
+
+  - id: python.mutability.plus-equals
+    level: senior
+    kind: conceptual
+    concepts: [python.mutability]
+    question: "Does `a += b` always mean `a = a + b`? Explain with lists, tuples and strings."
+    answer: |
+      No. Augmented assignment first tries the in-place method `__iadd__`. Lists implement it by extending the
+      list in place and returning the same object, so after `alias = a; a += [3]`, `alias` sees the 3 and
+      `a is alias` remains True. `a = a + [3]` instead calls `__add__`, building a new list and rebinding a,
+      so `alias` keeps the old list. Immutable types (int, str, tuple) don't implement `__iadd__`, so `+=`
+      falls back to `__add__` and rebinds the name to a new object — other names are unaffected. Either way
+      the result is assigned back to the target, which is why `t[0] += [x]` on a tuple both mutates the list
+      and raises TypeError. Dicts and sets support in-place `|=` the same way.
+    keyPoints:
+      - "+= uses __iadd__ when available, otherwise __add__."
+      - Lists mutate in place with +=; + creates a new list.
+      - Immutable types always rebind on +=.
+      - The result is always assigned back to the target.
+      - Aliases reveal the difference.
+    followUps:
+      - Why does `lst += "ab"` work but `lst = lst + "ab"` raise TypeError?
+
+  # ---------------------------------------------------------------- copying
+  - id: python.copying.shallow-vs-deep
+    level: junior
+    kind: conceptual
+    concepts: [python.copying]
+    question: What is the difference between a shallow copy and a deep copy? Give an example where it matters.
+    answer: |
+      A shallow copy (`lst.copy()`, `list(lst)`, `lst[:]`, `copy.copy(lst)`, `dict(d)`) creates a new outer
+      container whose slots refer to the same element objects. A deep copy (`copy.deepcopy(x)`) recursively
+      copies every mutable object inside, so the result shares nothing mutable with the original. It matters
+      with nested mutable data: with `teams = [["Asha"], ["Ben"]]` and `backup = teams.copy()`,
+      `backup.append(["Chen"])` doesn't affect teams, but `backup[0].append("Eli")` does, because the inner
+      lists are shared. With `copy.deepcopy(teams)` neither change reaches teams. For a flat list of
+      immutable values (ints, strings), a shallow copy is effectively independent.
+    keyPoints:
+      - Shallow = new outer container, shared elements.
+      - Deep = recursive copy of all mutable objects.
+      - Mutating a shared inner object through a shallow copy affects the original.
+      - Shallow is enough for flat containers of immutable values.
+    followUps:
+      - Is `b = a` a shallow copy?
+      - How would you copy only one nested list you intend to change?
+    pitfalls:
+      - Calling assignment (`b = a`) a shallow copy - it creates no new object at all.
+
+  - id: python.copying.deepcopy-cost
+    level: senior
+    kind: design
+    concepts: [python.copying]
+    question: When is copy.deepcopy a poor choice, and how does it handle shared or circular references?
+    answer: |
+      deepcopy visits every object reachable from its argument and creates a new one for every mutable object,
+      so its time and memory are proportional to the whole structure; calling it on large data, or inside hot
+      loops (for example on every request or every game move), can dominate runtime and memory. It also can't
+      sensibly copy resources such as open files, sockets or locks (it typically raises TypeError), and it may
+      duplicate things that should stay shared, like caches or connections, unless a class customises
+      `__deepcopy__`. To stay correct it keeps a memo dictionary from original object ids to their copies:
+      an object referenced twice is copied once and both references in the result point to that copy, and
+      cycles terminate because the second visit finds the object in the memo. Alternatives: copy only the part
+      you will mutate, construct new structures explicitly, use immutable data so sharing is safe, or store
+      diffs (e.g. undo stacks that record moves instead of whole states).
+    keyPoints:
+      - Cost is O(size of the whole object graph) in time and memory.
+      - Some objects (files, locks, sockets) can't be deep-copied.
+      - The memo preserves shared structure and handles cycles.
+      - Classes can customise with __copy__/__deepcopy__.
+      - Prefer targeted copies, immutability or diffs for large or frequent copies.
+    followUps:
+      - How would you implement undo for a large document editor without deep copies?

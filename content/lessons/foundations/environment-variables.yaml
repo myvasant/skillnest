@@ -1,0 +1,299 @@
+id: foundations.environment-variables
+concept: foundations.environment-variables
+title: Environment Variables and PATH
+subtitle: Configure a program from outside its source code
+estimatedMinutes: 40
+reviewedOn: 2026-11-04
+summary: >-
+  Learn what environment variables are, how a process receives them from its parent, and how PATH helps
+  the shell locate programs. Read and set configuration in Python with os.environ, understand why changes
+  usually affect only future child processes, and distinguish convenient configuration from secure secret storage.
+objectives:
+  - Define an environment variable as a named string setting available to a process.
+  - Explain how a child process normally inherits an environment from its parent.
+  - Use Python's os.environ and os.getenv to read configuration and set a value for child processes.
+  - Explain how PATH is used to locate executable programs and why order matters.
+  - Diagnose a basic command-not-found problem without reinstalling software blindly.
+  - Explain why environment variables are not a complete secret-management system.
+sources:
+  - title: Python os.environ — Mapping of environment variables
+    url: https://docs.python.org/3/library/os.html#os.environ
+    publisher: Python Software Foundation
+  - title: Microsoft — About Environment Variables
+    url: https://learn.microsoft.com/en-us/windows/win32/procthread/environment-variables
+    publisher: Microsoft
+  - title: GNU Bash Manual — Environment
+    url: https://www.gnu.org/software/bash/manual/html_node/Environment.html
+    publisher: GNU Project
+  - title: Python sysconfig — Configuration information
+    url: https://docs.python.org/3/library/sysconfig.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why configuration lives outside code
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          The same Python application may run on your laptop, in a test environment and on a production
+          server. The source code should not need editing just because the database address or log level
+          changes between environments.
+
+          **Configuration** is information that changes how a program behaves without changing its code.
+          An **environment variable** is a named setting supplied to a process by its environment. Examples
+          include `PATH`, `HOME`, `APP_MODE` and `DATABASE_URL`.
+      - type: callout
+        variant: analogy
+        title: Settings passed in at launch
+        body: |
+          Think of starting a program with a small envelope of settings. The program can read the settings
+          while it runs, but the settings are separate from the program's source file. The OS provides the
+          mechanism; the application decides which names it understands.
+
+  - id: read-values
+    title: Read environment variables in Python
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Python exposes environment variables through `os.environ`, a mapping from names to string values.
+          Use `.get()` or `os.getenv()` when a setting may be missing. Direct indexing such as
+          `os.environ["APP_MODE"]` raises `KeyError` if the variable is absent.
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          app_mode = os.getenv("APP_MODE", "development")
+          debug_enabled = os.getenv("DEBUG", "false").lower() == "true"
+          print(app_mode)
+          print(debug_enabled)
+        expectedOutput: |
+          development
+          False
+        annotations:
+          - line: 3
+            text: If APP_MODE is missing, `os.getenv` returns the supplied default.
+          - line: 4
+            text: Environment values are strings, so convert or compare them deliberately.
+          - line: 5
+            text: The program uses the default because no APP_MODE was supplied in this example.
+      - type: callout
+        variant: misconception
+        title: Environment values are strings
+        body: |
+          The text `"false"` is not the Boolean value `False`; it is a non-empty string. Avoid
+          `bool(os.getenv("DEBUG"))`, because `bool("false")` is `True`. Parse the allowed values explicitly
+          and decide what should happen when the value is invalid.
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          os.environ["APP_MODE"] = "test"
+          print(os.environ["APP_MODE"])
+        expectedOutput: |
+          test
+        caption: Assigning to os.environ changes the environment mapping of this running Python process and values passed to child processes it starts.
+        annotations:
+          - line: 3
+            text: The assignment sets a string value in this process's environment mapping.
+          - line: 4
+            text: The value can now be read by this process.
+
+  - id: inheritance
+    title: Process inheritance and PATH lookup
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When a process starts a child process, the child normally receives a copy of the parent's
+          environment. The child can change its own environment, but those changes do not travel backwards
+          and rewrite the parent's environment. Existing unrelated terminals also do not automatically
+          receive changes made in another terminal.
+
+          **PATH** is a special environment variable containing a list of directories. When you type a
+          command such as `python`, the shell or operating system searches those directories in order to
+          find a matching executable. If the wrong version appears first, that version may run.
+      - type: visualization
+        component: step-diagram
+        title: Environment inheritance and executable lookup
+        caption: A launched process receives settings; PATH is then used to find commands in its directories.
+        props:
+          nodes:
+            - { id: parent, label: Parent shell, x: 10, y: 30, detail: Holds environment values such as PATH. }
+            - { id: child, label: Child process, x: 50, y: 30, detail: Receives an environment copy when started. }
+            - { id: path, label: PATH directories, x: 90, y: 30, detail: Ordered locations searched for a command. }
+          edges:
+            - { id: inherit, from: parent, to: child, label: inherit environment }
+            - { id: search, from: child, to: path, label: command lookup }
+          steps:
+            - title: The shell has an environment
+              body: The current shell has settings such as PATH and HOME.
+              active: [parent]
+            - title: A program starts
+              body: The child process receives its own environment mapping based on the parent's values.
+              active: [parent, child, inherit]
+            - title: A command is located
+              body: The command lookup checks PATH directories in order; the first suitable match may be selected.
+              active: [child, path, search]
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          sample_path = os.pathsep.join(["/opt/tools", "/usr/local/bin", "/usr/bin"])
+          folders = sample_path.split(os.pathsep)
+          for folder in folders:
+              print(folder)
+        expectedOutput: |
+          /opt/tools
+          /usr/local/bin
+          /usr/bin
+        caption: This uses a sample POSIX PATH value to demonstrate ordered directories. Windows uses a different separator.
+        annotations:
+          - line: 3
+            text: "`os.pathsep` supplies the separator used by the current operating system."
+          - line: 4
+            text: "`split` separates the sample into its ordered directory entries."
+          - line: 5
+            text: The loop preserves the search order.
+      - type: item
+        ref: path-lookup-prediction
+
+  - id: troubleshooting
+    title: Diagnose command-not-found problems
+    kind: debugging
+    blocks:
+      - type: markdown
+        body: |
+          If a command is not found, do not immediately install it again. Check the likely causes in order:
+
+          1. Is the tool actually installed?
+          2. Which executable would the shell find? Check `where.exe python` in Windows or `command -v python` in bash/zsh.
+          3. Is the installation directory present in PATH?
+          4. Did you open a new terminal after changing PATH?
+          5. Are multiple versions installed, and is the intended one earlier in PATH?
+
+          PATH changes made in a terminal usually affect that shell and programs it starts. They do not
+          retroactively change the environment of already-running processes.
+      - type: callout
+        variant: production
+        title: Environment variables are not a vault
+        body: |
+          Environment variables are convenient for configuration, but they can be exposed through process
+          inspection, crash reports, diagnostic dumps, logs or misconfigured deployment tools. Do not print
+          secrets, commit them to source control or assume an environment variable is encrypted. Production
+          systems should use an appropriate secret manager or protected runtime injection mechanism.
+      - type: item
+        ref: explain-path
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Environment variables are named string settings available to a process.
+          - Child processes normally inherit an environment based on the parent's values.
+          - `os.getenv(name, default)` safely reads an optional setting.
+          - PATH is an ordered list of directories used to locate commands.
+          - A shell's environment changes do not automatically update already-running terminals.
+          - Environment variables are configuration transport, not a secure secret vault.
+      - type: item
+        ref: mastery-env
+      - type: item
+        ref: mastery-env-code
+      - type: item
+        ref: mastery-env-explain
+
+items:
+  - id: path-lookup-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this code print?
+    code: |
+      import os
+      values = {"APP_MODE": "test"}
+      print(values.get("APP_MODE", "development"))
+      print(values.get("DEBUG", "false"))
+    answer: |
+      test
+      false
+    explanation: The first key exists; the missing DEBUG key returns the supplied default string.
+  - id: explain-path
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A developer adds Python to PATH in one terminal, but an older terminal still reports that `python` cannot be found. Explain why and give a verification step.
+    rubric:
+      - Explains that a running shell has its own environment and is not automatically updated by another process.
+      - Suggests opening a new terminal and checking command resolution or PATH.
+    modelAnswer: The old terminal inherited its environment when it started and does not automatically receive changes made in another terminal or settings process. Open a new terminal and run `where.exe python` on Windows or `command -v python` on bash/zsh to verify which executable is found.
+    explanation: Environment values are passed to processes at launch; a running shell does not continuously reload them.
+  - id: mastery-env
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: Which statement about PATH is most accurate?
+    options:
+      - id: a
+        text: It lists directories searched to locate executable commands, in order.
+        correct: true
+        feedback: Correct. Search order can determine which installed version runs.
+      - id: b
+        text: It stores the source code of every installed program.
+        correct: false
+        feedback: PATH stores directory names, not program contents.
+      - id: c
+        text: It is a Python list object available without importing os.
+        correct: false
+        feedback: PATH is an environment-variable string; Python reads it through os.environ or related APIs.
+    explanation: PATH is a platform-defined environment variable containing a search path.
+  - id: mastery-env-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `read_setting(settings, name, default)` so it returns the setting when present and otherwise returns the default. Do not modify the supplied mapping.
+    explanation: >-
+      The dictionary get method returns the stored value when the key exists and otherwise returns the supplied default. Reading a missing setting does not add a new key.
+    starterCode: |
+      def read_setting(settings, name, default):
+          pass
+    solution: |
+      def read_setting(settings, name, default):
+          return settings.get(name, default)
+    tests:
+      - name: existing setting
+        code: |
+          assert read_setting({"APP_MODE": "test"}, "APP_MODE", "dev") == "test"
+      - name: missing setting
+        code: |
+          assert read_setting({}, "APP_MODE", "dev") == "dev"
+      - name: does not mutate mapping
+        code: |
+          settings = {}
+          read_setting(settings, "DEBUG", "false")
+          assert settings == {}
+    hints:
+      - Dictionaries have a `.get(key, default)` method.
+      - Reading a missing key with `.get` does not add it to the dictionary.
+  - id: mastery-env-explain
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: Why should an application avoid logging the value of DATABASE_URL even when it is provided through an environment variable?
+    rubric:
+      - Explains that environment variables are not automatically encrypted or secret.
+      - Identifies that logs may be retained, shared or exposed and recommends redaction or secret-management controls.
+    modelAnswer: Environment variables are a way to pass configuration, not a guarantee of confidentiality. DATABASE_URL may contain credentials, and logs can be retained or exposed. The application should redact sensitive values and use protected secret injection or a secret manager.
+    explanation: Moving a secret out of source code reduces one risk but does not make every place it is used safe.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-env, mastery-env-code, mastery-env-explain]
+cheatsheet: |
+  Read optional settings with `os.getenv("NAME", "default")` or `os.environ.get(...)`.
+  Environment values are strings. Parse booleans/numbers explicitly and validate allowed values.
+  PATH is an ordered list of executable directories. A child inherits a copy of its parent's environment.
+  Environment variables are not a secret vault; redact secrets and use protected secret-management controls.

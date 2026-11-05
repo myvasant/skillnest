@@ -1,0 +1,1442 @@
+id: cs.hashing
+concept: cs.hashing
+title: Hash Functions and Hash Tables
+subtitle: How dicts and sets find things without searching
+estimatedMinutes: 60
+reviewedOn: 2026-10-22
+summary: >-
+  A hash function turns a key into a number that says where to store it, so a hash table can jump almost
+  straight to the right place instead of searching. Build a hash table from scratch with buckets and
+  chaining, see collisions, load factor and resizing at work, and learn why Python's dict and set are
+  O(1) on average, O(n) in the worst case, and why lists cannot be keys.
+objectives:
+  - Explain what a hash function does and which properties a hash table needs from it.
+  - Implement a toy hash table with buckets and separate chaining, including put, get and update.
+  - Explain collisions, the load factor and why tables resize and rehash, and compute a load factor.
+  - Explain why dict and set operations are O(1) on average but O(n) in the worst case.
+  - Explain why mutable objects such as lists cannot be dict keys, and choose hashable alternatives.
+  - Write __eq__ and __hash__ that respect the rule "equal objects must have equal hashes".
+sources:
+  - title: "Glossary: hashable"
+    url: https://docs.python.org/3/glossary.html#term-hashable
+    publisher: Python Software Foundation
+  - title: "Data model: object.__hash__"
+    url: https://docs.python.org/3/reference/datamodel.html#object.__hash__
+    publisher: Python Software Foundation
+  - title: "Command line and environment: PYTHONHASHSEED"
+    url: https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED
+    publisher: Python Software Foundation
+  - title: "PEP 456: Secure and interchangeable hash algorithm"
+    url: https://peps.python.org/pep-0456/
+    publisher: Python Software Foundation
+  - title: "CPython source: Objects/dictobject.c (design notes in the comments)"
+    url: https://github.com/python/cpython/blob/main/Objects/dictobject.c
+    publisher: CPython developers
+  - title: Open Data Structures (Chapter 5, Hash Tables)
+    url: https://opendatastructures.org/
+    publisher: Pat Morin
+sections:
+  - id: why
+    title: Why not just search?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A contact list stored as a list of (name, number) pairs must be searched one pair at a time — a
+          [linear search](glossary:linear-search), O(n). Now imagine a filing cabinet with one drawer per
+          letter of the alphabet. To find "Femi" you open drawer F and look only there. **The key itself
+          tells you where to look.**
+      - type: code
+        runnable: true
+        code: |
+          contacts = [("Asha", "555-0101"), ("Ben", "555-0102"), ("Chen", "555-0103"),
+                      ("Dara", "555-0104"), ("Eli", "555-0105"), ("Femi", "555-0106")]
+
+          def find_in_list(name):
+              checked = 0
+              for contact_name, number in contacts:
+                  checked += 1
+                  if contact_name == name:
+                      return number, checked
+
+          drawers = [[] for _ in range(26)]                   # one drawer per letter A-Z
+          for name, number in contacts:
+              drawers[ord(name[0]) - ord("A")].append((name, number))
+
+          def find_in_drawer(name):
+              checked = 0
+              for contact_name, number in drawers[ord(name[0]) - ord("A")]:
+                  checked += 1
+                  if contact_name == name:
+                      return number, checked
+
+          print(find_in_list("Femi"))
+          print(find_in_drawer("Femi"))
+        expectedOutput: |
+          ('555-0106', 6)
+          ('555-0106', 1)
+        caption: The list needs one check per contact; the drawer needs one check however many contacts there are — as long as they spread out over the drawers.
+        annotations:
+          - line: 13
+            text: "ord gives a character's code; ord('F') - ord('A') is 5, so Femi goes in drawer 5."
+      - type: markdown
+        body: |
+          The first letter is a poor choice in practice — far more names start with S than with X, so some
+          drawers overflow. A [hash function](glossary:hash-function) is a better recipe for turning a key
+          into a drawer number, and a [hash table](glossary:hash-table) is the cabinet. Python's `dict` and
+          `set` are hash tables, which is why `d[key]` and `x in s` stay fast as they grow.
+
+  - id: hash-functions
+    title: Hash functions
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **hash function** takes a key and returns an integer, its [hash](glossary:hash-value). A table
+          with m [buckets](glossary:bucket) then uses `hash % m` to pick a bucket. For a hash table to work,
+          the function must be:
+
+          1. **Deterministic** — the same key always gives the same hash (within one run of the program).
+          2. **Consistent with equality** — keys that are equal (`==`) must give equal hashes, or the table
+             would look in the wrong bucket for an equal key.
+          3. **Fast** — it runs on every lookup.
+          4. **Well spread** — different keys should land in different buckets as evenly as possible.
+
+          It does **not** need to give different keys different hashes. There are infinitely many strings and
+          only finitely many buckets, so some different keys must share a bucket. That is a
+          [collision](glossary:hash-collision), and every hash table has a plan for it.
+
+          Python's built-in `hash()` provides hashes for its immutable types:
+      - type: code
+        runnable: true
+        code: |
+          print(hash(42), hash(-7))
+          print(hash("Ben") == hash("Ben"))
+          print(hash((1, 2)) == hash((1, 2)))
+          print(hash(1) == hash(1.0) == hash(True))
+        expectedOutput: |
+          42 -7
+          True
+          True
+          True
+        annotations:
+          - line: 1
+            text: In CPython small integers hash to themselves. That is an implementation detail — never rely on specific hash values.
+          - line: 2
+            text: We compare string hashes instead of printing them, because a string's hash changes every time Python starts.
+          - line: 4
+            text: 1, 1.0 and True compare equal, so rule 2 forces them to have the same hash. They are the same dict key.
+      - type: callout
+        variant: warning
+        title: Never print, store or send string hashes
+        body: |
+          For security, Python mixes a random value (a "salt") into the hash of every `str` and `bytes`
+          object, chosen afresh each time the interpreter starts. `hash("Ben")` is the same throughout one
+          run but different in the next. Saving hashes to a file or comparing them between programs gives
+          nonsense. If you need a stable fingerprint, use `hashlib` (e.g. SHA-256) — `hash()` is not a
+          cryptographic hash.
+      - type: markdown
+        body: |
+          Because Python's string hashes change between runs, this lesson's toy tables use their own simple,
+          **deterministic** hash so the results are reproducible. How you combine the characters matters. A
+          naive "add up the character codes" hash gives every anagram the same value; multiplying by a
+          constant as you go makes the order of characters count:
+      - type: code
+        runnable: true
+        code: |
+          def sum_hash(text):
+              return sum(ord(ch) for ch in text)
+
+          def poly_hash(text):
+              h = 0
+              for ch in text:
+                  h = h * 31 + ord(ch)        # each character shifts the earlier ones
+              return h
+
+          for word in ["listen", "silent", "enlist"]:
+              print(word, sum_hash(word), poly_hash(word))
+        expectedOutput: |
+          listen 655 3192458695
+          silent 655 3392640085
+          enlist 655 2996453575
+        caption: All three words collide under sum_hash. The polynomial hash (the same idea Java uses for strings) tells them apart.
+      - type: item
+        ref: hash-properties
+
+  - id: toy-table
+    title: Build a hash table with buckets and chaining
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The simplest collision plan is [separate chaining](glossary:separate-chaining): each bucket is a
+          small list holding every entry that maps to it. To store a key, compute its bucket and append to
+          that list. Start with plain integer keys and 4 buckets, using `key % 4` as the bucket number:
+      - type: visualization
+        component: python-tracer
+        title: Filling four buckets
+        caption: Watch each key go into bucket key % 4. 12 and 20 share bucket 0, and 7 and 3 share bucket 3 — collisions, handled by keeping a list.
+        props:
+          code: |
+            buckets = [[], [], [], []]
+            for key in [12, 7, 20, 3, 9]:
+                index = key % 4
+                buckets[index].append(key)
+            print(buckets)
+      - type: item
+        ref: predict-buckets
+      - type: markdown
+        body: |
+          A real table stores **key–value pairs** and must handle two more things: updating a key that is
+          already present, and lookups. Here is a complete toy version. `toy_hash` uses the integer itself for
+          ints and the polynomial hash for strings:
+      - type: code
+        runnable: true
+        code: |
+          def toy_hash(key):
+              """Deterministic hash for ints and strs (Python's own str hash varies between runs)."""
+              if isinstance(key, int):
+                  return key
+              h = 0
+              for ch in key:
+                  h = h * 31 + ord(ch)
+              return h
+
+          class ToyHashTable:
+              def __init__(self, size=8):
+                  self.buckets = [[] for _ in range(size)]
+
+              def _bucket(self, key):
+                  return self.buckets[toy_hash(key) % len(self.buckets)]
+
+              def put(self, key, value):
+                  bucket = self._bucket(key)
+                  for pair in bucket:
+                      if pair[0] == key:          # key already present: replace its value
+                          pair[1] = value
+                          return
+                  bucket.append([key, value])     # new key: add a [key, value] pair
+
+              def get(self, key):
+                  for stored_key, value in self._bucket(key):
+                      if stored_key == key:
+                          return value
+                  raise KeyError(key)
+
+          table = ToyHashTable()
+          for fruit, qty in [("apple", 3), ("pear", 5), ("fig", 7), ("plum", 2), ("apple", 4)]:
+              table.put(fruit, qty)
+
+          print(table.get("apple"), table.get("plum"))
+          for i, bucket in enumerate(table.buckets):
+              print(i, bucket)
+        expectedOutput: |
+          4 2
+          0 []
+          1 []
+          2 [['apple', 4]]
+          3 []
+          4 [['fig', 7], ['plum', 2]]
+          5 []
+          6 [['pear', 5]]
+          7 []
+        annotations:
+          - line: 15
+            text: The whole trick. Computing the bucket costs the same whatever the table holds.
+          - line: 20
+            text: Inside one bucket we still compare with ==, because different keys can share a bucket.
+          - line: 29
+            text: Like a dict, a missing key raises KeyError.
+      - type: markdown
+        body: |
+          "fig" and "plum" collided in bucket 4, and the chain handled it: `get("plum")` hashed to bucket 4 and
+          then checked just two entries. The second `put("apple", 4)` found the existing key and **replaced**
+          its value instead of adding a duplicate — exactly how `d["apple"] = 4` behaves.
+
+          The cost of `get` is: compute the hash (constant time), then scan one chain. If the chains stay
+          short, every operation is O(1) — regardless of how many keys the table holds.
+
+  - id: collisions
+    title: Collisions and how tables resolve them
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          There are two families of collision strategy:
+
+          - **Separate chaining** (our toy): each bucket holds a list. Simple; a bad bucket just gets a long
+            list.
+          - **[Open addressing](glossary:open-addressing)**: every entry lives directly in the array, at most
+            one per slot. If the slot is taken, *probe* other slots in a fixed order until you find a free one
+            (or, when searching, the key or an empty slot). The simplest probe order is "try the next slot":
+      - type: code
+        runnable: true
+        code: |
+          size = 8
+          slots = [None] * size
+
+          def insert(key):
+              i = key % size
+              probes = 1
+              while slots[i] is not None:         # taken: try the next slot along
+                  i = (i + 1) % size
+                  probes += 1
+              slots[i] = key
+              return probes
+
+          for key in [3, 11, 19, 4]:
+              print(key, "->", insert(key), "probe(s)")
+          print(slots)
+        expectedOutput: |
+          3 -> 1 probe(s)
+          11 -> 2 probe(s)
+          19 -> 3 probe(s)
+          4 -> 3 probe(s)
+          [None, None, None, 3, 11, 19, 4, None]
+        caption: "Linear probing. 3, 11 and 19 all want slot 3; 4 never collided with another key's hash, yet it was pushed along by the cluster."
+      - type: markdown
+        body: |
+          The demo shows the weakness of naive probing: occupied slots **cluster**, and clusters slow down
+          even keys that never collided. CPython's dict uses open addressing with a cleverer probe sequence
+          that mixes in more bits of the hash to jump around the table, so clusters stay rare.
+
+          Whichever strategy is used, collisions cost extra `==` checks. A few are harmless. If *all* keys
+          collide, every lookup degenerates into a linear search through all of them.
+      - type: item
+        ref: collision-mcq
+
+  - id: load-factor
+    title: Load factor and resizing
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With n entries in m buckets, the [load factor](glossary:load-factor) is **α = n / m**. With a
+          well-spread hash function, the average chain length is α. If the table never grew, α — and the cost
+          of every lookup — would grow with n, which is just a slower list.
+
+          So hash tables **resize**: when α passes a threshold, allocate (typically) twice as many buckets
+          and re-insert every entry, because each key's bucket `hash % m` depends on m. That is called
+          [rehashing](glossary:rehashing). Our toy resizes when α exceeds 0.75:
+      - type: code
+        runnable: true
+        code: |
+          def toy_hash(key):
+              return key                          # int keys only, to keep this short
+
+          class ResizingTable:
+              def __init__(self):
+                  self.buckets = [[] for _ in range(4)]
+                  self.count = 0
+                  self.moves = 0                  # entries re-inserted by resizes
+
+              def load_factor(self):
+                  return self.count / len(self.buckets)
+
+              def put(self, key, value):
+                  bucket = self.buckets[toy_hash(key) % len(self.buckets)]
+                  for pair in bucket:
+                      if pair[0] == key:
+                          pair[1] = value
+                          return
+                  bucket.append([key, value])
+                  self.count += 1
+                  if self.load_factor() > 0.75:
+                      self._resize(2 * len(self.buckets))
+
+              def _resize(self, new_size):
+                  old = self.buckets
+                  self.buckets = [[] for _ in range(new_size)]
+                  for bucket in old:
+                      for key, value in bucket:
+                          self.buckets[toy_hash(key) % new_size].append([key, value])
+                          self.moves += 1
+                  print(f"resized to {new_size} buckets at {self.count} keys")
+
+          table = ResizingTable()
+          for key in range(1, 25):
+              table.put(key, key * key)
+          print(len(table.buckets), "buckets for", table.count, "keys, load factor", table.load_factor())
+          print("entries moved by all resizes:", table.moves)
+        expectedOutput: |
+          resized to 8 buckets at 4 keys
+          resized to 16 buckets at 7 keys
+          resized to 32 buckets at 13 keys
+          32 buckets for 24 keys, load factor 0.75
+          entries moved by all resizes: 24
+        caption: Each resize is O(n), but they get rarer as the table grows. In total, 24 inserts caused 24 moves — about one per insert.
+        annotations:
+          - line: 21
+            text: Checked after every new key. This keeps α ≤ 0.75, so chains stay short on average.
+          - line: 29
+            text: Every key must be re-hashed into the new array, because its bucket depends on the number of buckets.
+      - type: markdown
+        body: |
+          This is the same [amortised](glossary:amortized-cost) argument as `list.append`: one insert is
+          occasionally expensive, but because the table doubles, the total re-insertion work is proportional
+          to n, so inserts are **O(1) amortised**. CPython's dict resizes before it is two-thirds full.
+      - type: item
+        ref: predict-resize
+
+  - id: dict-performance
+    title: Why dict and set are O(1) on average — and O(n) at worst
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Putting it together, a lookup costs **one hash computation plus the work in one bucket**. The
+          average-case claim, O(1), rests on two assumptions:
+
+          1. The load factor stays bounded (resizing guarantees this).
+          2. The hash function spreads the keys out, so a bucket holds only a few of them.
+
+          Break assumption 2 and the guarantee goes. We can show this on Python's real `dict` with a key class
+          whose hash we control, counting the `==` comparisons a single lookup makes:
+      - type: code
+        runnable: true
+        code: |
+          class Key:
+              """A key with a chosen hash that counts its == comparisons."""
+              comparisons = 0
+
+              def __init__(self, name, hash_value):
+                  self.name = name
+                  self.hash_value = hash_value
+
+              def __hash__(self):
+                  return self.hash_value
+
+              def __eq__(self, other):
+                  Key.comparisons += 1
+                  return self.name == other.name
+
+          def lookup_cost(n, all_same_hash):
+              table = {Key(i, 0 if all_same_hash else i): i for i in range(n)}
+              Key.comparisons = 0
+              table[Key(n - 1, 0 if all_same_hash else n - 1)]
+              return Key.comparisons
+
+          for n in [10, 100, 1000]:
+              print(f"n={n}: good hashes {lookup_cost(n, False)}, all hashes equal {lookup_cost(n, True)}")
+        expectedOutput: |
+          n=10: good hashes 1, all hashes equal 10
+          n=100: good hashes 1, all hashes equal 100
+          n=1000: good hashes 1, all hashes equal 1000
+        caption: Same dict, same keys, same lookup. With distinct hashes one comparison suffices at any size; when every key collides, the lookup compares against all of them — O(n).
+      - type: markdown
+        body: |
+          **Average O(1), worst case O(n).** Built-in types have well-designed hashes, so in practice dict
+          and set operations behave like O(1). But the worst case is real, and attackers have exploited it:
+          by sending a web server thousands of request parameters crafted to collide, they turned each insert
+          into a scan and overloaded the server ([hash flooding](glossary:hash-flooding)). That is why Python
+          salts string hashes with a random per-process value — attackers cannot predict which strings
+          collide. The `PYTHONHASHSEED` environment variable can fix the seed for reproducible debugging.
+
+          **No order by key.** Hashing scatters keys by design, so a hash table cannot answer "the smallest
+          key" or "keys between 10 and 20" without scanning everything. Dicts remember **insertion** order
+          (guaranteed since Python 3.7); sets have no defined order at all. For ordered queries use a sorted
+          list with `bisect` — see [searching](concept:cs.searching).
+      - type: item
+        ref: worst-case-tf
+
+  - id: hashability
+    title: Hashability — why lists cannot be keys
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A key's bucket is computed from its hash **once, when it is stored**. If the key could change
+          afterwards, its hash would change, and the table would look in a different bucket. Pretend for a
+          moment that lists could be keys, hashed by their contents:
+      - type: code
+        runnable: true
+        code: |
+          def content_hash(items):
+              return sum(items)
+
+          buckets = [[] for _ in range(8)]
+          key = [3, 4]
+          buckets[content_hash(key) % 8].append((key, "home"))    # stored in bucket 7
+
+          key.append(1)                                            # mutate the key: [3, 4, 1]
+          print("looking in bucket", content_hash(key) % 8)
+          print(buckets[content_hash(key) % 8])
+          print(buckets[7])
+        expectedOutput: |
+          looking in bucket 0
+          []
+          [([3, 4, 1], 'home')]
+        caption: The entry is stranded in bucket 7. Even a key equal to the stored one now hashes to bucket 0, so it can never be found.
+      - type: markdown
+        body: |
+          Python prevents this by making mutable built-ins **unhashable**: lists, dicts and sets have no hash
+          at all, so they cannot be dict keys or set items. An object is [hashable](glossary:hashable) if its
+          hash never changes during its lifetime and it can be compared with `==`. The rule that ties them
+          together:
+
+          > **If `a == b`, then `hash(a) == hash(b)`.** (The reverse need not hold — collisions are allowed.)
+      - type: code
+        runnable: true
+        code: |
+          point = [3, 4]
+          locations = {point: "home"}
+        expectError: TypeError
+        caption: "Python 3.14: TypeError: cannot use 'list' as a dict key (unhashable type: 'list')."
+      - type: code
+        runnable: true
+        code: |
+          locations = {(3, 4): "home"}                  # tuples of hashables are hashable
+          print(locations[(3, 4)])
+
+          tags = {frozenset({"red", "round"}): "apple"}  # frozenset: an immutable set
+          print(tags[frozenset({"round", "red"})])
+
+          try:
+              hash((1, [2]))
+          except TypeError as error:
+              print("TypeError:", error)
+        expectedOutput: |
+          home
+          apple
+          TypeError: unhashable type: 'list'
+        caption: A tuple is hashable only if everything inside it is. frozenset compares (and hashes) by contents, so element order does not matter.
+      - type: item
+        ref: which-keys
+
+  - id: python-internals
+    title: "Deep dive: __hash__, __eq__ and CPython's dict"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Your own classes.** By default, instances hash by **identity**: every object is different from
+          every other, which is consistent with the default `==` (also identity). As soon as you define
+          `__eq__` to compare by value, Python sets `__hash__` to `None`, making instances unhashable —
+          otherwise two equal objects could have different hashes and break the rule above.
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  self.x, self.y = x, y
+
+              def __eq__(self, other):
+                  if not isinstance(other, Point):
+                      return NotImplemented
+                  return (self.x, self.y) == (other.x, other.y)
+
+          print(Point(1, 2) == Point(1, 2))
+          print(Point.__hash__)
+          visited = {Point(1, 2)}
+        expectedOutput: |
+          True
+          None
+        expectError: TypeError
+        caption: "TypeError: cannot use 'Point' as a set element (unhashable type: 'Point'). Defining __eq__ alone removes the inherited hash."
+      - type: markdown
+        body: |
+          To make value objects usable as keys, define `__hash__` from **exactly the fields `__eq__`
+          compares**, and never mutate those fields while the object is in a dict or set. Hashing a tuple of
+          the fields is the standard idiom. A frozen dataclass generates both methods for you:
+      - type: code
+        runnable: true
+        code: |
+          from dataclasses import dataclass
+
+          class Point:
+              def __init__(self, x, y):
+                  self.x, self.y = x, y
+
+              def __eq__(self, other):
+                  if not isinstance(other, Point):
+                      return NotImplemented
+                  return (self.x, self.y) == (other.x, other.y)
+
+              def __hash__(self):
+                  return hash((self.x, self.y))       # the same fields __eq__ uses
+
+          visits = {Point(1, 2): "cafe"}
+          print(visits[Point(1, 2)])
+          print(len({Point(1, 2), Point(1, 2), Point(3, 4)}))
+
+          @dataclass(frozen=True)
+          class GridCell:
+              row: int
+              col: int
+
+          walls = {GridCell(0, 1), GridCell(2, 2)}
+          print(GridCell(0, 1) in walls, GridCell(1, 0) in walls)
+        expectedOutput: |
+          cafe
+          2
+          True False
+        caption: "frozen=True makes the fields read-only and generates __eq__ and __hash__ from them, so the hash can never go stale."
+      - type: item
+        ref: card-hash
+      - type: markdown
+        body: |
+          **Inside CPython's dict** (see the design notes in `Objects/dictobject.c`):
+
+          - It uses **open addressing**. The probe sequence mixes in the higher bits of the hash
+            ("perturbation") so keys whose hashes differ only in high bits still spread out.
+          - Since 3.6 a dict is "compact": a small **index** array of slots points into a dense **entries**
+            array of (hash, key, value) in insertion order. That is where insertion-order iteration comes
+            from, and it saves memory.
+          - The key's hash is kept (in the entry, or cached inside `str` objects), so most mismatches are
+            rejected by comparing integers, and resizing never needs to call `__hash__` again. An identity
+            check (`stored is key`) comes before `==`.
+          - The table never gets more than about two-thirds full before it is resized.
+
+          Sets use a similar open-addressing design tuned for membership tests.
+
+          **Odd but true.** `hash(-1)` is `-2` in CPython, because -1 signals an error in its C API. Numeric
+          hashes are designed so that equal numbers of different types (`1`, `1.0`, `Fraction(1, 1)`) hash
+          equally. The hash width is platform-dependent: `sys.hash_info.width` is 64 on typical desktop
+          builds and 32 in this browser runtime, so even hashes of large integers can differ between
+          machines. String hashing uses the SipHash family on most platforms
+          ([PEP 456](https://peps.python.org/pep-0456/)); `sys.hash_info.algorithm` names the algorithm a
+          given build uses.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: cannot use 'list' as a dict key (unhashable type: 'list')` | A list (or dict or set) used as a key or set item | Use a tuple or frozenset |
+          | `TypeError: cannot use 'Point' as a set element (unhashable type: 'Point')` | The class defines `__eq__` but not `__hash__` | Add `__hash__` over the same fields, or use `@dataclass(frozen=True)` |
+          | A key you just stored "disappears" | You mutated an object used as a key, so its hash changed | Never mutate keys; make key objects immutable |
+          | Duplicate "equal" objects both end up in a set | `__hash__` uses different fields than `__eq__` (equal objects, different hashes) | Hash exactly the fields that `__eq__` compares |
+          | Output order or `hash()` values differ between runs | String hashes are salted per process; sets have no order | Never depend on set order or saved hashes; use `sorted()` |
+          | A dict or set suddenly becomes very slow | Many keys share a hash (a constant or poor `__hash__`) | Hash all the identifying fields with `hash((a, b, c))` |
+          | Using `hash()` to check file integrity or passwords | `hash()` is fast and not cryptographic | Use `hashlib` (SHA-256) or a password-hashing library |
+
+          In your own hash table, the classic bug is forgetting to check for an existing key:
+      - type: item
+        ref: debug-put-duplicates
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Build on the toy table from this lesson. The tests inspect your buckets, so they check *how* you
+          store keys as well as the answers.
+      - type: item
+        ref: chained-set
+      - type: item
+        ref: explain-mutable-keys
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **hash function** maps a key to an integer quickly and deterministically; `hash % m` picks one
+            of m buckets. Equal keys **must** have equal hashes; different keys may collide.
+          - **Chaining** keeps a list per bucket; **open addressing** probes for another slot (CPython's dict
+            and set do this).
+          - **Load factor** α = n / m. Tables resize and **rehash** every key when α gets too high (CPython:
+            before two-thirds full), so inserts stay amortised O(1).
+          - dict/set lookups are **O(1) on average** (good hashes, bounded α) and **O(n) worst case** (all
+            keys colliding). String hash salting defends against deliberate collisions.
+          - Keys must be **hashable**: their hash must never change, which is why lists, dicts and sets
+            cannot be keys. Use tuples, frozensets or frozen dataclasses.
+          - Custom classes: define `__hash__` from the same fields as `__eq__`.
+          - Never print or store `hash()` of strings; it varies between runs. `hash()` is not cryptographic.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How does a hash map get O(1) lookups?" — hash the key to a bucket index, handle collisions by
+          chaining or probing, keep the load factor bounded by resizing (amortised O(1) inserts), and note the
+          O(n) worst case when keys collide. Then explain why mutable objects make bad keys and state the
+          `__eq__`/`__hash__` contract.
+
+items:
+  - id: hash-properties
+    type: mcq
+    skill: recognition
+    prompt: Which property **must** a hash function have for a hash table to work correctly?
+    explanation: >-
+      If two equal keys could have different hashes, the table might store one in bucket 3 and look for the
+      other in bucket 6, and never find it. Different keys sharing a hash is allowed — collisions are
+      handled — and nothing requires hashes to be sorted or hard to reverse.
+    options:
+      - id: a
+        text: Keys that are equal always produce equal hashes.
+        correct: true
+        feedback: Right. This is the one non-negotiable rule. Speed and good spreading matter for performance, not correctness.
+      - id: b
+        text: Different keys always produce different hashes.
+        feedback: >-
+          Impossible in general — there are more possible keys than hash values — and not needed, because
+          hash tables handle collisions.
+      - id: c
+        text: Hash values increase in the same order as the keys.
+        feedback: No. Hashing deliberately scatters keys; that is why hash tables cannot answer ordered queries.
+      - id: d
+        text: It must be impossible to recover the key from its hash.
+        feedback: That is a property of cryptographic hashes (hashlib). Python's hash(42) is simply 42, and dicts work fine.
+
+  - id: predict-buckets
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output.
+    code: |
+      buckets = [[], [], [], []]
+      for key in [10, 3, 7, 14, 8]:
+          buckets[key % 4].append(key)
+      print(buckets)
+    answer: "[[8], [], [10, 14], [3, 7]]"
+    explanation: >-
+      10 % 4 = 2, 3 % 4 = 3, 7 % 4 = 3, 14 % 4 = 2 and 8 % 4 = 0. Each key is appended to the end of its
+      bucket's list, so collisions keep their insertion order: bucket 2 holds 10 then 14.
+    wrongAnswers:
+      - answer: "[[8], [], [14, 10], [7, 3]]"
+        feedback: append() adds to the end of the list, so the key inserted first stays first in its bucket.
+      - answer: "[[10, 3, 7, 14, 8], [], [], []]"
+        feedback: "Each key goes to bucket key % 4, not all to bucket 0. Compute the remainder for each key."
+      - answer: "[[8], [3, 7], [10, 14], []]"
+        feedback: "3 % 4 is 3 (4 goes into 3 zero times, remainder 3), so 3 and 7 belong in the last bucket."
+
+  - id: collision-mcq
+    type: mcq
+    skill: explanation
+    prompt: In a hash table that uses separate chaining, two different keys map to the same bucket. What happens?
+    explanation: >-
+      With chaining, the bucket's list simply holds both entries. A later lookup computes the bucket from the
+      hash and then compares keys with == inside that short list to find the right one.
+    options:
+      - id: a
+        text: The second key overwrites the first.
+        feedback: Only an equal key replaces an existing entry. Different keys in the same bucket are both kept.
+      - id: b
+        text: Both entries are kept in the bucket's list; lookups compare keys with == inside that bucket.
+        correct: true
+        feedback: Right. That is why a table still needs == even after hashing.
+      - id: c
+        text: Python raises a collision error.
+        feedback: Collisions are normal and expected. They cost a few extra comparisons, never an error.
+      - id: d
+        text: The table immediately doubles its size.
+        feedback: Resizing is triggered by the load factor (how full the table is), not by a single collision.
+
+  - id: predict-resize
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: This loop simulates a table that doubles when its load factor goes above 0.75. Predict the output.
+    code: |
+      buckets = 8
+      count = 0
+      resizes = 0
+      for key in range(13):
+          count += 1
+          if count / buckets > 0.75:
+              buckets *= 2
+              resizes += 1
+      print(count, buckets, resizes)
+    answer: "13 32 2"
+    explanation: >-
+      With 8 buckets, the 7th key makes α = 7/8 = 0.875 > 0.75, so the table grows to 16. With 16 buckets, the
+      13th key makes α = 13/16 = 0.8125 > 0.75, so it grows to 32. Six keys at 8 buckets is exactly 0.75,
+      which does not trigger a resize.
+    wrongAnswers:
+      - answer: "13 16 1"
+        feedback: "After the first resize the table keeps filling. At 13 keys, 13 / 16 = 0.8125, which is above 0.75 again."
+      - answer: "13 64 3"
+        feedback: The 6th key gives 6 / 8 = 0.75, which is not greater than 0.75, so it does not resize there.
+      - answer: "13 8 0"
+        feedback: 13 keys in 8 buckets would be α = 1.625. The check runs after every key and doubles the buckets when α > 0.75.
+
+  - id: worst-case-tf
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a Python dict lookup is O(1) in every case, whatever the keys are."
+    answer: false
+    explanation: >-
+      It is O(1) on average, assuming the keys' hashes spread out. If many keys share a hash — a poor
+      __hash__, or keys crafted by an attacker — they collide and a lookup must compare against all of them,
+      which is O(n). The lesson's Key demo showed 1,000 comparisons for one lookup.
+
+  - id: which-keys
+    type: mcq
+    skill: recognition
+    prompt: Which of these can be used as a dictionary key?
+    explanation: >-
+      A tuple is hashable when everything inside it is hashable. (1, "a") contains an int and a str, both
+      hashable. A list, a dict and a tuple that contains a list are all unhashable.
+    options:
+      - id: a
+        text: "`[1, 2]`"
+        feedback: "Lists are mutable, so they are unhashable: TypeError: cannot use 'list' as a dict key."
+      - id: b
+        text: "`(1, [2])`"
+        feedback: A tuple is only hashable if all its items are. This one contains a list, so hashing it raises TypeError.
+      - id: c
+        text: "`(1, \"a\")`"
+        correct: true
+        feedback: Right. An immutable tuple of hashable items is hashable.
+      - id: d
+        text: "`{\"x\": 1}`"
+        feedback: Dicts are mutable and unhashable. Use a tuple of items, or a frozenset of them, if you need a key.
+
+  - id: card-hash
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      `Card` compares by rank and suit, but because it defines `__eq__` without `__hash__`, putting cards in a
+      set raises `TypeError: cannot use 'Card' as a set element`. Add a `__hash__` method that is consistent
+      with `__eq__`, so the program prints `2` (the two aces are the same card).
+    starterCode: |
+      class Card:
+          def __init__(self, rank, suit):
+              self.rank = rank
+              self.suit = suit
+
+          def __eq__(self, other):
+              if not isinstance(other, Card):
+                  return NotImplemented
+              return (self.rank, self.suit) == (other.rank, other.suit)
+
+          # Add __hash__ here.
+
+      hand = {Card("A", "spades"), Card("A", "spades"), Card("10", "hearts")}
+      print(len(hand))
+    solution: |
+      class Card:
+          def __init__(self, rank, suit):
+              self.rank = rank
+              self.suit = suit
+
+          def __eq__(self, other):
+              if not isinstance(other, Card):
+                  return NotImplemented
+              return (self.rank, self.suit) == (other.rank, other.suit)
+
+          def __hash__(self):
+              return hash((self.rank, self.suit))
+
+      hand = {Card("A", "spades"), Card("A", "spades"), Card("10", "hearts")}
+      print(len(hand))
+    expectedOutput: |
+      2
+    tests:
+      - name: cards work in sets and as dict keys
+        code: |
+          prices = {Card("Q", "hearts"): 12}
+          assert prices.get(Card("Q", "hearts")) == 12, "Looking up a new Card('Q', 'hearts') should find the stored value."
+          assert len({Card("A", "spades"), Card("A", "spades")}) == 1, "Two equal cards should count once in a set."
+      - name: equal cards have equal hashes
+        code: |
+          a, b = Card("7", "clubs"), Card("7", "clubs")
+          assert hash(a) == hash(b), "Equal cards must have equal hashes. Compute the hash from rank and suit, not from the object's identity."
+      - name: the hash uses both fields
+        code: |
+          ranks = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+          suits = ["spades", "hearts", "diamonds", "clubs"]
+          distinct = len({hash(Card(r, s)) for r in ranks for s in suits})
+          assert distinct >= 40, f"Your 52 cards produce only {distinct} different hashes. A legal but weak hash makes many cards collide; hash the tuple (rank, suit)."
+    hints:
+      - "`__hash__(self)` must return an int and should use the same fields that `__eq__` compares."
+      - "Tuples of hashable values are hashable: `hash((self.rank, self.suit))`."
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "unhashable" }
+        message: Card is still unhashable. Define a method named exactly `__hash__` inside the class.
+    explanation: >-
+      Hashing the tuple (rank, suit) means equal cards always produce equal hashes, and different cards
+      almost always produce different ones. Returning a constant would be legal but would make every card
+      collide; using `object.__hash__` (identity) would break the rule, so equal cards would be counted twice.
+
+  - id: debug-put-duplicates
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This toy table's `put` always appends, so storing an existing key a second time creates a duplicate and
+      `get` keeps returning the old value. The program prints `3 2` but should print `4 1`. Fix `put` so it
+      updates an existing key.
+    starterCode: |
+      def toy_hash(key):
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ToyHashTable:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+              self.count = 0
+
+          def _bucket(self, key):
+              return self.buckets[toy_hash(key) % len(self.buckets)]
+
+          def put(self, key, value):
+              self._bucket(key).append([key, value])
+              self.count += 1
+
+          def get(self, key):
+              for stored_key, value in self._bucket(key):
+                  if stored_key == key:
+                      return value
+              raise KeyError(key)
+
+      table = ToyHashTable()
+      table.put("apple", 3)
+      table.put("apple", 4)
+      print(table.get("apple"), table.count)
+    solution: |
+      def toy_hash(key):
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ToyHashTable:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+              self.count = 0
+
+          def _bucket(self, key):
+              return self.buckets[toy_hash(key) % len(self.buckets)]
+
+          def put(self, key, value):
+              bucket = self._bucket(key)
+              for pair in bucket:
+                  if pair[0] == key:
+                      pair[1] = value
+                      return
+              bucket.append([key, value])
+              self.count += 1
+
+          def get(self, key):
+              for stored_key, value in self._bucket(key):
+                  if stored_key == key:
+                      return value
+              raise KeyError(key)
+
+      table = ToyHashTable()
+      table.put("apple", 3)
+      table.put("apple", 4)
+      print(table.get("apple"), table.count)
+    expectedOutput: |
+      4 1
+    tests:
+      - name: updating replaces the value
+        code: |
+          t = ToyHashTable()
+          t.put("pear", 1)
+          t.put("pear", 2)
+          t.put("pear", 3)
+          assert t.get("pear") == 3, f"After three puts of 'pear', get should return the latest value 3, got {t.get('pear')!r}."
+          assert t.count == 1, f"count should stay 1 when the same key is stored again, got {t.count}."
+      - name: no duplicate pairs in the bucket
+        code: |
+          t = ToyHashTable()
+          for v in range(5):
+              t.put("fig", v)
+          pairs = [p for b in t.buckets for p in b if p[0] == "fig"]
+          assert len(pairs) == 1, f"The buckets hold {len(pairs)} pairs for 'fig'; there should be exactly one."
+      - name: different keys are still added
+        code: |
+          t = ToyHashTable()
+          for i, word in enumerate(["fig", "plum", "kiwi", "lime", "date"]):
+              t.put(word, i)
+          assert t.count == 5, f"Five different keys should give count 5, got {t.count}."
+          assert [t.get(w) for w in ["fig", "plum", "kiwi", "lime", "date"]] == [0, 1, 2, 3, 4], "Each key should return its own value, including fig and plum, which share a bucket."
+    hints:
+      - Before appending, look through the key's bucket. Is there already a pair with this key?
+      - "If you find `pair[0] == key`, set `pair[1] = value` and return without appending or counting."
+    feedback:
+      - when: { outputEquals: "4 2\n" }
+        message: >-
+          get now returns the new value, but there are still two pairs for "apple" (count is 2). Update the
+          existing pair instead of appending a second one.
+    explanation: >-
+      A table must treat put on an existing key as an update. Scanning the bucket first costs nothing extra
+      in Big-O terms — the bucket is short — and keeps exactly one entry per key, which is what makes count
+      (len) and get correct.
+
+  - id: chained-set
+    type: code
+    skill: implementation
+    difficulty: 3
+    prompt: |
+      Build `ChainedSet`, a set of keys (no values) using separate chaining and the given `toy_hash`.
+      Complete:
+
+      - `add(key)` — put the key in bucket `toy_hash(key) % len(self.buckets)`, unless it is already there.
+        Increase `self.count` only for new keys.
+      - `__contains__(key)` — makes `key in s` work. Look **only** in the key's own bucket.
+
+      Do not use Python's `set` or `dict` inside the class — the point is to build one.
+    starterCode: |
+      def toy_hash(key):
+          if isinstance(key, int):
+              return key
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ChainedSet:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+              self.count = 0
+
+          def add(self, key):
+              pass
+
+          def __contains__(self, key):
+              return False
+
+          def __len__(self):
+              return self.count
+
+      s = ChainedSet()
+      for word in ["fig", "plum", "fig", "kiwi"]:
+          s.add(word)
+      print(len(s), "plum" in s, "pear" in s)
+    solution: |
+      def toy_hash(key):
+          if isinstance(key, int):
+              return key
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ChainedSet:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+              self.count = 0
+
+          def _bucket(self, key):
+              return self.buckets[toy_hash(key) % len(self.buckets)]
+
+          def add(self, key):
+              bucket = self._bucket(key)
+              if key not in bucket:
+                  bucket.append(key)
+                  self.count += 1
+
+          def __contains__(self, key):
+              return key in self._bucket(key)
+
+          def __len__(self):
+              return self.count
+
+      s = ChainedSet()
+      for word in ["fig", "plum", "fig", "kiwi"]:
+          s.add(word)
+      print(len(s), "plum" in s, "pear" in s)
+    expectedOutput: |
+      3 True False
+    tests:
+      - name: add and membership work
+        code: |
+          s = ChainedSet()
+          for k in [5, 13, 21, 5, "fig", "plum", "fig"]:
+              s.add(k)
+          assert len(s) == 5, f"Adding 5, 13, 21, 5, 'fig', 'plum', 'fig' should give 5 distinct keys, got {len(s)}."
+          for k in [5, 13, 21, "fig", "plum"]:
+              assert k in s, f"{k!r} was added, so `{k!r} in s` should be True."
+          for k in [6, "pear", 29]:
+              assert k not in s, f"{k!r} was never added, so `{k!r} in s` should be False."
+      - name: keys live in the right bucket, once
+        code: |
+          s = ChainedSet()
+          for k in range(40):
+              s.add(k)
+              s.add(k)
+          for i, bucket in enumerate(s.buckets):
+              for k in bucket:
+                  assert toy_hash(k) % len(s.buckets) == i, f"Key {k!r} is in bucket {i}, but toy_hash({k!r}) % {len(s.buckets)} is {toy_hash(k) % len(s.buckets)}."
+              assert len(bucket) == len(set(bucket)), f"Bucket {i} contains duplicates: {bucket}."
+      - name: membership looks only in the key's own bucket
+        code: |
+          s = ChainedSet()
+          s.add("fig")
+          wrong = (toy_hash("pear") + 1) % len(s.buckets)
+          s.buckets[wrong].append("pear")          # plant 'pear' in the WRONG bucket
+          assert "pear" not in s, "`in` found 'pear' in a bucket it does not hash to. __contains__ should compute the key's bucket and look only there — that is what makes it O(1)."
+      - name: builds the set itself
+        code: |
+          import ast
+          tree = ast.parse(source)
+          cls = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "ChainedSet")
+          for node in ast.walk(cls):
+              assert not isinstance(node, (ast.Set, ast.Dict, ast.SetComp, ast.DictComp)), "Do not use Python's set or dict literals inside ChainedSet."
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                  assert node.func.id not in ("set", "dict", "frozenset"), f"Do not call {node.func.id}() inside ChainedSet; store keys in self.buckets."
+    hints:
+      - Write a helper `_bucket(self, key)` that returns `self.buckets[toy_hash(key) % len(self.buckets)]`, like the toy table.
+      - "In add: get the bucket; if the key is not already in it, append it and add 1 to self.count."
+      - "In __contains__: `return key in self._bucket(key)` — `in` on that short list scans only one bucket."
+    feedback:
+      - when: { outputEquals: "4 True False\n" }
+        message: The duplicate "fig" was counted twice. Check whether the key is already in its bucket before appending.
+    explanation: >-
+      Each operation computes one bucket and scans only its short list, so with a bounded load factor add and
+      `in` are O(1) on average — the same reason Python's set is fast. Planting "pear" in the wrong bucket
+      proves the point: a correct hash table never even looks there.
+
+  - id: explain-mutable-keys
+    type: explain
+    skill: explanation
+    prompt: |
+      A colleague asks: "Why won't Python let me use a list as a dictionary key? A list is just data, like a
+      tuple." Explain, using what happens inside a hash table.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Explains that the table chooses a bucket from the key's hash when the key is stored.
+      - Explains that a list's contents (and so any content-based hash) could change after it is stored.
+      - Explains the consequence — lookups would compute a different bucket and fail to find the entry, even with an equal key.
+      - Says Python therefore makes mutable built-ins unhashable, and suggests a tuple (or frozenset) instead.
+    modelAnswer: |
+      A dict decides where to put a key by hashing it, once, at the moment it is stored. To be found later,
+      the key must hash to the same bucket every time it is looked up. A list's hash would have to come from
+      its contents, and lists can change: if you appended to a list that was being used as a key, its hash
+      would change, the dict would look in a different bucket, and the entry would be stranded — not even an
+      equal list could find it. Rather than allow silently lost entries, Python makes lists (and dicts and
+      sets) unhashable and raises TypeError. A tuple cannot change, so its hash is stable; use
+      `tuple(my_list)` (or a frozenset if order does not matter) as the key.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-load-factor
+    type: mcq
+    skill: transfer
+    prompt: |
+      A chaining hash table has 1,000 buckets and holds 5,000 entries, spread evenly by a good hash function.
+      What is its load factor, and roughly how many entries does a lookup have to compare against?
+    explanation: >-
+      α = n / m = 5000 / 1000 = 5, which is also the average chain length. A lookup scans one chain, so about
+      5 comparisons. A real table would have resized long before this point to keep α below 1.
+    options:
+      - id: a
+        text: "α = 5; about 5 comparisons"
+        correct: true
+        feedback: Right. With even spreading, each bucket holds about α entries.
+      - id: b
+        text: "α = 0.2; about 1 comparison"
+        feedback: The load factor is entries divided by buckets (5000 / 1000), not the other way round.
+      - id: c
+        text: "α = 5; about 5,000 comparisons"
+        feedback: A lookup hashes straight to one bucket and scans only that chain, not every entry.
+      - id: d
+        text: "α = 5000; about 1,000 comparisons"
+        feedback: The load factor is a ratio, n / m, not the number of entries.
+
+  - id: m-predict-chain
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output. What does it say about choosing the number of buckets?
+    code: |
+      buckets = [[] for _ in range(5)]
+      for key in [15, 22, 7, 30, 12, 5]:
+          buckets[key % 5].append(key)
+      print([len(b) for b in buckets])
+    answer: "[3, 0, 3, 0, 0]"
+    explanation: >-
+      15, 30 and 5 are multiples of 5, so they all land in bucket 0; 22, 7 and 12 all leave remainder 2.
+      Keys with a pattern that matches the table size pile into a few buckets. Real tables mix the hash bits
+      (CPython's perturbed probing) so such patterns still spread out.
+    wrongAnswers:
+      - answer: "[1, 1, 1, 1, 2]"
+        feedback: Hashing does not spread keys evenly by magic. Compute key % 5 for each key — these keys share remainders.
+      - answer: "[3, 3, 0, 0, 0]"
+        feedback: "22 % 5 is 2, not 1, so the second group lands in bucket 2."
+      - answer: "[6, 0, 0, 0, 0]"
+        feedback: Only the multiples of 5 have remainder 0. 22, 7 and 12 have remainder 2.
+
+  - id: m-equal-hash-tf
+    type: true-false
+    skill: explanation
+    prompt: "True or false: if `hash(a) == hash(b)`, then `a == b` must be True."
+    answer: false
+    explanation: >-
+      The rule only goes one way: equal objects must have equal hashes. Different objects may share a hash —
+      that is a collision — which is why a hash table still compares keys with == inside a bucket.
+
+  - id: m-delete
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Add a `delete(key)` method to the toy hash table. It removes the key's `[key, value]` pair from its
+      bucket, and raises `KeyError(key)` if the key is not present — just like `del d[key]`.
+    starterCode: |
+      def toy_hash(key):
+          if isinstance(key, int):
+              return key
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ToyHashTable:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+
+          def _bucket(self, key):
+              return self.buckets[toy_hash(key) % len(self.buckets)]
+
+          def put(self, key, value):
+              bucket = self._bucket(key)
+              for pair in bucket:
+                  if pair[0] == key:
+                      pair[1] = value
+                      return
+              bucket.append([key, value])
+
+          def get(self, key):
+              for stored_key, value in self._bucket(key):
+                  if stored_key == key:
+                      return value
+              raise KeyError(key)
+
+          def delete(self, key):
+              pass
+
+      table = ToyHashTable()
+      table.put("fig", 7)
+      table.put("plum", 2)
+      table.delete("fig")
+      print(table.get("plum"), table.buckets[4])
+    solution: |
+      def toy_hash(key):
+          if isinstance(key, int):
+              return key
+          h = 0
+          for ch in key:
+              h = h * 31 + ord(ch)
+          return h
+
+      class ToyHashTable:
+          def __init__(self, size=8):
+              self.buckets = [[] for _ in range(size)]
+
+          def _bucket(self, key):
+              return self.buckets[toy_hash(key) % len(self.buckets)]
+
+          def put(self, key, value):
+              bucket = self._bucket(key)
+              for pair in bucket:
+                  if pair[0] == key:
+                      pair[1] = value
+                      return
+              bucket.append([key, value])
+
+          def get(self, key):
+              for stored_key, value in self._bucket(key):
+                  if stored_key == key:
+                      return value
+              raise KeyError(key)
+
+          def delete(self, key):
+              bucket = self._bucket(key)
+              for i, pair in enumerate(bucket):
+                  if pair[0] == key:
+                      del bucket[i]
+                      return
+              raise KeyError(key)
+
+      table = ToyHashTable()
+      table.put("fig", 7)
+      table.put("plum", 2)
+      table.delete("fig")
+      print(table.get("plum"), table.buckets[4])
+    expectedOutput: |
+      2 [['plum', 2]]
+    tests:
+      - name: deleted keys are gone
+        code: |
+          t = ToyHashTable()
+          t.put("fig", 7)
+          t.put("plum", 2)
+          t.delete("fig")
+          try:
+              t.get("fig")
+          except KeyError:
+              pass
+          else:
+              raise AssertionError("After delete('fig'), get('fig') should raise KeyError.")
+          assert t.get("plum") == 2, "Deleting 'fig' must not remove 'plum', which shares its bucket."
+      - name: missing keys raise KeyError
+        code: |
+          t = ToyHashTable()
+          t.put(3, "three")
+          for missing in ["pear", 11]:
+              try:
+                  t.delete(missing)
+              except KeyError:
+                  pass
+              else:
+                  raise AssertionError(f"delete({missing!r}) on a missing key should raise KeyError.")
+          assert t.get(3) == "three", "A failed delete must not change the table. (11 shares a bucket with 3.)"
+      - name: works for many keys
+        code: |
+          t = ToyHashTable()
+          for k in range(30):
+              t.put(k, k * 10)
+          for k in range(0, 30, 2):
+              t.delete(k)
+          remaining = sorted(k for b in t.buckets for k, _ in b)
+          assert remaining == list(range(1, 30, 2)), f"After deleting the even keys, the odd keys 1..29 should remain; found {remaining}."
+    hints:
+      - Find the key's bucket with self._bucket(key), then look for the pair whose first item equals key.
+      - "Use enumerate to get the pair's position and `del bucket[i]` (or bucket.remove(pair)), then return."
+      - If the loop finishes without finding the key, `raise KeyError(key)`.
+    feedback:
+      - when: { outputContains: "['fig', 7]" }
+        message: The fig pair is still in bucket 4. delete must remove it from the bucket's list.
+    explanation: >-
+      Like get, delete hashes to one bucket and scans only that chain, so it is O(1) on average. Removing from
+      the bucket's list leaves the other keys in that bucket (here "plum") untouched. Open-addressing tables
+      such as CPython's cannot simply empty a slot — that would break the probe chain — so they leave a
+      "deleted" marker instead.
+
+  - id: m-debug-rehash
+    type: debug
+    skill: debugging
+    difficulty: 3
+    prompt: |
+      This table doubles its number of buckets when the load factor goes above 0.75, but afterwards some
+      lookups raise `KeyError` for keys that were definitely stored. Find the bug in `_resize` and fix it.
+    starterCode: |
+      class Table:
+          def __init__(self):
+              self.buckets = [[] for _ in range(4)]
+              self.count = 0
+
+          def _index(self, key):
+              return key % len(self.buckets)        # int keys only, for simplicity
+
+          def put(self, key, value):
+              bucket = self.buckets[self._index(key)]
+              for pair in bucket:
+                  if pair[0] == key:
+                      pair[1] = value
+                      return
+              bucket.append([key, value])
+              self.count += 1
+              if self.count / len(self.buckets) > 0.75:
+                  self._resize()
+
+          def _resize(self):
+              # Double the number of buckets.
+              self.buckets.extend([] for _ in range(len(self.buckets)))
+
+          def get(self, key):
+              for stored, value in self.buckets[self._index(key)]:
+                  if stored == key:
+                      return value
+              raise KeyError(key)
+
+      table = Table()
+      for k in range(1, 11):
+          table.put(k, k * k)
+      print([table.get(k) for k in range(1, 11)])
+    solution: |
+      class Table:
+          def __init__(self):
+              self.buckets = [[] for _ in range(4)]
+              self.count = 0
+
+          def _index(self, key):
+              return key % len(self.buckets)        # int keys only, for simplicity
+
+          def put(self, key, value):
+              bucket = self.buckets[self._index(key)]
+              for pair in bucket:
+                  if pair[0] == key:
+                      pair[1] = value
+                      return
+              bucket.append([key, value])
+              self.count += 1
+              if self.count / len(self.buckets) > 0.75:
+                  self._resize()
+
+          def _resize(self):
+              old = self.buckets
+              self.buckets = [[] for _ in range(2 * len(old))]
+              for bucket in old:
+                  for key, value in bucket:
+                      self.buckets[self._index(key)].append([key, value])
+
+          def get(self, key):
+              for stored, value in self.buckets[self._index(key)]:
+                  if stored == key:
+                      return value
+              raise KeyError(key)
+
+      table = Table()
+      for k in range(1, 11):
+          table.put(k, k * k)
+      print([table.get(k) for k in range(1, 11)])
+    expectedOutput: |
+      [1, 4, 9, 16, 25, 36, 49, 64, 81, 100]
+    tests:
+      - name: every stored key can be found after resizes
+        code: |
+          t = Table()
+          for k in range(1, 101):
+              t.put(k, -k)
+          for k in range(1, 101):
+              assert t.get(k) == -k, f"get({k}) should return {-k}."
+      - name: buckets double and keys are rehashed
+        code: |
+          t = Table()
+          for k in range(1, 101):
+              t.put(k, k)
+          assert len(t.buckets) == 256, f"After 100 inserts the table should have grown 4 -> 8 -> ... -> 256 buckets, but it has {len(t.buckets)}."
+          for i, bucket in enumerate(t.buckets):
+              for key, _ in bucket:
+                  assert key % len(t.buckets) == i, f"Key {key} sits in bucket {i}, but it belongs in bucket {key % len(t.buckets)}. Re-insert every entry after growing."
+          assert t.count == 100 and sum(len(b) for b in t.buckets) == 100, "Resizing must keep exactly one entry per key."
+    hints:
+      - After the bucket list grows, where does `_index(4)` point? Where is key 4 actually stored?
+      - A key's bucket depends on the number of buckets, so every existing entry has to be placed again.
+      - "Keep a reference to the old buckets, create a new list of twice as many empty buckets, then re-insert every [key, value] using _index."
+    feedback:
+      - when: { errorType: KeyError }
+        message: >-
+          Some keys are still sitting in the bucket they were given before the resize. After adding buckets,
+          every entry must be re-inserted at its new index.
+    explanation: >-
+      Adding empty buckets changes `len(self.buckets)`, and therefore every key's index, but leaves the
+      entries where they were. Key 4 was stored in bucket 4 % 4 = 0, yet after growing to 16 buckets get(4)
+      looks in bucket 4. Rehashing — re-inserting every entry into a fresh, larger array — is what makes
+      resizing correct. It costs O(n) per resize but, with doubling, O(1) amortised per insert.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-load-factor, m-predict-chain, m-equal-hash-tf, m-delete, m-debug-rehash]
+
+cheatsheet: |
+  ```python
+  index = hash(key) % len(buckets)        # which bucket (Python's dict mixes bits more cleverly)
+  # chaining: buckets[index] is a list of [key, value]; compare keys with == inside it
+  load_factor = count / len(buckets)      # resize + rehash every key when it gets too high
+
+  hash(42) == 42                          # CPython detail; never print/store str hashes (salted per run)
+  {(3, 4): "ok"}                          # tuples/frozensets of hashables are hashable
+  {[3, 4]: "no"}                          # TypeError: cannot use 'list' as a dict key
+
+  class Point:
+      def __eq__(self, other): ...        # compares (x, y)
+      def __hash__(self):
+          return hash((self.x, self.y))   # SAME fields as __eq__
+  # or: @dataclass(frozen=True)
+  ```
+  - Rule: `a == b` ⇒ `hash(a) == hash(b)` (not the reverse)
+  - dict/set: O(1) average, O(n) worst (collisions) · inserts amortised O(1) · no ordering by key
+  - `hash()` is not cryptographic → `hashlib` for fingerprints and integrity

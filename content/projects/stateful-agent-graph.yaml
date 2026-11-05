@@ -1,0 +1,228 @@
+id: stateful-agent-graph
+title: Stateful Agent Graph — Build the Engine, Then the Agent
+track: agentic
+level: advanced
+estimatedHours: 14
+environment: local
+starterKit: projects/stateful-agent-graph
+summary: >-
+  Write a small state-graph engine from scratch — typed shared state with reducers, static and
+  conditional edges, a checkpoint after every node, interrupt and resume — use it for a
+  research-then-summarise agent with a human review step, then compare it with the same graph in LangGraph.
+concepts:
+  - agents.agent-loop
+  - agents.state-memory
+  - agents.human-in-the-loop
+  - frameworks.langgraph-basics
+  - frameworks.langgraph-persistence
+  - frameworks.langgraph-hitl
+  - python.type-hints
+  - python.higher-order-functions
+  - python.testing
+problem: |
+  Graph frameworks such as LangGraph are the most common way to build production agents, and their
+  documentation is full of terms — state schema, reducer, conditional edge, checkpointer, thread,
+  interrupt, `Command(resume=...)` — that are hard to understand until you have built them. So build them.
+
+  **Part 1 — the engine** (`agent_graph.py`, standard library only):
+
+  * `StateGraph(schema, defaults=...)` reads a `TypedDict`; `Annotated[list[str], operator.add]` makes a
+    key *append* instead of overwrite, and every update is type-checked;
+  * `add_node`, `add_edge(START, ...)`, `add_conditional_edges(source, router, path_map)`, and
+    `compile()` that rejects missing entry points, unknown targets, dead ends and unreachable nodes;
+  * `invoke(values, thread_id)` runs node after node, saves a JSON-serialisable checkpoint after each,
+    and stops at a recursion limit;
+  * a node can call `ctx.interrupt(payload)`; the run pauses, and `resume(thread_id, value)` — even in a
+    new process, from a `JsonFileCheckpointer` — re-runs that node, where `interrupt` now returns `value`.
+
+  **Part 2 — the agent:** plan search queries from a question, search a local corpus in a loop until
+  there are enough notes, pause for a human review (approve, or reject with feedback that becomes a new
+  query), then summarise. The model is a deterministic fake (`RuleBasedModel` / `ScriptedModel`); an
+  optional `OllamaModel` uses a free local model.
+
+  ```text
+  >>> graph = build_research_graph()
+  >>> paused = graph.invoke({"question": "How do heat pumps work and how much can insulation save?"}, "case-1")
+  >>> paused.status, paused.interrupt["sources"]
+  ('interrupted', ['heat-pump-efficiency', 'heat-pumps', 'insulation', 'insulation-savings'])
+  >>> graph.resume("case-1", {"approved": False, "feedback": "solar panels"}).interrupt["sources"][-1]
+  'solar-panels'
+  >>> graph.resume("case-1", {"approved": True}).state["summary"][:31]
+  'Based on 5 notes: Heat pumps de'
+  >>> [(c.step, c.next_node, c.status) for c in graph.history("case-1")][:4]
+  [(0, 'plan', 'running'), (1, 'research', 'running'), (2, 'research', 'running'), (3, 'review', 'running')]
+  ```
+
+  **Optional:** `optional/langgraph_research.py` wires the same node functions into LangGraph
+  (version-dependent; written for LangGraph 1.x).
+acceptanceCriteria:
+  - "`channels_from_schema` reads keys, types and `Annotated` reducers from a `TypedDict`; `apply_update` appends or overwrites accordingly, returns a new dict, and rejects unknown keys and wrongly typed values."
+  - "`compile()` rejects a graph with no entry point, unknown edge or branch targets, a node without an outgoing edge, or unreachable nodes, with messages that name the problem."
+  - "Runs follow static edges and routers (with or without a path map), give nodes a copy of the state, stop with `GraphError` at the recursion limit, and reject router choices that lead nowhere."
+  - "A checkpoint (thread, step, next node, deep-copied state, status) is saved after every node; checkpoints must be JSON-serialisable; `JsonFileCheckpointer` writes atomically and refuses thread ids that could escape its folder."
+  - "`ctx.interrupt(payload)` pauses the run with an `interrupted` checkpoint; `resume(thread_id, value)` re-runs the node, where `interrupt` returns the value; resuming also works after a crash and in a new engine instance."
+  - "The research agent plans (falling back to the question when the model's plan is unusable), loops research until enough notes or the budget, pauses for review, follows reviewer feedback with another search, and summarises from the notes only."
+  - "All 64 core tests pass with `GW_TARGET=solution`; the optional LangGraph tests pass when LangGraph 1.x is installed and are skipped otherwise; the code is typed, documented and ruff-clean."
+architecture: |
+  ```text
+   StateGraph(schema, defaults) ──add_node / add_edge / add_conditional_edges──► compile() ── validate()
+                                                                                  │
+   CompiledGraph.invoke(values, thread) ── defaults + values ─► checkpoint 0 ─► _run ◄── resume(thread, value)
+        _run loop:  ctx = NodeContext(resume value only for the first node)
+                    update = node(copy of state[, ctx]) ── _Interrupt? ─► save "interrupted", return
+                    state  = apply_update(channels, state, update)      (reducers + type checks)
+                    node   = edge[node]  or  path_map[router(state)]
+                    save Checkpoint(thread, step, next node, deep copy of state, status)
+   Checkpointer: MemoryCheckpointer | JsonFileCheckpointer(folder)  (one atomic JSON file per thread)
+  ```
+
+  The agent is ordinary functions bound with `functools.partial` — `plan_step`, `research_step`,
+  `review_step`, `summarise_step` and two routers — so the optional LangGraph version reuses them
+  unchanged; only the engine differs.
+
+  * **State and reducers** ([state and memory](concept:agents.state-memory),
+    [type hints](concept:python.type-hints)): the schema is the contract between nodes.
+  * **Graph** ([LangGraph basics](concept:frameworks.langgraph-basics)): routers return keys, path maps
+    name nodes, so every possible route is checked at compile time.
+  * **Persistence** ([LangGraph persistence](concept:frameworks.langgraph-persistence)): checkpoints per
+    thread make runs resumable and inspectable (`history`).
+  * **Human in the loop** ([LangGraph HITL](concept:frameworks.langgraph-hitl)): interrupt = save, stop,
+    and replay the node on resume.
+setup: |
+  You need Python 3.11 or newer; the core needs only `pytest`. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\stateful-agent-graph
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/stateful-agent-graph
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install pytest
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/agent_graph.py`. **Optional LangGraph comparison:**
+  `python -m pip install -r optional/requirements.txt` (LangGraph 1.x), then
+  `python -m pytest tests/test_langgraph_optional.py`. **Optional local model:** install
+  [Ollama](https://ollama.com), `ollama pull llama3.2` (about 8 GB RAM is comfortable), and pass
+  `OllamaModel()` to `build_research_graph`.
+milestones:
+  - id: typed-state
+    title: Typed state and reducers
+    description: |
+      Implement `channels_from_schema` (read a `TypedDict` with `typing.get_type_hints(...,
+      include_extras=True)`, take reducers from `Annotated` metadata), `matches_type` (classes,
+      `list[X]`, `dict[K, V]`, unions and `Literal`, with `bool` not counting as `int`) and
+      `apply_update` (reducer or overwrite, type check, new dict).
+
+      The tests check the channels of a small schema, fifteen type checks, appending versus overwriting,
+      that the old state is untouched, and errors for unknown keys, wrong types and non-dict updates.
+      Run `python -m pytest -k Milestone1`.
+  - id: graph-and-routing
+    title: Build, validate and run the graph
+    description: |
+      Implement `add_node`, `add_edge`, `add_conditional_edges`, `validate` and `_reachable`, then the run
+      loop: `invoke` (defaults + input, all keys present), `_run`, `_call` (one or two arguments, on a
+      copy of the state) and `_next` (edge or router, with or without a path map), with a recursion limit.
+
+      The tests run a linear graph, a counting loop, a router without a path map, five invalid graphs,
+      a router returning an unknown key, an endless loop, missing state keys, and a node that tries to
+      mutate the state in place. Run `python -m pytest -k Milestone2`.
+  - id: checkpoints
+    title: A checkpoint after every node
+    description: |
+      Implement `_save` (JSON check, deep copy), `MemoryCheckpointer`, `JsonFileCheckpointer` (one file
+      per thread, atomic writes, safe thread ids), `get_state`, `history`, and `resume` for a run that
+      crashed.
+
+      The tests inspect the checkpoint history step by step, check that snapshots never change, that
+      threads are independent, that files survive a "restart", that six hostile thread ids are refused,
+      that non-JSON state fails fast, and that a crashed run resumes in a new engine instance.
+      Run `python -m pytest -k Milestone3`.
+  - id: interrupt-resume
+    title: Interrupt and resume
+    description: |
+      Implement `NodeContext.interrupt` and the interrupt handling in `_run` and `resume`: pausing saves
+      an `interrupted` checkpoint with the payload; resuming re-runs the node from the top and
+      `interrupt` returns the value.
+
+      The tests count how often the code before and after `interrupt` runs, check the checkpoint
+      statuses, the resume rules (`None` is a valid answer), resuming from files in a new process, and
+      the one-interrupt-per-node rule. Run `python -m pytest -k Milestone4`.
+  - id: research-agent
+    title: The research-then-summarise agent
+    description: |
+      Implement `parse_plan`, `plan_step`, `research_step`, `route_after_research`, `review_update`,
+      `review_step`, `route_after_review`, `summarise_step` and `build_research_graph`.
+
+      The tests check that unusable plans fall back to the question, de-duplicated research, every
+      routing decision, review validation, a run without review, pausing and approving, rejecting with
+      feedback (another search, another review), rejecting without feedback (no summary), a search
+      budget, the summary prompt, and resuming the agent from JSON checkpoints.
+      Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 64 core tests in `tests/test_agent_graph.py`, one class per milestone
+  (`TestMilestone1TypedState` … `TestMilestone5ResearchAgent`), plus 3 optional tests in
+  `tests/test_langgraph_optional.py` that are skipped unless LangGraph is installed.
+
+  ```bash
+  python -m pytest                  # everything (LangGraph tests skipped without LangGraph)
+  python -m pytest -k Milestone4    # one milestone
+  python -m pytest -x -q            # stop at the first failure
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Everything is deterministic: the models are rule-based or scripted, the corpus is a dict, checkpoint
+  files go to pytest's `tmp_path`, and "crashes" are simulated with a node that raises once. The optional
+  LangGraph tests check that the framework produces the same queries, notes, sources and summary as your
+  engine, including interrupt and `Command(resume=...)`.
+security:
+  - Thread ids become file names in the JSON checkpointer, so they are restricted to letters, digits, '_', '-' and '.', and '..' is refused - otherwise a crafted id could write outside the checkpoint folder.
+  - Code before an interrupt runs again on resume. Never perform side effects (emails, payments) before asking for approval in the same node; put them in a later node.
+  - Model output (the plan) is untrusted - it is parsed as a JSON list of short strings, capped at three queries, and ignored if malformed; it can never add state keys.
+  - Retrieved notes are passed to the summariser as data with an explicit instruction, and the reviewer sees them before the summary is written - a defence against indirect prompt injection from documents.
+  - Checkpoints persist user questions and retrieved text. Treat the checkpoint folder as user data - restrict access and set a retention period.
+  - The recursion limit bounds runaway loops, including a reviewer who keeps rejecting with feedback.
+extensions:
+  - Add parallel branches - a node with several outgoing edges whose updates are merged with reducers in one super-step - and test that the merge is order-independent.
+  - Add time travel - update_state(thread_id, values, as_node) that writes a new checkpoint from an old one, and replay from any step.
+  - Store checkpoints in SQLite (one row per checkpoint) and compare the trade-offs with JSON files.
+  - Stream events (node started, update, checkpoint saved) through a callback and render a live trace in the terminal.
+  - Swap RuleBasedModel for OllamaModel, record the plans it produces for ten questions, and measure how often parse_plan has to fall back.
+rubric:
+  - criterion: Engine correctness
+    needsWork: Updates mutate shared state, reducers are ignored, or invalid graphs only fail at run time.
+    meets: Reducers and type checks work, compile-time validation catches every invalid graph in the tests, and the recursion limit stops loops.
+    exceeds: The engine stays small and readable, with docstrings that explain each mechanism, and you can explain how it maps to LangGraph.
+  - criterion: Persistence and human-in-the-loop
+    needsWork: Checkpoints are missing, mutable or not serialisable, or resume repeats work incorrectly.
+    meets: A deep-copied, JSON-serialisable checkpoint after every node; interrupt and resume work across engine instances and after crashes.
+    exceeds: You can explain replay semantics and show a node design that is safe to re-run.
+  - criterion: Agent design
+    needsWork: The agent loops without a budget or trusts the model's plan blindly.
+    meets: Planning falls back safely, research de-duplicates and respects the budget, review feedback leads to more research, and summaries use only the notes.
+    exceeds: Nodes are pure functions reused unchanged by the LangGraph version, and you compared both implementations.
+  - criterion: Testing and code quality
+    needsWork: Tests depend on timing, the network or shared files.
+    meets: All provided tests pass; the code is typed, documented and ruff-clean.
+    exceeds: You added tests for your own extensions, for example parallel branches or time travel.

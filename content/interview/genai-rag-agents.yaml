@@ -1,0 +1,552 @@
+category:
+  id: genai
+  title: Generative AI, RAG and agents
+  summary: LLM behaviour, retrieval, agents, protocols and safety.
+questions:
+  # ------------------------------------------------------------ genai.what-are-llms
+  - id: genai.what-are-llms.how-generation-works
+    level: junior
+    kind: conceptual
+    concepts: [genai.what-are-llms]
+    question: At a high level, how is a large language model trained, and how does it generate a response?
+    answer: |
+      An LLM is a neural network — almost always a decoder-only Transformer — trained to predict the next
+      token. During **pretraining** it reads huge amounts of text and its parameters are adjusted by
+      gradient descent to minimise cross-entropy, that is, to give high probability to the token that
+      actually comes next. That produces a base model that continues text. **Post-training** — supervised
+      instruction tuning on prompt/response examples, then preference tuning such as RLHF — makes it
+      follow instructions and answer helpfully.
+
+      To generate, the model takes the prompt as context, outputs a probability for every token in its
+      vocabulary, one token is picked (greedily or by sampling), appended to the context, and the process
+      repeats until an end token or a length limit. This is autoregressive generation: one forward pass
+      per output token.
+    keyPoints:
+      - Next-token prediction is the training objective (cross-entropy over the training text).
+      - Pretraining gives a base model; instruction and preference tuning turn it into an assistant.
+      - Generation loops predict → pick (greedy or sample) → append, one token at a time.
+      - The model computes probabilities; it does not look facts up.
+    followUps:
+      - What are the model's parameters, and do they change when you use the model?
+      - Why does generating a long answer take longer than reading a long prompt?
+    pitfalls:
+      - Saying the model searches a database or the internet to answer.
+      - Confusing decoding settings such as temperature with learned parameters.
+
+  - id: genai.what-are-llms.chat-memory
+    level: junior
+    kind: scenario
+    concepts: [genai.what-are-llms, genai.tokens-context]
+    question: >-
+      A product manager asks why the chatbot "forgot" a customer's order number from earlier in a long
+      conversation. How does conversation memory actually work with an LLM API, and what would you change?
+    answer: |
+      Chat model calls are stateless: the output depends only on the model's weights, the request's
+      content and the decoding settings. The appearance of memory comes from the application resending
+      the conversation history with every request. If the order number disappeared, the most likely causes
+      are that the history was trimmed to fit the context window or token budget (often by dropping the
+      oldest turns), or that the app does not resend history at all.
+
+      Fixes: keep important facts explicitly — summarise older turns while preserving key entities such as
+      order numbers, or store them as structured state (a "facts" block in the system prompt or a memory
+      store) and re-inject them each turn; budget the context deliberately; and test long conversations.
+      Fine-tuning is not a fix for per-conversation memory.
+    keyPoints:
+      - Model calls are stateless; the app resends history each turn.
+      - Trimming to fit the context window is a common reason details disappear.
+      - Preserve key facts through summaries or structured state that is re-sent every turn.
+      - Long histories also raise cost and latency, so memory must be budgeted.
+    followUps:
+      - How would you decide what to keep when the history no longer fits?
+      - What privacy questions arise if you store conversation memory?
+    pitfalls:
+      - Assuming the provider remembers previous calls.
+      - Proposing fine-tuning to make the model remember a user's details.
+
+  - id: genai.what-are-llms.limitations-design
+    level: mid
+    kind: design
+    concepts: [genai.what-are-llms]
+    question: >-
+      Where do an LLM's main limitations come from, and how would you design a customer-facing feature
+      around them?
+    answer: |
+      They follow from next-token prediction. The model produces plausible continuations, not verified
+      facts, so it can be fluently wrong (hallucinations). It knows only patterns in its training data up
+      to a knowledge cutoff and nothing about private data or current events. Calls are stateless. Output
+      is sampled, so it varies between runs. Abilities are broad but uneven — strong on some tasks, weak on
+      others such as exact counting.
+
+      Design: ground answers in supplied sources (retrieval) and ask for citations that can be checked;
+      use tools for live data and calculations; let the model say it does not know; validate outputs in
+      code (schemas, links that resolve, numbers that recompute); keep humans in the loop for high-stakes
+      actions; choose decoding settings per task; and, above all, build an evaluation set from real cases
+      and measure before and after every change.
+    keyPoints:
+      - Limitations come from the mechanism — plausibility, training cutoff, statelessness, sampling.
+      - Retrieval and tools supply facts the weights lack.
+      - Verify outputs programmatically and allow "I don't know".
+      - Evaluate on representative cases rather than trusting demos.
+    followUps:
+      - How would you measure hallucination rate for your feature?
+      - When is an LLM the wrong tool entirely?
+    pitfalls:
+      - Believing a better prompt alone can eliminate hallucinations.
+      - Treating lower temperature as a way to make answers true.
+
+  # ---------------------------------------------------------- genai.tokens-context
+  - id: genai.tokens-context.bpe
+    level: mid
+    kind: conceptual
+    concepts: [genai.tokens-context]
+    question: How is a byte-pair-encoding tokenizer trained and applied, and why does tokenization affect cost and fairness across languages?
+    answer: |
+      Training starts from a base vocabulary of characters (or all 256 byte values in byte-level BPE),
+      splits the training text into words, and repeatedly counts adjacent symbol pairs — weighted by word
+      frequency — merging the most frequent pair into a new symbol, until the target vocabulary size is
+      reached. The output is an ordered list of merges. To tokenize new text, split it the same way and
+      replay the merges in order; byte-level BPE can encode any text without unknown tokens.
+
+      Because merges are learned from the training data, text that resembles it (often English prose)
+      becomes few, long tokens, while other languages, rare scripts and some code split into many short
+      tokens. Since limits and prices are counted in tokens, the same content can cost several times more
+      and fill the context window faster in some languages — measured differences reach up to about 15x.
+    keyPoints:
+      - Merge the most frequent adjacent pair repeatedly; the ordered merge list is the tokenizer.
+      - Encoding replays merges in order; byte-level BPE never needs an unknown token.
+      - Token counts depend on how similar text is to the tokenizer's training data.
+      - Cost, latency and context limits are all counted in tokens, so languages are not treated equally.
+    followUps:
+      - Why do LLMs struggle to count the letters in a word?
+      - How would you estimate token counts for a model you have not used before?
+    pitfalls:
+      - Equating tokens with words or characters.
+      - Assuming the same text has the same token count on every model.
+
+  - id: genai.tokens-context.long-conversation
+    level: mid
+    kind: design
+    concepts: [genai.tokens-context]
+    question: Your assistant must handle long conversations and large documents with a model whose context window is limited. How do you fit everything in?
+    answer: |
+      Treat the window as a budget covering input and output: allocate tokens to the system prompt and
+      tool definitions, retrieved material, conversation history, and a reserved maximum output, and check
+      the total before each call using the model's tokenizer.
+
+      For history, keep the most recent turns verbatim and summarise older ones (preserving key facts such
+      as IDs and decisions), or keep structured state. For documents, do not paste them whole: chunk and
+      index them and retrieve only the passages relevant to the current question. Put critical
+      instructions and facts near the start or end, since models use mid-context information less
+      reliably. Cap output length. Monitor the token usage the API reports per request and alert when a
+      component grows.
+    keyPoints:
+      - Budget explicitly — system, tools, history, documents and reserved output.
+      - Recent turns verbatim, older turns summarised or stored as state.
+      - Retrieve relevant chunks instead of stuffing documents.
+      - Mind position effects ("lost in the middle") and measure real token usage.
+    followUps:
+      - What can go wrong when you summarise history with another model call?
+      - When would a long-context model be preferable to retrieval?
+    pitfalls:
+      - Forgetting to reserve room for the output.
+      - Assuming a larger window means the model uses all of it equally well.
+
+  - id: genai.tokens-context.cost-estimate
+    level: junior
+    kind: scenario
+    concepts: [genai.tokens-context]
+    question: >-
+      A feature sends about 2,000 input tokens and receives about 500 output tokens per request, 100,000
+      times a month. With prices of $3 per million input tokens and $15 per million output tokens, what is
+      the monthly cost, and which lever matters most for cost and latency?
+    answer: |
+      Per request: 2,000 × 3 / 1,000,000 = $0.006 for input and 500 × 15 / 1,000,000 = $0.0075 for output,
+      so $0.0135. Per month: 0.0135 × 100,000 = $1,350.
+
+      Output tokens are both pricier and the main driver of latency, because they are generated one at a
+      time; input is processed in parallel. So capping and shortening output (concise answers, maximum
+      output tokens) usually helps most, followed by trimming input (shorter prompts, fewer retrieved
+      chunks, summarised history) and, where the provider supports it, caching repeated prompt prefixes.
+      Prices vary by model and change, so the estimate should be re-run from current pricing and measured
+      usage.
+    keyPoints:
+      - Cost = input tokens × input price + output tokens × output price.
+      - "Arithmetic: $0.0135 per request, about $1,350 per month."
+      - Output tokens dominate latency and often cost.
+      - Use real token counts from the API's usage data, not character estimates.
+    followUps:
+      - How does resending chat history change the estimate for a multi-turn conversation?
+    pitfalls:
+      - Estimating tokens from words or characters without checking.
+      - Ignoring the separate, higher output price.
+
+  # ---------------------------------------------------------------- genai.sampling
+  - id: genai.sampling.temperature-top-p
+    level: mid
+    kind: conceptual
+    concepts: [genai.sampling]
+    question: Explain temperature and top-p precisely, and say which settings you would use for data extraction and for brainstorming.
+    answer: |
+      At each step the model outputs logits, one per token. Temperature T divides the logits before
+      softmax: T below 1 sharpens the distribution (the top token gets more probability), T above 1
+      flattens it (unlikely tokens gain probability), and T = 0 is treated as greedy decoding. Top-p
+      (nucleus sampling) sorts tokens by probability and keeps the smallest set whose cumulative
+      probability reaches p, renormalises, and samples from it — so the candidate set shrinks when the
+      model is confident and grows when it is not. Top-k instead keeps a fixed number of tokens.
+
+      For extraction or classification, use temperature 0 or close to it so the same input gives the same
+      answer, and validate the output. For brainstorming, use a moderate-to-high temperature (around 0.7–1)
+      often with top-p around 0.9 to keep variety while cutting the nonsense tail. Parameter support and
+      ranges vary by provider and model.
+    keyPoints:
+      - Temperature rescales logits before softmax; it never changes the ranking.
+      - Top-p keeps the smallest set with cumulative probability ≥ p, then renormalises.
+      - Low temperature for consistency, higher for variety.
+      - Lower temperature means more consistent, not more correct.
+    followUps:
+      - Why do some providers recommend adjusting temperature or top-p, but not both?
+      - What does top-k = 1 do?
+    pitfalls:
+      - Saying temperature controls "creativity" without explaining the mechanism.
+      - Describing top-p as keeping a percentage of tokens rather than of probability mass.
+
+  - id: genai.sampling.implement-top-p
+    level: mid
+    kind: coding
+    concepts: [genai.sampling]
+    question: Write a function that applies top-p filtering to a dict of token probabilities and returns the renormalised result.
+    answer: |
+      ```python
+      def top_p_filter(probs, p):
+          kept, cumulative = {}, 0.0
+          for tok in sorted(probs, key=probs.get, reverse=True):
+              kept[tok] = probs[tok]
+              cumulative += probs[tok]
+              if cumulative >= p:
+                  break
+          total = sum(kept.values())
+          return {t: v / total for t, v in kept.items()}
+      ```
+      Sort descending, add tokens until the running total reaches p (the token that crosses the
+      threshold is included), then divide by the kept total so the probabilities sum to 1. Sampling then
+      draws from the result, for example with `random.Random(seed).choices`. In a real system this runs on
+      arrays over the whole vocabulary, usually after temperature scaling.
+    keyPoints:
+      - Sort tokens by probability, highest first.
+      - Include the token that makes the cumulative total reach p.
+      - Renormalise the kept probabilities.
+      - Handles confident distributions (keeps one token) and p = 1 (keeps all).
+    followUps:
+      - How would you combine this with temperature and top-k, and in what order?
+      - How would you test it given floating-point rounding?
+    pitfalls:
+      - Forgetting to renormalise.
+      - Sorting ascending and keeping the least likely tokens.
+
+  - id: genai.sampling.nondeterministic-tests
+    level: senior
+    kind: debugging
+    concepts: [genai.sampling]
+    question: >-
+      Your integration tests call a hosted LLM at temperature 0 and compare the output with a stored
+      string. They fail intermittently. Why, and how would you restructure the tests?
+    answer: |
+      Temperature 0 removes sampling randomness but does not guarantee identical output: requests are
+      batched with others on parallel hardware, floating-point reductions are not perfectly associative,
+      and providers update models and serving stacks. A tiny numerical difference can flip a near-tie
+      between two tokens, and autoregressive generation then diverges. Some providers offer a seed
+      parameter, but its guarantees are best-effort and provider-specific.
+
+      Restructure: unit-test your own code with a fake or recorded model so it is deterministic; in
+      integration tests assert properties rather than exact strings (valid JSON matching a schema, the
+      right label, required fields, citations present); pin model versions where possible; and move
+      quality checks into an evaluation suite that runs each case several times and tracks pass rates
+      and their spread.
+    keyPoints:
+      - Temperature 0 ≠ bit-for-bit reproducibility on hosted models.
+      - Assert properties and schemas instead of exact text.
+      - Use fakes or recorded responses for deterministic unit tests.
+      - Evaluate quality statistically over repeated runs.
+    followUps:
+      - How would you detect that a provider silently changed model behaviour?
+    pitfalls:
+      - Retrying tests until they pass.
+      - Assuming a seed parameter makes outputs permanently reproducible.
+
+  # ------------------------------------------------------------ rag.keyword-search
+  - id: rag.keyword-search.bm25-intuition
+    level: mid
+    kind: conceptual
+    concepts: [rag.keyword-search]
+    question: Explain how BM25 scores a document for a query, including the roles of k1 and b.
+    answer: |
+      BM25 sums, over the query's terms, an IDF weight times a term-frequency component. IDF rewards rare
+      terms: a term in few documents distinguishes them, a term in every document barely counts (Lucene
+      uses ln(1 + (N − df + 0.5)/(df + 0.5)) so it stays positive). The tf component,
+      tf·(k1 + 1)/(tf + k1·(1 − b + b·dl/avgdl)), grows with how often the term occurs but **saturates**:
+      k1 (commonly 1.2) controls how quickly extra occurrences stop helping — k1 = 0 means presence only,
+      large k1 approaches linear tf. b (commonly 0.75) controls **length normalisation**: b = 0 ignores
+      document length, b = 1 fully normalises, so long documents do not win just by containing more words.
+
+      Compared with TF-IDF, BM25 resists keyword stuffing and length bias, which is why it is the default
+      in Lucene-based engines such as Elasticsearch and OpenSearch, and in SQLite FTS5's bm25().
+    keyPoints:
+      - Sum over query terms of IDF × saturating, length-normalised tf.
+      - IDF rewards rare terms.
+      - k1 controls saturation; b controls length normalisation.
+      - Defaults around k1 = 1.2 and b = 0.75; scores are not comparable across engines.
+    followUps:
+      - What happens to rankings if you set b = 0 on a corpus of very uneven document lengths?
+      - Why can the classic IDF formula go negative?
+    pitfalls:
+      - Mixing up k1 and b.
+      - Treating BM25 scores as probabilities or comparing them across queries or engines.
+
+  - id: rag.keyword-search.when-keyword-wins
+    level: mid
+    kind: scenario
+    concepts: [rag.keyword-search, rag.vector-similarity]
+    question: >-
+      Your team wants to drop BM25 from a support-search system now that it uses embeddings. When does
+      keyword search still beat vector search, and what would you recommend?
+    answer: |
+      Keyword search wins on exact identifiers and rare tokens — error codes, SKUs, part numbers, people
+      and product names, clause numbers, function names — because they become rare, high-IDF terms that
+      must match exactly, while embeddings may place near-identical strings close together or blur them
+      into generic meaning. It is also robust on out-of-domain text (BM25 was a strong baseline on BEIR),
+      cheap, fast to index and explainable. It loses on vocabulary mismatch: paraphrases and synonyms.
+
+      Recommendation: keep both and use hybrid retrieval — run BM25 and vector search, fuse the rankings
+      (for example with reciprocal rank fusion), optionally rerank — and decide using an evaluation set of
+      real queries that includes both identifier lookups and natural-language questions, measuring recall
+      at k for each approach.
+    keyPoints:
+      - Exact identifiers and rare terms favour keyword search.
+      - Embeddings handle paraphrases; their failure modes differ.
+      - BM25 is cheap, explainable and robust out of domain.
+      - Hybrid retrieval plus evaluation on real queries is the usual answer.
+    followUps:
+      - How would you fuse two rankings whose scores are on different scales?
+    pitfalls:
+      - Declaring one method universally better without evaluation.
+
+  - id: rag.keyword-search.no-results-debug
+    level: junior
+    kind: debugging
+    concepts: [rag.keyword-search]
+    question: >-
+      A homemade keyword search finds documents for "password reset" but returns nothing for
+      "Passwords: Reset!". What is the likely bug, and how do you fix it?
+    answer: |
+      The documents were analysed (lowercased, split on punctuation, possibly stemmed) when indexing, but
+      the query was not analysed the same way — for example it was only split on spaces, producing terms
+      like "Passwords:" and "Reset!" that do not exist in the index. The fix is to run the query through
+      exactly the same analyser function as the documents (lowercase, the same tokenisation rules, the
+      same stop words and stemmer), and to re-index whenever the analyser changes. Add a test with mixed
+      case, punctuation and plurals. Stemming (or a synonym list) would additionally let "passwords" match
+      "password".
+    keyPoints:
+      - Queries and documents must go through the same analyser.
+      - Case, punctuation and plural forms are the usual culprits.
+      - Re-index after changing analysis rules.
+    followUps:
+      - What are the risks of aggressive stemming?
+    pitfalls:
+      - Fixing the symptom by lowercasing only, leaving punctuation and plurals broken.
+
+  # --------------------------------------------------------- rag.vector-similarity
+  - id: rag.vector-similarity.top-k-numpy
+    level: mid
+    kind: coding
+    concepts: [rag.vector-similarity]
+    question: Implement top-k cosine similarity search over a matrix of document embeddings with NumPy, and explain why normalising first helps.
+    answer: |
+      ```python
+      import numpy as np
+
+      def normalize(m):
+          norms = np.linalg.norm(m, axis=-1, keepdims=True)
+          return m / np.clip(norms, 1e-12, None)
+
+      def top_k(doc_matrix, query, k):
+          docs = normalize(doc_matrix)          # do this once at index time in practice
+          q = normalize(query)
+          scores = docs @ q                     # cosine similarity for unit vectors
+          idx = np.argpartition(-scores, k - 1)[:k] if k < len(scores) else np.arange(len(scores))
+          idx = idx[np.argsort(-scores[idx])]   # order the k best
+          return idx, scores[idx]
+      ```
+      For unit-length vectors, the dot product equals cosine similarity and squared L2 distance equals
+      2 − 2·cosine, so all three metrics give the same ranking and one matrix–vector product scores every
+      document. Normalising stored vectors once makes each query cheap. This exact search is O(N·d) per
+      query — fine up to roughly tens or hundreds of thousands of vectors; beyond that you would use an
+      approximate index (HNSW, IVF) and measure its recall against this exact baseline.
+    keyPoints:
+      - Normalise rows (guarding zero norms); dot product then equals cosine.
+      - One matrix–vector product scores all documents; argpartition avoids a full sort.
+      - Exact search is O(N·d) and serves as the recall baseline for ANN indexes.
+      - Use the metric the embedding model was trained for.
+    followUps:
+      - How would you add metadata filtering to this search?
+      - How do you measure recall@k of an approximate index?
+    pitfalls:
+      - Sorting distances in descending order.
+      - Mixing embeddings from different models or dimensions.
+
+  - id: rag.vector-similarity.metrics
+    level: junior
+    kind: conceptual
+    concepts: [rag.vector-similarity]
+    question: What is the difference between dot product, cosine similarity and Euclidean distance for comparing embeddings, and when do they agree?
+    answer: |
+      The dot product Σ aᵢbᵢ grows with both the angle alignment and the vectors' lengths. Cosine
+      similarity divides the dot product by both lengths, so it measures direction only and ranges from −1
+      to 1. Euclidean (L2) distance is the straight-line distance between the points; smaller means more
+      similar. When all vectors are normalised to unit length, dot product equals cosine and squared L2
+      distance is 2 − 2·cosine, so all three produce the same ranking (distance in reverse order).
+      Without normalisation they can disagree, because dot product favours long vectors. You should use
+      the metric the embedding model was trained for, and remember that similarity scores are relative,
+      not calibrated probabilities.
+    keyPoints:
+      - Dot product depends on length; cosine only on direction; L2 is smaller-is-better.
+      - Unit vectors make all three rank identically.
+      - Use the metric the model expects.
+      - Scores are not calibrated; thresholds are model-specific.
+    followUps:
+      - Why might a model be trained for dot product on unnormalised vectors?
+    pitfalls:
+      - Treating a distance as a similarity (sorting the wrong way).
+
+  - id: rag.vector-similarity.failure-modes
+    level: senior
+    kind: design
+    concepts: [rag.vector-similarity, rag.keyword-search]
+    question: >-
+      Describe how semantic (embedding) search and keyword search fail differently, and how you would
+      design and validate retrieval for a technical support knowledge base.
+    answer: |
+      Keyword search fails on vocabulary mismatch — paraphrases, synonyms, different phrasing of the same
+      problem — and depends on analysis choices such as stemming. Semantic search handles paraphrases but
+      tends to blur exact identifiers (error codes, versions, part numbers), can place a sentence close to
+      its negation, retrieves topically similar but non-answering chunks ("similar is not relevant"),
+      depends on the embedding model's domain coverage, and is harder to explain.
+
+      For a support knowledge base with both codes and natural-language symptoms: chunk documents with
+      metadata, run BM25 and vector search in parallel, fuse their rankings, apply metadata and permission
+      filters, and optionally rerank the top candidates with a cross-encoder. Validate with a labelled set
+      of real queries — identifier lookups and symptom descriptions — measuring recall@k and MRR for each
+      retriever and for the hybrid, and inspect failures by category. Re-run the evaluation when changing
+      the embedding model, chunking or analysers.
+    keyPoints:
+      - Keyword fails on paraphrase; semantic fails on exact identifiers, negation and topical-but-wrong matches.
+      - Hybrid retrieval with rank fusion, filters and optional reranking.
+      - Evaluate with labelled real queries, by query type, with recall@k and MRR.
+      - Re-evaluate whenever models, chunking or analysis change.
+    followUps:
+      - How would you choose k for retrieval versus how many chunks go into the prompt?
+    pitfalls:
+      - Choosing an approach from a few demo queries.
+      - Using a fixed similarity threshold copied from another model.
+
+  # --------------------------------------------------------------- agents.agent-loop
+  - id: agents.agent-loop.minimal-loop
+    level: mid
+    kind: coding
+    concepts: [agents.agent-loop]
+    question: Write a minimal tool-calling agent loop and explain how it stops.
+    answer: |
+      ```python
+      def run_agent(model, tools, goal, max_steps=8):
+          messages = [{"role": "user", "content": goal}]
+          for _ in range(max_steps):
+              response = model.respond(messages)            # tool call or final answer
+              if response["type"] == "final":
+                  return response["text"]
+              messages.append({"role": "assistant", "tool_call": response})
+              error = validate_call(response, tools)        # name, required args, types
+              if error:
+                  content, is_error = f"error: {error}", True
+              else:
+                  try:
+                      result = tools[response["name"]]["function"](**response["arguments"])
+                      content, is_error = json.dumps(result), False
+                  except ToolError as exc:                  # expected failures go back to the model
+                      content, is_error = f"error: {exc}", True
+              messages.append({"role": "tool", "name": response["name"],
+                               "content": content, "is_error": is_error})
+          return fallback("step budget exhausted")
+      ```
+      It stops when the model returns a final answer, or when code-enforced limits trigger: the step
+      budget built into the `for` loop, plus in production a token/cost budget, a wall-clock timeout and
+      loop detection (the same call with the same arguments repeated), each with a defined fallback.
+      Every step is logged as the trajectory. Real APIs add tool-call IDs, parallel tool calls and keep
+      the model's own turn verbatim.
+    keyPoints:
+      - Branch on tool call vs final answer; append call and result each step.
+      - Validate before executing; feed expected errors back as tool results.
+      - Hard stops in code (steps, cost, time, loop detection) with a fallback.
+      - Log the trajectory; test with a scripted fake model.
+    followUps:
+      - How does the context grow per iteration, and how would you manage it?
+      - Where would you insert human approval?
+    pitfalls:
+      - Relying on the model alone to decide when to stop.
+      - Catching every exception and feeding bugs to the model.
+
+  - id: agents.agent-loop.runaway-costs
+    level: senior
+    kind: debugging
+    concepts: [agents.agent-loop]
+    question: >-
+      An agent in production occasionally runs for hundreds of iterations and costs far more than
+      expected. How do you investigate and prevent it?
+    answer: |
+      Investigate with the trajectories: find the long runs and look at what repeats. Common causes are a
+      tool that keeps failing with an unhelpful error so the model retries the same call; errors that are
+      not fed back at all; a tool that returns huge outputs so the context balloons; a goal the agent
+      cannot complete with its tools; or a missing or very high step budget. Check whether a tool, prompt
+      or model version changed when the problem started.
+
+      Prevent it with hard limits enforced in code — maximum steps, a token or cost budget per run, a
+      wall-clock timeout — plus loop detection (identical call repeated, no new information), and a
+      defined fallback (partial answer, ask the user, hand off to a human). Fix the root causes too:
+      actionable tool error messages, truncated or paginated tool outputs, context trimming. Monitor the
+      distribution of steps and cost per run and alert on budget-exhaustion rates.
+    keyPoints:
+      - Use logged trajectories to find repeating patterns.
+      - Typical causes are unhelpful or missing error feedback, oversized tool outputs and unachievable goals.
+      - Enforce step, cost and time budgets plus loop detection with a fallback.
+      - Monitor per-run steps and cost and alert on exhaustion rates.
+    followUps:
+      - How would you choose sensible budget values?
+    pitfalls:
+      - Only adding "do not loop" to the prompt.
+      - Setting a step limit without a fallback or alerting.
+
+  - id: agents.agent-loop.workflow-or-agent
+    level: mid
+    kind: design
+    concepts: [agents.agent-loop, agents.workflows-vs-agents]
+    question: >-
+      A team built an agent that, for every order question, looks up the order, converts the currency and
+      replies. Would you keep the agent loop? Justify your answer.
+    answer: |
+      No — the steps are known and always the same, so a fixed workflow is better: code calls
+      `get_order`, then `convert_currency`, and an LLM is used at most to extract the order ID from the
+      message and to phrase the reply. That is deterministic and unit-testable, needs fewer model calls,
+      is cheaper and faster, and cannot loop, skip the conversion or call tools in the wrong order. Its
+      failure modes are ordinary software failures that are easy to monitor.
+
+      I would keep or introduce an agent loop only where the path cannot be known in advance — for example
+      investigating unusual order problems that need different lookups depending on what is found — and
+      where mistakes are recoverable, with budgets, validation and logging in place. A hybrid, a workflow
+      with one bounded agentic step, is often the right compromise.
+    keyPoints:
+      - Known, stable steps → workflow in code.
+      - Workflows are deterministic, testable, cheaper and faster.
+      - Agents fit open-ended tasks whose steps depend on discoveries.
+      - Hybrids (workflow plus a bounded agentic step) are common.
+    followUps:
+      - What evidence from production would make you reconsider?
+    pitfalls:
+      - Choosing an agent because a framework makes it easy.

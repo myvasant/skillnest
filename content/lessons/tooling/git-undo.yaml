@@ -1,0 +1,159 @@
+id: tooling.git-undo
+concept: tooling.git-undo
+title: 'Undoing Changes: Restore, Reset, Revert and Reflog'
+subtitle: Recover safely by understanding the working tree, index and history
+estimatedMinutes: 35
+reviewedOn: '2026-11-04'
+summary: Learn to undo local edits, unstage files, amend unshared commits, safely revert shared commits, stash work
+  and recover commit references with the reflog.
+objectives:
+- Distinguish working-tree, index and commit-history changes.
+- Choose between restore, reset, revert and amend.
+- Explain why revert is safer for shared pushed history.
+- Use stash and reflog for their intended purposes.
+- Recognise what the reflog cannot recover.
+sources:
+- title: Pro Git, 2.4 Undoing Things
+  url: https://git-scm.com/book/en/v2/Git-Basics-Undoing-Things
+  publisher: Scott Chacon and Ben Straub
+- title: Pro Git, 7.7 Reset Demystified
+  url: https://git-scm.com/book/en/v2/Git-Tools-Reset-Demystified
+  publisher: Scott Chacon and Ben Straub
+- title: git-reflog documentation
+  url: https://git-scm.com/docs/git-reflog
+  publisher: Git project
+sections:
+- id: why
+  title: Undo depends on where the change lives
+  kind: why
+  blocks:
+  - type: markdown
+    body: 'Git has three important places to inspect: the **working tree** (your files), the **index** (what is
+      staged for the next commit) and the **commit history**. An undo command is safe only when you know which place
+      you intend to change and whether the history is shared.'
+- id: working
+  title: Discard or unstage local changes
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '`git restore file` discards unstaged edits to that file. `git restore --staged file` unstages it but
+      keeps the working-tree edits. Use `git status` and `git diff` before and after; destructive commands should
+      never be run blindly.'
+  - type: code
+    language: bash
+    runnable: false
+    code: 'git status
+
+      git diff
+
+      git diff --cached
+
+      git restore --staged path/to/file
+
+      git restore path/to/file'
+    caption: Inspect both unstaged and staged changes before deciding whether to unstage or discard.
+  - type: item
+    ref: undo-scenario-explain
+- id: history
+  title: Reset, revert and amend
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '`git commit --amend` replaces the latest commit and is generally appropriate before sharing it. `git
+      reset` moves the current branch pointer: `--soft` keeps changes staged, `--mixed` (the default) leaves them
+      unstaged, and `--hard` resets the index and working tree, discarding tracked local changes. Do not reset commits
+      that teammates have built on without coordinating.'
+  - type: markdown
+    body: For a commit already pushed to a shared branch, prefer `git revert <commit>`. It creates a new commit
+      that applies the inverse changes and keeps the shared history intact.
+  - type: item
+    ref: undo-command-mcq
+- id: recovery
+  title: Stash and reflog
+  kind: concept
+  blocks:
+  - type: markdown
+    body: '`git stash` temporarily shelves tracked working-tree and index changes; `git stash pop` reapplies a stash
+      and removes it if successful. `git reflog` records recent updates to references such as HEAD, which can help
+      locate a commit after a reset or rebase moved a branch pointer.'
+  - type: markdown
+    body: The reflog is not a backup of uncommitted file contents. If `reset --hard` discarded edits that were never
+      committed or stashed, the reflog generally cannot restore them. This is why small commits and backups matter.
+  - type: item
+    ref: reflog-uncommitted-tf
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '- Working tree, index and history are different states.
+
+      - `restore --staged` unstages; `restore` discards unstaged edits.
+
+      - `reset` moves a branch pointer; `revert` adds an inverse commit.
+
+      - Use revert for shared pushed history.
+
+      - Reflog helps recover commits, not arbitrary uncommitted edits.'
+  - type: item
+    ref: undo-command-mcq
+  - type: item
+    ref: reflog-uncommitted-tf
+  - type: item
+    ref: undo-scenario-explain
+items:
+- id: undo-command-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: A commit containing a bug has already been pushed to a shared branch. Which command is normally safest
+    for undoing its changes without rewriting shared history?
+  explanation: '`git revert` creates a new commit that inverses an earlier commit, preserving shared history.'
+  options:
+  - id: a
+    text: git reset --hard HEAD~1
+    correct: false
+    feedback: This rewrites the branch pointer and discards working-tree changes; it is dangerous on shared history.
+  - id: b
+    text: git revert <commit>
+    correct: true
+    feedback: Correct. It adds a new inverse commit.
+  - id: c
+    text: git restore .
+    correct: false
+    feedback: This restores working-tree files, not a pushed commit history.
+  - id: d
+    text: git clean -fd
+    correct: false
+    feedback: This deletes untracked files and is unrelated to reverting a commit.
+- id: reflog-uncommitted-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: 'The reflog can usually recover uncommitted edits discarded by `git reset --hard`. '
+  answer: false
+  explanation: The reflog records movements of references and commits, not arbitrary uncommitted working-tree contents.
+- id: undo-scenario-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You accidentally staged a file, then realise it should not be in the next commit. You have not committed
+    or pushed. Explain how to unstage it without deleting your local edits.
+  rubric:
+  - Use `git restore --staged <file>` or equivalent index operation.
+  - Explain that the file remains in the working tree.
+  - Distinguish unstage from discarding edits.
+  modelAnswer: Run `git restore --staged path/to/file`. This removes the file from the index but leaves the working-tree
+    contents unchanged. `git restore path/to/file` without `--staged` would discard unstaged edits, so inspect `git
+    status` and the diff before choosing.
+  explanation: Git has different commands for the working tree, index and commit history. Choose the command based
+    on which state you intend to change.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - undo-command-mcq
+  - reflog-uncommitted-tf
+  - undo-scenario-explain
+cheatsheet: 'Unstage: `git restore --staged file`. Discard unstaged edits: `git restore file`. Amend unshared last
+  commit: `git commit --amend`. Move branch: `git reset` (soft/mixed/hard). Undo shared commit: `git revert <commit>`.
+  Recover commit refs: `git reflog` (not uncommitted edits).'

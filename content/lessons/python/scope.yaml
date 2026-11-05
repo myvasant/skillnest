@@ -1,0 +1,1190 @@
+id: python.scope
+concept: python.scope
+title: Scope and Namespaces
+subtitle: Where Python looks for a name - and why functions keep their names to themselves
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  Every function call gets its own namespace, so names inside a function cannot clash with names
+  outside it. Learn the LEGB lookup order, why assigning to a name makes it local (and how that causes
+  UnboundLocalError), when global and nonlocal are needed, and why global state and shadowed built-ins
+  cause bugs.
+objectives:
+  - Distinguish local, enclosing, global and built-in names, and predict which object a name refers to using the LEGB rule.
+  - Explain why each call gets a fresh local namespace and why local names do not exist after the call.
+  - Explain why assigning to a name anywhere in a function makes it local everywhere in that function, and fix UnboundLocalError.
+  - Use global and nonlocal correctly, and refactor global state into parameters and return values.
+  - Recognise and fix bugs caused by shadowing built-in names such as sum, list or max.
+sources:
+  - title: "The Python Tutorial: Python Scopes and Namespaces"
+    url: https://docs.python.org/3/tutorial/classes.html#python-scopes-and-namespaces
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Naming and binding"
+    url: https://docs.python.org/3/reference/executionmodel.html#naming-and-binding
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Resolution of names"
+    url: https://docs.python.org/3/reference/executionmodel.html#resolution-of-names
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The global statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-global-statement
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The nonlocal statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-nonlocal-statement
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: Why am I getting an UnboundLocalError when the variable has a value?"
+    url: https://docs.python.org/3/faq/programming.html#why-am-i-getting-an-unboundlocalerror-when-the-variable-has-a-value
+    publisher: Python Software Foundation
+  - title: "builtins — Built-in objects"
+    url: https://docs.python.org/3/library/builtins.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why functions keep their names to themselves
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Imagine you are using a function someone else wrote. Would you need to check every variable name
+          inside it, in case it overwrites one of yours? Look at this program: the program and the
+          function both use the name `total`.
+      - type: code
+        runnable: true
+        code: |
+          total = 100
+
+          def sum_list(numbers):
+              total = 0
+              for n in numbers:
+                  total += n
+              return total
+
+          print(sum_list([1, 2, 3]))
+          print(total)
+        expectedOutput: |
+          6
+          100
+        annotations:
+          - line: 1
+            text: The program's own total.
+          - line: 4
+            text: A different total that belongs only to this call of sum_list.
+          - line: 10
+            text: The program's total is untouched.
+      - type: markdown
+        body: |
+          The function's `total` and the program's `total` are **two different names that happen to be
+          spelled the same**, living in two different [namespaces](glossary:namespace). That separation is
+          called [scope](glossary:scope), and it is what makes functions safe to reuse: you can call a
+          function without knowing - or caring - which names it uses inside.
+
+  - id: local-global
+    title: Local and global names
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **namespace** is a mapping from names to objects. A **scope** is the region of code in which a
+          namespace's names can be used directly. For now there are two that matter:
+
+          - **Global** names are bound at the top level of the file (outside any function). They live in
+            the module's global namespace for as long as the program runs. These are
+            [global variables](glossary:global-variable).
+          - **Local** names are bound inside a function: its parameters, and any name it assigns to. They
+            live in that call's **frame** and disappear when the call returns. These are
+            [local variables](glossary:local-variable).
+
+          The rule of visibility is one-directional: **code inside a function can read global names, but
+          code outside a function cannot see its local names.**
+      - type: code
+        runnable: true
+        code: |
+          greeting = "Hello"
+
+          def greet(name):
+              message = greeting + ", " + name
+              return message
+
+          print(greet("Ada"))
+          print(message)
+        expectError: NameError
+        expectedOutput: |
+          Hello, Ada
+        annotations:
+          - line: 1
+            text: A global name.
+          - line: 3
+            text: The parameter name is local to greet.
+          - line: 4
+            text: message is local; greeting is not assigned here, so it is read from the global namespace.
+          - line: 8
+            text: "NameError: message existed only inside the call, which has already finished."
+      - type: callout
+        variant: tip
+        title: Getting a value out of a function
+        body: |
+          If the caller needs a value computed inside a function, **return it** and store the result:
+          `message = greet("Ada")`. That is the only clean way out - local names never leak.
+
+  - id: fresh-namespace
+    title: Each call gets a fresh namespace
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A function's local namespace is created **when the function is called**, not when it is defined,
+          and it is thrown away when the call ends. Two calls never share local names, and nothing is
+          remembered from one call to the next:
+      - type: code
+        runnable: true
+        code: |
+          def count_calls():
+              calls = 0
+              calls += 1
+              return calls
+
+          print(count_calls())
+          print(count_calls())
+          print(count_calls())
+        expectedOutput: |
+          1
+          1
+          1
+        caption: Each call starts with a brand-new calls = 0. The previous call's calls no longer exists.
+      - type: markdown
+        body: |
+          Now three functions, three different names that are all spelled `x`. Predict the output, then step
+          through it and watch the frames.
+      - type: item
+        ref: predict-three-x
+      - type: visualization
+        component: python-tracer
+        title: Three x's in three frames
+        caption: >-
+          Each frame has its own x. When helper runs, its frame sits on top of outer_task's frame; helper's
+          x does not replace outer_task's x, and neither affects the global x.
+        props:
+          code: |
+            x = "global x"
+
+            def outer_task():
+                x = "outer_task's x"
+                helper()
+                print(x)
+
+            def helper():
+                x = "helper's x"
+                print(x)
+
+            outer_task()
+            print(x)
+
+  - id: legb
+    title: "LEGB: the order Python searches"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When Python meets a name it must **read**, it searches up to four scopes, in this fixed order -
+          the [LEGB rule](glossary:legb-rule) - and uses the first match:
+
+          1. **L**ocal - the current function call's names.
+          2. **E**nclosing - the local names of any function the current function is written *inside*
+             (functions can be defined inside other functions).
+          3. **G**lobal - the module's top-level names.
+          4. **B**uilt-in - names Python provides everywhere: `print`, `len`, `range`, `int`, `ValueError`…
+
+          If no scope has the name, you get a `NameError`.
+      - type: code
+        runnable: true
+        code: |
+          x = "global"
+
+          def outer():
+              x = "enclosing"
+
+              def inner():
+                  print("inner sees:", x)
+
+              inner()
+
+          outer()
+          print("module sees:", x)
+          print(len("abc"))
+        expectedOutput: |
+          inner sees: enclosing
+          module sees: global
+          3
+        annotations:
+          - line: 6
+            text: A nested function - defined inside outer. It is a local name of outer.
+          - line: 7
+            text: x is not local to inner, so Python checks the enclosing function (outer) and finds it there.
+          - line: 13
+            text: len is not local or global, so Python finds it in the built-in scope.
+      - type: markdown
+        body: |
+          **Scopes follow where code is *written*, not who *calls* it.** This is called
+          [lexical scoping](glossary:lexical-scoping). A function can see the enclosing functions it is
+          written inside, but never the local names of whatever function happens to call it. Nested
+          functions that remember enclosing names are the foundation of
+          [closures](concept:python.closures).
+      - type: item
+        ref: mcq-lexical
+      - type: markdown
+        body: |
+          **Blocks do not create scopes.** In Python only functions (and, later, classes and modules)
+          create scopes. A name assigned inside an `if`, `for` or `while` block belongs to the surrounding
+          function or module and is still there after the block:
+      - type: code
+        runnable: true
+        code: |
+          for i in range(3):
+              last = i * 10
+          print(i, last)
+
+          if len("abc") == 3:
+              inside_if = "still visible"
+          print(inside_if)
+        expectedOutput: |
+          2 20
+          still visible
+        caption: Many other languages would reject this; in Python the loop variable and last survive the loop.
+
+  - id: assignment-local
+    title: Assignment makes a name local - UnboundLocalError
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          How does Python decide whether a name in a function is local? Not by running the code line by
+          line. It decides **when the function is compiled**, using one rule:
+
+          > If a function **assigns** to a name anywhere in its body, that name is local for the **whole**
+          > function - including the lines before the assignment.
+
+          "Assigns" includes `=`, augmented assignment (`+=`, `-=` …), `for name in …`, `def name` and
+          `import name`. Parameters are local too.
+
+          So this famous program fails, even though `count` clearly exists globally:
+      - type: code
+        runnable: true
+        code: |
+          count = 0
+
+          def increment():
+              count += 1
+
+          increment()
+        expectError: UnboundLocalError
+        caption: "UnboundLocalError: cannot access local variable 'count' where it is not associated with a value"
+      - type: markdown
+        body: |
+          `count += 1` means `count = count + 1`, an assignment, so `count` is local throughout
+          `increment`. To compute `count + 1` Python reads the **local** `count`, which has not been bound
+          yet. The error type, [`UnboundLocalError`](glossary:unbound-local-error), is a kind of
+          `NameError`: "the name is local, but it has no value yet".
+
+          The decision covers the whole body, so even a read on an **earlier** line fails:
+      - type: item
+        ref: mcq-unbound
+      - type: markdown
+        body: |
+          **The fix** is usually not `global` (next section) but better design: pass the value in and
+          return the new value.
+      - type: code
+        runnable: true
+        code: |
+          def increment(count):
+              return count + 1
+
+          count = 0
+          count = increment(count)
+          count = increment(count)
+          print(count)
+        expectedOutput: |
+          2
+        caption: The function's input and output are now visible in every call.
+      - type: item
+        ref: explain-unbound
+
+  - id: global-nonlocal
+    title: global and nonlocal
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Sometimes a function really must **rebind** a name that lives outside it. Two statements switch
+          off the "assignment makes it local" rule for specific names:
+
+          - The [global statement](glossary:global-statement), `global name`, means "in this function,
+            `name` is the module-level name": reads and assignments go to the global namespace.
+          - `nonlocal name` means "`name` is the variable of the nearest **enclosing function**". It is only
+            allowed in nested functions and never refers to globals.
+
+          Both must appear before the name is used in the function, usually as its first line.
+      - type: visualization
+        component: python-tracer
+        title: global rebinds the module's name; plain assignment makes a local
+        caption: >-
+          increment changes counter in the global frame. broken_increment's assignment creates a separate
+          local counter in its own frame, which disappears when it returns - the global stays 2.
+        props:
+          code: |
+            counter = 0
+
+            def increment():
+                global counter
+                counter += 1
+
+            def broken_increment():
+                counter = 99
+
+            increment()
+            increment()
+            broken_increment()
+            print(counter)
+      - type: code
+        runnable: true
+        code: |
+          def play_rounds():
+              score = 0
+
+              def add_points(n):
+                  nonlocal score
+                  score += n
+
+              add_points(3)
+              add_points(5)
+              return score
+
+          print(play_rounds())
+        expectedOutput: |
+          8
+        annotations:
+          - line: 5
+            text: Without this line, score += n would make score local to add_points and raise UnboundLocalError.
+      - type: markdown
+        body: |
+          **Mutation is not assignment.** `global` is only needed to **rebind** a global name. Calling a
+          method that changes a global list or dict in place - `items.append(x)`, `settings["debug"] = True`
+          - does not assign to the name itself, so Python simply looks the name up (LEGB finds the global)
+          and mutates that object.
+      - type: item
+        ref: predict-global-mutation
+
+  - id: avoid-global-state
+    title: Prefer parameters and return values
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          `global` works, but code that shares changing state through global variables is harder to get
+          right. Compare these two versions:
+      - type: code
+        runnable: true
+        code: |
+          balance = 100
+
+          def withdraw(amount):
+              global balance
+              balance -= amount
+
+          withdraw(30)
+          withdraw(20)
+          print(balance)
+        expectedOutput: |
+          50
+        caption: "Global state: the call withdraw(30) does not show what it reads or what it changes."
+      - type: code
+        runnable: true
+        code: |
+          def withdraw(balance, amount):
+              return balance - amount
+
+          balance = 100
+          balance = withdraw(balance, 30)
+          balance = withdraw(balance, 20)
+          print(balance)
+
+          savings = withdraw(500, 125)
+          print(savings)
+        expectedOutput: |
+          50
+          375
+        caption: Parameters and a return value - and the same function now works for any number of accounts.
+      - type: markdown
+        body: |
+          Why the second version is better:
+
+          - **Visible inputs and outputs.** Everything the function uses arrives as a parameter; everything
+            it produces leaves as the return value. You can understand a call without reading the body.
+          - **No action at a distance.** With a global, *any* function anywhere could change `balance`, so
+            a wrong value could come from anywhere.
+          - **Order independence and testability.** A function whose result depends only on its arguments
+            gives the same answer every time; a test can call it without setting up and resetting globals.
+          - **It scales.** One global `balance` means one account. Later, with concurrent code, shared
+            mutable globals also become a source of race conditions.
+
+          Module-level **constants** that are only read - `TAX_RATE = 18`, written in UPPER_CASE - are fine.
+          It is changing global state that causes trouble.
+
+  - id: shadowing
+    title: Shadowing built-ins
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Because Python searches local and global scopes **before** the built-in scope, a name you create
+          hides - [shadows](glossary:shadowing) - any built-in with the same name. Nothing stops you
+          writing `sum = 0` or `list = [1, 2]`, but from then on that name no longer means the built-in in
+          that scope:
+      - type: code
+        runnable: true
+        code: |
+          prices = [3, 4, 5]
+          sum = 0
+          for p in prices:
+              sum += p
+          print(sum)
+          print(sum(prices))
+        expectError: TypeError
+        expectedOutput: |
+          12
+        caption: "TypeError: 'int' object is not callable - the global name sum now refers to 12, and LEGB finds it before the built-in."
+      - type: markdown
+        body: |
+          Names beginners often shadow: `list`, `dict`, `str`, `sum`, `max`, `min`, `input`, `type`, `id`,
+          `len`, `filter`, `map`, `next`. Pick descriptive names instead: `total`, `scores`, `name_list`,
+          `largest`.
+
+          Shadowing inside a function only affects that function's local scope; at the top level it affects
+          the rest of the module. If you have shadowed a built-in at the top level, `del sum` removes your
+          global name so the built-in is found again - but renaming is the real fix.
+      - type: code
+        runnable: true
+        code: |
+          import builtins
+
+          sum = 10
+          del sum
+          print(sum([1, 2]))
+          print(builtins.sum is sum)
+        expectedOutput: |
+          3
+          True
+        depth: deep
+        caption: Built-ins live in the builtins module. Deleting the global name lets LEGB reach the built-in again.
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Scope is decided at compile time.** Before a function runs, the compiler builds a *symbol
+          table* for it: every name is classified as local, enclosing (a *free* variable of a nested
+          function), global or built-in. That is why `UnboundLocalError` can happen on a line *before* the
+          assignment - the classification is about the whole body, not about execution order. It is also
+          why `global x` after `x` has been used is a `SyntaxError` ("name 'x' is used prior to global
+          declaration"), and `nonlocal y` with no enclosing `y` is a `SyntaxError` ("no binding for
+          nonlocal 'y' found").
+
+          **Different lookups, different instructions.** CPython stores a function's locals in a fixed
+          array inside the frame and reads them by position, which is fast. Global and built-in names are
+          looked up in dictionaries (with caching to make this quick). Enclosing variables live in small
+          *cell* objects shared between the outer and inner function. You can see the instructions with
+          `dis.dis(function)` - instruction names such as `LOAD_FAST` and `LOAD_GLOBAL` vary a little
+          between versions.
+
+          **Inspecting namespaces.** `globals()` returns the module's namespace dict. Inside a function,
+          `locals()` returns a dict *snapshot* of the local names; writing to it does not change the local
+          variables (since Python 3.13 this behaviour is guaranteed by
+          [PEP 667](https://peps.python.org/pep-0667/)).
+      - type: code
+        runnable: true
+        code: |
+          import builtins
+
+          x = "global"
+
+          def demo(a):
+              b = a * 2
+              print(sorted(locals()))
+              print("x" in globals(), "x" in locals())
+
+          demo(1)
+          print(demo.__code__.co_varnames)
+          print(builtins.len is len)
+        expectedOutput: |
+          ['a', 'b']
+          True False
+          ('a', 'b')
+          True
+        annotations:
+          - line: 11
+            text: The compiler recorded the local names - parameter a first, then b - before demo ever ran.
+          - line: 12
+            text: len found by LEGB is the very object stored in the builtins module.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `UnboundLocalError: cannot access local variable 'count' where it is not associated with a value` | The function assigns to `count` (e.g. `count += 1`) and reads it before that | Pass the value in and return the new value; use `global`/`nonlocal` only if you truly must rebind an outer name. |
+          | `NameError` for a variable created inside a function | Local names disappear when the call ends | `return` the value and store it in the caller. |
+          | `NameError` in a helper for a name its caller defined | Scopes are lexical: a callee cannot see its caller's locals | Pass the value as an argument. |
+          | A global "did not change" after a function assigned it | The assignment created a new local name | Return the new value and rebind in the caller. |
+          | A function gives a different answer the second time | It accumulates in global state between calls | Create the working variables inside the function. |
+          | `TypeError: 'int' object is not callable` (or `'list'`, `'str'`…) | A variable shadows a built-in such as `sum`, `list`, `max` | Rename the variable. |
+          | `SyntaxError: name 'x' is used prior to global declaration` | `global x` written after `x` is used | Put `global x` first in the function. |
+          | `SyntaxError: no binding for nonlocal 'x' found` | `nonlocal` used where no enclosing function defines `x` | Define `x` in the enclosing function, or use parameters. |
+      - type: code
+        runnable: true
+        code: |
+          def helper():
+              print(secret)
+
+          def caller():
+              secret = 42
+              helper()
+
+          caller()
+        expectError: NameError
+        caption: Read the traceback - helper is the innermost frame. secret is local to caller, and helper is not written inside caller, so LEGB never looks there.
+      - type: item
+        ref: debug-unbound-counter
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: debug-shadow-builtin
+      - type: item
+        ref: bank-refactor
+      - type: item
+        ref: tf-block-scope
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **namespace** maps names to objects; a **scope** is where those names can be used directly.
+          - Names bound in a function (parameters, assignments) are **local**; each call gets a **fresh**
+            local namespace that disappears when the call returns.
+          - Reading a name searches **L**ocal → **E**nclosing → **G**lobal → **B**uilt-in; scopes follow
+            where code is written, not who calls it. `if`/`for`/`while` blocks do not create scopes.
+          - **Assigning** to a name anywhere in a function makes it local for the whole function →
+            `UnboundLocalError` if it is read first.
+          - `global name` / `nonlocal name` let a function rebind an outer name. Mutating an outer object
+            needs neither. Prefer parameters and return values over global state.
+          - Don't name variables `sum`, `list`, `max`, `input`…: they shadow the built-ins.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          A common question shows `x = 10; def f(): print(x); x = 5` and asks what happens. Answer
+          `UnboundLocalError`, then explain *why*: scope is determined at compile time, and any assignment
+          makes the name local for the whole function. Follow with the LEGB order, when `nonlocal` is
+          needed, and why you would pass state explicitly instead of using `global`.
+
+items:
+  - id: predict-three-x
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output before you step through it below. (Three lines.)
+    code: |
+      x = "global x"
+
+      def outer_task():
+          x = "outer_task's x"
+          helper()
+          print(x)
+
+      def helper():
+          x = "helper's x"
+          print(x)
+
+      outer_task()
+      print(x)
+    answer: |
+      helper's x
+      outer_task's x
+      global x
+    explanation: >-
+      Each function assigns x, so each has its own local x. helper prints its own; when it returns,
+      outer_task's x is unchanged and is printed; finally the global x was never touched.
+    wrongAnswers:
+      - answer: |
+          helper's x
+          helper's x
+          helper's x
+        feedback: >-
+          This assumes one shared x that each assignment overwrites. Each function call has its own local
+          namespace, so helper's assignment cannot change outer_task's x or the global x.
+      - answer: |
+          helper's x
+          helper's x
+          global x
+        feedback: helper's x lives in helper's own frame. It cannot replace the x in the frame of the function that called it.
+      - answer: |
+          outer_task's x
+          helper's x
+          global x
+        feedback: outer_task calls helper before its own print, so helper's line comes first.
+
+  - id: mcq-lexical
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Why does this program raise `NameError: name 'secret' is not defined`?
+
+      ```python
+      def helper():
+          print(secret)
+
+      def caller():
+          secret = 42
+          helper()
+
+      caller()
+      ```
+    explanation: >-
+      Python's scopes are lexical: helper can see its own locals, the functions it is written inside (none),
+      the globals and the built-ins. caller's local names are not on that list, even though caller is
+      the function that called helper.
+    options:
+      - id: a
+        text: secret is local to caller, and helper is not written inside caller, so helper's lookup never searches caller's names.
+        correct: true
+        feedback: Right. Lookup follows where helper is defined (top level), not who called it. Pass secret as an argument instead.
+      - id: b
+        text: helper is defined before caller, so it cannot see caller's variables yet.
+        feedback: Definition order is not the issue. Even if helper were defined after caller, it still could not see caller's locals.
+      - id: c
+        text: secret should be written in quotes.
+        feedback: In quotes it would just be the text "secret", not a lookup of the variable.
+      - id: d
+        text: Functions can only read built-in names.
+        feedback: Functions can read their own locals, enclosing functions' names, globals and built-ins (LEGB).
+
+  - id: mcq-unbound
+    type: mcq
+    skill: prediction
+    difficulty: 2
+    prompt: |
+      What happens when this program runs?
+
+      ```python
+      total = 10
+
+      def show():
+          print(total)
+          total = 5
+
+      show()
+      ```
+    explanation: >-
+      Because show assigns to total (line 5), total is local throughout show - including line 4. When
+      print(total) runs, the local total has no value yet, so Python raises UnboundLocalError. The
+      decision is made when the function is compiled, not line by line.
+    options:
+      - id: a
+        text: It prints 10, then the local total becomes 5.
+        feedback: That would require Python to decide scope line by line. It decides for the whole function at once, and line 5 makes total local everywhere in show.
+      - id: b
+        text: It prints 5.
+        feedback: Line 5 has not run when line 4 prints. Assignments do not happen early.
+      - id: c
+        text: "UnboundLocalError on the print line: total is local in show but not yet assigned."
+        correct: true
+        feedback: Correct. The assignment anywhere in the body makes total local for the whole body.
+      - id: d
+        text: It prints 10 and changes the global total to 5.
+        feedback: Without a global statement, an assignment inside a function never rebinds the global name.
+
+  - id: explain-unbound
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a friend why `count += 1` inside `increment()` raises UnboundLocalError even though
+      `count = 0` was set at the top of the program. Then describe two different fixes and say which one
+      you would choose.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that count += 1 is an assignment, and assigning anywhere in a function makes the name local for the whole function.
+      - Says this is decided when the function is compiled, before it runs, so the local count is read before it has a value.
+      - Gives the preferred fix - pass count in as a parameter and return count + 1, rebinding in the caller.
+      - Mentions `global count` as an alternative and explains why it is usually worse (hidden state, harder to test).
+    modelAnswer: |
+      count += 1 is short for count = count + 1, which assigns to count. When Python compiles increment,
+      it sees that assignment and marks count as a local name for the entire function. So when the line
+      runs, Python needs the value of the local count to add 1 to it - and the local count has not been
+      given a value yet, hence UnboundLocalError. The global count is never consulted. The best fix is to
+      write def increment(count): return count + 1 and call count = increment(count), so the input and
+      output are explicit. The other fix is to put `global count` at the top of the function; it works,
+      but the function then secretly depends on and changes global state, which makes it harder to reuse
+      and test.
+
+  - id: predict-global-mutation
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      names = ["Ada"]
+      label = "team"
+
+      def update():
+          names.append("Alan")
+          label = "squad"
+
+      update()
+      print(names, label)
+    answer: "['Ada', 'Alan'] team"
+    explanation: >-
+      names.append is a method call on the object the global names refers to - no assignment to the name,
+      so LEGB finds the global list and mutates it. label = "squad" is an assignment, so it creates a new
+      local label that disappears when update returns.
+    wrongAnswers:
+      - answer: "['Ada'] team"
+        feedback: >-
+          append does not assign to the name names, so names is not local. Python finds the global list
+          and changes it in place - no global statement needed for mutation.
+      - answer: "['Ada', 'Alan'] squad"
+        feedback: Assigning label inside the function creates a local name. Without `global label`, the global label stays "team".
+
+  - id: tf-block-scope
+    type: true-false
+    skill: recognition
+    prompt: |
+      True or false: a variable first assigned inside a `for` loop (at the top level of a program) can
+      still be used after the loop has finished.
+    answer: true
+    explanation: >-
+      In Python only functions (and classes and modules) create new scopes. Loops and if blocks do not, so
+      a name assigned in the loop body - and the loop variable itself - belongs to the surrounding scope
+      and keeps its last value after the loop.
+
+  - id: debug-unbound-counter
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should print `15`, but it crashes with `UnboundLocalError`. Fix it **without using
+      `global`**: change `add` so it takes the current total and the amount and **returns** the new
+      total, then update the two calls.
+    starterCode: |
+      total = 0
+
+      def add(amount):
+          total = total + amount
+
+      add(5)
+      add(10)
+      print(total)
+    solution: |
+      def add(total, amount):
+          return total + amount
+
+      total = 0
+      total = add(total, 5)
+      total = add(total, 10)
+      print(total)
+    expectedOutput: |
+      15
+    tests:
+      - name: no global statement
+        code: |
+          assert not uses("Global"), "Solve it without the global statement: pass total in as a parameter and return the new value."
+      - name: add takes the total and the amount
+        code: |
+          import inspect
+          n = len(inspect.signature(add).parameters)
+          assert n == 2, f"add should take two parameters (the current total and the amount); yours takes {n}."
+      - name: add returns the new total
+        code: |
+          for args, expected in [((0, 5), 5), ((10, 3), 13), ((-2, 2), 0)]:
+              r = add(*args)
+              assert r == expected, f"add{args} returned {r!r}; it should return {expected}."
+      - name: prints 15
+        code: |
+          assert output().strip() == "15", f"Rebind total from each call, e.g. total = add(total, 5). Your program printed {output()!r}."
+    hints:
+      - "`total = total + amount` assigns to total, so inside add, total is local - and it has no value yet."
+      - "Make total a parameter: `def add(total, amount):` and end with `return total + amount`."
+      - "The caller must store the result: `total = add(total, 5)`."
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: total is still being assigned inside add without being a parameter. Make it a parameter and return the result.
+      - when: { outputEquals: "0\n" }
+        message: The calls run, but their results are thrown away. Rebind the global name with total = add(total, 5).
+    explanation: >-
+      With total as a parameter, the local name is bound to the caller's value before the body runs, and
+      return hands the new value back. The caller rebinds its own total, so all state changes are visible
+      at the call site.
+
+  - id: debug-shadow-builtin
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print the total and the average of the scores, but the average line crashes
+      with `TypeError: 'int' object is not callable`. Find the variable that shadows a built-in and
+      rename it, so the program prints:
+
+      ```text
+      Total: 15
+      Average: 5.0
+      ```
+    starterCode: |
+      scores = [4, 9, 2]
+
+      sum = 0
+      for s in scores:
+          sum += s
+      print("Total:", sum)
+
+      average = sum(scores) / len(scores)
+      print("Average:", average)
+    solution: |
+      scores = [4, 9, 2]
+
+      total = 0
+      for s in scores:
+          total += s
+      print("Total:", total)
+
+      average = sum(scores) / len(scores)
+      print("Average:", average)
+    expectedOutput: |
+      Total: 15
+      Average: 5.0
+    tests:
+      - name: prints total and average
+        code: |
+          assert output_lines() == ["Total: 15", "Average: 5.0"], f"Expected 'Total: 15' and 'Average: 5.0', but your program printed {output()!r}."
+      - name: no built-in names are reassigned
+        code: |
+          import ast, builtins
+          stored = {n.id for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+          shadowed = sorted(stored & set(dir(builtins)))
+          assert not shadowed, f"Your program still assigns to built-in names: {shadowed}. Rename those variables (for example total instead of sum)."
+      - name: works for other scores
+        code: |
+          import re, io, contextlib
+          changed = re.sub(r"scores\s*=\s*\[4,\s*9,\s*2\]", "scores = [10, 20]", source, count=1)
+          buf = io.StringIO()
+          with contextlib.redirect_stdout(buf):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buf.getvalue().splitlines()[:2] == ["Total: 30", "Average: 15.0"], "Compute both lines from the scores list so the program works for any scores."
+    hints:
+      - The error happens on the average line. What does the name sum refer to at that moment?
+      - "`sum = 0` rebinds the name sum in the global scope, so LEGB finds your integer before the built-in function."
+      - Rename the variable (and every place it is used) to something like total.
+    feedback:
+      - when: { errorMessageContains: "not callable" }
+        message: A built-in name is still bound to a number. Rename the loop's running-total variable everywhere it appears.
+    explanation: >-
+      `sum = 0` created a global name that shadows the built-in sum. LEGB checks globals before
+      built-ins, so sum(scores) tried to call the integer 15. Renaming the variable leaves sum referring
+      to the built-in function.
+
+  - id: bank-refactor
+    type: code
+    skill: design
+    difficulty: 2
+    prompt: |
+      This banking script keeps the balance in a global variable. Rewrite `deposit` and `withdraw` so
+      that each takes `balance` and `amount` as parameters and **returns** the new balance - no `global`.
+      `withdraw` must refuse to overdraw: if `amount` is more than `balance`, it returns `balance`
+      unchanged. Update the calls so the program still prints `120`.
+    starterCode: |
+      balance = 100
+
+      def deposit(amount):
+          global balance
+          balance += amount
+
+      def withdraw(amount):
+          global balance
+          if amount <= balance:
+              balance -= amount
+
+      deposit(50)
+      withdraw(30)
+      withdraw(500)
+      print(balance)
+    solution: |
+      def deposit(balance, amount):
+          return balance + amount
+
+      def withdraw(balance, amount):
+          if amount > balance:
+              return balance
+          return balance - amount
+
+      balance = 100
+      balance = deposit(balance, 50)
+      balance = withdraw(balance, 30)
+      balance = withdraw(balance, 500)
+      print(balance)
+    expectedOutput: |
+      120
+    tests:
+      - name: no global statements
+        code: |
+          assert not uses("Global"), "Remove the global statements: pass balance in and return the new balance."
+      - name: deposit returns the new balance
+        code: |
+          for args, expected in [((100, 50), 150), ((0, 1), 1)]:
+              r = deposit(*args)
+              assert r == expected, f"deposit{args} returned {r!r}; it should return {expected}."
+      - name: withdraw returns the new balance and refuses to overdraw
+        code: |
+          for args, expected in [((100, 30), 70), ((100, 100), 0), ((100, 300), 100)]:
+              r = withdraw(*args)
+              assert r == expected, f"withdraw{args} returned {r!r}; it should return {expected}."
+      - name: functions do not change the global balance
+        code: |
+          before = balance
+          deposit(10, 5)
+          withdraw(10, 5)
+          assert balance == before, "deposit and withdraw should not change the global balance; return the new value and let the caller rebind it."
+      - name: prints 120
+        code: |
+          assert output().strip() == "120", f"Rebind balance from each call, e.g. balance = deposit(balance, 50). Your program printed {output()!r}."
+    hints:
+      - "Start with the def lines: `def deposit(balance, amount):` and `def withdraw(balance, amount):`."
+      - In withdraw, return early with the unchanged balance when the amount is too large.
+      - "Each call must store the result: `balance = withdraw(balance, 30)`."
+    feedback:
+      - when: { outputEquals: "100\n" }
+        message: The functions return the new balance, but the calls throw it away. Write balance = deposit(balance, 50), and so on.
+    explanation: >-
+      Each function now depends only on its arguments and communicates only through its return value.
+      The same functions can manage any number of accounts, and a test can call withdraw(100, 300) without
+      setting up a global first.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-legb
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      x = "global"
+
+      def outer():
+          x = "enclosing"
+          def inner():
+              return x
+          x = "changed"
+          return inner()
+
+      print(outer(), x)
+    answer: changed global
+    explanation: >-
+      inner has no local x, so LEGB finds the enclosing function's x - and reads its value at the moment
+      inner runs. By then outer has rebound its x to "changed". The global x was never assigned inside
+      any function, so it is still "global".
+    wrongAnswers:
+      - answer: enclosing global
+        feedback: >-
+          inner looks the name up when it is called, not when it is defined. By the time inner() runs,
+          outer's x refers to "changed".
+      - answer: global global
+        feedback: The Enclosing scope is searched before the Global one, and outer has its own x.
+      - answer: changed changed
+        feedback: Assignments inside outer only bind outer's local x; the module's x is untouched.
+
+  - id: m-mcq-global
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      Calling `add(5)` raises `UnboundLocalError` for `count`. Why does the line using `items` work
+      when the line using `count` fails?
+
+      ```python
+      items = []
+      count = 0
+
+      def add(x):
+          items.append(x)
+          count = count + 1
+      ```
+    explanation: >-
+      items is only mutated (a method call), never assigned in add, so it is not local and LEGB finds the
+      global list. count is assigned in add, which makes it local for the whole function; reading it on
+      the right-hand side before it has a value raises UnboundLocalError.
+    options:
+      - id: a
+        text: items is mutated but never assigned, so it is looked up as a global; count is assigned, so it is local throughout add.
+        correct: true
+        feedback: Correct. Only rebinding needs global; mutation just needs to find the object.
+      - id: b
+        text: Lists are always global and integers are always local.
+        feedback: Scope depends on whether a name is assigned in the function, not on the type of object.
+      - id: c
+        text: append is a built-in function, so it is allowed to change globals.
+        feedback: append is a list method. What matters is that the name items is not assigned in add.
+      - id: d
+        text: count must be declared before items for the function to see it.
+        feedback: Both globals exist before add runs. The problem is that count = ... makes count local.
+
+  - id: m-tf-fresh
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a local variable keeps the value it had at the end of the previous call to the same function."
+    answer: false
+    explanation: >-
+      Each call creates a fresh local namespace, and it is discarded when the call returns. To keep a value
+      between calls, return it (and pass it back in) or store it in an object the caller keeps.
+
+  - id: m-debug-leaky-state
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `unique(items)` should return the distinct items of **one** list, in first-seen order. The first
+      call prints `[1, 2]` correctly, but the second prints `[1, 2, 3]` instead of `[3]`. Fix it so
+      every call starts fresh.
+    starterCode: |
+      seen = []
+
+      def unique(items):
+          for item in items:
+              if item not in seen:
+                  seen.append(item)
+          return seen
+
+      print(unique([1, 2, 2]))
+      print(unique([3, 3]))
+    solution: |
+      def unique(items):
+          seen = []
+          for item in items:
+              if item not in seen:
+                  seen.append(item)
+          return seen
+
+      print(unique([1, 2, 2]))
+      print(unique([3, 3]))
+    expectedOutput: |
+      [1, 2]
+      [3]
+    tests:
+      - name: each call is independent
+        code: |
+          r1 = unique([5, 5, 6])
+          r2 = unique([7])
+          assert r1 == [5, 6], f"unique([5, 5, 6]) returned {r1!r}; expected [5, 6]. Results from earlier calls are leaking in."
+          assert r2 == [7], f"unique([7]) returned {r2!r}; expected [7]."
+          assert r1 is not r2, "Two calls returned the same list object. Create a new list inside the function."
+      - name: empty input
+        code: |
+          r = unique([])
+          assert r == [], f"unique([]) returned {r!r}; expected []."
+      - name: prints both results
+        code: |
+          assert output_lines() == ["[1, 2]", "[3]"], f"Your program printed {output()!r}."
+    hints:
+      - Where is the seen list created, and how many times does that line run?
+      - A local name gets a fresh object on every call only if it is assigned inside the function.
+    feedback:
+      - when: { outputContains: "[1, 2, 3]" }
+        message: The calls are still sharing one global list. Create seen inside unique.
+    explanation: >-
+      The global seen list was created once and kept growing across calls. Moving `seen = []` into the
+      function makes it a local name bound to a new list on every call, so each result depends only on
+      its own argument.
+
+  - id: m-debug-nonlocal
+    type: debug
+    skill: debugging
+    difficulty: 3
+    prompt: |
+      `score_game` should add up the points from each round using its helper `add`, and print `7`. It
+      crashes with `UnboundLocalError`. Fix it so `points` belongs to `score_game` (do not use `global`).
+    starterCode: |
+      def score_game(rounds):
+          points = 0
+          def add(n):
+              points += n
+          for r in rounds:
+              add(r)
+          return points
+
+      print(score_game([3, 4]))
+    solution: |
+      def score_game(rounds):
+          points = 0
+          def add(n):
+              nonlocal points
+              points += n
+          for r in rounds:
+              add(r)
+          return points
+
+      print(score_game([3, 4]))
+    expectedOutput: |
+      7
+    tests:
+      - name: no global statement
+        code: |
+          assert not uses("Global"), "points belongs to score_game, not to the module. Use nonlocal, not global."
+      - name: adds up the rounds
+        code: |
+          for rounds, expected in [([3, 4], 7), ([], 0), ([10, -2, 5], 13)]:
+              r = score_game(rounds)
+              assert r == expected, f"score_game({rounds}) returned {r!r}; expected {expected}."
+      - name: prints 7
+        code: |
+          assert output().strip() == "7", f"Your program printed {output()!r}."
+    hints:
+      - "`points += n` assigns to points, which makes points local to add."
+      - Which statement tells an inner function that a name belongs to the enclosing function?
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: Inside add, points is still treated as local. Add `nonlocal points` as the first line of add.
+    explanation: >-
+      The assignment in add made points local to add. `nonlocal points` makes add rebind the enclosing
+      function's points instead. (Removing the helper and adding in the loop directly is another valid
+      fix.)
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-legb, m-mcq-global, m-tf-fresh, m-debug-leaky-state, m-debug-nonlocal]
+
+cheatsheet: |
+  ```python
+  x = "global"            # global name (module level)
+  def f(a):               # a is local
+      b = a * 2           # b is local (assigned in f)
+      return x            # read: Local -> Enclosing -> Global -> Built-in
+
+  def g():
+      count += 1          # UnboundLocalError: assignment makes count local everywhere in g
+
+  def h():
+      global total        # rebind the module-level total
+      total += 1
+
+  def outer():
+      n = 0
+      def inner():
+          nonlocal n      # rebind outer's n
+          n += 1
+  ```
+  - Each call → fresh locals · blocks (if/for/while) don't create scopes
+  - Mutating an outer list needs no global; rebinding does
+  - Don't shadow built-ins (sum, list, max, input…) · prefer parameters + return over globals

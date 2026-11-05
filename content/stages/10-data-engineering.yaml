@@ -1,0 +1,517 @@
+id: de
+order: 10
+title: Data Engineering and Data Platforms
+shortTitle: Data Engineering
+summary: >-
+  Building reliable data pipelines: formats, ETL/ELT, batch and streaming, orchestration, modelling,
+  warehouses and lakehouses, distributed processing with Spark, quality, lineage and governance.
+why: >-
+  Models and RAG systems are only as good as the data that reaches them. Data engineering makes that data
+  correct, fresh, documented and reproducible.
+modules:
+  - id: pipelines
+    title: Pipelines
+    summary: Formats, ETL/ELT, batch vs streaming, idempotency and orchestration.
+  - id: storage
+    title: Storage and modelling
+    summary: Dimensional modelling, warehouses, lakes, lakehouses and schema evolution.
+  - id: distributed
+    title: Distributed processing
+    summary: Distributed systems fundamentals, Spark and streaming platforms.
+  - id: governance
+    title: Quality and governance
+    summary: Data quality, lineage, catalogs and managed platforms.
+concepts:
+  # --------------------------------------------------------------- pipelines
+  - id: de.data-formats
+    title: Data formats — structured, semi-structured and unstructured
+    module: pipelines
+    level: intermediate
+    priority: essential
+    summary: CSV, JSON, Avro and Parquet differ in schema, compression and row- vs column-orientation, which drives storage cost and query speed.
+    why: The file format decides how much you pay to store and scan data, whether types survive the trip between systems, and how fast every downstream query runs.
+    requires: [data.data-loading]
+    keyIdeas:
+      - Structured data has a fixed tabular schema; semi-structured data (JSON, XML) is nested and self-describing; unstructured data (text, images, audio) has no record schema at all.
+      - CSV and JSON Lines are row-oriented text — easy to read and append, but untyped, verbose and slow to parse at scale.
+      - Avro is a row-oriented binary format whose schema travels with the data, which suits event streams, record-at-a-time writes and schema evolution.
+      - Parquet is columnar — each column is stored, encoded and compressed separately, so a query reads only the columns it needs and can skip row groups using stored min/max statistics.
+      - Compression codecs (Snappy, Zstandard, gzip) trade CPU for size; Parquet and Avro stay splittable for parallel reads when compressed, a gzipped CSV does not.
+    misconceptions:
+      - JSON is not really schemaless; consumers still rely on an implicit schema, and it breaks silently when a producer changes it.
+      - Parquet is not always the right choice; for small, frequently appended or record-at-a-time data, row formats such as Avro or JSON Lines fit better.
+    tools: [Apache Parquet, Apache Avro, Apache Arrow]
+    interview: Explain why columnar formats make analytical queries faster (column pruning, predicate pushdown, better compression).
+    production: Avoid the small-files problem — thousands of tiny files slow every engine down, so compact them into larger files of the size your engine recommends.
+    sources:
+      - title: Apache Parquet documentation
+        url: https://parquet.apache.org/docs/
+        publisher: Apache Software Foundation
+      - title: Apache Avro specification
+        url: https://avro.apache.org/docs/1.12.0/specification/
+        publisher: Apache Software Foundation
+        version: "1.12.0"
+      - title: Arrow Columnar Format
+        url: https://arrow.apache.org/docs/format/Columnar.html
+        publisher: Apache Software Foundation
+  - id: de.etl-elt
+    title: ETL and ELT pipelines
+    module: pipelines
+    level: intermediate
+    priority: essential
+    summary: Extract, transform and load data between systems; ELT loads raw data first and transforms inside the warehouse.
+    why: Business data is spread across many operational databases, SaaS tools and event streams; analytics, ML and RAG need it combined, cleaned and in one place.
+    requires: [de.data-formats, databases.sql-modification]
+    keyIdeas:
+      - Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or incrementally.
+      - Transform cleans, deduplicates, casts types, joins and aggregates; Load writes the result to a warehouse, lake or other target.
+      - ETL transforms on a separate engine before loading; ELT loads raw data first and transforms it with SQL inside the warehouse or lakehouse, whose compute scales independently of storage.
+      - Keep an untouched raw (staging, bronze) layer so any downstream table can be rebuilt when logic changes; layer cleaned and business-level tables on top.
+      - Change data capture (CDC) reads a database's transaction log to stream inserts, updates and deletes instead of re-copying whole tables.
+    misconceptions:
+      - ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+      - A pipeline run that "succeeded" only means no exception was raised — it is not evidence that the data is correct.
+    tools: [dbt Core, Debezium]
+    interview: Explain when you would choose ELT over ETL and how you would layer raw, cleaned and business-level tables.
+    production: Keep raw data immutable and partitioned by load date so reprocessing never depends on the source still having the data.
+    sources:
+      - title: Extract, transform, load (ETL)
+        url: https://learn.microsoft.com/en-us/azure/architecture/data-guide/relational-data/etl
+        publisher: Microsoft Azure Architecture Center
+      - title: How we structure our dbt projects
+        url: https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview
+        publisher: dbt Labs
+      - title: Debezium documentation
+        url: https://debezium.io/documentation/reference/stable/index.html
+        publisher: Debezium project
+  - id: de.batch-streaming
+    title: Batch vs streaming processing
+    module: pipelines
+    level: intermediate
+    priority: essential
+    summary: Batch processes bounded data on a schedule; streaming processes unbounded events continuously — the trade-off is latency vs complexity and cost.
+    why: Choosing streaming when an hourly batch would do multiplies operational cost; choosing batch when the business needs second-level freshness fails the use case.
+    requires: [de.etl-elt]
+    keyIdeas:
+      - Batch jobs process a bounded dataset (for example yesterday's partition) on a schedule; they are simple to reason about, rerun and backfill.
+      - Streaming jobs process an unbounded sequence of events as they arrive, with latencies from milliseconds to seconds, and run continuously.
+      - Event time (when something happened) differs from processing time (when the system saw it); windows (tumbling, sliding, session) group events by event time.
+      - Watermarks estimate how far event time has progressed, deciding when a window is complete enough to emit and how late data is handled.
+      - Micro-batching (Spark Structured Streaming's default mode) runs small batches continuously — a middle ground; always ask how fresh the data really needs to be.
+    misconceptions:
+      - Streaming is not automatically better or more modern; it is harder to test, debug, reprocess and operate.
+      - Events do not arrive in order; aggregating by arrival time gives wrong results when devices are offline or networks are slow.
+    tools: [Apache Kafka, Apache Flink, Spark Structured Streaming]
+    interview: Explain event time vs processing time, windowing and how late-arriving data is handled.
+    production: Streaming jobs need checkpointed state, monitoring of lag and a plan for reprocessing history, which batch jobs get almost for free.
+    sources:
+      - title: "Streaming 101: The world beyond batch"
+        url: https://www.oreilly.com/radar/the-world-beyond-batch-streaming-101/
+        publisher: O'Reilly Radar (Tyler Akidau)
+      - title: Structured Streaming Programming Guide
+        url: https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html
+        publisher: Apache Software Foundation
+      - title: Timely Stream Processing
+        url: https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/
+        publisher: Apache Flink
+  - id: de.idempotency-incremental
+    title: Idempotent and incremental pipelines
+    module: pipelines
+    level: advanced
+    priority: essential
+    summary: Re-running a pipeline must not duplicate data; incremental loads process only new data using watermarks, and backfills reprocess history safely.
+    why: Pipelines fail and are retried all the time; without idempotency every retry or backfill risks duplicated, missing or half-written data.
+    requires: [de.etl-elt]
+    keyIdeas:
+      - Idempotent means running a job twice with the same input leaves the same result as running it once.
+      - "Common techniques: overwrite a whole partition (for example `dt=2026-10-21`) instead of appending, `MERGE`/upsert on a business key, and deduplicate on a unique event ID."
+      - Incremental loads store a high-water mark (the largest `updated_at` or offset processed) and read only newer rows, usually with a small overlap to catch late updates.
+      - Parameterise jobs by the logical interval they process, not by "now", so a backfill of any past interval runs exactly the same code.
+      - Hard deletes in a source are invisible to an `updated_at` watermark; use CDC or soft-delete flags to propagate them.
+    misconceptions:
+      - Retries are not safe by default; an `INSERT` that timed out may have succeeded, so retrying it can duplicate rows.
+      - Watermarks on timestamps can skip rows when transactions commit out of order; an overlap window plus deduplication fixes this.
+    interview: Describe how you would make a daily load safe to rerun and how you would backfill a year of history.
+    production: Record per-run metadata (interval processed, row counts, watermark values) so reruns and audits are traceable.
+    sources:
+      - title: Airflow best practices
+        url: https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html
+        publisher: Apache Software Foundation
+      - title: Configure incremental models
+        url: https://docs.getdbt.com/docs/build/incremental-models
+        publisher: dbt Labs
+      - title: Table deletes, updates, and merges
+        url: https://docs.delta.io/delta-update/
+        publisher: Delta Lake (Linux Foundation)
+  - id: de.change-data-capture
+    title: Change data capture (CDC)
+    module: pipelines
+    level: advanced
+    priority: supporting
+    summary: Capture every insert, update and delete from a database's transaction log and stream them to other systems, instead of repeatedly re-querying tables.
+    why: Polling tables with an `updated_at` watermark misses hard deletes and adds load to the source; reading the log captures every change, in commit order, with low latency.
+    requires: [de.etl-elt, databases.transactions]
+    keyIdeas:
+      - "Log-based CDC reads the database's write-ahead or binary log (PostgreSQL logical decoding, MySQL binlog) and emits one change event per row change."
+      - "A change event typically carries the operation (create/update/delete), the row before and after, and the source position (log sequence number) for ordering and resuming."
+      - An initial snapshot of existing rows is taken first, then the connector switches to streaming changes from the recorded log position.
+      - Consumers apply events idempotently (upsert by primary key, tombstones for deletes) because delivery is usually at-least-once.
+    misconceptions:
+      - CDC is not a backup; it replicates changes, including mistakes such as an accidental DELETE.
+      - Schema changes in the source must be handled explicitly; CDC does not make downstream schemas evolve safely on its own.
+    tools: [Debezium]
+    interview: Compare timestamp-based incremental loads with log-based CDC, including how each handles deletes and ordering.
+    production: Monitor replication slot lag; an abandoned PostgreSQL replication slot retains WAL and can fill the source database's disk.
+    sources:
+      - title: Debezium documentation
+        url: https://debezium.io/documentation/reference/stable/index.html
+        publisher: Debezium (Red Hat and community)
+      - title: "PostgreSQL: Logical decoding"
+        url: https://www.postgresql.org/docs/current/logicaldecoding.html
+        publisher: PostgreSQL Global Development Group
+  - id: de.orchestration
+    title: Pipeline orchestration
+    module: pipelines
+    level: intermediate
+    priority: essential
+    summary: Orchestrators (Airflow, Dagster, Prefect) run tasks as DAGs with schedules, dependencies, retries, alerts and backfills.
+    why: Real pipelines have dozens of dependent steps that must run in order, on time, with retries and alerts; cron scripts cannot see dependencies or recover from failures.
+    requires: [de.etl-elt, cs.graphs]
+    keyIdeas:
+      - A pipeline is a directed acyclic graph (DAG) — tasks are nodes, dependencies are edges, and a task runs only when its upstream tasks succeed.
+      - Each scheduled run is tied to a data interval (Airflow's logical date), which enables catch-up and backfills of past intervals.
+      - Configure retries with backoff, timeouts and failure alerts per task; this is only safe when tasks are idempotent.
+      - The orchestrator coordinates work; heavy computation belongs in the warehouse, Spark or containers, not inside scheduler workers.
+      - Asset-oriented orchestration (Dagster assets, Airflow assets/datasets) models the data each step produces and schedules on data updates — APIs and names are version-dependent.
+    misconceptions:
+      - Airflow is not a data processing engine; passing large datasets between tasks (for example through XCom) is an anti-pattern — pass references instead.
+      - A run's logical date marks the data interval it processes, not the wall-clock time it executes.
+    tools: [Apache Airflow, Dagster, Prefect]
+    interview: Explain how you handle retries, failed dependencies and backfills, and compare task-based with asset-based orchestration.
+    production: Alert on failures and missed or slow runs, keep DAG files fast to parse, and version DAG code with the transformations it runs.
+    sources:
+      - title: Airflow core concepts
+        url: https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/index.html
+        publisher: Apache Software Foundation
+      - title: Dagster documentation
+        url: https://dagster.io/docs
+        publisher: Dagster Labs
+      - title: Prefect documentation
+        url: https://docs.prefect.io/
+        publisher: Prefect Technologies
+  - id: de.dbt
+    title: SQL transformations with dbt
+    module: pipelines
+    level: intermediate
+    priority: technology-specific
+    summary: dbt turns version-controlled SELECT statements into tested, documented, dependency-ordered warehouse models.
+    why: Warehouse SQL scattered across scripts and BI tools becomes untested, undocumented and impossible to change safely; dbt brings version control, tests and dependency management to it.
+    requires: [de.etl-elt, databases.sql-advanced]
+    keyIdeas:
+      - A model is a `.sql` file containing one `SELECT`; dbt wraps it in DDL and materialises it as a view, table, incremental table or ephemeral CTE.
+      - "`{{ ref('model_name') }}` declares a dependency, so dbt builds models in DAG order and draws lineage; `{{ source('raw', 'orders') }}` points at raw tables."
+      - Data tests such as `unique`, `not_null`, `accepted_values` and `relationships` are declared in YAML; `dbt build` runs models and their tests in dependency order.
+      - Jinja templating and macros reuse SQL logic; `dbt docs generate` builds a documentation site with the lineage graph.
+      - dbt Core is open source; dbt Labs also sells hosted and newer-engine products whose features and licences differ — check current terms.
+    misconceptions:
+      - dbt does not extract or load data; it only transforms data that is already in the warehouse.
+      - Hard-coding table names instead of using `ref()` breaks build ordering, lineage and switching between dev and prod schemas.
+    tools: [dbt Core]
+    interview: Explain how `ref` builds the DAG, the materialisation types, and when an incremental model is worth its complexity.
+    production: In CI, build and test only modified models and their children against an isolated schema before merging.
+    sources:
+      - title: What is dbt?
+        url: https://docs.getdbt.com/docs/introduction
+        publisher: dbt Labs
+      - title: Materializations
+        url: https://docs.getdbt.com/docs/build/materializations
+        publisher: dbt Labs
+      - title: Add data tests to your DAG
+        url: https://docs.getdbt.com/docs/build/data-tests
+        publisher: dbt Labs
+  # ----------------------------------------------------------------- storage
+  - id: de.data-modeling
+    title: Dimensional data modelling
+    module: storage
+    level: intermediate
+    priority: essential
+    summary: Fact and dimension tables, star schemas, grain and slowly changing dimensions organise data for analysis.
+    why: Operational tables are normalised for fast writes; analysts need tables that make business questions easy to ask and give the same answer every time.
+    requires: [databases.schema-design, de.etl-elt]
+    keyIdeas:
+      - Fact tables record measurable events (orders, payments, clicks) with numeric measures and foreign keys; dimension tables describe the who, what, where and when.
+      - Declare the grain first — exactly what one fact row represents, such as "one row per order line" — and keep every measure consistent with it.
+      - A star schema joins one fact table directly to denormalised dimensions; a snowflake schema normalises dimensions into further tables.
+      - Slowly changing dimensions — Type 1 overwrites the old value; Type 2 adds a new row with `valid_from`, `valid_to` and `is_current` so history is preserved.
+      - Use surrogate keys for dimensions so source-key changes and Type 2 history are handled cleanly; conformed dimensions are shared across fact tables.
+    misconceptions:
+      - Mixing grains in one fact table (order totals next to order lines) silently double-counts when users sum a measure.
+      - Cheap storage has not made modelling obsolete; wide denormalised tables still need a defined grain and consistent dimensions.
+    interview: Design a star schema for a given business process, state its grain, and explain SCD Type 2.
+    sources:
+      - title: Dimensional modeling techniques
+        url: https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/
+        publisher: Kimball Group
+      - title: Understand star schema and the importance for Power BI
+        url: https://learn.microsoft.com/en-us/power-bi/guidance/star-schema
+        publisher: Microsoft Learn
+  - id: de.warehouses-lakes
+    title: Warehouses, lakes and lakehouses
+    module: storage
+    level: intermediate
+    priority: essential
+    summary: Warehouses store modelled data for SQL analytics; lakes store raw files cheaply; lakehouse table formats (Delta Lake, Apache Iceberg) add transactions to lakes.
+    why: Where analytical data lives determines its cost, which workloads (SQL, ML, file processing) can use it, and whether updates are reliable.
+    requires: [de.data-formats, de.data-modeling]
+    keyIdeas:
+      - A warehouse stores structured, modelled data in a managed columnar engine optimised for SQL; most cloud warehouses separate storage from compute.
+      - A data lake stores files of any format (often Parquet) in cheap object storage; without a table layer there are no transactions, so failed or concurrent writes can leave partial data.
+      - Open table formats (Delta Lake, Apache Iceberg, Apache Hudi) keep a metadata/transaction log over data files, giving atomic commits, schema enforcement and evolution, time travel and efficient `MERGE`/delete.
+      - A lakehouse uses such a table format so SQL engines, Spark and ML tools share one copy of the data.
+      - The medallion pattern layers data as bronze (raw), silver (cleaned, conformed) and gold (business-level aggregates).
+    misconceptions:
+      - A lake without governance or a table format does not become a cheaper warehouse — it becomes a "data swamp".
+      - Delta Lake and Iceberg are not databases or query engines; they are table formats that engines such as Spark, Trino, Flink and warehouses read and write.
+    tools: [Delta Lake, Apache Iceberg, DuckDB]
+    interview: Compare warehouse, lake and lakehouse, and explain what a table format's transaction log provides.
+    production: Schedule table maintenance (compaction, snapshot expiry or vacuum) or query performance and storage costs degrade over time.
+    sources:
+      - title: Apache Iceberg documentation
+        url: https://iceberg.apache.org/docs/latest/
+        publisher: Apache Software Foundation
+      - title: Delta Lake documentation
+        url: https://docs.delta.io/index.html
+        publisher: Delta Lake (Linux Foundation)
+      - title: What is the medallion lakehouse architecture?
+        url: https://docs.databricks.com/aws/en/lakehouse/medallion
+        publisher: Databricks
+  - id: de.schema-evolution
+    title: Schema evolution
+    module: storage
+    level: advanced
+    priority: supporting
+    summary: Adding, renaming or retyping fields without breaking producers and consumers — compatibility rules and versioned contracts.
+    why: Producers and consumers deploy independently, so an unannounced field change can break pipelines loudly or corrupt dashboards and models silently.
+    requires: [de.data-formats, databases.migrations]
+    keyIdeas:
+      - Backward compatible means new readers can read old data; forward compatible means old readers can read new data; full compatibility means both.
+      - Usually safe — adding an optional field with a default, or widening a type (int to long). Usually breaking — removing or renaming a field, narrowing a type, or changing a field's meaning.
+      - Rename with expand-and-contract — add the new field, write both, migrate consumers, then remove the old field.
+      - Avro or Protobuf with a schema registry can reject incompatible schemas at write time; Iceberg tracks columns by ID, so renames and reorders are metadata-only changes.
+      - Treat schemas as versioned contracts owned by the producer and checked in CI.
+    misconceptions:
+      - Changing what a field means (for example cents to dollars) is a breaking change even if its type stays the same.
+      - Self-describing files do not make readers tolerant of change; engines may fail, or silently return nulls, for mismatched columns.
+    interview: Define backward and forward compatibility and walk through a safe rollout of a field rename.
+    production: Enforce compatibility checks in CI or a schema registry rather than discovering breaks in downstream jobs.
+    sources:
+      - title: Apache Avro specification — schema resolution
+        url: https://avro.apache.org/docs/1.12.0/specification/
+        publisher: Apache Software Foundation
+        version: "1.12.0"
+      - title: Iceberg schema evolution
+        url: https://iceberg.apache.org/docs/latest/evolution/
+        publisher: Apache Software Foundation
+      - title: "Language Guide (proto 3): updating a message type"
+        url: https://protobuf.dev/programming-guides/proto3/
+        publisher: Google
+  # ------------------------------------------------------------- distributed
+  - id: de.distributed-systems-basics
+    title: Distributed systems fundamentals
+    module: distributed
+    level: advanced
+    priority: essential
+    summary: Partitioning, replication, partial failure, clocks and the CAP trade-off explain why distributed systems behave differently from one machine.
+    why: Spark, Kafka, cloud warehouses and vector databases are all distributed; their duplicates, stale reads and odd failures only make sense with these fundamentals.
+    requires: [networking.tcp-udp, databases.transactions]
+    keyIdeas:
+      - Partitioning (sharding) splits data across nodes for scale; replication keeps copies for availability and read throughput.
+      - Partial failure — a missing reply cannot distinguish a slow node, a crashed node and a lost message, so timeouts are guesses and retries require idempotent operations.
+      - Clocks on different machines drift; order events with sequence numbers or logical clocks rather than wall-clock timestamps.
+      - CAP — during a network partition a replicated system must choose between consistency (linearizability) and availability; PACELC adds the latency vs consistency trade-off when there is no partition.
+      - Consensus protocols such as Raft and Paxos let a majority quorum agree on a leader or log; a cluster of `2f + 1` nodes tolerates `f` failed nodes.
+    misconceptions:
+      - CAP is not "pick any two of three" at all times; the choice only applies while a partition is happening.
+      - Exactly-once delivery over a network is not achievable in general; systems provide exactly-once effects through at-least-once delivery plus idempotent or transactional processing.
+    interview: Explain CAP precisely, how quorum replication works, and why "exactly-once" is really about effects.
+    sources:
+      - title: "MIT 6.5840: Distributed Systems (course materials)"
+        url: https://pdos.csail.mit.edu/6.824/
+        publisher: MIT
+      - title: The Raft consensus algorithm
+        url: https://raft.github.io/
+        publisher: Diego Ongaro and John Ousterhout
+      - title: Distributed Systems (free textbook)
+        url: https://www.distributed-systems.net/
+        publisher: Maarten van Steen and Andrew S. Tanenbaum
+  - id: de.spark
+    title: Apache Spark
+    module: distributed
+    level: advanced
+    priority: technology-specific
+    summary: Spark distributes DataFrame operations across a cluster with lazy evaluation; partitions and shuffles determine performance.
+    why: When data no longer fits on one machine, Spark lets you write familiar DataFrame or SQL code that runs in parallel across a cluster.
+    requires: [de.distributed-systems-basics, data.pandas-transform]
+    keyIdeas:
+      - A driver program builds a plan; executors on worker nodes run tasks, one per data partition, in parallel.
+      - Transformations (`select`, `filter`, `join`) are lazy; an action (`count`, `write`, `collect`) triggers a job, which the Catalyst optimiser and Adaptive Query Execution (AQE) turn into stages.
+      - Narrow transformations work within a partition; wide ones (`groupBy`, `join`, `distinct`) shuffle data across the network, which is usually the most expensive step.
+      - Data skew (a few keys holding most rows) makes single tasks straggle; broadcast joins for small tables, salting keys and AQE skew handling help.
+      - Prefer built-in DataFrame functions over Python UDFs, which move rows to Python workers; `collect()` pulls all data to the driver and can crash it.
+    misconceptions:
+      - Spark is not always faster; for data that fits on one machine, pandas, Polars or DuckDB are simpler and often quicker.
+      - "`.cache()` does not cache anything immediately; data is cached when an action computes it, and it uses executor memory."
+    tools: [Apache Spark, PySpark]
+    interview: Explain lazy evaluation, narrow vs wide transformations, what causes a shuffle, and how you would fix a skewed join.
+    production: Use the Spark UI to find slow stages, spills to disk and skewed tasks, and tune partition counts and output file sizes.
+    sources:
+      - title: Spark SQL, DataFrames and Datasets Guide
+        url: https://spark.apache.org/docs/latest/sql-programming-guide.html
+        publisher: Apache Software Foundation
+      - title: RDD Programming Guide (shuffle operations)
+        url: https://spark.apache.org/docs/latest/rdd-programming-guide.html
+        publisher: Apache Software Foundation
+      - title: Spark SQL performance tuning
+        url: https://spark.apache.org/docs/latest/sql-performance-tuning.html
+        publisher: Apache Software Foundation
+  - id: de.streaming-systems
+    title: Streaming platforms and Kafka
+    module: distributed
+    level: advanced
+    priority: supporting
+    summary: Durable logs of events split into partitions, consumer groups, offsets and delivery semantics (at-most-once, at-least-once, exactly-once).
+    why: A durable event log decouples producers from many independent consumers and lets them replay history — the backbone of event-driven and real-time data systems.
+    requires: [de.batch-streaming, backend.event-driven, de.distributed-systems-basics]
+    keyIdeas:
+      - A topic is an append-only, replicated log split into partitions; order is guaranteed only within a partition, and the message key decides the partition.
+      - Consumers in a consumer group share a topic's partitions; each partition is read by one consumer of the group at a time, so the partition count caps parallelism (newer Kafka versions add queue-like share groups — version-dependent).
+      - Consumers track their position as offsets; committing before processing gives at-most-once, committing after processing gives at-least-once (possible duplicates).
+      - Kafka's exactly-once semantics combine idempotent producers and transactions for read-process-write within Kafka; side effects in external systems still need idempotent sinks.
+      - Messages are kept for a retention period or size, or compacted to the latest value per key — reading does not delete them.
+    misconceptions:
+      - Kafka is not a queue that removes messages once read; many consumer groups can read the same data independently.
+      - Adding partitions to a topic later changes which partition a key maps to, breaking per-key ordering across the change.
+    tools: [Apache Kafka]
+    interview: Explain partitions, consumer groups, offset commits and the three delivery semantics.
+    production: Monitor consumer lag, size partition counts for future throughput, and use replication with `acks=all` and `min.insync.replicas` for durability.
+    sources:
+      - title: Introduction to Apache Kafka
+        url: https://kafka.apache.org/intro/
+        publisher: Apache Software Foundation
+      - title: Apache Kafka documentation
+        url: https://kafka.apache.org/documentation/
+        publisher: Apache Software Foundation
+  # -------------------------------------------------------------- governance
+  - id: de.pipeline-quality
+    title: Data quality in pipelines
+    module: governance
+    level: intermediate
+    priority: essential
+    summary: Tests on every pipeline stage, data contracts with producers, freshness and volume monitoring, and quarantining bad records.
+    why: Bad data fails silently — models degrade and dashboards mislead without a single error — so checks must catch problems where they enter.
+    requires: [data.data-quality, de.etl-elt]
+    keyIdeas:
+      - Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness (latest timestamp), volume (row-count anomalies) and distribution drift.
+      - Test at the boundaries — on ingestion, after each transformation (for example dbt tests) and before publishing to consumers.
+      - A data contract is a producer's commitment to a schema, semantics and freshness, checked in the producer's CI so breaking changes are caught before deployment.
+      - Quarantine failing records in a separate table with the failure reason instead of silently dropping them or crashing the whole run.
+      - Give each check a severity — block publishing, or warn and continue — because not every anomaly should stop delivery.
+    misconceptions:
+      - Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+      - Silently filtering out bad rows hides upstream bugs; count them, store them and alert on them.
+    tools: [dbt Core, Great Expectations, Soda Core]
+    interview: Describe the checks you would put on a critical table and how you decide between blocking, warning and quarantining.
+    production: Route alerts to the owning team with context (failed check, sample rows) and treat data incidents like software incidents.
+    sources:
+      - title: Add data tests to your DAG
+        url: https://docs.getdbt.com/docs/build/data-tests
+        publisher: dbt Labs
+      - title: Great Expectations documentation
+        url: https://docs.greatexpectations.io/docs/home/
+        publisher: Great Expectations
+  - id: de.lineage-governance
+    title: Lineage, catalogs and governance
+    module: governance
+    level: advanced
+    priority: supporting
+    summary: Know where data came from, who owns it, who may access it and how sensitive it is — essential for debugging, compliance and trust.
+    why: When a number looks wrong, or a regulator asks where personal data went, you need to know the sources, transformations, owners and access paths.
+    requires: [de.warehouses-lakes, security.privacy-engineering]
+    keyIdeas:
+      - Lineage maps how datasets derive from each other, at table or column level, enabling impact analysis before a change and root-cause analysis after an incident.
+      - A data catalog records metadata — description, owner, schema, freshness, sensitivity classification and usage.
+      - Access control uses role- or attribute-based policies, column masking and row-level filters, granting least privilege.
+      - Classify sensitive data (PII) and apply retention and deletion rules required by regulations such as GDPR.
+      - OpenLineage is an open standard for emitting lineage events from orchestrators and engines, so lineage is captured automatically.
+    misconceptions:
+      - Governance is not just a compliance checkbox; clear ownership and documentation directly cut debugging time.
+      - Hand-drawn lineage goes stale; capture it from the tools that actually run the pipelines.
+    tools: [OpenLineage, DataHub, OpenMetadata]
+    interview: Explain how lineage supports impact analysis and how you would restrict access to PII columns.
+    production: Make sure deletion requests reach every derived copy, including snapshots, exports, caches and ML training sets.
+    sources:
+      - title: About OpenLineage
+        url: https://openlineage.io/docs/
+        publisher: OpenLineage (LF AI & Data)
+      - title: What is Unity Catalog?
+        url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/
+        publisher: Databricks
+      - title: OpenMetadata documentation
+        url: https://docs.open-metadata.org/
+        publisher: OpenMetadata
+  - id: de.cloud-data-platforms
+    title: Cloud data platforms
+    module: governance
+    level: intermediate
+    priority: supporting
+    summary: Object storage plus managed warehouses and query engines (BigQuery, Snowflake, Redshift, Athena) and their cost models.
+    why: Most production analytics runs on managed cloud services, and their pricing models (bytes scanned, compute time, storage, egress) shape how you design tables and queries.
+    requires: [de.warehouses-lakes, architecture.cloud-fundamentals]
+    keyIdeas:
+      - Object storage (Amazon S3, Google Cloud Storage, Azure Blob/ADLS) is the cheap, durable base layer that warehouses and query engines read from or alongside.
+      - Separating storage from compute lets you scale query capacity independently and suspend it when idle.
+      - Cost models differ — per bytes scanned (for example BigQuery on-demand, Athena) or per compute time (for example Snowflake warehouses, provisioned Redshift), plus storage and egress; check current pricing.
+      - Partitioning, clustering and columnar formats reduce bytes scanned and therefore cost; `SELECT *` on a wide table is the classic expensive mistake.
+      - Moving data out of a region or provider (egress) is often billed and can dominate costs for cross-cloud architectures.
+    misconceptions:
+      - In scan-priced engines, adding `LIMIT` often does not reduce the bytes billed; selecting fewer columns and filtering on partition columns does.
+      - '"Serverless" does not mean free: you still pay for scans or compute seconds, storage and data transfer.'
+    tools: [DuckDB, Trino]
+    interview: Explain how a warehouse's pricing model changes your table design and query patterns.
+    production: Set budgets, quotas and cost alerts, and tag resources by team so spend can be attributed.
+    sources:
+      - title: BigQuery documentation
+        url: https://cloud.google.com/bigquery/docs
+        publisher: Google Cloud
+      - title: Snowflake key concepts and architecture
+        url: https://docs.snowflake.com/en/user-guide/intro-key-concepts
+        publisher: Snowflake
+      - title: What is Amazon Athena?
+        url: https://docs.aws.amazon.com/athena/latest/ug/what-is.html
+        publisher: Amazon Web Services
+  - id: de.databricks
+    title: Databricks platform concepts
+    module: governance
+    level: advanced
+    priority: technology-specific
+    summary: A managed Spark lakehouse platform — workspaces, clusters, notebooks, jobs, Delta Lake tables and Unity Catalog governance.
+    why: Databricks is a widely used enterprise data and ML platform; knowing its building blocks lets you map general Spark and lakehouse knowledge onto it quickly.
+    requires: [de.spark, de.warehouses-lakes]
+    keyIdeas:
+      - A workspace holds notebooks, Git folders, jobs and dashboards; compute comes as interactive clusters, job clusters, SQL warehouses and serverless options.
+      - Delta Lake is the default table format, and Unity Catalog organises tables in a three-level namespace `catalog.schema.table`.
+      - Unity Catalog centralises permissions, lineage and audit logs across workspaces.
+      - Jobs orchestrate notebooks, scripts and SQL tasks; declarative pipelines (formerly Delta Live Tables) add data-quality expectations — product names change often, so check the current docs.
+      - Cost is billed in Databricks Units (DBUs) on top of, or bundled with, cloud compute; auto-termination and job clusters avoid paying for idle clusters — check current terms.
+    misconceptions:
+      - Databricks is not a separate engine from Spark; it runs Apache Spark with proprietary optimisations, so Spark concepts transfer directly.
+      - Leaving interactive clusters running is one of the most common and expensive mistakes; always set auto-termination.
+    tools: [Databricks]
+    production: Run scheduled work on job or serverless compute, govern access through Unity Catalog, and deploy jobs from version control rather than editing them in the UI.
+    sources:
+      - title: Databricks documentation
+        url: https://docs.databricks.com/aws/en/
+        publisher: Databricks
+      - title: What is Unity Catalog?
+        url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/
+        publisher: Databricks

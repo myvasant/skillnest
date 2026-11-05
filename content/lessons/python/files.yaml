@@ -1,0 +1,1316 @@
+id: python.files
+concept: python.files
+title: Reading and Writing Files
+subtitle: open(), modes, encodings and the with statement
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Programs forget everything when they stop; files let data outlive a run. Learn what a file really is
+  (bytes on disk), how open() and its modes work, why you always pass encoding="utf-8", how `with`
+  guarantees the file is closed, and how to read, write and debug files safely.
+objectives:
+  - Explain a file as named bytes on disk, and a text file as bytes decoded with an encoding.
+  - Choose the right open() mode (r, w, a, x, b) and predict what each does to an existing file.
+  - Use `with open(..., encoding="utf-8") as f:` to read a file whole, line by line, or with readline().
+  - Write text with write(), writelines() and print(file=...), adding newlines deliberately.
+  - Diagnose FileNotFoundError, UnicodeDecodeError and "not readable" errors, including relative-path problems.
+sources:
+  - title: "The Python Tutorial: Reading and Writing Files"
+    url: https://docs.python.org/3/tutorial/inputoutput.html#reading-and-writing-files
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: open()"
+    url: https://docs.python.org/3/library/functions.html#open
+    publisher: Python Software Foundation
+  - title: "io — Core tools for working with streams (Text encoding)"
+    url: https://docs.python.org/3/library/io.html#text-encoding
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The with statement"
+    url: https://docs.python.org/3/reference/compound_stmts.html#the-with-statement
+    publisher: Python Software Foundation
+  - title: "PEP 686: Make UTF-8 mode default"
+    url: https://peps.python.org/pep-0686/
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why programs need files
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Every variable you have created so far lives in the computer's **memory** (RAM). Memory is fast,
+          but it is wiped the moment your program ends. Run a to-do app, add three tasks, close it — and
+          the tasks are gone.
+
+          To remember anything between runs — settings, scores, a log of what happened, data from another
+          program — a program has to put it somewhere **persistent**: a file on disk.
+      - type: code
+        runnable: true
+        code: |
+          tasks = ["buy milk", "call Sam", "water plants"]
+
+          with open("tasks.txt", "w", encoding="utf-8") as f:
+              for task in tasks:
+                  f.write(task + "\n")
+
+          del tasks   # pretend the program ended: the list is gone from memory
+
+          with open("tasks.txt", encoding="utf-8") as f:
+              print(f.read())
+        expectedOutput: |
+          buy milk
+          call Sam
+          water plants
+        caption: >-
+          The list is deleted, but its contents survive in tasks.txt. A completely different program could
+          read the same file tomorrow.
+        annotations:
+          - line: 3
+            text: Open tasks.txt for writing ("w"), as UTF-8 text. `f` is the file object.
+          - line: 5
+            text: write() does not add a newline, so we add "\n" ourselves to put each task on its own line.
+          - line: 9
+            text: Open the same file again, this time for reading (the default mode).
+      - type: callout
+        variant: note
+        title: Files in this browser
+        body: |
+          Python here runs inside your browser, so it has a **virtual** file system that lives in memory
+          (your working folder is `/home/pyodide`). Files survive between runs until you reload the page,
+          then they disappear. That is why every example in this lesson creates the files it reads. On
+          your own computer, the same code writes real files to your disk.
+
+  - id: what-is-a-file
+    title: What a file really is
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **file** is a named sequence of **bytes** stored by the operating system's file system. A
+          [path](glossary:path) such as `reports/june.txt` is the file's address. The file system does not
+          know or care what the bytes mean — that is up to the program reading them.
+
+          Files come in two broad kinds:
+
+          - A [text file](glossary:text-file) holds bytes that represent characters: `.txt`, `.csv`,
+            `.json`, `.py`, `.html`. To turn the bytes into characters you need to know the file's
+            **encoding** — the rule that maps characters to bytes (see
+            [text encoding](concept:foundations.text-encoding)). Today the usual encoding is
+            [UTF-8](glossary:utf-8).
+          - A [binary file](glossary:binary-file) holds bytes that are *not* text: images, audio, zip
+            archives, Excel workbooks. You read them as raw bytes.
+
+          In UTF-8, plain English letters take one byte each, but many other characters take two to four.
+          So "number of characters" and "number of bytes" are different things:
+      - type: code
+        runnable: true
+        code: |
+          word = "café"
+          data = word.encode("utf-8")   # text -> bytes
+
+          print(len(word), "characters")
+          print(len(data), "bytes")
+          print(data)
+          print(data.decode("utf-8"))   # bytes -> text
+        expectedOutput: |
+          4 characters
+          5 bytes
+          b'caf\xc3\xa9'
+          café
+        annotations:
+          - line: 2
+            text: encode() turns a str into a bytes object using an encoding.
+          - line: 6
+            text: "A bytes literal starts with b. The é became two bytes, written in hex as \\xc3\\xa9."
+          - line: 7
+            text: decode() is the reverse. You must decode with the same encoding that was used to encode.
+      - type: markdown
+        body: |
+          When you open a file in **text mode** (the default), Python does this encoding and decoding for
+          you: you write and read `str` objects, and Python converts to and from bytes on the way to the
+          disk. Opening in **binary mode** (`"rb"`, `"wb"`) skips that step and gives you the raw bytes:
+      - type: code
+        runnable: true
+        code: |
+          with open("cafe.txt", "w", encoding="utf-8") as f:
+              f.write("café\n")
+
+          with open("cafe.txt", "rb") as f:     # b = binary: no decoding
+              print(f.read())
+
+          with open("cafe.txt", encoding="utf-8") as f:
+              print(f.read())
+        expectedOutput: |
+          b'caf\xc3\xa9\n'
+          café
+        caption: The same six bytes on disk, seen raw (binary mode) and decoded (text mode).
+      - type: callout
+        variant: warning
+        title: Always pass encoding="utf-8" for text files
+        body: |
+          If you leave out `encoding`, Python 3.14 uses your computer's *locale* encoding. In this browser
+          and on most macOS and Linux machines that is UTF-8, but on Windows it is often `cp1252`. The
+          same program can then read a file correctly on one computer and produce garbage — or crash with
+          `UnicodeDecodeError` — on another. Python 3.15 switches the default to UTF-8
+          ([PEP 686](https://peps.python.org/pep-0686/)), but writing `encoding="utf-8"` explicitly is
+          still the clearest and works on every version.
+      - type: item
+        ref: encoding-mcq
+
+  - id: open-and-modes
+    title: open() and its modes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `open(path, mode, encoding=...)` asks the operating system for access to a file and returns a
+          [file object](glossary:file-object) — a Python object you call methods on (`read`, `write`,
+          `close`, …). The [mode](glossary:file-mode) string says what you intend to do:
+
+          | Mode | Meaning | If the file exists | If it doesn't |
+          |---|---|---|---|
+          | `"r"` (default) | read | read from the start | `FileNotFoundError` |
+          | `"w"` | write | **erases it first** (truncates to 0 bytes) | creates it |
+          | `"a"` | append | keeps it; every write goes **at the end** | creates it |
+          | `"x"` | exclusive create | `FileExistsError` | creates it |
+
+          Add `b` for binary (`"rb"`, `"wb"`) or `+` to allow both reading and writing (`"r+"`). Text mode
+          (`t`) is the default, so `"r"` means `"rt"`.
+
+          The most important row is `"w"`: **opening a file in `"w"` mode erases it immediately**, before
+          you write anything. That is great for "save my latest data", and a disaster if you meant to add
+          to the file.
+      - type: code
+        runnable: true
+        code: |
+          with open("log.txt", "w", encoding="utf-8") as f:
+              f.write("first entry\n")
+
+          with open("log.txt", "a", encoding="utf-8") as f:   # append: keep what is there
+              f.write("second entry\n")
+
+          with open("log.txt", encoding="utf-8") as f:
+              print(f.read())
+
+          with open("log.txt", "w", encoding="utf-8") as f:   # "w" again: erased!
+              pass
+
+          with open("log.txt", encoding="utf-8") as f:
+              print(repr(f.read()))
+        expectedOutput: |
+          first entry
+          second entry
+
+          ''
+        annotations:
+          - line: 4
+            text: '"a" adds to the end of the existing file.'
+          - line: 10
+            text: '`pass` writes nothing, yet the file is now empty: "w" truncated it the moment it was opened.'
+          - line: 14
+            text: repr() shows the empty string as '' so you can see that nothing is left.
+      - type: markdown
+        body: |
+          Use `"x"` when overwriting would be a bug — for example, never replacing a report that already
+          exists:
+      - type: code
+        runnable: true
+        code: |
+          with open("report.txt", "w", encoding="utf-8") as f:
+              f.write("Q3 report\n")
+
+          try:
+              with open("report.txt", "x", encoding="utf-8") as f:
+                  f.write("this must not replace the old report\n")
+          except FileExistsError:
+              print("report.txt already exists - leaving it alone")
+
+          with open("report.txt", encoding="utf-8") as f:
+              print(f.read())
+        expectedOutput: |
+          report.txt already exists - leaving it alone
+          Q3 report
+      - type: item
+        ref: predict-truncate
+
+  - id: with-statement
+    title: "Closing files: why `with` matters"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          An open file is a **resource borrowed from the operating system**. Two things make closing it
+          important:
+
+          1. **Buffering.** Writing to disk is slow, so the file object collects your writes in memory (a
+             [buffer](glossary:buffering)) and sends them to the disk in bigger chunks. Until the buffer is
+             *flushed* — which `close()` does — the data may not be in the file yet.
+          2. **Limits.** The operating system lets each program have only a limited number of files open
+             at once, and on some systems an open file cannot be renamed or deleted.
+
+          Watch the buffer in action. The data is written, but another reader sees an empty file until
+          the writer is closed:
+      - type: code
+        runnable: true
+        code: |
+          f = open("buffered.txt", "w", encoding="utf-8")
+          f.write("important data\n")
+
+          with open("buffered.txt", encoding="utf-8") as reader:
+              print("before close:", repr(reader.read()))
+
+          f.close()
+
+          with open("buffered.txt", encoding="utf-8") as reader:
+              print("after close:", repr(reader.read()))
+        expectedOutput: |
+          before close: ''
+          after close: 'important data\n'
+        caption: >-
+          write() put the text in the file object's buffer. Only close() (or flush()) pushed it to the
+          file.
+      - type: markdown
+        body: |
+          The `with` statement closes the file for you. When the indented block ends — **normally, or
+          because an exception was raised inside it** — Python calls `f.close()`:
+
+          ```python
+          with open("notes.txt", "w", encoding="utf-8") as f:
+              f.write("hello\n")
+          # here the file is already closed
+          ```
+
+          It is a shorter, safer version of this pattern from the
+          [exceptions lesson](concept:python.exceptions):
+
+          ```python
+          f = open("notes.txt", "w", encoding="utf-8")
+          try:
+              f.write("hello\n")
+          finally:
+              f.close()
+          ```
+      - type: code
+        runnable: true
+        code: |
+          try:
+              with open("partial.txt", "w", encoding="utf-8") as f:
+                  f.write("line 1\n")
+                  result = 10 / 0          # something goes wrong half-way
+                  f.write("line 2\n")
+          except ZeroDivisionError:
+              print("Error! Is the file closed anyway?", f.closed)
+
+          with open("partial.txt", encoding="utf-8") as f:
+              print(repr(f.read()))
+        expectedOutput: |
+          Error! Is the file closed anyway? True
+          'line 1\n'
+        annotations:
+          - line: 4
+            text: The ZeroDivisionError leaves the with block immediately — but with closes the file first.
+          - line: 7
+            text: "`f.closed` is True. The name f still exists; it just refers to a closed file object."
+          - line: 10
+            text: Line 1 reached the disk because closing flushed the buffer. Line 2 never ran.
+      - type: callout
+        variant: analogy
+        title: A borrowed book with a bookmark
+        body: |
+          Opening a file is like borrowing a book from a library. The file object is your copy plus a
+          **bookmark**: reading moves the bookmark forward, so the next read continues where the last one
+          stopped. Closing is returning the book. `with` is a librarian who takes the book back the moment
+          you leave the reading room — even if you leave in a hurry.
+      - type: callout
+        variant: deep-dive
+        title: with works with more than files
+        depth: deep
+        body: |
+          Any object that is a [context manager](glossary:context-manager) can be used with `with` — locks, database transactions,
+          temporary directories. The object defines what happens on entry and exit. You will build your own
+          in [context managers](concept:python.context-managers).
+      - type: item
+        ref: explain-with
+
+  - id: reading
+    title: Reading a file
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A file object opened for reading gives you several ways to get at the text:
+
+          | Code | Returns | Good for |
+          |---|---|---|
+          | `f.read()` | the whole rest of the file as one `str` | small files |
+          | `f.readline()` | the next line, **including** its `"\n"`; `""` at the end | reading a header line first |
+          | `for line in f:` | each line in turn, including `"\n"` | almost everything — uses little memory |
+          | `f.readlines()` | a `list` of all remaining lines | when you need them all at once |
+
+          Each of these continues from the file's current position (the bookmark) and moves it forward. At
+          the end of the file there is nothing left, so `read()` returns `""` and `readline()` returns `""`.
+      - type: code
+        runnable: true
+        code: |
+          with open("lines.txt", "w", encoding="utf-8") as f:
+              f.write("one\ntwo\nthree")
+
+          with open("lines.txt", encoding="utf-8") as f:
+              print(repr(f.readline()))
+              print(repr(f.readline()))
+              print(repr(f.read()))
+              print(repr(f.read()))
+        expectedOutput: |
+          'one\n'
+          'two\n'
+          'three'
+          ''
+        annotations:
+          - line: 2
+            text: The last line has no "\n" — files do not have to end with a newline.
+          - line: 8
+            text: The bookmark is at the end, so there is nothing left to read.
+      - type: markdown
+        body: |
+          The most common pattern is a `for` loop over the file object. Step through it and look at the
+          value of `line` each time — notice the `\n` at the end:
+      - type: visualization
+        component: python-tracer
+        title: Looping over the lines of a file
+        caption: >-
+          Each iteration binds `line` to the next line of text, newline included. strip() removes it before
+          printing. After the with block, the file object still exists but is closed.
+        props:
+          code: |
+            with open("shopping.txt", "w", encoding="utf-8") as f:
+                f.write("apples\nbread\n")
+
+            count = 0
+            with open("shopping.txt", encoding="utf-8") as f:
+                for line in f:
+                    count += 1
+                    print(count, line.strip())
+            print("closed:", f.closed)
+      - type: callout
+        variant: tip
+        title: Iterating does not load the whole file
+        body: |
+          `for line in f:` reads one line at a time, so it works on a 10 GB log file with very little
+          memory. `f.read()` and `f.readlines()` load everything at once. File objects are
+          [iterators](concept:python.iterators), an idea you will study properly soon.
+      - type: item
+        ref: predict-read-twice
+
+  - id: writing
+    title: Writing a file
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Three ways to write text to a file opened with `"w"`, `"a"` or `"x"`:
+
+          - `f.write(text)` writes exactly the string you give it — **no newline is added** — and returns
+            the number of characters written. It only accepts `str` (in text mode), so convert numbers
+            first.
+          - `f.writelines(list_of_strings)` writes each string in turn. Despite the name it does **not**
+            add newlines either.
+          - `print(..., file=f)` works like normal print — spaces between values, a newline at the end —
+            but sends the text to the file instead of the screen.
+      - type: code
+        runnable: true
+        code: |
+          scores = {"Ada": 91, "Grace": 87}
+
+          with open("scores.txt", "w", encoding="utf-8") as f:
+              f.write("name,score\n")
+              for name, score in scores.items():
+                  f.write(name + "," + str(score) + "\n")
+              f.writelines(["no", "newlines", "here"])
+              f.write("\n")
+              print("Total:", sum(scores.values()), file=f)
+
+          with open("scores.txt", encoding="utf-8") as f:
+              print(f.read())
+        expectedOutput: |
+          name,score
+          Ada,91
+          Grace,87
+          nonewlineshere
+          Total: 178
+        annotations:
+          - line: 6
+            text: str(score) is required — write(91) would raise TypeError.
+          - line: 7
+            text: writelines() glued the three strings together.
+          - line: 9
+            text: print(..., file=f) formats like print and adds the newline itself.
+      - type: callout
+        variant: deep-dive
+        title: Newlines on Windows
+        depth: deep
+        body: |
+          In text mode Python translates line endings for you. When writing, each `"\n"` becomes the
+          operating system's line separator (`os.linesep`): `"\r\n"` on Windows, `"\n"` elsewhere. When
+          reading, `"\r\n"`, `"\r"` and `"\n"` all arrive as `"\n"` ("universal newlines"). You can turn
+          this off with `open(..., newline="")`, which the [csv module](concept:python.csv-json) needs.
+
+  - id: paths-and-cwd
+    title: Relative paths and the current working directory
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A path like `"tasks.txt"` or `"reports/june.txt"` is **relative**: Python looks for it starting
+          from the program's [current working directory](glossary:path) (cwd), which is the folder the
+          program was *started from* — not necessarily the folder the `.py` file lives in. An **absolute**
+          path such as `/home/pyodide/tasks.txt` or `C:\Users\ada\tasks.txt` names the file from the root
+          of the file system and does not depend on the cwd.
+      - type: code
+        runnable: true
+        code: |
+          import os
+
+          print(os.getcwd())                       # where relative paths start
+          os.makedirs("reports", exist_ok=True)    # create a folder (no error if it exists)
+
+          with open("reports/q3-summary.txt", "w", encoding="utf-8") as f:
+              f.write("All good\n")
+
+          print(os.path.abspath("reports/q3-summary.txt"))
+          print(os.path.exists("q3-summary.txt"), os.path.exists("reports/q3-summary.txt"))
+        expectedOutput: |
+          /home/pyodide
+          /home/pyodide/reports/q3-summary.txt
+          False True
+        annotations:
+          - line: 9
+            text: abspath() shows the full path a relative path resolves to from the current directory.
+          - line: 10
+            text: The file is inside reports/, so "q3-summary.txt" on its own does not find it.
+      - type: callout
+        variant: misconception
+        title: '"The file is right next to my script, so open() will find it"'
+        body: |
+          Only if you start the program from that folder. If `app/main.py` opens `"config.txt"` and you run
+          `python app/main.py` from the parent folder, Python looks for `config.txt` in the **parent**
+          folder and raises `FileNotFoundError`. Either run the program from its own folder, or build the
+          path from the script's location — the [pathlib lesson](concept:python.pathlib) shows the
+          standard way, `Path(__file__).parent / "config.txt"`.
+      - type: callout
+        variant: tip
+        title: Windows paths in strings
+        body: |
+          A backslash starts an escape sequence in a Python string (`"\n"` is a newline), so
+          `"C:\new\data.txt"` contains a newline! Use forward slashes (`"C:/new/data.txt"`, which Windows
+          accepts), a raw string (`r"C:\new\data.txt"`), or pathlib.
+      - type: item
+        ref: cwd-mcq
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `FileNotFoundError: [Errno 2] No such file or directory: 'data.txt'` | Typo in the name, wrong folder, or the cwd is not what you think | Print `os.getcwd()` and `os.path.abspath(path)`; check spelling and extension (`data.txt.txt` on Windows!) |
+          | The file is unexpectedly empty | It was opened with `"w"`, which truncates | Use `"a"` to add, `"r"` to read |
+          | `io.UnsupportedOperation: not readable` | Reading from a file opened with `"w"` or `"a"` | Open it with `"r"` (the default) to read |
+          | `UnicodeDecodeError: 'utf-8' codec can't decode byte …` | The file is not UTF-8 (or not text at all) | Find out the real encoding, or open binary files with `"rb"` |
+          | Text like `cafÃ©` instead of `café` | Decoded with the wrong encoding | Pass the encoding the file was written with — usually `"utf-8"` |
+          | `TypeError: write() argument must be str, not int` | Writing a number in text mode | Convert first: `f.write(str(n))` or use an f-string |
+          | `ValueError: I/O operation on closed file.` | Using `f` after the `with` block ended | Do the work inside the block |
+          | Blank lines between printed lines | Each line already ends with `"\n"` and print adds another | `print(line.rstrip("\n"))` or `print(line, end="")` |
+
+          The `[Errno 2]` part is the operating system's error code for "no such file". In this browser
+          you will see `[Errno 44]` instead, because the WebAssembly runtime numbers its errors
+          differently — the meaning is identical.
+      - type: code
+        runnable: true
+        code: |
+          with open("no-such-folder/scores.txt", encoding="utf-8") as f:
+              print(f.read())
+        expectError: FileNotFoundError
+        caption: Run it and read the last line of the traceback. The path in quotes is exactly what Python looked for.
+      - type: markdown
+        body: |
+          When a missing file is a normal situation — a first run, an optional settings file — catch the
+          specific exception and fall back to something sensible:
+      - type: code
+        runnable: true
+        code: |
+          filename = "never-created-settings.txt"
+
+          try:
+              with open(filename, encoding="utf-8") as f:
+                  settings = f.read()
+          except FileNotFoundError:
+              print(f"{filename} not found - using defaults")
+              settings = "theme=light"
+
+          print(settings)
+        expectedOutput: |
+          never-created-settings.txt not found - using defaults
+          theme=light
+        caption: >-
+          Catch only FileNotFoundError. A bare except would also hide a typo in your code or a permission
+          problem you need to know about.
+      - type: markdown
+        body: |
+          An encoding mismatch either crashes or silently produces garbled text (called *mojibake*):
+      - type: code
+        runnable: true
+        code: |
+          with open("menu.txt", "w", encoding="utf-8") as f:
+              f.write("crème brûlée\n")
+
+          with open("menu.txt", encoding="latin-1") as f:   # wrong encoding, no error...
+              print(f.read())
+
+          with open("menu.txt", encoding="ascii") as f:     # wrong encoding, error
+              print(f.read())
+        expectError: UnicodeDecodeError
+        expectedOutput: |
+          crÃ¨me brÃ»lÃ©e
+        caption: >-
+          Latin-1 can decode any byte, so it "succeeds" with the wrong characters. ASCII only knows bytes
+          0–127, so it fails on the first é byte. The fix for both is encoding="utf-8".
+      - type: item
+        ref: debug-word-count
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise creates its own files, so you can run it as often as you like. Write the code
+          yourself before opening the hints.
+      - type: item
+        ref: save-load-lines
+      - type: item
+        ref: append-log
+      - type: item
+        ref: parsons-shout
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Three layers.** `open()` in text mode builds a stack of objects from the
+          [io module](https://docs.python.org/3/library/io.html):
+
+          1. `TextIOWrapper` — what you use. Encodes `str` to bytes (and decodes back) and translates
+             newlines.
+          2. `BufferedWriter` / `BufferedReader` — keeps a buffer in memory so the OS is called rarely.
+          3. `FileIO` — the raw layer that makes operating-system calls on a **file descriptor**, a small
+             integer the OS uses to identify the open file.
+
+          Binary mode (`"rb"`) gives you layer 2 directly; `buffering=0` with binary mode gives layer 3.
+      - type: code
+        runnable: true
+        code: |
+          with open("layers.txt", "w", encoding="utf-8") as f:
+              print(type(f).__name__)
+              print(type(f.buffer).__name__)
+              print(type(f.buffer.raw).__name__)
+              print(f.fileno() >= 0)
+        expectedOutput: |
+          TextIOWrapper
+          BufferedWriter
+          FileIO
+          True
+      - type: markdown
+        body: |
+          **Position.** Every open file has a current position. `f.tell()` reports it and `f.seek(0)` jumps
+          back to the start. In text mode the number returned by `tell()` is an opaque "cookie" that you
+          should only pass back to `seek()`; with multi-byte encodings it is not a character count.
+      - type: code
+        runnable: true
+        code: |
+          with open("abc.txt", "w", encoding="utf-8") as f:
+              f.write("abcdef")
+
+          with open("abc.txt", encoding="utf-8") as f:
+              print(f.read(2))    # read at most 2 characters
+              print(f.read())     # the rest
+              f.seek(0)           # back to the start
+              print(f.read(3))
+        expectedOutput: |
+          ab
+          cdef
+          abc
+      - type: markdown
+        body: |
+          **What if you forget to close?** In CPython, a file object is closed (and flushed) when its last
+          reference disappears, thanks to reference counting, and remaining files are usually flushed at
+          normal exit. That is an implementation detail: other Pythons (such as PyPy) free objects later, a
+          crash or `os._exit()` skips the cleanup, and in long-running programs leaked files pile up until
+          the OS refuses to open more (`OSError: [Errno 24] Too many open files`). Python even emits a
+          `ResourceWarning` for unclosed files when warnings are enabled (`python -W default`). Use `with`
+          and none of this matters.
+
+          **Atomic saves (production).** If a program crashes half-way through writing, `"w"` has already
+          erased the old content, so you are left with a broken file. Robust programs write to a temporary
+          file in the same folder and then replace the original with `os.replace(tmp, path)`, which swaps
+          the file in one step.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A file is named **bytes** on disk. Text files need an **encoding** to become characters — pass
+            `encoding="utf-8"` every time.
+          - `open(path, mode, encoding=...)` returns a file object. Modes: `"r"` read, `"w"` **truncate**
+            and write, `"a"` append, `"x"` create-only; add `"b"` for binary.
+          - `with open(...) as f:` closes the file when the block ends, even after an exception — which
+            also flushes buffered writes.
+          - Read with `read()`, `readline()`, or `for line in f:` (lines keep their `"\n"`; `""` means end
+            of file).
+          - `write()` and `writelines()` never add newlines; `print(..., file=f)` does.
+          - Relative paths start from the **current working directory**, not the script's folder.
+          - Catch `FileNotFoundError` when a missing file is expected; don't hide other errors.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What does `with` do when you open a file, and what happens if an exception occurs inside the
+          block?" — Explain that the file is closed on exit no matter how the block ends, that closing
+          flushes buffered data, and that it replaces a `try`/`finally` with `close()`. Strong answers also
+          mention passing an explicit encoding and that `"w"` truncates immediately.
+
+items:
+  - id: encoding-mcq
+    type: mcq
+    skill: recognition
+    prompt: Why should you write `open("notes.txt", encoding="utf-8")` instead of just `open("notes.txt")`?
+    explanation: >-
+      Without an explicit encoding, Python 3.14 decodes text with the computer's locale encoding, which
+      differs between machines (often cp1252 on Windows, UTF-8 on macOS/Linux). Passing encoding="utf-8"
+      makes the program read and write the same bytes everywhere.
+    options:
+      - id: a
+        text: Without it, Python cannot open text files at all.
+        feedback: open() works without it — it silently picks a default encoding, which is exactly the problem.
+      - id: b
+        text: Without it, Python uses a platform-dependent default, so the same file may be decoded differently (or fail) on another computer.
+        correct: true
+        feedback: Right. An explicit encoding makes the program behave the same on every machine.
+      - id: c
+        text: UTF-8 always makes files smaller than other encodings.
+        feedback: Size is not the point (for some languages other encodings are smaller). Consistency and correctness are.
+      - id: d
+        text: The encoding argument switches the file to binary mode.
+        feedback: Binary mode is "b" and takes no encoding at all — open(path, "rb", encoding="utf-8") raises ValueError.
+
+  - id: predict-truncate
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      with open("diary.txt", "w", encoding="utf-8") as f:
+          f.write("Monday\n")
+          f.write("Tuesday\n")
+
+      with open("diary.txt", "w", encoding="utf-8") as f:
+          f.write("Wednesday\n")
+
+      with open("diary.txt", encoding="utf-8") as f:
+          print(f.read())
+    answer: |
+      Wednesday
+    explanation: >-
+      The second open() uses "w", which truncates the file to zero bytes the moment it is opened. Monday and
+      Tuesday are gone before Wednesday is written. Use "a" to add to a file.
+    wrongAnswers:
+      - answer: |
+          Monday
+          Tuesday
+          Wednesday
+        feedback: That is what "a" (append) would do. "w" always starts from an empty file.
+      - answer: |
+          Monday
+          Tuesday
+        feedback: Opening an existing file with "w" is allowed — it does not skip the write; it erases the old content.
+      - answer: |
+          Wednesday
+          Tuesday
+        feedback: >-
+          "w" does not overwrite only the first part of the file; the whole file is truncated before
+          anything is written.
+
+  - id: predict-read-twice
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print? (Three lines.)
+    code: |
+      with open("colors.txt", "w", encoding="utf-8") as f:
+          f.write("red\ngreen\nblue\n")
+
+      with open("colors.txt", encoding="utf-8") as f:
+          first = f.readline()
+          rest = f.read()
+          again = f.read()
+
+      print(repr(first))
+      print(repr(rest))
+      print(repr(again))
+    answer: |
+      'red\n'
+      'green\nblue\n'
+      ''
+    explanation: >-
+      readline() returns the first line including its newline and moves the position past it. read()
+      returns everything from there to the end. The position is now at the end, so the second read()
+      returns the empty string.
+    wrongAnswers:
+      - answer: |
+          'red'
+          'green\nblue\n'
+          ''
+        feedback: readline() keeps the newline at the end of the line; you have to strip it yourself.
+      - answer: |
+          'red\n'
+          'red\ngreen\nblue\n'
+          'red\ngreen\nblue\n'
+        feedback: >-
+          Reads do not restart from the beginning. Each read continues from the current position, like a
+          bookmark moving through the file.
+      - answer: |
+          'red\n'
+          'green\nblue\n'
+          'green\nblue\n'
+        feedback: After the first read() the position is at the end of the file, so there is nothing left for the second one.
+
+  - id: explain-with
+    type: explain
+    skill: explanation
+    prompt: >-
+      Explain to a teammate what `with open("out.txt", "w", encoding="utf-8") as f:` guarantees, and what
+      can go wrong if they call open() without `with` and never call close().
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says the file is closed automatically when the with block ends.
+      - Says this also happens when an exception is raised inside the block.
+      - Explains that writes are buffered and closing flushes them, so unclosed files may be missing data.
+      - Mentions that open files are a limited operating-system resource (or may stay locked).
+    modelAnswer: |
+      `with` calls f.close() as soon as the indented block finishes, whether it finishes normally or
+      because an exception was raised. Closing matters because write() first puts text in an in-memory
+      buffer; close() flushes that buffer to disk. Without closing, other readers may see an empty or
+      incomplete file, and data can be lost if the program crashes. Each open file also uses an
+      operating-system file handle, which is limited and on some systems keeps the file locked.
+
+  - id: cwd-mcq
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      `C:/projects/app/main.py` contains `open("config.txt", encoding="utf-8")`, and `config.txt` sits in
+      the same folder as `main.py`. Running `python main.py` from inside `C:/projects/app` works. Running
+      `python app/main.py` from `C:/projects` fails with `FileNotFoundError`. Why?
+    explanation: >-
+      Relative paths are resolved from the current working directory — the folder the program was started
+      from — not from the folder containing the script. From C:/projects, "config.txt" means
+      C:/projects/config.txt, which does not exist.
+    options:
+      - id: a
+        text: The relative path is resolved from the current working directory (C:/projects), not from the script's folder.
+        correct: true
+        feedback: Exactly. Run from the script's folder or build the path from the script's location (pathlib's Path(__file__).parent).
+      - id: b
+        text: Windows needs backslashes, so "config.txt" must be written "\config.txt".
+        feedback: There is no folder in this path at all, and a leading backslash would mean the root of the drive.
+      - id: c
+        text: open() can only see files in the folder where Python is installed.
+        feedback: open() can open files anywhere you have permission; relative paths start from the cwd.
+      - id: d
+        text: The file is locked because the first run never closed it.
+        feedback: When a program exits, the operating system releases its files. The error is "not found", not "permission denied".
+
+  - id: debug-word-count
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should count the words in the poem and print `6`, but it crashes. Run it, read the
+      error, and fix it.
+    starterCode: |
+      with open("poem.txt", "w", encoding="utf-8") as f:
+          f.write("roses are red\nviolets are blue\n")
+
+      word_count = 0
+      with open("poem.txt", "w", encoding="utf-8") as f:
+          for line in f:
+              word_count += len(line.split())
+      print(word_count)
+    solution: |
+      with open("poem.txt", "w", encoding="utf-8") as f:
+          f.write("roses are red\nviolets are blue\n")
+
+      word_count = 0
+      with open("poem.txt", encoding="utf-8") as f:
+          for line in f:
+              word_count += len(line.split())
+      print(word_count)
+    expectedOutput: |
+      6
+    tests:
+      - name: prints 6
+        code: |
+          assert output().strip() == "6", f"Expected 6, but your program printed {output()!r}."
+      - name: the poem is still in the file
+        code: |
+          with open("poem.txt", encoding="utf-8") as check:
+              content = check.read()
+          assert content == "roses are red\nviolets are blue\n", (
+              "poem.txt should still contain the poem after counting. Opening it with \"w\" erased it."
+          )
+      - name: counts the words in the file, not a fixed number
+        code: |
+          import io, contextlib
+          changed = source.replace("roses are red", "roses are very red")
+          ns = {}
+          with contextlib.redirect_stdout(io.StringIO()):
+              exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("word_count") == 7, "Count the words by reading the file, so a longer poem gives a bigger count."
+    hints:
+      - "The last line of the error says the file is `not readable`. Which mode was it opened in?"
+      - '"w" means write (and erase). Which mode do you need to read?'
+      - The second open() should use "r" — or no mode at all, because "r" is the default.
+    feedback:
+      - when: { errorType: UnsupportedOperation }
+        message: >-
+          A file opened with "w" can only be written to. Open the poem for reading with "r" (or leave the
+          mode out) in the second with statement.
+      - when: { outputEquals: "0\n" }
+        message: >-
+          The loop found no lines. Is the file being emptied before it is read? Check the mode of the second
+          open().
+    explanation: >-
+      The second open() used "w", which erased the poem and opened a write-only file, so iterating over it
+      raised io.UnsupportedOperation: not readable. Opening it for reading ("r", the default) lets the
+      loop see both lines: 3 + 3 = 6 words.
+
+  - id: save-load-lines
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write two functions:
+
+      1. `save_lines(path, lines)` writes every string in the list `lines` to the file at `path`, each on
+         its own line, **replacing** any previous content.
+      2. `load_lines(path)` **returns** a list of the lines in the file, without their trailing newline.
+
+      Use `with` and `encoding="utf-8"` in both. The code at the bottom tries them out.
+    starterCode: |
+      def save_lines(path, lines):
+          # Open the file for writing and write each line followed by "\n".
+          pass
+
+
+      def load_lines(path):
+          # Open the file for reading and return a list of lines without "\n".
+          pass
+
+
+      save_lines("pets.txt", ["cat", "dog", "parrot"])
+      print(load_lines("pets.txt"))
+    solution: |
+      def save_lines(path, lines):
+          with open(path, "w", encoding="utf-8") as f:
+              for line in lines:
+                  f.write(line + "\n")
+
+
+      def load_lines(path):
+          result = []
+          with open(path, encoding="utf-8") as f:
+              for line in f:
+                  result.append(line.rstrip("\n"))
+          return result
+
+
+      save_lines("pets.txt", ["cat", "dog", "parrot"])
+      print(load_lines("pets.txt"))
+    expectedOutput: |
+      ['cat', 'dog', 'parrot']
+    tests:
+      - name: save_lines writes one item per line
+        code: |
+          import os
+          if os.path.exists("check-save.txt"):
+              os.remove("check-save.txt")
+          save_lines("check-save.txt", ["x", "y z"])
+          assert os.path.exists("check-save.txt"), "save_lines should create the file at path."
+          with open("check-save.txt", encoding="utf-8") as check:
+              content = check.read()
+          assert content == "x\ny z\n", f"The file should contain 'x\\ny z\\n', but it contains {content!r}. Write each item followed by \"\\n\"."
+      - name: save_lines replaces old content
+        code: |
+          save_lines("check-replace.txt", ["old1", "old2", "old3"])
+          save_lines("check-replace.txt", ["new"])
+          with open("check-replace.txt", encoding="utf-8") as check:
+              content = check.read()
+          assert content == "new\n", f"After saving ['new'], the file should contain only 'new\\n', but it contains {content!r}. Use mode \"w\"."
+      - name: load_lines returns the lines without newlines
+        code: |
+          with open("check-load.txt", "w", encoding="utf-8") as setup:
+              setup.write("first\nsecond line\n")
+          result = load_lines("check-load.txt")
+          assert isinstance(result, list), f"load_lines should return a list, but it returned {result!r}."
+          assert result == ["first", "second line"], f"Expected ['first', 'second line'], got {result!r}."
+      - name: load_lines handles a last line without a newline
+        code: |
+          with open("check-last.txt", "w", encoding="utf-8") as setup:
+              setup.write("a\nb")
+          result = load_lines("check-last.txt")
+          assert result == ["a", "b"], f"Expected ['a', 'b'], got {result!r}."
+      - name: uses with and encoding="utf-8"
+        code: |
+          import ast
+          tree = ast.parse(source)
+          opens = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+          assert len(opens) >= 2, "Call open() in both functions."
+          missing = [n.lineno for n in opens if not any(k.arg == "encoding" for k in n.keywords)]
+          assert not missing, f'Pass encoding="utf-8" to every open() call (missing on line {missing}).'
+          assert uses("With"), "Open the files with a with statement so they are always closed."
+    hints:
+      - 'In save_lines: `with open(path, "w", encoding="utf-8") as f:` then loop over lines and write each one plus "\n".'
+      - In load_lines, start with an empty list, loop over the file object, and append each line.
+      - 'line.rstrip("\n") removes the newline from the end of a line. Remember to return the list.'
+    feedback:
+      - when: { outputContains: "\\n'" }
+        message: >-
+          Your lines still end with \n. Remove it from each line, for example with line.rstrip("\n"),
+          before adding it to the list.
+      - when: { outputEquals: "None\n" }
+        message: load_lines must return the list (with return), not just build or print it.
+      - when: { outputContains: "catdog" }
+        message: The items ran together because write() does not add newlines. Write line + "\n".
+    explanation: >-
+      save_lines opens with "w" so each save replaces the old content, and adds "\n" because write() never
+      does. load_lines iterates over the file — one line at a time, newline included — and strips the
+      newline before collecting each line. rstrip("\n") is safer than strip() when leading spaces are part
+      of the data.
+
+  - id: append-log
+    type: code
+    skill: transfer
+    prompt: |
+      Complete `log(message)` so that it **adds** `message` as a new line at the end of `activity.log`,
+      keeping everything already in the file. The program first empties the log, then logs three messages
+      and prints the file.
+    starterCode: |
+      # Start with an empty log each time the program runs.
+      with open("activity.log", "w", encoding="utf-8") as f:
+          pass
+
+
+      def log(message):
+          # Add message (and a newline) to the end of activity.log.
+          pass
+
+
+      log("started")
+      log("loaded 3 files")
+      log("finished")
+
+      with open("activity.log", encoding="utf-8") as f:
+          print(f.read())
+    solution: |
+      # Start with an empty log each time the program runs.
+      with open("activity.log", "w", encoding="utf-8") as f:
+          pass
+
+
+      def log(message):
+          with open("activity.log", "a", encoding="utf-8") as f:
+              f.write(message + "\n")
+
+
+      log("started")
+      log("loaded 3 files")
+      log("finished")
+
+      with open("activity.log", encoding="utf-8") as f:
+          print(f.read())
+    expectedOutput: |
+      started
+      loaded 3 files
+      finished
+    tests:
+      - name: the log has all three messages
+        code: |
+          assert output_lines() == ["started", "loaded 3 files", "finished"], f"The log should list all three messages in order, but the program printed {output()!r}."
+      - name: log() keeps existing lines
+        code: |
+          log("one more")
+          with open("activity.log", encoding="utf-8") as check:
+              lines = check.read().splitlines()
+          assert lines == ["started", "loaded 3 files", "finished", "one more"], f"Calling log('one more') should add a fourth line, but the file now has {lines!r}."
+      - name: passes encoding="utf-8"
+        code: |
+          import ast
+          opens = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+          missing = [n.lineno for n in opens if not any(k.arg == "encoding" for k in n.keywords)]
+          assert not missing, f'Pass encoding="utf-8" to every open() call (missing on line {missing}).'
+    hints:
+      - Which mode adds to the end of a file instead of erasing it?
+      - 'Inside log: `with open("activity.log", "a", encoding="utf-8") as f:`'
+      - write() does not add a newline, so write message + "\n".
+    feedback:
+      - when: { outputEquals: "finished\n" }
+        message: >-
+          Only the last message survived. Mode "w" erases the file every time log() opens it; use "a" to
+          append.
+      - when: { outputContains: "startedloaded" }
+        message: The messages ran together on one line. Add "\n" after each message.
+    explanation: >-
+      Mode "a" opens the file with the position at the end and never truncates, so each call adds one line.
+      Opening and closing the file inside log() means every message is flushed to disk straight away — a
+      real logger behaves similarly.
+
+  - id: parsons-shout
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program writes two names to a file, then reads the file and prints each name
+      in capitals, one per line, with no blank lines in between. One line is a distractor.
+    solution: |
+      with open("names.txt", "w", encoding="utf-8") as f:
+          f.write("ada\ngrace\n")
+      with open("names.txt", encoding="utf-8") as f:
+          for line in f:
+              print(line.strip().upper())
+    distractors:
+      - "        print(line.upper())"
+    expectedOutput: |
+      ADA
+      GRACE
+    explanation: >-
+      The file must be written (and closed) before it is read. Each line from the loop ends in "\n", so
+      strip() removes it before upper(); printing line.upper() directly would add a blank line after each
+      name.
+
+  # ----- Mastery check (new items, not used in the sections above) -----
+  - id: m-predict-append
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      with open("visits.txt", "w", encoding="utf-8") as f:
+          f.write("Mon\n")
+
+      with open("visits.txt", "a", encoding="utf-8") as f:
+          f.write("Tue\n")
+          f.write("Wed")
+
+      with open("visits.txt", encoding="utf-8") as f:
+          lines = f.readlines()
+
+      print(len(lines), lines[-1])
+    answer: "3 Wed"
+    explanation: >-
+      "w" creates the file with "Mon\n"; "a" adds "Tue\n" and "Wed" at the end. The file has three lines
+      (the last one has no newline), so readlines() returns ['Mon\n', 'Tue\n', 'Wed'].
+    wrongAnswers:
+      - answer: "2 Tue"
+        feedback: >-
+          A line does not need to end with a newline to count — "Wed" after the last "\n" is a third line.
+      - answer: "1 Wed"
+        feedback: '"a" appends; it does not erase "Mon". Only "w" truncates.'
+      - answer: "2 TueWed"
+        feedback: Tue was written with "\n" after it, so Wed starts a new line.
+
+  - id: m-mode-design
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A nightly job writes `report-2026-10-22.txt`. If a file with that name already exists, the job has
+      already run and the existing report must **not** be changed. Which mode should the job open the
+      file with?
+    explanation: >-
+      "x" creates the file only if it does not exist and raises FileExistsError otherwise, so the job can
+      detect the situation and stop without touching the old report.
+    options:
+      - id: a
+        text: '"w"'
+        feedback: '"w" would silently erase the existing report — exactly what must not happen.'
+      - id: b
+        text: '"a"'
+        feedback: '"a" keeps the old content but adds a second copy of the report to the end of it.'
+      - id: c
+        text: '"x"'
+        correct: true
+        feedback: Right. Exclusive creation fails with FileExistsError instead of modifying an existing file.
+      - id: d
+        text: '"r"'
+        feedback: '"r" only reads, and it fails with FileNotFoundError on the first night when there is no file yet.'
+
+  - id: m-tf-write-newline
+    type: true-false
+    skill: recognition
+    prompt: 'True or false: `f.write("hello")` writes `hello` followed by a newline, just like `print("hello")` does.'
+    answer: false
+    explanation: >-
+      write() writes exactly the string it is given and nothing else. Add "\n" yourself, or use
+      print("hello", file=f), which adds the newline like normal print.
+
+  - id: m-code-total
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      The program creates `prices.txt` with one price per line (and one blank line). Write
+      `total_price(path)` that reads the file and **returns** the sum of the prices as a float, skipping
+      blank lines. Use `with` and `encoding="utf-8"`.
+    starterCode: |
+      with open("prices.txt", "w", encoding="utf-8") as f:
+          f.write("12.50\n7.25\n\n0.25\n")
+
+
+      def total_price(path):
+          # Read the file line by line, convert non-blank lines to float, add them up.
+          pass
+
+
+      print(total_price("prices.txt"))
+    solution: |
+      with open("prices.txt", "w", encoding="utf-8") as f:
+          f.write("12.50\n7.25\n\n0.25\n")
+
+
+      def total_price(path):
+          total = 0.0
+          with open(path, encoding="utf-8") as f:
+              for line in f:
+                  line = line.strip()
+                  if line:
+                      total += float(line)
+          return total
+
+
+      print(total_price("prices.txt"))
+    expectedOutput: |
+      20.0
+    tests:
+      - name: total of prices.txt is 20.0
+        code: |
+          result = total_price("prices.txt")
+          assert result == 20.0, f"total_price('prices.txt') should return 20.0, but returned {result!r}."
+      - name: works for another file
+        code: |
+          with open("check-prices.txt", "w", encoding="utf-8") as setup:
+              setup.write("2\n\n3.5\n")
+          result = total_price("check-prices.txt")
+          assert result == 5.5, f"For a file containing 2, a blank line and 3.5, expected 5.5 but got {result!r}. Read the path you are given."
+      - name: uses with and encoding
+        code: |
+          import ast
+          opens = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+          missing = [n.lineno for n in opens if not any(k.arg == "encoding" for k in n.keywords)]
+          assert not missing, f'Pass encoding="utf-8" to every open() call (missing on line {missing}).'
+          assert uses("With"), "Open the file with a with statement."
+    hints:
+      - Start with total = 0.0, then loop with `for line in f:`.
+      - "Each line is a string like '12.50\\n'. strip() it; if the result is empty, skip it."
+      - Convert with float(line) before adding, and return total at the end.
+    feedback:
+      - when: { errorType: ValueError, errorMessageContains: "''" }
+        message: >-
+          float('') fails: the blank line became an empty string after strip(). Skip lines that are empty
+          before converting.
+      - when: { errorType: TypeError }
+        message: Lines read from a file are strings. Convert each one with float() before adding it to the total.
+      - when: { outputEquals: "None\n" }
+        message: total_price must return the total, not just calculate or print it.
+    explanation: >-
+      Everything read from a text file is a str, so each line is stripped and converted with float(). The
+      blank line strips to "", which is falsy, so `if line:` skips it. Returning (rather than printing)
+      the total lets other code use the result.
+
+  - id: m-debug-double-spacing
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print the to-do list like this:
+
+      ```text
+      - wash dishes
+      - feed cat
+      - pay bills
+      ```
+
+      but it prints an empty line after every item. Fix it without typing the items again.
+    starterCode: |
+      with open("todo.txt", "w", encoding="utf-8") as f:
+          f.write("wash dishes\nfeed cat\npay bills\n")
+
+      with open("todo.txt", encoding="utf-8") as f:
+          for line in f:
+              print("-", line)
+    solution: |
+      with open("todo.txt", "w", encoding="utf-8") as f:
+          f.write("wash dishes\nfeed cat\npay bills\n")
+
+      with open("todo.txt", encoding="utf-8") as f:
+          for line in f:
+              print("-", line.rstrip("\n"))
+    expectedOutput: |
+      - wash dishes
+      - feed cat
+      - pay bills
+    tests:
+      - name: prints the list without blank lines
+        code: |
+          assert output_lines() == ["- wash dishes", "- feed cat", "- pay bills"], f"Expected three lines with no blank lines between them, but got {output()!r}."
+      - name: still reads the items from the file
+        code: |
+          import io, contextlib
+          changed = source.replace("feed cat", "feed the cat")
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exec(compile(changed, "<variant>", "exec"), {})
+          assert buffer.getvalue().splitlines() == ["- wash dishes", "- feed the cat", "- pay bills"], "Keep printing the lines read from the file (in a loop) rather than typing them."
+    hints:
+      - Print repr(line) to see exactly what each line contains.
+      - Each line already ends with "\n", and print adds another one.
+      - Remove the newline with line.rstrip("\n"), or tell print not to add one with end="".
+    feedback:
+      - when: { outputContains: "-  " }
+        message: Close — but there is an extra space. print puts one space between "-" and the line already.
+    explanation: >-
+      Lines read from a file keep their "\n". print() then adds its own newline, producing a blank line
+      after each item. Stripping the newline (or using end="") leaves exactly one line break per item.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-append, m-mode-design, m-tf-write-newline, m-code-total, m-debug-double-spacing]
+
+cheatsheet: |
+  ```python
+  with open("data.txt", encoding="utf-8") as f:      # read (mode "r" is the default)
+      text = f.read()                                # whole file as one str
+  with open("data.txt", encoding="utf-8") as f:
+      for line in f:                                 # one line at a time, "\n" included
+          print(line.rstrip("\n"))
+  with open("out.txt", "w", encoding="utf-8") as f:  # "w" ERASES the file first
+      f.write("no newline added\n")
+      print("print adds one", file=f)
+  open("log.txt", "a", encoding="utf-8")             # append to the end
+  open("new.txt", "x", encoding="utf-8")             # FileExistsError if it exists
+  open("photo.png", "rb")                            # bytes, no encoding
+  ```
+  - `with` closes (and flushes) the file even if an exception happens.
+  - `""` from read()/readline() = end of file.
+  - Relative paths start at `os.getcwd()`, not the script's folder.
+  - FileNotFoundError → check name, folder, cwd · UnicodeDecodeError → wrong encoding

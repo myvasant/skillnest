@@ -1,0 +1,1104 @@
+id: python.mutability
+concept: python.mutability
+title: Mutability, Identity and References
+subtitle: When one change shows up under two names
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Why does appending to one list sometimes "also change" another? This lesson gives you the precise rule:
+  names refer to objects, some objects can be changed in place (mutated), and every name referring to a
+  mutated object sees the change. You'll learn to tell mutation from rebinding, use is and == correctly,
+  understand why += behaves differently for lists, and avoid the famous [[0] * 3] * 3 trap.
+objectives:
+  - Explain the difference between an object's identity, type and value, and compare objects with is and ==.
+  - Classify built-in types as mutable or immutable and explain what "changing" an immutable value really does.
+  - Distinguish mutation from rebinding in code, and predict which names see a change.
+  - Predict the effect of += versus + on lists, tuples and strings that have several names.
+  - Diagnose and fix aliasing bugs, including the shared-row grid trap and loops that rebind their variable.
+sources:
+  - title: "Python Language Reference: Objects, values and types"
+    url: https://docs.python.org/3/reference/datamodel.html#objects-values-and-types
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: id()"
+    url: https://docs.python.org/3/library/functions.html#id
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Identity comparisons"
+    url: https://docs.python.org/3/reference/expressions.html#identity-comparisons
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Augmented assignment statements"
+    url: https://docs.python.org/3/reference/simple_stmts.html#augmented-assignment-statements
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: Why did changing list 'y' also change list 'x'?"
+    url: https://docs.python.org/3/faq/programming.html#why-did-changing-list-y-also-change-list-x
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: How do I create a multidimensional list?"
+    url: https://docs.python.org/3/faq/programming.html#how-do-i-create-a-multidimensional-list
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: Why does a_tuple[i] += ['item'] raise an exception when the addition works?"
+    url: https://docs.python.org/3/faq/programming.html#why-does-a-tuple-i-item-raise-an-exception-when-the-addition-works
+    publisher: Python Software Foundation
+  - title: "PEP 8: Programming Recommendations"
+    url: https://peps.python.org/pep-0008/#programming-recommendations
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: The bug that surprises everyone
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Here is a program almost every Python learner writes at some point. You make a shopping list, give
+          it a second name, and add something through the second name:
+      - type: code
+        runnable: true
+        code: |
+          original = ["milk", "eggs"]
+          shopping = original
+          shopping.append("bread")
+          print(original)
+        expectedOutput: |
+          ['milk', 'eggs', 'bread']
+        caption: '"But I only changed shopping!"'
+      - type: markdown
+        body: |
+          Now the same steps with a number:
+      - type: code
+        runnable: true
+        code: |
+          a = 5
+          b = a
+          b += 1
+          print(a, b)
+        expectedOutput: |
+          5 6
+      - type: markdown
+        body: |
+          Both programs give an object a second name and then "change it" through that name. Yet the list
+          changed under *both* names, while the number didn't. This is not a quirk to memorise: it follows
+          from one precise rule, which also explains a large share of the confusing bugs that intermediate
+          Python programmers hit — lists changing "by themselves", grids where every row changes at once,
+          functions that modify data they were only supposed to read.
+
+          You already have the first half of the rule from [variables](concept:python.variables): **names
+          refer to objects, and `b = a` makes b refer to the same object as a.** This lesson adds the second
+          half: **some objects can be changed in place.**
+
+  - id: identity
+    title: Identity, type and value
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Python's data model says every object has three things:
+
+          - an **identity** — *which* object it is. It never changes while the object exists. Think of it as
+            the object's address.
+          - a **type** — what kind of object it is (`list`, `int`...). It never changes either.
+          - a **value** — the data it holds. For some objects the value can change; for others it can't.
+
+          Two operators compare objects in two different ways:
+
+          - `a == b` asks: **do they have equal values?**
+          - `a is b` asks: **are they the very same object?** ([object identity](glossary:identity))
+
+          `id(x)` returns an integer that identifies the object x refers to. The number itself is meaningless
+          to you and differs from run to run, so **never print it — compare it**: `id(a) == id(b)` means the
+          same as `a is b`.
+      - type: code
+        runnable: true
+        code: |
+          a = [1, 2, 3]
+          b = a
+          c = [1, 2, 3]
+          print(a == b, a is b)
+          print(a == c, a is c)
+          print(id(a) == id(b), id(a) == id(c))
+        expectedOutput: |
+          True True
+          True False
+          True False
+        annotations:
+          - line: 2
+            text: b refers to the same list object as a - one object, two names.
+          - line: 3
+            text: A second list literal creates a second, separate list that happens to hold equal values.
+          - line: 5
+            text: Equal values, different objects - like two printed copies of the same book.
+      - type: item
+        ref: predict-is-eq
+
+  - id: mutable-immutable
+    title: Mutable and immutable objects
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [mutable](glossary:mutable) object's value can change in place. An
+          [immutable](glossary:immutable) object's value can never change after it is created.
+
+          | Immutable (value can never change) | Mutable (value can change in place) |
+          |---|---|
+          | `int`, `float`, `bool`, `complex` | `list` |
+          | `str` | `dict` |
+          | `tuple` | `set` |
+          | `frozenset`, `None` | most objects of [classes](concept:python.classes) you write |
+
+          With immutable objects, every operation that *looks* like a change actually **creates a new object**,
+          and assignment rebinds the name to it. With mutable objects, methods such as `append` change the
+          existing object. Identity proves it:
+      - type: code
+        runnable: true
+        code: |
+          word = "cat"
+          before = id(word)
+          word = word + "s"
+          print(word, id(word) == before)
+
+          items = ["cat"]
+          before = id(items)
+          items.append("dog")
+          print(items, id(items) == before)
+        expectedOutput: |
+          cats False
+          ['cat', 'dog'] True
+        annotations:
+          - line: 3
+            text: '`word + "s"` builds a brand-new string. The name word is rebound to it; the old "cat" is unchanged.'
+          - line: 8
+            text: append() changes the existing list object. Its identity stays the same.
+      - type: item
+        ref: mcq-mutable-types
+
+  - id: two-kinds-of-change
+    title: "The key distinction: rebinding vs mutation"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Everything in this lesson follows from telling apart two completely different operations:
+
+          - **Rebinding** a name: `name = something`. It moves **that one name's** arrow to an object. No
+            object changes, and every other name is unaffected.
+          - **[Mutation](glossary:mutation)**: changing an object itself — `lst.append(x)`, `lst[0] = x`,
+            `del lst[0]`, `lst.sort()`, `d[key] = value`, `s.add(x)`. There is only one object, so **every
+            name, and every container slot, that refers to it sees the change**.
+
+          You can usually tell which one you are looking at from the code alone:
+
+          | You see | It is | Who notices |
+          |---|---|---|
+          | `name = ...` (a bare name on the left) | rebinding | only that name |
+          | `name[...] = ...` or `del name[...]` | mutation | everyone referring to the object |
+          | `name.append(...)`, `.extend`, `.insert`, `.remove`, `.pop`, `.sort`, `.clear`, `.update`, `.add`... | mutation | everyone referring to the object |
+          | `name += ...` | depends on the type — see below | |
+      - type: callout
+        variant: analogy
+        title: A shared online document
+        body: |
+          Two colleagues both have a link to the same online document. When one of them **edits** it, the
+          other sees the edit — there is only one document (mutation). If one of them instead **creates a new
+          document** and changes their own link to point at it, the other colleague's link still points at the
+          old one (rebinding).
+      - type: markdown
+        body: |
+          Step through the shopping-list program. Watch the arrows: line 2 does not create a second list.
+      - type: visualization
+        component: python-tracer
+        title: Two names, one list
+        caption: >-
+          Line 2 adds a second arrow to the same list - no copy is made. Line 3 changes that one list, so
+          the change is visible through both names.
+        props:
+          code: |
+            original = ["milk", "eggs"]
+            shopping = original
+            shopping.append("bread")
+            print(original)
+            print(original is shopping)
+      - type: markdown
+        body: |
+          Now mix both kinds of change. Predict the output first, then step through it:
+      - type: item
+        ref: predict-rebind-vs-mutate
+      - type: visualization
+        component: python-tracer
+        title: Mutation is shared; rebinding is not
+        caption: >-
+          Line 3 mutates the shared list. Line 4 rebinds only b, to a brand-new list. From then on, changes
+          made through b no longer affect a.
+        props:
+          code: |
+            a = [1, 2]
+            b = a
+            b.append(3)
+            b = [9]
+            b.append(10)
+            print(a, b)
+      - type: markdown
+        body: |
+          The key moment is line 4. `b = [9]` moves b's arrow. It doesn't touch the list a refers to, and it
+          doesn't "break a link" — there never was a link between the names, only two arrows that happened to
+          point at the same object.
+
+          This also explains the number example at the top: ints are immutable, so `b += 1` can't change the
+          5. It builds a new int 6 and rebinds b. **Aliasing is harmless for immutable objects, because no one
+          can mutate them.**
+      - type: item
+        ref: explain-alias
+
+  - id: aliases-everywhere
+    title: Aliases hide in many places
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          [Aliasing](glossary:aliasing) — two [references](glossary:reference) to one object — doesn't only
+          happen with `b = a`. Anything that holds a reference can be an alias: another name, a dictionary
+          value, a list slot, a loop variable.
+      - type: code
+        runnable: true
+        code: |
+          settings = {"theme": "dark", "plugins": ["git"]}
+          backup = settings
+          backup["theme"] = "light"
+          print(settings["theme"])
+          print(settings is backup)
+        expectedOutput: |
+          light
+          True
+        caption: Dictionaries behave exactly like lists. backup is not a backup at all - it is a second name.
+      - type: code
+        runnable: true
+        code: |
+          row = [0, 0]
+          grid = [row, row]
+          grid[0][0] = 1
+          print(grid)
+          print(row)
+        expectedOutput: |
+          [[1, 0], [1, 0]]
+          [1, 0]
+        annotations:
+          - line: 2
+            text: Both slots of grid hold a reference to the same row object (and so does the name row).
+          - line: 3
+            text: grid[0] is that row, so this mutates it - visible through grid[1] and row too.
+      - type: markdown
+        body: |
+          ### The loop variable is an alias too
+
+          In `for item in items:`, the loop variable is bound to each element in turn. It is **another name
+          for that element**, not a copy. So:
+
+          - **rebinding** the loop variable (`n = n * 10`) changes nothing in the list;
+          - **mutating** the element through it (`row.append(0)`) changes the element that is inside the list.
+      - type: code
+        runnable: true
+        code: |
+          numbers = [1, 2, 3]
+          for n in numbers:
+              n = n * 10
+          print(numbers)
+
+          rows = [[1], [2]]
+          for row in rows:
+              row.append(0)
+          print(rows)
+        expectedOutput: |
+          [1, 2, 3]
+          [[1, 0], [2, 0]]
+        annotations:
+          - line: 3
+            text: Rebinds n to a new int. The list slot still refers to the old number.
+          - line: 8
+            text: Mutates the inner list that row currently refers to - which is the same object rows holds.
+      - type: visualization
+        component: python-tracer
+        title: The loop variable points into the list
+        caption: >-
+          Watch row point at the first inner list, then at the second. Each append changes the inner list
+          that row currently refers to - the same object the outer list holds.
+        props:
+          code: |
+            rows = [[1], [2]]
+            for row in rows:
+                row.append(0)
+            print(rows)
+      - type: markdown
+        body: |
+          To change the numbers themselves, assign into the list's **slots** by index — that is mutation of
+          the list:
+      - type: code
+        runnable: true
+        code: |
+          numbers = [1, 2, 3]
+          for i in range(len(numbers)):
+              numbers[i] = numbers[i] * 10
+          print(numbers)
+        expectedOutput: |
+          [10, 20, 30]
+
+  - id: plus-equals
+    title: "+= on a list mutates; + builds a new list"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You learned that `x += 1` means `x = x + 1`. For immutable objects that's exactly true. **For lists
+          it is not:** `a += [3]` mutates the list in place (it works like `a.extend([3])`), while
+          `a = a + [3]` builds a new list and rebinds a.
+      - type: code
+        runnable: true
+        code: |
+          a = [1, 2]
+          b = a
+          a += [3]
+          print(a, b, a is b)
+
+          x = [1, 2]
+          y = x
+          x = x + [3]
+          print(x, y, x is y)
+        expectedOutput: |
+          [1, 2, 3] [1, 2, 3] True
+          [1, 2, 3] [1, 2] False
+        annotations:
+          - line: 3
+            text: In place - b, which refers to the same list, sees the 3.
+          - line: 8
+            text: x + [3] is a new list; only x is rebound, so y keeps the old one.
+      - type: markdown
+        body: |
+          The rule: **`x += y` mutates x in place if x's type supports in-place updates** (lists, and
+          `|=` on dicts and sets); **otherwise it builds a new object and rebinds x.** Immutable types can't be
+          updated in place, so for them `+=` always rebinds:
+      - type: code
+        runnable: true
+        code: |
+          t = (1, 2)
+          u = t
+          t += (3,)
+          print(t, u, t is u)
+
+          s = "ab"
+          s2 = s
+          s += "c"
+          print(s, s2)
+        expectedOutput: |
+          (1, 2, 3) (1, 2) False
+          abc ab
+      - type: item
+        ref: predict-plus-equals
+      - type: visualization
+        component: python-tracer
+        title: "+= versus +"
+        caption: >-
+          Line 3 (+=) extends the shared list, so a sees the 2. Line 4 (+) builds a new list and rebinds only
+          b, so a never sees the 3.
+        props:
+          code: |
+            a = [1]
+            b = a
+            b += [2]
+            b = b + [3]
+            print(a, b)
+
+  - id: grid-trap
+    title: "The [[0] * 3] * 3 trap"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Now the most famous mutability bug. You want a 3 × 3 grid of zeros. `[0] * 3` gives `[0, 0, 0]`, so
+          `[[0] * 3] * 3` looks like exactly the right thing. Predict what this smaller version prints:
+      - type: item
+        ref: predict-grid
+      - type: visualization
+        component: python-tracer
+        title: Three arrows, one row
+        caption: >-
+          The outer * 3 copies the reference to the inner list three times: three arrows to ONE list.
+          Changing it through grid[0] shows up in every "row".
+        props:
+          code: |
+            grid = [[0] * 3] * 3
+            grid[0][0] = 1
+            print(grid)
+            print(grid[0] is grid[1])
+      - type: markdown
+        body: |
+          **Why is `[0] * 3` fine but `[[0] * 3] * 3` not?** `*` on a list repeats **references**; it never
+          copies the objects.
+
+          - In `[0] * 3`, all three slots refer to the same int `0`. That's harmless: ints are immutable, so
+            `row[0] = 1` **rebinds that slot** to a different int. Nobody can mutate the 0 itself.
+          - In `[[0] * 3] * 3`, all three slots refer to the same **mutable** list, and `grid[0][0] = 1`
+            **mutates** that one list.
+
+          **The fix:** create a new inner list for every row, for example in a loop:
+      - type: code
+        runnable: true
+        code: |
+          grid = []
+          for _ in range(3):
+              grid.append([0] * 3)
+          grid[0][0] = 1
+          print(grid)
+          print(grid[0] is grid[1])
+        expectedOutput: |
+          [[1, 0, 0], [0, 0, 0], [0, 0, 0]]
+          False
+        annotations:
+          - line: 3
+            text: "[0] * 3 runs again on every iteration, so each row is a new list object."
+      - type: callout
+        variant: tip
+        title: The one-line version
+        body: |
+          Later you'll write this as a [list comprehension](concept:python.comprehensions):
+          `[[0] * 3 for _ in range(3)]`. It works for the same reason as the loop: the inner expression is
+          evaluated once per row.
+
+  - id: is-vs-equals
+    title: When to use is, and when ==
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Use `==` to compare values** — that is what you want almost every time.
+
+          **Use `is` only when you really mean "the very same object".** The everyday case is checking for
+          `None`: there is only one `None` object, and [PEP 8](https://peps.python.org/pep-0008/#programming-recommendations)
+          recommends `x is None` / `x is not None`.
+      - type: code
+        runnable: true
+        code: |
+          result = None
+          if result is None:
+              print("no result yet")
+        expectedOutput: |
+          no result yet
+      - type: callout
+        variant: warning
+        title: Never use is to compare numbers or strings
+        body: |
+          CPython keeps a single shared object for each small integer (-5 to 256) and reuses some strings, so
+          `is` sometimes *seems* to work for values — and then fails for others. Python even warns you when you
+          write `x is 1000`: `SyntaxWarning: "is" with 'int' literal. Did you mean "=="?`
+      - type: code
+        runnable: true
+        code: |
+          x = int("256")
+          y = int("256")
+          print(x == y, x is y)
+          x = int("1000")
+          y = int("1000")
+          print(x == y, x is y)
+        expectedOutput: |
+          True True
+          True False
+        caption: >-
+          CPython-specific: 256 is in the small-integer cache, 1000 is not, so the second pair are two
+          separate objects. Another implementation could print something different - which is exactly why
+          `is` must not be used to compare values.
+
+  - id: functions-preview
+    title: "Preview: passing a list to a function"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When you call a function and give it a list, the function's parameter becomes **another name for the
+          same list** — exactly like `b = a`. If the function mutates the list (append, sort, item assignment),
+          the caller sees the change. If it only rebinds its parameter, the caller doesn't. You'll write such
+          functions yourself in [functions](concept:python.functions) and
+          [parameters in depth](concept:python.parameters).
+
+          You already know a pair of built-ins that show both behaviours:
+      - type: code
+        runnable: true
+        code: |
+          scores = [70, 95, 82]
+          ranked = sorted(scores)     # builds and returns a NEW list
+          print(scores, ranked)
+          scores.sort()               # changes THIS list in place, returns None
+          print(scores)
+        expectedOutput: |
+          [70, 95, 82] [70, 82, 95]
+          [70, 82, 95]
+      - type: callout
+        variant: production
+        title: Say whether your code mutates its input
+        body: |
+          Changing data that the caller didn't expect to change is a classic production bug. Python's own
+          convention helps: operations that mutate in place return `None` (`list.sort`, `list.append`), while
+          operations that build a new object leave their input alone (`sorted`, `+`). Follow the same
+          convention in your own functions, and say which one it is in the documentation.
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **References all the way down.** In CPython every name, every list slot and every dictionary value is
+          a pointer to an object. Assignment, passing an argument, putting an object into a list — all of them
+          copy *pointers*, never objects. Copies are only made when you explicitly ask for one, which is the
+          topic of the next lesson, [shallow and deep copies](concept:python.copying).
+
+          **`id()` is a memory address — in CPython.** CPython returns the object's address in memory; other
+          implementations may use other numbers. An id is only unique among objects that exist **at the same
+          time**: after an object is freed, a new object can reuse its address and therefore its id. Compare
+          the ids of objects you are still holding; never save ids for later.
+
+          **Reference counting.** Every object counts the references pointing at it. When the count drops to
+          zero — for example when the last name referring to it is rebound — CPython frees it immediately. Since
+          Python 3.12 some objects, such as `None`, `True`, `False` and the small integers, are *immortal*
+          ([PEP 683](https://peps.python.org/pep-0683/)): their count is never updated and they are never
+          freed. More in [memory management](concept:python.memory-model).
+
+          **Immutability is shallow.** A tuple can't change *which* objects it holds, but a mutable object
+          inside it can still change:
+      - type: code
+        runnable: true
+        code: |
+          pair = ([1, 2], "label")
+          pair[0].append(3)
+          print(pair)
+        expectedOutput: |
+          ([1, 2, 3], 'label')
+        caption: The tuple still holds the same two objects. The list among them changed.
+      - type: markdown
+        body: |
+          **The famous puzzle.** What does `t[0] += [3]` do when `t` is a tuple containing a list?
+      - type: code
+        runnable: true
+        code: |
+          t = ([1, 2],)
+          t[0] += [3]
+        expectError: TypeError
+        caption: "TypeError: 'tuple' object does not support item assignment - and yet, afterwards, the list inside t contains 3."
+      - type: markdown
+        body: |
+          Augmented assignment to `t[0]` runs in two steps: first `result = t[0].__iadd__([3])`, which
+          **mutates the list in place and succeeds**; then `t[0] = result`, which tries to assign to a tuple
+          slot and **fails**. The mutation has already happened by the time the error is raised. (The
+          [Programming FAQ](https://docs.python.org/3/faq/programming.html#why-does-a-tuple-i-item-raise-an-exception-when-the-addition-works)
+          walks through it.) Using `t[0].extend([3])` instead mutates the list without the failing
+          assignment.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | Changing one list "also changes" another | `b = a` — both names refer to one list | Make a real copy when you need independence: `b = a.copy()` or `b = a[:]` (next lesson) |
+          | All rows of a grid change together | `[[0] * 3] * 3` repeats one inner list | Build each row separately in a loop |
+          | A loop doesn't change the numbers in a list | Rebinding the loop variable: `n = n * 2` | Assign by index: `nums[i] = nums[i] * 2` |
+          | `AttributeError: 'NoneType' object has no attribute 'append'` | `lst = lst.append(x)` — mutating methods return None | Call the method without assigning its result |
+          | `SyntaxWarning: "is" with 'int' literal` or a surprising `False` | `is` compares identity, not value | Use `==` |
+          | Every entry of a history list shows the final state | The same mutable object was appended again and again | Append a snapshot each time: `history.append(state[:])` |
+          | `+=` changed another name's list, but `a = a + ...` didn't | `+=` mutates lists in place; `+` creates a new list | Choose deliberately which one you need |
+      - type: code
+        runnable: true
+        code: |
+          scores = [70, 95]
+          scores = scores.append(82)
+          scores.append(60)
+        expectError: AttributeError
+        caption: "Line 2 rebinds scores to None (append's return value), so line 3 fails: 'NoneType' object has no attribute 'append'."
+      - type: markdown
+        body: |
+          **Debugging tip:** when a value changes "by itself", ask *"which other names or containers refer to
+          this same object?"* Printing `a is b` for the suspects (or stepping through with the tracer) usually
+          finds the alias in seconds.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          For each exercise, first decide which lines rebind and which mutate. Then write the code.
+      - type: item
+        ref: debug-surcharge
+      - type: item
+        ref: seating-chart
+      - type: item
+        ref: parsons-grid
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Every object has an **identity** (`is`, `id()`), a **type** and a **value** (`==`).
+          - **Immutable**: int, float, bool, str, tuple, frozenset, None. **Mutable**: list, dict, set.
+          - **Rebinding** (`name = ...`) moves one name. **Mutation** (`append`, `x[i] = ...`, `d[k] = ...`)
+            changes the object, and every alias sees it.
+          - Aliases are everywhere: second names, dict values, list slots, loop variables.
+          - `+=` mutates lists in place; `+` builds a new list. On immutable types `+=` rebinds.
+          - `[[0] * 3] * 3` shares one row; build rows in a loop.
+          - Use `==` for values, `is` for identity (mainly `is None`). Compare ids, never print them.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Why does modifying a list inside a function affect the caller's list?" — Python passes references
+          to objects (sometimes called *call by sharing*): the parameter is a new name for the caller's object.
+          Mutating it is visible to the caller; rebinding the parameter is not. Show `b = a; b.append(1)`
+          versus `b = b + [1]`, and mention the `[[0] * 3] * 3` trap as another consequence of shared
+          references.
+
+items:
+  - id: predict-is-eq
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      a = [1, 2]
+      b = [1, 2]
+      c = a
+      print(a == b, a is b, a is c)
+    answer: "True False True"
+    explanation: >-
+      a and b are two separate list objects with equal values, so == is True and is is False. c = a makes c
+      refer to the same object as a, so a is c is True.
+    wrongAnswers:
+      - answer: "True True True"
+        feedback: Two list literals always create two different objects. Equal values do not make them the same object.
+      - answer: "False False True"
+        feedback: "== compares values, and [1, 2] == [1, 2] is True. Only `is` checks whether they are the same object."
+      - answer: "True False False"
+        feedback: c = a doesn't copy anything; it makes c a second name for the same list, so a is c is True.
+
+  - id: mcq-mutable-types
+    type: mcq
+    skill: recognition
+    prompt: Which of these types is **mutable**?
+    explanation: >-
+      Lists can be changed in place (append, item assignment, sort...). Strings, tuples and ints are
+      immutable: operations on them produce new objects.
+    options:
+      - id: a
+        text: "`str`"
+        feedback: Strings are immutable. Methods like upper() return a new string and leave the original unchanged.
+      - id: b
+        text: "`tuple`"
+        feedback: Tuples are immutable - no item assignment, append or remove.
+      - id: c
+        text: "`list`"
+        correct: true
+        feedback: Right. A list's contents can change in place, and every name referring to it sees the change.
+      - id: d
+        text: "`int`"
+        feedback: "Ints are immutable. `n += 1` creates a new int and rebinds n."
+
+  - id: predict-rebind-vs-mutate
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output, then check it with the step-through below.
+    code: |
+      a = [1, 2]
+      b = a
+      b.append(3)
+      b = [9]
+      b.append(10)
+      print(a, b)
+    answer: "[1, 2, 3] [9, 10]"
+    explanation: >-
+      b.append(3) mutates the list both names share, so a sees 3. b = [9] rebinds only b to a new list, so
+      the later append(10) changes that new list, not a's.
+    wrongAnswers:
+      - answer: "[9, 10] [9, 10]"
+        feedback: >-
+          This assumes b = [9] changes what a refers to. Rebinding moves only the name on the left; a still
+          refers to the original list.
+      - answer: "[1, 2] [9, 10]"
+        feedback: Before line 4, a and b refer to the same list, so b.append(3) changes the list a sees.
+      - answer: "[1, 2, 3, 10] [9, 10]"
+        feedback: After line 4, b refers to a different list, so append(10) no longer affects a.
+
+  - id: explain-alias
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      Explain why, after `a = [1, 2]`, `b = a`, `b.append(3)`, the list `a` shows `[1, 2, 3]` — but after
+      `x = 5`, `y = x`, `y += 1`, `x` is still 5.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - "`b = a` makes b refer to the same list object as a; no copy is made."
+      - append mutates that single list object, so every name referring to it sees the change.
+      - Ints are immutable, so `y += 1` cannot change the 5; it creates a new int 6 and rebinds only y.
+      - Names the distinction between mutation (changing an object) and rebinding (pointing a name at another object).
+    modelAnswer: |
+      In both programs the second assignment makes two names refer to one object. The difference is what
+      happens next. `b.append(3)` is a mutation: it changes the list object itself, and since a refers to
+      that same object, a shows the change. Ints are immutable, so `y += 1` can't change the 5 at all;
+      Python computes a new int, 6, and rebinds only y to it. x still refers to 5. Mutation changes an
+      object and is seen through every alias; rebinding moves one name and affects nothing else.
+
+  - id: predict-plus-equals
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output, then step through it below.
+    code: |
+      a = [1]
+      b = a
+      b += [2]
+      b = b + [3]
+      print(a, b)
+    answer: "[1, 2] [1, 2, 3]"
+    explanation: >-
+      On a list, `b += [2]` mutates the list in place, so a (the same list) sees 2. `b + [3]` builds a new
+      list and only b is rebound to it, so a doesn't see 3.
+    wrongAnswers:
+      - answer: "[1] [1, 2, 3]"
+        feedback: >-
+          For ints, += rebinds. For lists, += mutates the existing list in place (like extend), so a sees
+          the 2.
+      - answer: "[1, 2, 3] [1, 2, 3]"
+        feedback: "`b + [3]` creates a new list and rebinds only b. The list a refers to is not changed by +."
+      - answer: "[1, 2, 3] [1, 2]"
+        feedback: print(a, b) prints a first. Trace which line changes which list.
+
+  - id: predict-grid
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      grid = [[0] * 2] * 2
+      grid[0][1] = 5
+      print(grid)
+    answer: "[[0, 5], [0, 5]]"
+    explanation: >-
+      The outer `* 2` repeats a reference to the same inner list, so both rows are one object. Changing
+      grid[0][1] mutates that object, which both rows show.
+    wrongAnswers:
+      - answer: "[[0, 5], [0, 0]]"
+        feedback: >-
+          That would be true if each row were a separate list. But `* 2` on the outer list repeats the
+          reference to ONE inner list, so both "rows" are the same object.
+      - answer: "[[5, 5], [5, 5]]"
+        feedback: Only index 1 of the shared row is changed; index 0 still refers to 0.
+
+  - id: debug-surcharge
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `prices` and `menu_prices` refer to the **same** list (the menu display reads `menu_prices`). This
+      program should add a 20 rupee delivery surcharge to every price **in place**, so that both names show
+      `[120, 270, 100]`. It prints `[100, 250, 80]` instead. Fix the loop.
+    starterCode: |
+      prices = [100, 250, 80]
+      menu_prices = prices
+      for price in prices:
+          price += 20
+      print(menu_prices)
+    solution: |
+      prices = [100, 250, 80]
+      menu_prices = prices
+      for i in range(len(prices)):
+          prices[i] += 20
+      print(menu_prices)
+    expectedOutput: |
+      [120, 270, 100]
+    tests:
+      - name: every price has the surcharge
+        code: |
+          assert menu_prices == [120, 270, 100], f"menu_prices should be [120, 270, 100], but it is {menu_prices!r}."
+      - name: the list is changed in place
+        code: |
+          assert prices is menu_prices, "prices and menu_prices must still be the same list. Change the list's items in place instead of building a new list."
+          import ast
+          rebinds = 0
+          for node in ast.walk(ast.parse(source)):
+              targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, (ast.AugAssign, ast.AnnAssign)) else []
+              rebinds += sum(isinstance(t, ast.Name) and t.id in ("prices", "menu_prices") for t in targets)
+          assert rebinds == 2, "Don't rebind prices or menu_prices after creating them; assign into the list's slots, e.g. prices[i] = ..."
+      - name: works for other prices
+        code: |
+          import re
+          changed = re.sub(r"prices\s*=\s*\[.*?\]\n", "prices = [5, 10]\n", source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates prices so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("menu_prices") == [25, 30], "With prices [5, 10] the result should be [25, 30]. Add 20 to each item rather than typing the answers."
+      - name: prints the new prices
+        code: |
+          assert output().strip() == "[120, 270, 100]", f"Print menu_prices. Your program printed {output()!r}."
+    hints:
+      - Inside the loop, price is a name for one of the numbers. What does `price += 20` do to that name - and does it touch the list?
+      - Ints are immutable, so `price += 20` just rebinds the loop variable to a new int. The list slot still refers to the old number.
+      - "Loop over the positions with `for i in range(len(prices)):` and assign `prices[i] += 20`."
+    feedback:
+      - when: { outputEquals: "[100, 250, 80]\n" }
+        message: The list is unchanged - `price += 20` only rebinds the loop variable. Assign into the list's slot instead, e.g. prices[i] += 20.
+      - when: { codeMatches: "prices\\s*=\\s*\\[(?!100)" }
+        message: Building a new list and rebinding prices would leave menu_prices pointing at the old list. Change the existing list's items instead.
+    explanation: >-
+      The loop variable is just another name for each int; `price += 20` rebinds it to a new int and leaves
+      the list slot untouched. Assigning to `prices[i]` mutates the list itself, and because menu_prices refers
+      to the same list, it shows the new prices too.
+
+  - id: seating-chart
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Build a seating chart `seats` with `rows` rows of `cols` seats each, every seat `"."`. Each row must be
+      a **separate** list. The starter code then books seat 2 of row 1 and prints each row:
+
+      ```text
+      ['.', '.', '.', '.']
+      ['.', '.', 'X', '.']
+      ['.', '.', '.', '.']
+      ```
+
+      Use `rows` and `cols` (don't type 3 or 4 again), so the chart works for any size.
+    starterCode: |
+      rows = 3
+      cols = 4
+      seats = []
+
+      # Build the rows here.
+
+      seats[1][2] = "X"
+      for row in seats:
+          print(row)
+    solution: |
+      rows = 3
+      cols = 4
+      seats = []
+      for _ in range(rows):
+          seats.append(["."] * cols)
+
+      seats[1][2] = "X"
+      for row in seats:
+          print(row)
+    expectedOutput: |
+      ['.', '.', '.', '.']
+      ['.', '.', 'X', '.']
+      ['.', '.', '.', '.']
+    tests:
+      - name: the chart has the right shape
+        code: |
+          assert len(seats) == 3 and all(len(row) == 4 for row in seats), f"seats should have 3 rows of 4 seats, but it is {seats!r}."
+      - name: every row is a separate list
+        code: |
+          shared = any(seats[i] is seats[j] for i in range(len(seats)) for j in range(len(seats)) if i != j)
+          assert not shared, "Some rows are the same list object, so booking one seat marks several rows. Create a new list for every row, for example inside a loop."
+      - name: only one seat is booked
+        code: |
+          assert [row.count("X") for row in seats] == [0, 1, 0], f"Exactly one seat (row 1, seat 2) should be booked, but the chart is {seats!r}."
+      - name: works for other sizes
+        code: |
+          import re
+          changed = re.sub(r"rows\s*=\s*3", "rows = 2", source, count=1)
+          changed = re.sub(r"cols\s*=\s*4", "cols = 3", changed, count=1)
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("seats") == [[".", ".", "."], [".", ".", "X"]], "With rows = 2 and cols = 3 the chart should have 2 rows of 3 seats. Build it from rows and cols."
+    hints:
+      - "`[\".\"] * cols` makes one row. The question is how to get `rows` different row objects."
+      - A loop that runs `rows` times and appends a freshly built row each time creates separate lists.
+      - "`for _ in range(rows): seats.append([\".\"] * cols)`"
+    feedback:
+      - when: { codeMatches: "\\]\\s*\\*\\s*rows" }
+        message: "`[...] * rows` repeats a reference to ONE row list. Build each row separately in a loop."
+      - when: { outputEquals: "['.', '.', 'X', '.']\n['.', '.', 'X', '.']\n['.', '.', 'X', '.']\n" }
+        message: Every row shows the booking, so all rows are the same list object. Create a new list for each row.
+    explanation: >-
+      Each pass through the loop evaluates `["."] * cols` again, creating a brand-new row list, so the rows
+      are independent. Repeating the outer list with `* rows` would copy one reference several times, and
+      booking a seat would mutate the single shared row.
+
+  - id: parsons-grid
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to build a 2 × 2 grid whose rows are independent, change one cell, and print the
+      grid as `[[7, 0], [0, 0]]`. Two lines are distractors.
+    solution: |
+      grid = []
+      for _ in range(2):
+          grid.append([0, 0])
+      grid[0][0] = 7
+      print(grid)
+    distractors:
+      - grid = [[0, 0]] * 2
+      - grid[0] = 7
+    expectedOutput: |
+      [[7, 0], [0, 0]]
+    explanation: >-
+      The list literal [0, 0] inside the loop is evaluated on every iteration, so each row is a new object.
+      `[[0, 0]] * 2` would share one row (giving [[7, 0], [7, 0]]), and `grid[0] = 7` would replace the whole
+      first row with the number 7.
+
+  # ----- Mastery check (new items, not used in the sections above) -----
+  - id: m-predict-dict-alias
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      config = {"debug": False}
+      current = config
+      current["debug"] = True
+      current = {"debug": False}
+      print(config["debug"], current["debug"])
+    answer: "True False"
+    explanation: >-
+      Line 3 mutates the dictionary both names share, so config["debug"] becomes True. Line 4 rebinds only
+      current to a new dictionary; config is unaffected.
+    wrongAnswers:
+      - answer: "False False"
+        feedback: Line 3 mutates the shared dictionary, and rebinding current on line 4 does not undo that change.
+      - answer: "True True"
+        feedback: Line 4 points current at a brand-new dictionary whose "debug" is False. config still refers to the old one.
+
+  - id: m-predict-tuple-list
+    type: predict-output
+    skill: transfer
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      pair = ([1], [2])
+      first = pair[0]
+      first.append(10)
+      print(pair)
+    answer: "([1, 10], [2])"
+    explanation: >-
+      first is another name for the list stored in pair[0]. Appending mutates that list. The tuple can't
+      change which objects it holds, but it doesn't stop those objects from changing.
+    wrongAnswers:
+      - answer: "([1], [2])"
+        feedback: >-
+          Tuple immutability is shallow: the tuple still holds the same two lists, but a list inside it can
+          be mutated through any name that refers to it.
+      - answer: "([1, 10], [2, 10])"
+        feedback: first refers only to the first list; the second list is a different object.
+
+  - id: m-mcq-which-mutates
+    type: mcq
+    skill: recognition
+    prompt: |
+      After these two lines:
+
+      ```python
+      a = [3, 1, 2]
+      b = a
+      ```
+
+      which **single** statement changes what `print(b)` shows?
+    explanation: >-
+      Only a mutation of the shared list is visible through b. a.sort() sorts that list in place. The other
+      statements rebind a to a different list and leave b's list untouched.
+    options:
+      - id: a
+        text: "`a = sorted(a)`"
+        feedback: sorted() builds a new list and a is rebound to it. b still refers to the original, unsorted list.
+      - id: b
+        text: "`a.sort()`"
+        correct: true
+        feedback: Right. sort() mutates the list in place, and b refers to the same list.
+      - id: c
+        text: "`a = a + [4]`"
+        feedback: "+ builds a new list; only a is rebound. b is unchanged."
+      - id: d
+        text: "`a = [1, 2, 3]`"
+        feedback: Rebinding a moves only the name a. b keeps referring to the original list.
+
+  - id: m-tf-id-same
+    type: true-false
+    skill: recognition
+    prompt: "True or false: after `a = [1]` and then `a.append(2)`, `id(a)` returns a different number than it did before the append."
+    answer: false
+    explanation: >-
+      append() mutates the existing list object; it does not create a new one. An object's identity never
+      changes during its lifetime, so id(a) is the same before and after.
+
+  - id: m-debug-snapshot
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A game records the player's inventory after each pickup. `history` should end up as
+      `[['key'], ['key', 'map'], ['key', 'map', 'torch']]`, but every entry shows the final inventory. Fix it
+      so that each entry is a snapshot of the inventory at that moment.
+    starterCode: |
+      inventory = []
+      history = []
+      for item in ["key", "map", "torch"]:
+          inventory.append(item)
+          history.append(inventory)
+      print(history)
+    solution: |
+      inventory = []
+      history = []
+      for item in ["key", "map", "torch"]:
+          inventory.append(item)
+          history.append(inventory[:])
+      print(history)
+    expectedOutput: |
+      [['key'], ['key', 'map'], ['key', 'map', 'torch']]
+    tests:
+      - name: history holds snapshots
+        code: |
+          assert history == [["key"], ["key", "map"], ["key", "map", "torch"]], f"history is {history!r}."
+      - name: inventory still has every item
+        code: |
+          assert inventory == ["key", "map", "torch"], f"inventory should end as ['key', 'map', 'torch'], but it is {inventory!r}."
+      - name: entries are separate lists
+        code: |
+          assert all(entry is not inventory for entry in history), "Each history entry must be a new list, not the inventory list itself."
+      - name: works for other pickups
+        code: |
+          import re
+          changed = re.sub(r'\["key", "map", "torch"\]', '["axe", "rope"]', source, count=1)
+          assert changed != source, 'Keep the list ["key", "map", "torch"] in the loop so the checks can try other items.'
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("history") == [["axe"], ["axe", "rope"]], "With other items the snapshots were wrong."
+    hints:
+      - How many list objects does this program create? Count the [] literals and anything else that builds a list.
+      - history.append(inventory) appends a reference to the same inventory list every time.
+      - "Append a snapshot instead: inventory[:] (or list(inventory)) builds a new list with the current items."
+    feedback:
+      - when: { outputEquals: "[['key', 'map', 'torch'], ['key', 'map', 'torch'], ['key', 'map', 'torch']]\n" }
+        message: All three entries are still the same list object - the inventory itself. Append a new list built from its current items.
+    explanation: >-
+      `history.append(inventory)` stores a reference to the one inventory list three times, so later appends
+      show up in every entry. `inventory[:]` builds a new list containing the current items, so each entry
+      freezes the inventory as it was at that moment.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-dict-alias, m-predict-tuple-list, m-mcq-which-mutates, m-tf-id-same, m-debug-snapshot]
+
+cheatsheet: |
+  ```python
+  a == b        # equal values?
+  a is b        # same object?  (same as id(a) == id(b))
+  b = a         # NO copy: two names, one object
+  b.append(x)   # mutation  -> visible through a too
+  b = [9]       # rebinding -> only b moves
+  a += [3]      # list: mutates in place (like extend)
+  a = a + [3]   # new list, rebinds a
+  grid = []                                  # independent rows
+  for _ in range(3): grid.append([0] * 3)
+  x is None     # the main legitimate use of is
+  ```
+  - Immutable: int float bool str tuple frozenset None · Mutable: list dict set
+  - Rebinding moves one name · mutation changes the object for every alias
+  - Never `[[0] * n] * m` · never `lst = lst.append(x)` · never `is` for numbers/strings

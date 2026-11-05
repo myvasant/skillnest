@@ -1,0 +1,1008 @@
+id: python.sets
+concept: python.sets
+title: Sets
+subtitle: Unique items and fast membership tests
+estimatedMinutes: 35
+reviewedOn: 2026-10-22
+summary: >-
+  A set holds each item at most once and answers "is this in here?" quickly, however large it grows.
+  Learn to create sets (and why `{}` is not one), add and remove items, combine sets with union,
+  intersection and difference, remove duplicates, and why you must never rely on the order a set prints in.
+objectives:
+  - Create sets with literals and set(), and explain why {} creates a dictionary instead.
+  - Use in, add(), discard() and remove() correctly, including when remove() raises KeyError.
+  - Combine sets with union, intersection, difference and symmetric difference, and predict the results.
+  - Remove duplicates from a list, with and without keeping the original order.
+  - Explain why sets are unordered and why membership tests are fast, and display sets deterministically with sorted().
+sources:
+  - title: "The Python Tutorial: Sets"
+    url: https://docs.python.org/3/tutorial/datastructures.html#sets
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Set Types — set, frozenset"
+    url: https://docs.python.org/3/library/stdtypes.html#set-types-set-frozenset
+    publisher: Python Software Foundation
+  - title: "Command line and environment: PYTHONHASHSEED"
+    url: https://docs.python.org/3/using/cmdline.html#envvar-PYTHONHASHSEED
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: object.__hash__"
+    url: https://docs.python.org/3/reference/datamodel.html#object.__hash__
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why a collection without duplicates?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A website logs the username of every page view. How many **different** people visited? With a
+          list, you have to check each name against everything you've kept so far:
+      - type: code
+        runnable: true
+        code: |
+          visitors = ["asha", "ben", "asha", "chen", "ben", "asha"]
+          unique = []
+          for name in visitors:
+              if name not in unique:
+                  unique.append(name)
+          print(len(unique))
+        expectedOutput: |
+          3
+        annotations:
+          - line: 4
+            text: "`not in unique` scans the whole list every time. With 100,000 visitors this gets very slow."
+      - type: markdown
+        body: |
+          A [set](glossary:set) keeps only one copy of each item, and checks membership without scanning:
+      - type: code
+        runnable: true
+        code: |
+          visitors = ["asha", "ben", "asha", "chen", "ben", "asha"]
+          unique = set(visitors)
+          print(len(unique))
+          print(sorted(unique))
+          print("chen" in unique)
+        expectedOutput: |
+          3
+          ['asha', 'ben', 'chen']
+          True
+        annotations:
+          - line: 2
+            text: Building the set drops the duplicates automatically.
+          - line: 4
+            text: sorted() turns the set into a sorted list, so the output is the same every time.
+      - type: markdown
+        body: |
+          Sets answer two kinds of question very well: **"have I seen this before?"** and **"what do these
+          two groups have in common, or not?"**
+
+  - id: what
+    title: Creating sets
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A set is a mutable, **unordered** collection of **unique**,
+          [hashable](glossary:hashable) items. You write it with curly braces — like a dictionary, but with
+          single items instead of `key: value` pairs:
+      - type: code
+        runnable: true
+        code: |
+          primes = {2, 3, 5, 7, 3, 2}
+          print(len(primes))
+          print(sorted(primes))
+          print(5 in primes, 4 in primes)
+        expectedOutput: |
+          4
+          [2, 3, 5, 7]
+          True False
+        annotations:
+          - line: 1
+            text: Duplicates in the literal are simply dropped. Each value is stored once.
+      - type: markdown
+        body: |
+          `set(iterable)` builds a set from any sequence — and remember that a **string is a sequence of
+          characters**:
+      - type: code
+        runnable: true
+        code: |
+          print(sorted(set([3, 1, 3, 2, 1])))
+          print(sorted(set("hello")))
+          print({"hello"})
+        expectedOutput: |
+          [1, 2, 3]
+          ['e', 'h', 'l', 'o']
+          {'hello'}
+        annotations:
+          - line: 2
+            text: set() takes the string apart into its characters; the repeated "l" is kept once.
+          - line: 3
+            text: A literal with one item is a set containing the whole word.
+      - type: markdown
+        body: |
+          ### The empty set is `set()`, not `{}`
+
+          Dictionaries existed long before set literals, so `{}` was already taken: it is an **empty
+          dictionary**. To make an empty set, call `set()`:
+      - type: code
+        runnable: true
+        code: |
+          empty = set()
+          not_a_set = {}
+          print(type(empty), type(not_a_set))
+          print(empty, len(empty))
+        expectedOutput: |
+          <class 'set'> <class 'dict'>
+          set() 0
+      - type: markdown
+        body: |
+          ### Sets are unordered
+
+          A set has **no positions**. There is no first item, so `s[0]` is an error, and the order in which a
+          set prints is not something you choose or can rely on:
+      - type: code
+        runnable: true
+        code: |
+          colours = {"red", "green"}
+          print(colours[0])
+        expectError: TypeError
+        caption: "TypeError: 'set' object is not subscriptable. Use in, a for loop, or sorted(colours)."
+      - type: callout
+        variant: warning
+        title: Never rely on the order a set prints in
+        body: |
+          For security reasons, Python computes the hash of a string with a random value chosen when the
+          program starts. As a result, **a set of strings can print in a different order every time you run
+          the same program**. Sets of small integers often *look* sorted in CPython, but that is a side effect
+          of how it stores them, not a promise. Whenever the order matters — printing, comparing output,
+          tests — use `sorted(the_set)`.
+      - type: item
+        ref: mcq-order
+      - type: item
+        ref: predict-dedupe
+
+  - id: membership
+    title: Fast membership tests
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `x in some_list` compares x with the items **one by one** until it finds a match or reaches the
+          end. The more items, the longer it takes.
+
+          A set is a [hash table](glossary:hash-table), just like the keys of a dictionary: `x in some_set`
+          computes x's hash and jumps straight to where x would be stored. On average it takes about the same
+          time for 10 items as for 10 million. (The
+          [dictionaries deep dive](concept:python.dictionaries) shows how hash lookups work.)
+      - type: code
+        runnable: true
+        code: |
+          banned = {"spam", "scam", "free money"}
+          for word in ["hello", "scam", "lunch"]:
+              if word in banned:
+                  print("blocked:", word)
+              else:
+                  print("ok:", word)
+        expectedOutput: |
+          ok: hello
+          blocked: scam
+          ok: lunch
+      - type: markdown
+        body: |
+          For a handful of items the difference is invisible. It matters when you test **many** values
+          against a **large** collection — for example checking a million usernames against ten thousand
+          banned ones. Building a set from a list costs one pass over the list, so it pays off as soon as you
+          look things up repeatedly.
+
+  - id: changing
+    title: Adding and removing items
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          | Method | What it does | If the item is... |
+          |---|---|---|
+          | `s.add(x)` | Adds x | ...already there: nothing happens |
+          | `s.update(items)` | Adds every item from any iterable | ...already there: skipped |
+          | `s.discard(x)` | Removes x | ...missing: nothing happens |
+          | `s.remove(x)` | Removes x | ...missing: raises `KeyError` |
+          | `s.pop()` | Removes and returns **an arbitrary** item | ...set empty: raises `KeyError` |
+          | `s.clear()` | Removes everything | |
+
+          Like list methods that change the object in place, these all return `None`. Step through a seat
+          booking system (seat numbers are small integers):
+      - type: visualization
+        component: python-tracer
+        title: One set object, changed in place
+        caption: >-
+          Adding 12 a second time changes nothing - it is already there. discard(99) quietly does nothing;
+          remove(14) takes 14 out.
+        props:
+          code: |
+            booked = {12, 14}
+            booked.add(15)
+            booked.add(12)
+            booked.discard(99)
+            booked.remove(14)
+            print(sorted(booked))
+      - type: code
+        runnable: true
+        code: |
+          tags = {"python"}
+          tags.add("beginner")
+          tags.update(["loops", "python", "lists"])
+          tags.discard("java")
+          print(sorted(tags))
+          tags.remove("loops")
+          print(sorted(tags), len(tags))
+        expectedOutput: |
+          ['beginner', 'lists', 'loops', 'python']
+          ['beginner', 'lists', 'python'] 3
+      - type: code
+        runnable: true
+        code: |
+          tags = {"python"}
+          tags.remove("java")
+        expectError: KeyError
+        caption: "KeyError: 'java'. Use discard() when the item may legitimately be absent."
+      - type: callout
+        variant: tip
+        title: remove() or discard()?
+        body: |
+          Same idea as `d[key]` versus `d.get(key)`: use `remove()` when the item **must** be there (a missing
+          item is a bug you want to hear about), and `discard()` when "already gone" is fine.
+
+  - id: operations
+    title: Union, intersection and difference
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Sets support the [set operations](glossary:set-operations) from mathematics. Each one builds a
+          **new** set:
+
+          | Operation | Operator | Method | Result contains items that are... |
+          |---|---|---|---|
+          | Union | `a \| b` | `a.union(b)` | in a, in b, or in both |
+          | Intersection | `a & b` | `a.intersection(b)` | in both a and b |
+          | Difference | `a - b` | `a.difference(b)` | in a but not in b |
+          | Symmetric difference | `a ^ b` | `a.symmetric_difference(b)` | in exactly one of them |
+      - type: code
+        runnable: true
+        code: |
+          python_club = {"asha", "ben", "chen"}
+          chess_club = {"ben", "dev", "chen", "eli"}
+          print(sorted(python_club | chess_club))
+          print(sorted(python_club & chess_club))
+          print(sorted(python_club - chess_club))
+          print(sorted(chess_club - python_club))
+          print(sorted(python_club ^ chess_club))
+        expectedOutput: |
+          ['asha', 'ben', 'chen', 'dev', 'eli']
+          ['ben', 'chen']
+          ['asha']
+          ['dev', 'eli']
+          ['asha', 'dev', 'eli']
+        annotations:
+          - line: 3
+            text: Everyone in at least one club.
+          - line: 4
+            text: Members of both clubs.
+          - line: 5
+            text: Difference is not symmetric - order matters. This is python_club members who don't play chess...
+          - line: 6
+            text: "...and this is chess players who are not in the Python club."
+          - line: 7
+            text: Members of exactly one club.
+      - type: markdown
+        body: |
+          A few more useful checks:
+
+          - `a <= b` (or `a.issubset(b)`): is every item of a also in b?
+          - `a.isdisjoint(b)`: do they have **no** items in common?
+          - The **methods** accept any iterable (`a.union(["x", "y"])`); the **operators** need sets on both
+            sides (`a | ["x"]` is a `TypeError`).
+      - type: code
+        runnable: true
+        code: |
+          required = {"name", "email"}
+          submitted = {"name", "email", "phone"}
+          print(required <= submitted)
+          print(required.isdisjoint({"age"}))
+          print(sorted(required.union(["city"])))
+        expectedOutput: |
+          True
+          True
+          ['city', 'email', 'name']
+      - type: markdown
+        body: |
+          ### New set or changed set?
+
+          `a | b` builds a **new** set. The augmented forms `a |= b`, `a &= b`, `a -= b` and `a ^= b` (and
+          `a.update(b)`) **change a in place**. Step through to see the difference:
+      - type: visualization
+        component: python-tracer
+        title: "| builds a new set; |= changes the existing one"
+        caption: >-
+          After line 3, c is a brand-new set object. Line 4 adds b's items into the set that a already refers
+          to - no new set is created.
+        props:
+          code: |
+            a = {1, 2, 3}
+            b = {3, 4}
+            c = a | b
+            a |= b
+            print(sorted(c), sorted(a))
+            print(c == a, c is a)
+      - type: item
+        ref: predict-ops
+
+  - id: dedupe
+    title: Removing duplicates
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `set(items)` is the quickest way to remove duplicates — **if you don't care about order**: counting
+          distinct values, or showing them sorted.
+
+          When the original order matters ("in the order they first appeared"), combine a set for fast
+          "seen before?" checks with a list that keeps the order:
+      - type: visualization
+        component: python-tracer
+        title: The seen-set pattern
+        caption: >-
+          seen answers "have I had this one already?" quickly; unique records the order of first
+          appearance. The second 3 is skipped.
+        props:
+          code: |
+            pages = [3, 1, 3, 2]
+            seen = set()
+            unique = []
+            for page in pages:
+                if page not in seen:
+                    seen.add(page)
+                    unique.append(page)
+            print(unique)
+      - type: code
+        runnable: true
+        code: |
+          emails = ["b@x.org", "a@x.org", "b@x.org", "c@x.org", "a@x.org"]
+          seen = set()
+          unique = []
+          for email in emails:
+              if email not in seen:
+                  seen.add(email)
+                  unique.append(email)
+          print(unique)
+          print(list(dict.fromkeys(emails)))
+        expectedOutput: |
+          ['b@x.org', 'a@x.org', 'c@x.org']
+          ['b@x.org', 'a@x.org', 'c@x.org']
+        annotations:
+          - line: 9
+            text: A shortcut that relies on dictionaries keeping insertion order - dict.fromkeys() makes each email a key, once.
+      - type: item
+        ref: explain-set-vs-list
+
+  - id: hashable-items
+    title: What can go in a set?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Set items must be **hashable**, exactly like dictionary keys, and for the same reason: the set uses
+          each item's hash to decide where it lives, so an item must never change while it is inside.
+          Numbers, strings, `None` and tuples of hashable items are fine; lists, dicts and sets are not:
+      - type: code
+        runnable: true
+        code: |
+          visited = {[0, 0], [0, 1]}
+        expectError: TypeError
+        caption: "Python 3.14: TypeError: cannot use 'list' as a set element (unhashable type: 'list')."
+      - type: code
+        runnable: true
+        code: |
+          visited = {(0, 0), (0, 1)}
+          visited.add((0, 0))
+          print(len(visited), (0, 1) in visited)
+        expectedOutput: |
+          2 True
+        caption: Grid positions as tuples work perfectly - a common pattern for "squares already visited" in games and maze solvers.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `AttributeError: 'dict' object has no attribute 'add'` | `s = {}` created a dictionary | `s = set()` |
+          | `TypeError: 'set' object is not subscriptable` | `s[0]` - sets have no positions | Use `in`, a loop, or `sorted(s)[0]` |
+          | `KeyError: 'java'` | `remove()` of an item that isn't there | `discard()`, or check `in` first |
+          | `TypeError: cannot use 'list' as a set element (unhashable type: 'list')` | A list inside a set | Use a tuple |
+          | Output order changes between runs | Printing a set of strings directly | `print(sorted(s))` |
+          | `set("hello")` gives letters | `set()` iterates over the string | `{"hello"}` for a set containing the word |
+          | The set variable becomes `None` | `s = s.add(x)` - add() returns None | Just call `s.add(x)` |
+          | `TypeError: unsupported operand type(s) for \|: 'set' and 'list'` | Operators need two sets | `s.union(items)` or `s \| set(items)` |
+      - type: code
+        runnable: true
+        code: |
+          seen = {}
+          seen.add("asha")
+        expectError: AttributeError
+        caption: "AttributeError: 'dict' object has no attribute 'add'. The braces made an empty dict."
+      - type: item
+        ref: mcq-empty-braces
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise checks behaviour with other data too, so solve the general problem rather than the
+          example.
+      - type: item
+        ref: common-friends
+      - type: item
+        ref: first-repeat
+      - type: item
+        ref: debug-empty-set
+      - type: item
+        ref: parsons-attendance
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **A set is a hash table of keys without values.** Adding, removing and testing membership hash the
+          item, jump to a slot and compare — the same idea as a dictionary. CPython's set implementation is
+          separate from its dict implementation and tuned for membership tests (for example, it checks a few
+          neighbouring slots before jumping elsewhere after a collision).
+
+          **Why there is no order.** Since Python 3.6 a dictionary keeps a separate array of entries in
+          insertion order. A set does not: iterating a set walks its slot table, so the order depends on the
+          items' hash values, the table size and the history of additions and removals. String hashes are
+          salted with a random value per process (controlled by the `PYTHONHASHSEED` environment variable),
+          which is why string-set order changes between runs. Small integers hash to themselves, which is why
+          small-int sets often happen to look sorted.
+
+          **Costs.** `x in s`, `add` and `discard` take constant time on average; building a set from n items
+          is O(n); `a | b` is proportional to the total size; `a & b` to the size of the smaller set. The
+          price is memory: a set uses several times more memory per item than a list, because it keeps empty
+          slots so that lookups stay fast.
+      - type: visualization
+        component: complexity-growth
+        title: Membership cost as the collection grows
+        caption: Drag n and compare the O(n) curve (x in list) with the flat O(1) curve (x in set, on average).
+        props:
+          maxN: 32
+      - type: markdown
+        body: |
+          ### frozenset: an immutable set
+
+          A set is mutable, so it is not hashable: you can't put a set inside another set or use it as a
+          dictionary key. A [frozenset](glossary:frozenset) is the immutable version. It supports every
+          operation that doesn't change it (`in`, `|`, `&`, `-`, `^`, `<=`...) but has no `add` or `remove`,
+          and it **is** hashable. A classic use is an unordered pair, where (a, b) and (b, a) should count as
+          the same thing:
+      - type: code
+        runnable: true
+        code: |
+          pair1 = frozenset({"asha", "ben"})
+          pair2 = frozenset({"ben", "asha"})
+          print(pair1 == pair2)
+          friendships = {pair1}
+          print(pair2 in friendships)
+          print(len({pair1, pair2}))
+        expectedOutput: |
+          True
+          True
+          1
+        annotations:
+          - line: 4
+            text: A set of frozensets - impossible with ordinary sets, which are unhashable.
+      - type: code
+        runnable: true
+        code: |
+          fixed = frozenset({1, 2})
+          fixed.add(3)
+        expectError: AttributeError
+        caption: "AttributeError: 'frozenset' object has no attribute 'add'."
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **set** holds unique, hashable items with **no order** and no positions.
+          - `{1, 2, 3}` or `set(iterable)`; the empty set is `set()` because `{}` is an empty dict.
+          - `x in s` is fast on average (hash table), unlike `x in list`.
+          - `add`, `update`, `discard` (no error), `remove` (KeyError if missing).
+          - `|` union, `&` intersection, `-` difference, `^` symmetric difference — new sets;
+            `|=` and friends change the set in place.
+          - Remove duplicates with `set(items)`; keep first-seen order with a seen-set loop or
+            `list(dict.fromkeys(items))`.
+          - **Never rely on set order** — print `sorted(s)`.
+          - `frozenset` is the immutable, hashable version.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "How would you remove duplicates from a list while keeping its order?" — Show the seen-set loop
+          (O(n) overall, because each `in` check on the set is O(1) on average) or `list(dict.fromkeys(items))`,
+          and explain why `list(set(items))` loses the order and why the naive "check against the result
+          list" version is O(n²) in the worst case.
+
+items:
+  - id: mcq-order
+    type: mcq
+    skill: explanation
+    prompt: |
+      A program does `print({"pear", "apple", "fig"})`. Run once it shows `{'fig', 'pear', 'apple'}`; run
+      again it shows `{'apple', 'fig', 'pear'}`. What is going on?
+    explanation: >-
+      Sets have no defined order. Iteration follows the internal table, which depends on the items' hashes,
+      and string hashes are randomised for each run of Python. Nothing is broken, but you must sort the set
+      whenever order matters.
+    options:
+      - id: a
+        text: It's a bug in Python; the output should always be the same.
+        feedback: It is by design. Sets are unordered, and string hashes differ between runs for security reasons.
+      - id: b
+        text: Sets are unordered, and string hashes change from run to run, so the iteration order can differ.
+        correct: true
+        feedback: Right. Use sorted(...) when you need a predictable order.
+      - id: c
+        text: Sets sort their items alphabetically, but only after the program has run once.
+        feedback: Sets never sort their items. sorted() returns a sorted list when you need one.
+      - id: d
+        text: Some of the items were lost in the first run.
+        feedback: All three items are present both times; only the order differs.
+
+  - id: predict-dedupe
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      print(len({1, 2, 2, 3, 3, 3}), len(set("banana")))
+    answer: "3 3"
+    explanation: >-
+      The literal keeps each number once: {1, 2, 3}. set("banana") takes the string apart into characters
+      and keeps the distinct ones: b, a and n.
+    wrongAnswers:
+      - answer: "6 6"
+        feedback: Sets drop duplicates, so repeated values are stored only once.
+      - answer: "3 1"
+        feedback: set("banana") iterates over the string's characters. A set containing the whole word would be {"banana"}.
+      - answer: "3 6"
+        feedback: set("banana") is a set of characters, and repeated characters are kept once - b, a and n.
+
+  - id: predict-ops
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      a = {1, 2, 3, 4}
+      b = {3, 4, 5}
+      print(sorted(a - b), sorted(b - a), sorted(a ^ b))
+    answer: "[1, 2] [5] [1, 2, 5]"
+    explanation: >-
+      a - b keeps the items of a that are not in b; b - a keeps the items of b not in a. The symmetric
+      difference a ^ b keeps items in exactly one of the two sets: 1, 2 and 5.
+    wrongAnswers:
+      - answer: "[1, 2] [1, 2] [1, 2, 5]"
+        feedback: Difference is not symmetric. b - a starts from b's items, so it is [5].
+      - answer: "[1, 2] [5] [3, 4]"
+        feedback: "[3, 4] is the intersection (a & b). ^ gives the items that are in exactly one set."
+      - answer: "{1, 2} {5} {1, 2, 5}"
+        feedback: sorted() always returns a list, which prints with square brackets.
+
+  - id: explain-set-vs-list
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      Explain why the seen-set pattern uses **both** a set (`seen`) and a list (`unique`), instead of only
+      one of them.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - The set makes each "have I seen this?" check fast (average constant time) instead of scanning a list.
+      - The list remembers the order in which items first appeared, which a set cannot do.
+      - Using only a list works but gets slow for large inputs, because every `in` check scans the list.
+      - Using only a set (or list(set(...))) loses the original order.
+    modelAnswer: |
+      Each job needs a different structure. The set `seen` answers "have I already had this item?" in
+      constant time on average, because it is a hash table. But a set has no order, so it can't tell you the
+      order in which items first appeared - the list `unique` does that. With only the list, every `not in`
+      check would scan the whole list, which becomes very slow for long inputs. With only a set, you'd lose
+      the order. Together you get both: fast checks and the original order.
+
+  - id: mcq-empty-braces
+    type: mcq
+    skill: debugging
+    prompt: |
+      This code fails with `AttributeError: 'dict' object has no attribute 'add'`:
+
+      ```python
+      names = {}
+      names.add("asha")
+      ```
+
+      What is the best fix?
+    explanation: >-
+      Empty braces create an empty dictionary, because dictionaries had the `{}` syntax first. An empty set
+      must be created by calling set().
+    options:
+      - id: a
+        text: "Write `names = set()` on the first line."
+        correct: true
+        feedback: Right. set() is the only way to write an empty set.
+      - id: b
+        text: "Use `names.append(\"asha\")`."
+        feedback: Neither dicts nor sets have append(). The real problem is that names is a dict.
+      - id: c
+        text: "Write `names = {,}`."
+        feedback: That is a SyntaxError. There is no literal for an empty set.
+      - id: d
+        text: "Write `names[\"asha\"] = True`."
+        feedback: That would work as a dictionary, but if you want a set, create one with set().
+
+  - id: common-friends
+    type: code
+    skill: implementation
+    prompt: |
+      `amir` and `zara` are lists of their friends. Using a **set operation**, store the friends they have
+      in common in a set called `common`. Then print the common friends as a sorted list, and on the next
+      line how many there are:
+
+      ```text
+      ['Chen', 'Dev']
+      2
+      ```
+    starterCode: |
+      amir = ["Ben", "Chen", "Dev", "Eli"]
+      zara = ["Dev", "Fay", "Chen", "Gus"]
+
+    solution: |
+      amir = ["Ben", "Chen", "Dev", "Eli"]
+      zara = ["Dev", "Fay", "Chen", "Gus"]
+      common = set(amir) & set(zara)
+      print(sorted(common))
+      print(len(common))
+    expectedOutput: |
+      ['Chen', 'Dev']
+      2
+    tests:
+      - name: common is the right set
+        code: |
+          assert defined("common"), "Create a variable named common."
+          assert isinstance(common, set), f"common should be a set, but it is a {type(common).__name__}."
+          assert common == {"Chen", "Dev"}, f"common should be {{'Chen', 'Dev'}}, but it is {common!r}."
+      - name: uses a set operation
+        code: |
+          assert uses("BitAnd") or calls("intersection"), "Find the common friends with & or .intersection(), not a loop."
+      - name: works for other lists
+        code: |
+          import re
+          changed = re.sub(r"amir\s*=\s*\[.*?\]\n", 'amir = ["Zoe", "Fay", "Gus"]\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates amir so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("common") == {"Fay", "Gus"}, "With other friend lists, common was wrong. Compute it from amir and zara."
+      - name: prints the sorted list and the count
+        code: |
+          assert output_lines() == ["['Chen', 'Dev']", "2"], f"Print sorted(common) and then len(common). Your program printed {output()!r}."
+    hints:
+      - Turn each list into a set with set(...).
+      - "`&` gives the items that are in both sets."
+      - Print sorted(common), not common itself, so the order is predictable.
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "unsupported operand" }
+        message: "& works on two sets, not on lists. Convert both lists with set(...) first."
+      - when: { outputContains: "{" }
+        message: You printed the set directly, so the order is unpredictable. Print sorted(common) instead.
+    explanation: >-
+      Converting both lists to sets lets `&` compute the intersection in one step. sorted() turns the result
+      into a list in a fixed order for printing, and len() counts the friends in common.
+
+  - id: first-repeat
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      A ticket scanner logs ticket IDs in the order they are scanned. Find the **first scan that repeats
+      an earlier ID** (a possible copied ticket) and print that ID. Keep a set of IDs seen so far, and stop
+      the loop as soon as you find a repeat. If no ID repeats, print `No duplicates`.
+
+      For the scans below the answer is `3`: ticket 3 is scanned for the second time before ticket 7 is.
+    starterCode: |
+      scans = [7, 3, 9, 3, 7, 5]
+
+    solution: |
+      scans = [7, 3, 9, 3, 7, 5]
+      seen = set()
+      for ticket in scans:
+          if ticket in seen:
+              print(ticket)
+              break
+          seen.add(ticket)
+      else:
+          print("No duplicates")
+    expectedOutput: |
+      3
+    tests:
+      - name: prints the first repeated scan
+        code: |
+          assert output().strip() == "3", f"The first repeated scan is 3, but your program printed {output()!r}."
+      - name: uses a set of seen IDs
+        code: |
+          assert calls("set") and calls("add"), "Keep the IDs you've seen in a set: seen = set(), then seen.add(ticket)."
+      - name: works for other scans
+        code: |
+          import re, io, contextlib
+          def variant(data):
+              changed = re.sub(r"scans\s*=\s*\[.*?\]\n", f"scans = {data}\n", source, count=1, flags=re.S)
+              assert changed != source, "Keep the line that creates scans so the checks can try other data."
+              buffer = io.StringIO()
+              with contextlib.redirect_stdout(buffer):
+                  exec(compile(changed, "<variant>", "exec"), {})
+              return buffer.getvalue().strip()
+          assert variant([4, 8, 8, 4]) == "8", "With scans [4, 8, 8, 4] the first repeated scan is 8."
+          assert variant([1, 2, 3]) == "No duplicates", "When nothing repeats, print exactly: No duplicates"
+    hints:
+      - "Start with an empty set: `seen = set()`. For each ticket, ask: is it already in seen?"
+      - If it is, print it and break. Otherwise add it to seen.
+      - A for loop's else block runs only when the loop finished without break - the perfect place for "No duplicates".
+    feedback:
+      - when: { outputEquals: "7\n" }
+        message: >-
+          7 is the first ticket that appears twice somewhere in the list, but the first *repeat* happens at
+          the second 3. Check each scan against the set of tickets seen before it.
+      - when: { outputContains: "No duplicates\n3" }
+        message: Print "No duplicates" only when the loop finishes without finding a repeat - use break and a loop else.
+    explanation: >-
+      The set holds every ID scanned so far. Each new scan is checked against it in constant time on
+      average; the first one already present is the first repeat. break stops the loop immediately, and the
+      loop's else branch runs only if no break happened.
+
+  - id: debug-empty-set
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print the distinct words in sorted order, `['blue', 'green', 'red']`, but it
+      crashes. Fix it.
+    starterCode: |
+      words = ["red", "blue", "red", "green"]
+      unique = {}
+      for word in words:
+          unique.add(word)
+      print(sorted(unique))
+    solution: |
+      words = ["red", "blue", "red", "green"]
+      unique = set()
+      for word in words:
+          unique.add(word)
+      print(sorted(unique))
+    expectedOutput: |
+      ['blue', 'green', 'red']
+    tests:
+      - name: unique is a set
+        code: |
+          assert isinstance(unique, set), f"unique should be a set, but it is a {type(unique).__name__}."
+      - name: prints the sorted distinct words
+        code: |
+          assert output().strip() == "['blue', 'green', 'red']", f"Your program printed {output()!r}."
+      - name: still builds the set in the loop
+        code: |
+          assert uses("For") and calls("add"), "Keep the loop that adds each word to the set."
+    hints:
+      - "Read the error: which type does Python say unique is?"
+      - "`{}` creates an empty dictionary, not an empty set."
+      - Create the empty set with set().
+    feedback:
+      - when: { errorType: AttributeError }
+        message: "unique is still a dict - {} always means an empty dictionary. Use set() instead."
+    explanation: >-
+      `{}` is an empty dictionary, which has no add() method. `set()` creates an empty set; add() then
+      inserts each word once, and sorted() returns the distinct words in alphabetical order.
+
+  - id: parsons-attendance
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to print, in sorted order, the students who registered for a class but did not
+      attend. Two lines are distractors.
+    solution: |
+      registered = {"asha", "ben", "chen", "dev"}
+      attended = {"ben", "dev"}
+      absent = registered - attended
+      print(sorted(absent))
+    distractors:
+      - absent = attended - registered
+      - print(absent[0])
+    expectedOutput: |
+      ['asha', 'chen']
+    explanation: >-
+      registered - attended keeps the registered students who are not in attended. The reverse difference
+      would give students who attended without registering (none here). Sets have no positions, so
+      absent[0] raises TypeError.
+
+  # ----- Mastery check (new items, not used in the sections above) -----
+  - id: m-predict-remove-discard
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      s = {1, 2, 3}
+      s.discard(5)
+      s.add(2)
+      s.remove(1)
+      print(sorted(s), len(s))
+    answer: "[2, 3] 2"
+    explanation: >-
+      discard(5) does nothing because 5 isn't there; add(2) does nothing because 2 is already there;
+      remove(1) takes 1 out. That leaves {2, 3}.
+    wrongAnswers:
+      - answer: "[2, 2, 3] 3"
+        feedback: Sets never hold duplicates. Adding an item that is already present changes nothing.
+      - answer: "[2, 3, 5] 3"
+        feedback: discard() removes an item if it is present; it never adds anything.
+
+  - id: m-mcq-banned
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      You must check one million new usernames against a list of 10,000 banned usernames. Which approach
+      is best?
+    explanation: >-
+      Converting the banned list to a set costs one pass over 10,000 names. After that, each of the million
+      checks is a constant-time hash lookup on average, instead of scanning up to 10,000 names each time.
+    options:
+      - id: a
+        text: Check `name in banned_list` for each username.
+        feedback: Each check scans the list - up to 10,000 comparisons, a million times.
+      - id: b
+        text: "Convert once with `banned = set(banned_list)`, then check `name in banned` for each username."
+        correct: true
+        feedback: Right. Build the set once; every lookup afterwards is fast on average.
+      - id: c
+        text: "Convert inside the loop: `name in set(banned_list)` for each username."
+        feedback: That rebuilds the whole set a million times - even slower than scanning the list.
+      - id: d
+        text: Sort the banned list and print it before checking.
+        feedback: Sorting alone doesn't speed up `in` on a list, and printing has nothing to do with the check.
+
+  - id: m-tf-unhashable
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `{[1, 2], [3]}` creates a set containing two lists."
+    answer: false
+    explanation: >-
+      Set items must be hashable, and lists are not, so Python raises `TypeError: cannot use 'list' as a
+      set element (unhashable type: 'list')`. Tuples such as `{(1, 2), (3,)}` work.
+
+  - id: m-code-missing
+    type: code
+    skill: implementation
+    prompt: |
+      A sign-up form requires every field in `required`. `submitted` lists the fields a user filled in (it
+      may contain repeats). Using a **set operation**, store the fields that are still missing in a set
+      called `missing`, and print them as a sorted list. For the data below the output is
+      `['email', 'password']`.
+    starterCode: |
+      required = {"name", "email", "password", "country"}
+      submitted = ["name", "country", "name"]
+
+    solution: |
+      required = {"name", "email", "password", "country"}
+      submitted = ["name", "country", "name"]
+      missing = required - set(submitted)
+      print(sorted(missing))
+    expectedOutput: |
+      ['email', 'password']
+    tests:
+      - name: missing is the right set
+        code: |
+          assert defined("missing"), "Create a variable named missing."
+          assert missing == {"email", "password"}, f"missing should be {{'email', 'password'}}, but it is {missing!r}."
+      - name: uses a set difference
+        code: |
+          assert uses("Sub") or calls("difference"), "Use set difference: required - set(submitted), or required.difference(submitted)."
+      - name: works for other submissions
+        code: |
+          import re
+          changed = re.sub(r"submitted\s*=\s*\[.*?\]\n", 'submitted = ["email", "email"]\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates submitted so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("missing") == {"name", "password", "country"}, "With other submissions, missing was wrong. Compute it from required and submitted."
+      - name: prints the sorted missing fields
+        code: |
+          assert output().strip() == "['email', 'password']", f"Print sorted(missing). Your program printed {output()!r}."
+    hints:
+      - Which items are in required but not in submitted? That is a difference.
+      - "The - operator needs a set on both sides: set(submitted)."
+      - Print sorted(missing) so the order is predictable.
+    feedback:
+      - when: { outputEquals: "[]\n" }
+        message: "Check the order of the difference: required - set(submitted) keeps the required fields that were NOT submitted."
+      - when: { errorType: TypeError, errorMessageContains: "unsupported operand" }
+        message: "- between a set and a list is not allowed. Convert submitted with set(submitted) first."
+    explanation: >-
+      `required - set(submitted)` keeps the required fields that do not appear in the submission; repeats in
+      submitted don't matter because the set removes them. sorted() gives a predictable order for printing.
+
+  - id: m-debug-keep-order
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program should remove repeated page numbers **but keep the order in which pages were first
+      visited**, printing `[30, 10, 20]`. It prints `[10, 20, 30]` instead. Fix it.
+    starterCode: |
+      visits = [30, 10, 30, 20, 10]
+      unique = list(set(visits))
+      print(unique)
+    solution: |
+      visits = [30, 10, 30, 20, 10]
+      seen = set()
+      unique = []
+      for page in visits:
+          if page not in seen:
+              seen.add(page)
+              unique.append(page)
+      print(unique)
+    expectedOutput: |
+      [30, 10, 20]
+    tests:
+      - name: unique keeps first-visit order
+        code: |
+          assert unique == [30, 10, 20], f"unique should be [30, 10, 20] (first-visit order), but it is {unique!r}."
+      - name: works for other visits
+        code: |
+          import re
+          changed = re.sub(r"visits\s*=\s*\[.*?\]\n", "visits = [5, 9, 5, 1, 9]\n", source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates visits so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("unique") == [5, 9, 1], "With visits [5, 9, 5, 1, 9] unique should be [5, 9, 1]. Build it from visits."
+      - name: prints unique
+        code: |
+          assert output().strip() == "[30, 10, 20]", f"Your program printed {output()!r}."
+    hints:
+      - A set has no order, so list(set(...)) can come out in any order.
+      - Loop over visits, and keep a set of pages already added plus a list in which you append each new page.
+      - "Alternatively, dictionaries keep insertion order: list(dict.fromkeys(visits))."
+    explanation: >-
+      Converting to a set throws away the original order. The seen-set loop keeps a list in first-visit
+      order while using the set for fast "already added?" checks; `list(dict.fromkeys(visits))` is an
+      equivalent shortcut because dictionaries preserve insertion order.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-remove-discard, m-mcq-banned, m-tf-unhashable, m-code-missing, m-debug-keep-order]
+
+cheatsheet: |
+  ```python
+  s = {1, 2, 3}           # set literal; duplicates dropped
+  s = set(items)          # from any iterable; set() is the EMPTY set ({} is a dict)
+  x in s                  # fast membership test (O(1) on average)
+  s.add(x); s.update(items)
+  s.discard(x)            # no error if missing
+  s.remove(x)             # KeyError if missing
+  a | b   a & b   a - b   a ^ b       # union, intersection, difference, symmetric difference
+  a |= b                  # in place
+  a <= b; a.isdisjoint(b)
+  print(sorted(s))        # ALWAYS sort before printing
+  list(dict.fromkeys(items))          # dedupe, keeping first-seen order
+  frozenset(s)            # immutable, hashable set
+  ```
+  - Items must be hashable (no lists inside sets — use tuples).

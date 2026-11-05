@@ -1,0 +1,1591 @@
+id: backend.web-frameworks
+concept: backend.web-frameworks
+title: What a Web Framework Does
+subtitle: Build a tiny framework, then recognise every piece in FastAPI
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  A web framework turns HTTP requests into calls to your functions and your return values into HTTP
+  responses. Build one from scratch in Python - request and response objects, a route table filled by
+  decorators, path parameters, JSON responses, error handling and middleware - and then map each piece to
+  FastAPI, Starlette and the WSGI/ASGI interfaces that connect frameworks to servers.
+objectives:
+  - Explain the division of work between an HTTP server (Uvicorn, Gunicorn) and a framework (FastAPI, Flask, Django).
+  - Explain how decorators such as @app.get("/notes/{id}") fill a route table when the module is loaded.
+  - Implement path matching with path parameters and predict which route a request reaches.
+  - Choose between 404 and 405 and produce JSON responses with correct status codes.
+  - Predict the order in which middleware runs, and write a middleware that short-circuits a request.
+  - Map the pieces of a tiny framework to FastAPI, and describe WSGI and ASGI at a high level.
+sources:
+  - title: "PEP 3333: Python Web Server Gateway Interface v1.0.1"
+    url: https://peps.python.org/pep-3333/
+    publisher: Python Software Foundation
+  - title: ASGI (Asynchronous Server Gateway Interface) Specification
+    url: https://asgi.readthedocs.io/en/latest/specs/main.html
+    publisher: ASGI project
+  - title: HTTP and WebSocket ASGI Message Format
+    url: https://asgi.readthedocs.io/en/latest/specs/www.html
+    publisher: ASGI project
+  - title: "FastAPI tutorial: Path Parameters"
+    url: https://fastapi.tiangolo.com/tutorial/path-params/
+    publisher: FastAPI
+  - title: "FastAPI tutorial: Middleware"
+    url: https://fastapi.tiangolo.com/tutorial/middleware/
+    publisher: FastAPI
+  - title: "FastAPI tutorial: Handling Errors"
+    url: https://fastapi.tiangolo.com/tutorial/handling-errors/
+    publisher: FastAPI
+  - title: Starlette documentation
+    url: https://starlette.dev/
+    publisher: Starlette project
+  - title: wsgiref — WSGI Utilities and Reference Implementation
+    url: https://docs.python.org/3/library/wsgiref.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why frameworks exist
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          In [HTTP basics](concept:networking.http-basics) you parsed requests and built responses by hand. A
+          real API has dozens of endpoints. Written directly, every one of them repeats the same plumbing:
+          compare the method and path, pull values out of the path, convert types, handle errors, encode JSON,
+          pick a status code. Here is a two-endpoint API written that way:
+      - type: code
+        runnable: true
+        code: |
+          import json
+
+          NOTES = {1: {"id": 1, "title": "Buy oat milk"}}
+
+          def handle(method, path):
+              if method == "GET" and path == "/notes":
+                  return 200, json.dumps(list(NOTES.values()))
+              if method == "GET" and path.startswith("/notes/"):
+                  note_id = int(path.split("/")[2])
+                  if note_id in NOTES:
+                      return 200, json.dumps(NOTES[note_id])
+                  return 404, json.dumps({"detail": "Note not found"})
+              return 404, json.dumps({"detail": "Not Found"})
+
+          print(handle("GET", "/notes/1"))
+          print(handle("GET", "/notes/abc"))
+        expectError: ValueError
+        expectedOutput: |
+          (200, '{"id": 1, "title": "Buy oat milk"}')
+        caption: >-
+          The second request crashes the whole function with ValueError. Also note that DELETE /notes/1 would
+          get a misleading 404, and /notes/1/extra would be treated as note 1.
+      - type: markdown
+        body: |
+          Every new endpoint adds more `if` branches and more chances to get the details wrong. A
+          [web framework](glossary:web-framework) does the plumbing once, correctly, so each endpoint is just a
+          function. The FastAPI version of `read_note` (not runnable here, because FastAPI is a third-party
+          package):
+      - type: code
+        status: illustrative
+        code: |
+          @app.get("/notes/{note_id}")
+          def read_note(note_id: int):
+              if note_id not in NOTES:
+                  raise HTTPException(status_code=404, detail="Note not found")
+              return NOTES[note_id]
+        caption: >-
+          Routing, path parameters, int conversion (with a 422 error for "abc"), JSON encoding and error
+          responses are handled by the framework.
+      - type: markdown
+        body: |
+          To see that there is no magic, you will build a small framework with the same shape - about 80
+          lines of Python - and then map each part to FastAPI.
+
+  - id: jobs
+    title: What a framework is responsible for
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Two programs cooperate to serve a request:
+
+          - An **HTTP server** such as Uvicorn, Hypercorn or Gunicorn owns the network side: it listens on a
+            port, accepts TCP connections, reads and parses HTTP bytes, and writes response bytes.
+          - The **framework** (FastAPI, Starlette, Flask, Django) is the *application* the server calls once
+            per request, through a standard interface: [WSGI](glossary:wsgi) for synchronous apps or
+            [ASGI](glossary:asgi) for asynchronous ones.
+
+          Inside the framework, a request passes through the same stages every time:
+
+          1. Build a **request object** from what the server parsed.
+          2. Run **[middleware](glossary:middleware)**: code wrapped around every request (logging, timing,
+             authentication, CORS).
+          3. **[Routing](glossary:routing)**: find the [handler](glossary:request-handler) whose method and
+             path pattern match, extracting [path parameters](glossary:path-parameter) like `{note_id}`.
+          4. **Validate and convert** inputs (FastAPI uses type hints for this).
+          5. Call your **handler**.
+          6. **Serialise** the return value into a response (JSON, status code, headers).
+          7. Turn errors into proper error responses (404, 405, 422, 500).
+      - type: visualization
+        component: step-diagram
+        title: A request through server, middleware, router and handler
+        caption: Click through. Lit boxes and arrows take part in each step.
+        props:
+          width: 760
+          height: 300
+          nodes:
+            - { id: client, label: Client, x: 80, y: 150, shape: actor }
+            - { id: server, label: Server (Uvicorn), x: 240, y: 150 }
+            - { id: mw, label: Middleware, x: 410, y: 150 }
+            - { id: router, label: Router, x: 600, y: 60 }
+            - { id: handler, label: Your handler, x: 600, y: 240, shape: pill }
+          edges:
+            - { id: c-s, from: client, to: server, label: HTTP bytes }
+            - { id: s-m, from: server, to: mw, label: request }
+            - { id: m-r, from: mw, to: router, label: request }
+            - { id: r-h, from: router, to: handler, label: params }
+            - { id: h-m, from: handler, to: mw, label: response }
+          steps:
+            - title: Bytes arrive
+              body: The server reads the request from a TCP connection and parses the HTTP message.
+              active: [client, server, c-s]
+              payload: |
+                GET /notes/1 HTTP/1.1
+                Host: localhost:8000
+            - title: The server calls the application
+              body: >-
+                Through ASGI (or WSGI) the server hands the framework a description of the request - method,
+                path, headers - and ways to read the body and send the response.
+              active: [server, mw, s-m]
+              payload: "{'type': 'http', 'method': 'GET', 'path': '/notes/1', 'headers': [...]}"
+            - title: Middleware, on the way in
+              body: >-
+                Each middleware layer can inspect or reject the request (for example, a missing API key gives
+                401 without ever reaching your handler), then passes it inward.
+              active: [mw]
+            - title: Routing
+              body: >-
+                The router compares method and path with each registered route in order. GET /notes/{note_id}
+                matches, with note_id = "1".
+              active: [mw, router, m-r]
+              payload: "GET /notes/{note_id}  ->  read_note(note_id='1')"
+            - title: Your handler runs
+              body: >-
+                The framework converts parameters (FastAPI turns "1" into the int 1 because of the type hint)
+                and calls your function, which returns plain data.
+              active: [router, handler, r-h]
+              payload: "{'id': 1, 'title': 'Buy oat milk'}"
+            - title: Serialise, then middleware on the way out
+              body: >-
+                The return value becomes a JSON response with status 200 and a Content-Type header. Middleware
+                runs again in reverse order and may add headers.
+              active: [handler, mw, h-m]
+              payload: |
+                200 OK
+                content-type: application/json
+                {"id": 1, "title": "Buy oat milk"}
+            - title: The server writes bytes
+              body: The server turns the response into HTTP bytes on the connection.
+              active: [mw, server, client, s-m, c-s]
+      - type: item
+        ref: server-vs-framework
+
+  - id: objects
+    title: Request and response objects
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          First, plain data classes for a request and a response, and a helper that serialises data to a JSON
+          response. Header names are stored in lower case, as you learned for HTTP.
+      - type: code
+        runnable: true
+        code: |
+          import json
+          from dataclasses import dataclass, field
+
+          @dataclass
+          class Request:
+              method: str
+              path: str
+              headers: dict[str, str] = field(default_factory=dict)
+              body: bytes = b""
+
+          @dataclass
+          class Response:
+              status: int
+              headers: dict[str, str] = field(default_factory=dict)
+              body: bytes = b""
+
+          def json_response(data, status=200):
+              body = json.dumps(data).encode("utf-8")
+              return Response(status, {"content-type": "application/json"}, body)
+
+          request = Request("GET", "/notes/1", {"accept": "application/json"})
+          response = json_response({"id": 1, "title": "Buy oat milk"})
+          print(request.method, request.path, request.headers)
+          print(response.status, response.headers, response.body)
+        expectedOutput: |
+          GET /notes/1 {'accept': 'application/json'}
+          200 {'content-type': 'application/json'} b'{"id": 1, "title": "Buy oat milk"}'
+        annotations:
+          - line: 8
+            text: default_factory gives each Request its own new dict, avoiding a shared mutable default.
+          - line: 17
+            text: Handlers return plain data; this helper does the JSON encoding once for everyone.
+          - line: 18
+            text: The body is bytes, ready for the wire.
+
+  - id: routing
+    title: A route table filled by decorators
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          The router needs a table of `(method, pattern, handler)` entries. Frameworks fill it with
+          [decorators](glossary:decorator): `@app.get("/notes")` is a **decorator factory** - calling
+          `get("/notes")` returns the real decorator, which records the function and returns it unchanged.
+
+          Crucially, decorators run **when the function is defined** - when the module is imported - not when a
+          request arrives. Step through and watch `routes` fill up before any request exists:
+      - type: visualization
+        component: python-tracer
+        title: Decorators register routes at definition time
+        caption: Watch the routes list grow as each def statement runs. No handler is called.
+        props:
+          code: |
+            routes = []
+
+            def get(pattern):
+                def register(handler):
+                    routes.append(("GET", pattern, handler.__name__))
+                    return handler
+                return register
+
+            @get("/notes")
+            def list_notes():
+                return []
+
+            @get("/notes/{note_id}")
+            def read_note(note_id):
+                return {"id": note_id}
+
+            print(routes)
+      - type: item
+        ref: predict-registration
+      - type: markdown
+        body: |
+          **Matching a path pattern.** Split the pattern and the path into segments. They must have the same
+          number of segments; a segment written `{name}` captures whatever is in that position, and any other
+          segment must match exactly. Captured values are always **strings** - converting them is a separate
+          step.
+      - type: code
+        runnable: true
+        code: |
+          def match(pattern, path):
+              pattern_parts = pattern.strip("/").split("/")
+              path_parts = path.strip("/").split("/")
+              if len(pattern_parts) != len(path_parts):
+                  return None
+              params = {}
+              for expected, actual in zip(pattern_parts, path_parts):
+                  if expected.startswith("{") and expected.endswith("}"):
+                      params[expected[1:-1]] = actual
+                  elif expected != actual:
+                      return None
+              return params
+
+          print(match("/notes/{note_id}", "/notes/42"))
+          print(match("/notes/{note_id}", "/notes/42/edit"))
+          print(match("/notes/{note_id}", "/tasks/42"))
+          print(match("/users/{user_id}/notes/{note_id}", "/users/7/notes/3"))
+        expectedOutput: |
+          {'note_id': '42'}
+          None
+          None
+          {'user_id': '7', 'note_id': '3'}
+        annotations:
+          - line: 4
+            text: Different segment counts can never match, so /notes/42/edit is rejected.
+          - line: 8
+            text: A {placeholder} captures the segment under its name, without the braces.
+          - line: 10
+            text: Literal segments such as notes must be identical.
+      - type: callout
+        variant: note
+        title: How real routers do it
+        body: |
+          Starlette (which FastAPI is built on) compiles each path pattern to a regular expression once, and
+          supports *convertors* such as `{note_id:int}` or `{file_path:path}`. FastAPI additionally converts
+          parameters using your function's type hints. The idea is the same: match, capture, convert.
+      - type: item
+        ref: predict-match
+      - type: item
+        ref: route-order
+
+  - id: middleware
+    title: Middleware - wrappers around every request
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Some work applies to **every** request: logging, timing, authentication, adding security headers.
+          Rather than repeating it in each handler, a framework lets you register middleware - a function that
+          receives the request and a `call_next` function standing for "everything inside me". It can run code
+          before calling `call_next`, after it returns, or return early without calling it at all.
+
+          Wrapping each layer around the previous one builds an onion. As in FastAPI, the middleware added
+          **last** becomes the **outermost** layer, so it runs first on the way in and last on the way out.
+      - type: code
+        runnable: true
+        code: |
+          def handler(request):
+              print("      handler runs")
+              return {"status": 200}
+
+          def timing(request, call_next):
+              print("timing: before")
+              response = call_next(request)
+              print("timing: after")
+              return response
+
+          def auth(request, call_next):
+              print("   auth: before")
+              response = call_next(request)
+              print("   auth: after")
+              return response
+
+          def wrap(middleware, call_next):
+              def layer(request):
+                  return middleware(request, call_next)
+              return layer
+
+          app = handler
+          for middleware in [auth, timing]:
+              app = wrap(middleware, app)
+
+          print(app({"path": "/notes"}))
+        expectedOutput: |
+          timing: before
+             auth: before
+                handler runs
+             auth: after
+          timing: after
+          {'status': 200}
+        annotations:
+          - line: 17
+            text: wrap is a closure - each layer remembers its own middleware and its own call_next.
+          - line: 23
+            text: auth is wrapped first (inner), then timing wraps that (outer).
+      - type: visualization
+        component: python-tracer
+        title: The onion, frame by frame
+        caption: Watch the call stack grow to the handler and shrink back through each layer.
+        props:
+          code: |
+            def handler(request):
+                return "200 OK"
+
+            def outer(request, call_next):
+                print("outer: before")
+                response = call_next(request)
+                print("outer: after")
+                return response
+
+            def inner(request, call_next):
+                print("inner: before")
+                return call_next(request)
+
+            print(outer("GET /", lambda r: inner(r, handler)))
+      - type: item
+        ref: predict-onion
+      - type: item
+        ref: explain-middleware
+
+  - id: assembled
+    title: Putting the framework together
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Here is the whole framework, an app that uses it, and a tiny "server" function that turns raw HTTP
+          bytes into a `Request` and the `Response` back into bytes - the part Uvicorn does for real. Errors
+          are handled in three places:
+
+          - `HTTPError(404, "...")` raised by a handler becomes a JSON error with that status.
+          - A request that matches **no route** gets `404 Not Found`.
+          - Any **unexpected exception** becomes a generic `500 Internal Server Error`, without leaking
+            details to the client.
+
+          Read it top to bottom, then run it.
+      - type: code
+        runnable: true
+        code: |
+          import json
+          from dataclasses import dataclass, field
+          from http import HTTPStatus
+
+          @dataclass
+          class Request:
+              method: str
+              path: str
+              headers: dict[str, str] = field(default_factory=dict)
+              body: bytes = b""
+
+          @dataclass
+          class Response:
+              status: int
+              headers: dict[str, str] = field(default_factory=dict)
+              body: bytes = b""
+
+          def json_response(data, status=200):
+              body = json.dumps(data).encode("utf-8")
+              return Response(status, {"content-type": "application/json"}, body)
+
+          class HTTPError(Exception):
+              def __init__(self, status, detail):
+                  super().__init__(detail)
+                  self.status = status
+                  self.detail = detail
+
+          def match(pattern, path):
+              pattern_parts = pattern.strip("/").split("/")
+              path_parts = path.strip("/").split("/")
+              if len(pattern_parts) != len(path_parts):
+                  return None
+              params = {}
+              for expected, actual in zip(pattern_parts, path_parts):
+                  if expected.startswith("{") and expected.endswith("}"):
+                      params[expected[1:-1]] = actual
+                  elif expected != actual:
+                      return None
+              return params
+
+          def wrap(middleware, call_next):
+              def layer(request):
+                  return middleware(request, call_next)
+              return layer
+
+          class App:
+              def __init__(self):
+                  self.routes = []
+                  self.middleware = []
+
+              def route(self, method, pattern):
+                  def register(handler):
+                      self.routes.append((method, pattern, handler))
+                      return handler
+                  return register
+
+              def get(self, pattern):
+                  return self.route("GET", pattern)
+
+              def post(self, pattern):
+                  return self.route("POST", pattern)
+
+              def add_middleware(self, middleware):
+                  self.middleware.append(middleware)
+
+              def dispatch(self, request):
+                  for method, pattern, handler in self.routes:
+                      params = match(pattern, request.path)
+                      if params is None or method != request.method:
+                          continue
+                      try:
+                          result = handler(request, **params)
+                      except HTTPError as error:
+                          return json_response({"detail": error.detail}, error.status)
+                      if isinstance(result, tuple):
+                          return json_response(*result)
+                      return json_response(result)
+                  return json_response({"detail": "Not Found"}, 404)
+
+              def handle(self, request):
+                  call_next = self.dispatch
+                  for middleware in self.middleware:
+                      call_next = wrap(middleware, call_next)
+                  try:
+                      return call_next(request)
+                  except Exception:
+                      return json_response({"detail": "Internal Server Error"}, 500)
+
+          def serve_bytes(app, raw):
+              head, _, body = raw.partition(b"\r\n\r\n")
+              lines = head.decode("iso-8859-1").split("\r\n")
+              method, target, _ = lines[0].split(" ")
+              headers = {}
+              for line in lines[1:]:
+                  name, _, value = line.partition(":")
+                  headers[name.strip().lower()] = value.strip()
+              response = app.handle(Request(method, target.split("?")[0], headers, body))
+              response.headers["content-length"] = str(len(response.body))
+              out = f"HTTP/1.1 {response.status} {HTTPStatus(response.status).phrase}\r\n"
+              out += "".join(f"{name}: {value}\r\n" for name, value in response.headers.items())
+              return (out + "\r\n").encode("ascii") + response.body
+
+          # ------------------------- the application -------------------------
+          app = App()
+          NOTES = {1: {"id": 1, "title": "Buy oat milk"}}
+
+          def add_server_header(request, call_next):
+              response = call_next(request)
+              response.headers["server"] = "tiny/0.1"
+              return response
+
+          app.add_middleware(add_server_header)
+
+          @app.get("/notes/{note_id}")
+          def read_note(request, note_id):
+              note = NOTES.get(int(note_id))
+              if note is None:
+                  raise HTTPError(404, "Note not found")
+              return note
+
+          @app.post("/notes")
+          def create_note(request):
+              data = json.loads(request.body)
+              note = {"id": len(NOTES) + 1, "title": data["title"]}
+              NOTES[note["id"]] = note
+              return note, 201
+
+          for request in [
+              Request("GET", "/notes/1"),
+              Request("GET", "/notes/99"),
+              Request("GET", "/notes/abc"),
+              Request("DELETE", "/notes/1"),
+              Request("POST", "/notes", body=b'{"title": "Call Ada"}'),
+          ]:
+              response = app.handle(request)
+              print(request.method, request.path, "->", response.status, response.body.decode())
+
+          print()
+          print(serve_bytes(app, b"GET /notes/2 HTTP/1.1\r\nHost: localhost\r\n\r\n").decode())
+        expectedOutput: |
+          GET /notes/1 -> 200 {"id": 1, "title": "Buy oat milk"}
+          GET /notes/99 -> 404 {"detail": "Note not found"}
+          GET /notes/abc -> 500 {"detail": "Internal Server Error"}
+          DELETE /notes/1 -> 404 {"detail": "Not Found"}
+          POST /notes -> 201 {"id": 2, "title": "Call Ada"}
+
+          HTTP/1.1 200 OK
+          content-type: application/json
+          server: tiny/0.1
+          content-length: 30
+
+          {"id": 2, "title": "Call Ada"}
+        annotations:
+          - line: 51
+            text: The decorator factory from the routing section, now as a method.
+          - line: 67
+            text: Try each route in registration order; the first match wins.
+          - line: 73
+            text: An expected failure raised by the handler becomes a clean error response.
+          - line: 75
+            text: Handlers may return (data, status) to choose a status code, like 201 Created.
+          - line: 83
+            text: Build the onion - each middleware added later wraps the earlier ones.
+          - line: 86
+            text: The safety net - an unexpected exception becomes a 500 without exposing the traceback.
+          - line: 89
+            text: The "server" part - bytes in, bytes out. Uvicorn does this (and the sockets) for real.
+          - line: 116
+            text: int("abc") raises ValueError - a bug the client caused, but reported as 500.
+      - type: markdown
+        body: |
+          Two results are not good enough yet, and real frameworks fix both:
+
+          - `GET /notes/abc` returns **500**, blaming the server for a bad client input. FastAPI converts
+            `note_id: int` before calling your handler and answers **422** with a description of the
+            validation error.
+          - `DELETE /notes/1` returns **404**, but the path exists - only the method is wrong. The correct answer
+            is **405 Method Not Allowed** with an `Allow` header listing the methods that do work. You will add
+            this in the practice section.
+      - type: item
+        ref: status-404-405
+
+  - id: fastapi
+    title: The same pieces in FastAPI
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          FastAPI is built on Starlette (routing, requests, responses, middleware) and Pydantic (validation).
+          Every part of the tiny framework has a counterpart:
+
+          | Tiny framework | FastAPI / Starlette |
+          |---|---|
+          | `Request` dataclass | `fastapi.Request` (from Starlette), built from the ASGI scope |
+          | `app.routes` filled by `@app.get(...)` | Routes registered by `@app.get(...)`, `@app.post(...)`, in declaration order |
+          | `{note_id}` captured as a string | `{note_id}` plus the type hint `note_id: int` - converted for you; invalid input gives **422** |
+          | Return a dict → `json_response` | Return a dict (or Pydantic model) → serialised to a JSON response |
+          | `return note, 201` | `@app.post("/notes", status_code=201)` |
+          | `raise HTTPError(404, "...")` | `raise HTTPException(status_code=404, detail="...")` → `{"detail": "..."}` |
+          | No route matched → 404 | Same, `{"detail": "Not Found"}`; a wrong method on an existing path gives 405 |
+          | `add_middleware(func)` with `call_next` | `@app.middleware("http")` with `await call_next(request)`; the last added is outermost |
+          | Catch-all 500 | Starlette's `ServerErrorMiddleware` returns a generic 500 |
+          | `serve_bytes` | An ASGI server such as Uvicorn: sockets, HTTP parsing, then `await app(scope, receive, send)` |
+
+          The equivalent notes API in FastAPI:
+      - type: code
+        status: illustrative
+        code: |
+          from fastapi import FastAPI, HTTPException, Request
+          from pydantic import BaseModel
+
+          app = FastAPI()
+          NOTES = {1: {"id": 1, "title": "Buy oat milk"}}
+
+          class NoteIn(BaseModel):
+              title: str
+
+          @app.middleware("http")
+          async def add_server_header(request: Request, call_next):
+              response = await call_next(request)
+              response.headers["x-served-by"] = "notes-api"
+              return response
+
+          @app.get("/notes/{note_id}")
+          def read_note(note_id: int):
+              note = NOTES.get(note_id)
+              if note is None:
+                  raise HTTPException(status_code=404, detail="Note not found")
+              return note
+
+          @app.post("/notes", status_code=201)
+          def create_note(note: NoteIn):
+              new = {"id": len(NOTES) + 1, "title": note.title}
+              NOTES[new["id"]] = new
+              return new
+        caption: >-
+          main.py - illustrative, because FastAPI is a third-party package that is not available in this
+          browser. A parameter typed with a Pydantic model (NoteIn) is read from the JSON body and validated.
+        annotations:
+          - line: 10
+            text: FastAPI middleware is async and must await call_next.
+          - line: 17
+            text: The type hint makes FastAPI convert "1" to 1 and reject "abc" with 422.
+          - line: 24
+            text: A missing or non-string title is rejected with 422 before your code runs.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ pip install "fastapi[standard]"
+          $ fastapi dev main.py
+          ...  Uvicorn running on http://127.0.0.1:8000
+          $ curl -i http://127.0.0.1:8000/notes/1      # in a second terminal
+          HTTP/1.1 200 OK
+          date: Thu, 22 Oct 2026 09:30:00 GMT
+          server: uvicorn
+          content-length: 31
+          content-type: application/json
+          x-served-by: notes-api
+
+          {"id":1,"title":"Buy oat milk"}
+        caption: >-
+          Run locally inside a virtual environment. fastapi dev starts Uvicorn with auto-reload for development
+          (uvicorn main:app --reload is equivalent); interactive docs appear at /docs. Header order and values
+          vary. On Windows PowerShell, type curl.exe.
+      - type: callout
+        variant: production
+        title: Async is not automatically faster
+        body: |
+          ASGI frameworks shine when requests spend most of their time **waiting** - on databases, other APIs,
+          LLM calls - because one process can interleave many waiting requests. CPU-heavy work does not get
+          faster by writing `async def`; it needs more processes or a background job queue. FastAPI runs plain
+          `def` handlers in a thread pool so they do not block the event loop.
+
+  - id: wsgi-asgi
+    title: WSGI and ASGI - the server-framework contract
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Because servers and frameworks agree on an interface, you can combine them freely (Gunicorn with
+          Flask or Django, Uvicorn or Hypercorn with FastAPI or Django).
+
+          **WSGI** ([PEP 3333](https://peps.python.org/pep-3333/)) is synchronous. The application is any
+          callable `app(environ, start_response)`: `environ` is a dict of CGI-style keys (`REQUEST_METHOD`,
+          `PATH_INFO`, `HTTP_HOST`...), the app calls `start_response(status, headers)` once, and returns an
+          iterable of bytes. Python's standard library includes a reference implementation, so you can call a
+          WSGI app directly:
+      - type: code
+        runnable: true
+        code: |
+          from wsgiref.util import setup_testing_defaults
+
+          def app(environ, start_response):
+              body = f"Hello from {environ['PATH_INFO']}".encode("utf-8")
+              start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8"),
+                                        ("Content-Length", str(len(body)))])
+              return [body]
+
+          environ = {"REQUEST_METHOD": "GET", "PATH_INFO": "/notes"}
+          setup_testing_defaults(environ)
+
+          def start_response(status, headers):
+              print(status, headers)
+
+          print(b"".join(app(environ, start_response)))
+        expectedOutput: |
+          200 OK [('Content-Type', 'text/plain; charset=utf-8'), ('Content-Length', '17')]
+          b'Hello from /notes'
+        caption: Here we play the server - we build environ and supply start_response. Gunicorn does exactly this per request.
+      - type: markdown
+        body: |
+          One WSGI call handles one request from start to finish, holding a worker thread or process the
+          whole time, and there is no way to keep a connection open for WebSockets.
+
+          **ASGI** ([specification](https://asgi.readthedocs.io/en/latest/specs/main.html)) is the asynchronous
+          successor. The application is a coroutine `app(scope, receive, send)`: `scope` describes the
+          connection (`type` is `"http"`, `"websocket"` or `"lifespan"`, plus method, path, headers as byte
+          pairs...), `await receive()` delivers events such as request body chunks, and `await send(event)`
+          emits `http.response.start` (status and headers) and `http.response.body` events. Because everything
+          is an event on a long-lived connection, ASGI supports WebSockets, streaming responses and
+          server-sent events.
+      - type: code
+        status: illustrative
+        code: |
+          async def app(scope, receive, send):
+              assert scope["type"] == "http"
+              body = f"Hello from {scope['path']}".encode("utf-8")
+              await send({
+                  "type": "http.response.start",
+                  "status": 200,
+                  "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+              })
+              await send({"type": "http.response.body", "body": body})
+        caption: >-
+          A complete ASGI application with no framework. Save as main.py and run uvicorn main:app locally;
+          shown rather than run because it needs an ASGI server and an asyncio event loop.
+      - type: markdown
+        body: |
+          FastAPI's `app` object is exactly such a callable; everything in this lesson happens inside that one
+          `await app(scope, receive, send)` call. Django supports both interfaces; Flask is a WSGI framework.
+
+  - id: mistakes
+    title: Common mistakes
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Cause | Fix |
+          |---|---|---|
+          | `GET /notes/new` runs `read_note` with `note_id="new"` | `/notes/{note_id}` was registered before `/notes/new`; the first match wins | Declare fixed paths before parameterised ones, or use a typed parameter (`{note_id:int}`, `note_id: int`) |
+          | `KeyError: '1'` looking up a record | Path parameters arrive as **strings**; the dict has int keys | Convert (`int(note_id)`) - or let FastAPI do it with a type hint |
+          | `AttributeError: 'NoneType' object has no attribute ...` after adding middleware | The middleware forgot to `return` the response | Always return what `call_next` returned (or your own response) |
+          | Route never registered; handler name refers to another function | `@app.get` used without arguments | Call the factory: `@app.get("/path")` |
+          | Wrong method answered with 404 | The router does not distinguish 404 from 405 | 405 with an `Allow` header when the path exists |
+          | Every error is a 500 | Input validation errors are not caught | Validate input and answer 400/422; keep 500 for real server bugs |
+          | `FastAPI` app does not start with `python main.py` | FastAPI is not a server | Run it with `fastapi dev`, `fastapi run` or `uvicorn main:app` |
+      - type: code
+        runnable: true
+        code: |
+          NOTES = {1: {"id": 1, "title": "Buy oat milk"}}
+          note_id = "1"            # captured from the path /notes/1
+          print(NOTES[note_id])
+        expectError: KeyError
+        caption: The string '1' and the integer 1 are different dictionary keys.
+      - type: code
+        runnable: true
+        code: |
+          routes = []
+
+          def get(pattern):
+              def register(handler):
+                  routes.append((pattern, handler.__name__))
+                  return handler
+              return register
+
+          @get
+          def list_notes():
+              return []
+
+          print(routes)
+          print(list_notes.__name__)
+        expectedOutput: |
+          []
+          register
+        caption: >-
+          Without parentheses, get(list_notes) runs with the function as the pattern and returns register -
+          which replaces list_notes. Nothing was registered.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Extend the tiny framework. Each exercise is self-contained; the checks call your functions with many
+          paths and methods.
+      - type: item
+        ref: implement-dispatch
+      - type: item
+        ref: implement-typed-match
+      - type: item
+        ref: debug-middleware-return
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - The **server** (Uvicorn, Gunicorn) owns sockets and HTTP bytes; the **framework** is the
+            application it calls per request through **WSGI** (sync) or **ASGI** (async, also WebSockets).
+          - Decorators like `@app.get("/notes/{note_id}")` register `(method, pattern, handler)` in a route
+            table **when the module loads**.
+          - The router tries routes in order; `{param}` segments capture strings, which must be converted.
+          - No path match → **404**; path matches but method does not → **405** with `Allow`; handler errors →
+            chosen 4xx; unexpected exceptions → generic **500**.
+          - Handlers return data; the framework serialises it to JSON with a status code.
+          - Middleware wraps every request like an onion; the last added is outermost; it can short-circuit.
+          - FastAPI = Starlette routing and middleware + Pydantic validation driven by type hints, run by an
+            ASGI server.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What happens between a request arriving on a socket and your handler running?" - walk through
+          server parsing, the ASGI call, middleware, routing, parameter conversion and validation, the handler,
+          serialisation and middleware on the way out. Be ready to contrast WSGI and ASGI. See
+          [the interview question](interview:backend.web-frameworks.request-journey).
+
+items:
+  - id: server-vs-framework
+    type: mcq
+    skill: recognition
+    prompt: Which statement about FastAPI and Uvicorn is correct?
+    explanation: >-
+      Uvicorn is an ASGI server: it handles sockets and the HTTP protocol, then calls the application.
+      FastAPI is the application framework that does routing, validation and serialisation.
+    options:
+      - id: a
+        text: Uvicorn is an ASGI server that handles connections and HTTP; FastAPI is the application it calls for each request.
+        correct: true
+        feedback: Right. That is why you start FastAPI apps with fastapi dev or uvicorn main:app.
+      - id: b
+        text: FastAPI is a web server, so Uvicorn is optional.
+        feedback: FastAPI does not open sockets itself. It needs an ASGI server such as Uvicorn or Hypercorn.
+      - id: c
+        text: Uvicorn decides which handler runs for each path.
+        feedback: Routing is the framework's job. Uvicorn passes every request to the same ASGI application.
+      - id: d
+        text: They are two names for the same program.
+        feedback: They are separate projects connected by the ASGI interface; you could swap Uvicorn for Hypercorn.
+
+  - id: predict-registration
+    type: predict-output
+    skill: prediction
+    prompt: No request is ever handled in this program. What does it print?
+    code: |
+      routes = []
+
+      def get(pattern):
+          def register(handler):
+              routes.append(pattern)
+              return handler
+          return register
+
+      @get("/a")
+      def page_a():
+          return "A"
+
+      @get("/b")
+      def page_b():
+          return "B"
+
+      print(routes)
+      print(page_a())
+    answer: |
+      ['/a', '/b']
+      A
+    explanation: >-
+      Each decorator runs when its def statement runs, so both patterns are registered before the prints.
+      register returns the original function, so page_a still works normally.
+    wrongAnswers:
+      - answer: |
+          []
+          A
+        feedback: >-
+          Decorators are applied when the function is defined, not when it is first called or requested. The
+          route table is complete as soon as the module has run.
+      - answer: |
+          ['/a', '/b']
+          None
+        feedback: >-
+          register returns handler unchanged, so page_a is still the original function and returns "A". (It
+          would be None only if the decorator forgot to return the function.)
+
+  - id: predict-match
+    type: predict-output
+    skill: prediction
+    prompt: Using the `match` function from this section, what does this print?
+    code: |
+      def match(pattern, path):
+          pattern_parts = pattern.strip("/").split("/")
+          path_parts = path.strip("/").split("/")
+          if len(pattern_parts) != len(path_parts):
+              return None
+          params = {}
+          for expected, actual in zip(pattern_parts, path_parts):
+              if expected.startswith("{") and expected.endswith("}"):
+                  params[expected[1:-1]] = actual
+              elif expected != actual:
+                  return None
+          return params
+
+      print(match("/files/{name}", "/files/report.pdf"))
+      print(match("/files/{name}", "/files/2026/report.pdf"))
+      print(match("/files/{name}", "/files/"))
+    answer: |
+      {'name': 'report.pdf'}
+      None
+      None
+    explanation: >-
+      The first path has two segments like the pattern. The second has three, so the counts differ. In the
+      third, strip("/") leaves "files", a single segment, so it cannot match the two-segment pattern.
+    wrongAnswers:
+      - answer: |
+          {'name': 'report.pdf'}
+          {'name': '2026/report.pdf'}
+          None
+        feedback: >-
+          A {name} placeholder captures exactly one segment; slashes separate segments. (Starlette offers a
+          special {name:path} convertor when you want to capture slashes.)
+      - answer: |
+          {'name': 'report.pdf'}
+          None
+          {'name': ''}
+        feedback: >-
+          strip("/") removes the trailing slash, so "/files/" becomes the single segment "files" - one segment
+          against a two-segment pattern.
+
+  - id: route-order
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      An app registers `@app.get("/notes/{note_id}")` and then, further down, `@app.get("/notes/new")`.
+      `GET /notes/new` returns `500 Internal Server Error` with `ValueError: invalid literal for int()` in the
+      logs. What is happening?
+    explanation: >-
+      The router tries routes in registration order and stops at the first match. "/notes/{note_id}" matches
+      "/notes/new" with note_id="new", and int("new") fails. FastAPI's docs make the same point: declare
+      /users/me before /users/{user_id}.
+    options:
+      - id: a
+        text: The parameterised route was registered first and matches "new" as a note_id; register /notes/new first or restrict note_id to integers.
+        correct: true
+        feedback: Correct. First match wins, so order specific routes before general ones.
+      - id: b
+        text: /notes/new is an invalid path because it has no parameter.
+        feedback: Fixed paths are perfectly valid routes; this one is just never reached.
+      - id: c
+        text: The router picks the route that was registered last.
+        feedback: It picks the first matching route in registration order.
+      - id: d
+        text: GET requests cannot be routed to two different handlers.
+        feedback: Many GET routes can coexist; they differ by path pattern.
+
+  - id: predict-onion
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Three middleware are added in the order A, B, C. What does this print?
+    code: |
+      def wrap(middleware, call_next):
+          def layer(request):
+              return middleware(request, call_next)
+          return layer
+
+      def handler(request):
+          print("handler")
+          return "ok"
+
+      def make(name):
+          def middleware(request, call_next):
+              print(name, "in")
+              result = call_next(request)
+              print(name, "out")
+              return result
+          return middleware
+
+      app = handler
+      for mw in [make("A"), make("B"), make("C")]:
+          app = wrap(mw, app)
+      app("GET /")
+    answer: |
+      C in
+      B in
+      A in
+      handler
+      A out
+      B out
+      C out
+    explanation: >-
+      Each wrap puts a new layer outside the previous ones, so C (added last) is outermost. Requests travel
+      inward C, B, A to the handler, and responses travel back out A, B, C.
+    wrongAnswers:
+      - answer: |
+          A in
+          B in
+          C in
+          handler
+          C out
+          B out
+          A out
+        feedback: >-
+          That would be the order if the first-added middleware were outermost. Here each new wrap encloses the
+          previous app, so the last one added runs first - the same rule FastAPI documents.
+      - answer: |
+          A in
+          A out
+          B in
+          B out
+          C in
+          C out
+          handler
+        feedback: >-
+          Middleware is nested, not sequential. Each layer's "out" line runs only after call_next returns, which
+          is after everything inside it has finished.
+
+  - id: status-404-405
+    type: mcq
+    skill: explanation
+    prompt: |
+      An API has only `GET /notes/{note_id}` and `PUT /notes/{note_id}`. What should it answer to
+      `DELETE /notes/1` and to `GET /notez/1`?
+    explanation: >-
+      For DELETE /notes/1 the path matches routes but the method does not, so 405 Method Not Allowed with an
+      Allow header listing GET and PUT. /notez/1 matches no route at all, so 404 Not Found.
+    options:
+      - id: a
+        text: "DELETE /notes/1: 405 with Allow: GET, PUT. GET /notez/1: 404."
+        correct: true
+        feedback: Correct. 405 tells the client the resource exists but the method is wrong.
+      - id: b
+        text: Both 404.
+        feedback: 404 for the DELETE hides useful information; the path does exist, only the method is unsupported.
+      - id: c
+        text: Both 405.
+        feedback: /notez/1 matches no route with any method, so there is nothing to allow - 404.
+      - id: d
+        text: "DELETE /notes/1: 500, because the server cannot handle it."
+        feedback: 5xx means the server failed. Here the client used an unsupported method, a 4xx situation.
+
+  - id: explain-middleware
+    type: explain
+    skill: design
+    prompt: |
+      Your team wants every response to include an `X-Request-ID` header and every request to be logged with
+      its duration. One developer proposes adding this code at the top and bottom of each of the 40 handlers.
+      Argue for middleware instead, and say what the middleware would do before and after `call_next`.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says middleware runs for every request automatically, so no handler can forget it and new endpoints get it for free.
+      - Describes work before call_next (start a timer, create or read the request ID).
+      - Describes work after call_next (compute the duration, log it, add the X-Request-ID header to the response).
+      - Mentions that it also covers responses not produced by handlers, such as 404s or errors, or that handlers stay focused on business logic.
+    modelAnswer: |
+      Cross-cutting behaviour belongs in middleware because it wraps every request in one place. Copying code
+      into 40 handlers means someone will forget it in handler 41, and every change must be made 40 times.
+      The middleware would, before calling call_next, record the start time and take the incoming
+      X-Request-ID header or generate a new ID; after call_next returns, it would compute the duration, log
+      method, path, status and duration with the ID, add X-Request-ID to the response headers and return the
+      response. Because it sits outside the router, it also covers 404s, 405s and error responses that never
+      reach a handler, and the handlers stay focused on business logic.
+
+  - id: implement-dispatch
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `dispatch(routes, method, path)` for a router that returns `(status, data, headers)`:
+
+      - Try routes in order. For the **first** route whose pattern matches **and** whose method equals
+        `method`, call `handler(**params)` and return `(200, result, {})`.
+      - If **no pattern** matches the path, return `(404, {"detail": "Not Found"}, {})`.
+      - If some patterns match but **none with this method**, return
+        `(405, {"detail": "Method Not Allowed"}, {"allow": "GET, PUT"})`, listing the matching routes' methods
+        in route order, joined by `", "`.
+
+      `match` is provided.
+    starterCode: |
+      def match(pattern, path):
+          pattern_parts = pattern.strip("/").split("/")
+          path_parts = path.strip("/").split("/")
+          if len(pattern_parts) != len(path_parts):
+              return None
+          params = {}
+          for expected, actual in zip(pattern_parts, path_parts):
+              if expected.startswith("{") and expected.endswith("}"):
+                  params[expected[1:-1]] = actual
+              elif expected != actual:
+                  return None
+          return params
+
+      def dispatch(routes, method, path):
+          for route_method, pattern, handler in routes:
+              params = match(pattern, path)
+              if params is not None and route_method == method:
+                  return 200, handler(**params), {}
+          return 404, {"detail": "Not Found"}, {}
+
+      routes = [
+          ("GET", "/notes/{note_id}", lambda note_id: {"id": note_id}),
+          ("PUT", "/notes/{note_id}", lambda note_id: {"updated": note_id}),
+      ]
+      print(dispatch(routes, "GET", "/notes/3"))
+      print(dispatch(routes, "DELETE", "/notes/3"))
+      print(dispatch(routes, "GET", "/tasks/3"))
+    solution: |
+      def match(pattern, path):
+          pattern_parts = pattern.strip("/").split("/")
+          path_parts = path.strip("/").split("/")
+          if len(pattern_parts) != len(path_parts):
+              return None
+          params = {}
+          for expected, actual in zip(pattern_parts, path_parts):
+              if expected.startswith("{") and expected.endswith("}"):
+                  params[expected[1:-1]] = actual
+              elif expected != actual:
+                  return None
+          return params
+
+      def dispatch(routes, method, path):
+          allowed = []
+          for route_method, pattern, handler in routes:
+              params = match(pattern, path)
+              if params is None:
+                  continue
+              if route_method == method:
+                  return 200, handler(**params), {}
+              allowed.append(route_method)
+          if allowed:
+              return 405, {"detail": "Method Not Allowed"}, {"allow": ", ".join(allowed)}
+          return 404, {"detail": "Not Found"}, {}
+
+      routes = [
+          ("GET", "/notes/{note_id}", lambda note_id: {"id": note_id}),
+          ("PUT", "/notes/{note_id}", lambda note_id: {"updated": note_id}),
+      ]
+      print(dispatch(routes, "GET", "/notes/3"))
+      print(dispatch(routes, "DELETE", "/notes/3"))
+      print(dispatch(routes, "GET", "/tasks/3"))
+    expectedOutput: |
+      (200, {'id': '3'}, {})
+      (405, {'detail': 'Method Not Allowed'}, {'allow': 'GET, PUT'})
+      (404, {'detail': 'Not Found'}, {})
+    tests:
+      - name: a matching route is called with its parameters
+        code: |
+          got = dispatch(routes, "PUT", "/notes/9")
+          assert got == (200, {"updated": "9"}, {}), f"PUT /notes/9 should call the PUT handler with note_id='9'; got {got!r}."
+      - name: wrong method on an existing path gives 405 with Allow
+        code: |
+          got = dispatch(routes, "DELETE", "/notes/3")
+          assert got == (405, {"detail": "Method Not Allowed"}, {"allow": "GET, PUT"}), f"Expected 405 with allow 'GET, PUT'; got {got!r}."
+      - name: unknown path gives 404
+        code: |
+          got = dispatch(routes, "GET", "/tasks/3")
+          assert got == (404, {"detail": "Not Found"}, {}), f"No pattern matches /tasks/3, so expect 404; got {got!r}."
+      - name: allow lists only routes whose path matches
+        code: |
+          other = [
+              ("POST", "/notes", lambda: {"created": True}),
+              ("GET", "/notes/{note_id}", lambda note_id: {"id": note_id}),
+              ("DELETE", "/notes/{note_id}", lambda note_id: {"deleted": note_id}),
+          ]
+          got = dispatch(other, "PATCH", "/notes/1")
+          assert got == (405, {"detail": "Method Not Allowed"}, {"allow": "GET, DELETE"}), f"Only GET and DELETE routes match /notes/1; got {got!r}."
+          assert dispatch(other, "POST", "/notes") == (200, {"created": True}, {}), "POST /notes should still reach its handler."
+      - name: first matching route wins
+        code: |
+          ordered = [("GET", "/notes/{note_id}", lambda note_id: "param"), ("GET", "/notes/new", lambda: "fixed")]
+          assert dispatch(ordered, "GET", "/notes/new")[1] == "param", "Try routes in order and return the first match."
+    hints:
+      - Keep a list of methods whose pattern matched the path but whose method did not.
+      - After the loop, a non-empty list means 405; an empty one means 404.
+      - "`\", \".join(allowed)` builds the Allow value."
+    feedback:
+      - when: { outputContains: "(404, {'detail': 'Not Found'}, {})\n(404" }
+        message: DELETE /notes/3 still gives 404. When the pattern matches but the method does not, remember the method and answer 405 after the loop.
+    explanation: >-
+      Distinguishing "no such resource" (404) from "resource exists, wrong method" (405 plus Allow) tells
+      clients exactly what to fix. Real routers such as Starlette's do the same check.
+
+  - id: implement-typed-match
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      Starlette lets you write `{note_id:int}` in a path. Extend `match` so that:
+
+      - `{name}` captures the segment as a **string** (as before),
+      - `{name:int}` matches only if the segment consists of digits (use `str.isdigit()`), and captures it
+        converted to an **int**; otherwise the whole match fails (`None`).
+
+      With a typed route, `GET /notes/new` no longer reaches the note handler.
+    starterCode: |
+      def match(pattern, path):
+          pattern_parts = pattern.strip("/").split("/")
+          path_parts = path.strip("/").split("/")
+          if len(pattern_parts) != len(path_parts):
+              return None
+          params = {}
+          for expected, actual in zip(pattern_parts, path_parts):
+              if expected.startswith("{") and expected.endswith("}"):
+                  params[expected[1:-1]] = actual
+              elif expected != actual:
+                  return None
+          return params
+
+      print(match("/notes/{note_id:int}", "/notes/42"))
+      print(match("/notes/{note_id:int}", "/notes/new"))
+      print(match("/tags/{tag}", "/tags/work"))
+    solution: |
+      def match(pattern, path):
+          pattern_parts = pattern.strip("/").split("/")
+          path_parts = path.strip("/").split("/")
+          if len(pattern_parts) != len(path_parts):
+              return None
+          params = {}
+          for expected, actual in zip(pattern_parts, path_parts):
+              if expected.startswith("{") and expected.endswith("}"):
+                  name, _, kind = expected[1:-1].partition(":")
+                  if kind == "int":
+                      if not actual.isdigit():
+                          return None
+                      params[name] = int(actual)
+                  else:
+                      params[name] = actual
+              elif expected != actual:
+                  return None
+          return params
+
+      print(match("/notes/{note_id:int}", "/notes/42"))
+      print(match("/notes/{note_id:int}", "/notes/new"))
+      print(match("/tags/{tag}", "/tags/work"))
+    expectedOutput: |
+      {'note_id': 42}
+      None
+      {'tag': 'work'}
+    tests:
+      - name: int parameters are converted
+        code: |
+          got = match("/notes/{note_id:int}", "/notes/42")
+          assert got == {"note_id": 42}, f"Expected {{'note_id': 42}} with an int, got {got!r}."
+          assert isinstance(got["note_id"], int), "Convert the captured segment with int()."
+      - name: non-digits do not match an int parameter
+        code: |
+          assert match("/notes/{note_id:int}", "/notes/new") is None, "'new' is not digits, so the typed route must not match."
+          assert match("/notes/{note_id:int}", "/notes/4x") is None, "'4x' is not all digits."
+      - name: untyped parameters stay strings
+        code: |
+          assert match("/tags/{tag}", "/tags/work") == {"tag": "work"}, "A plain {tag} captures the string."
+          assert match("/files/{name}", "/files/42") == {"name": "42"}, "Without :int the value stays the string '42'."
+      - name: several parameters and literal segments
+        code: |
+          got = match("/users/{user_id:int}/notes/{slug}", "/users/7/notes/shopping")
+          assert got == {"user_id": 7, "slug": "shopping"}, f"Got {got!r}."
+          assert match("/users/{user_id:int}/notes/{slug}", "/people/7/notes/shopping") is None, "Literal segments must still match exactly."
+          assert match("/notes/{note_id:int}", "/notes/1/edit") is None, "Different segment counts never match."
+    hints:
+      - "Inside the braces, split the text at ':' - `name, _, kind = inner.partition(\":\")` gives kind == '' when there is no type."
+      - "For kind == \"int\": return None unless `actual.isdigit()`, otherwise store `int(actual)`."
+    feedback:
+      - when: { outputContains: "'note_id:int'" }
+        message: The parameter name still includes ":int". Split the text inside the braces into the name and the type.
+    explanation: >-
+      A typed placeholder does two jobs: it restricts which paths match (so /notes/new can reach a different
+      route) and converts the value. FastAPI achieves the same with type hints, answering 422 instead of
+      falling through when a value cannot be converted.
+
+  - id: debug-middleware-return
+    type: debug
+    skill: debugging
+    prompt: |
+      After adding this middleware, every request fails with
+      `AttributeError: 'NoneType' object has no attribute 'status'`. Fix the middleware so the response
+      keeps working and carries the `server` header.
+    starterCode: |
+      from dataclasses import dataclass, field
+
+      @dataclass
+      class Response:
+          status: int
+          headers: dict[str, str] = field(default_factory=dict)
+
+      def handler(request):
+          return Response(200)
+
+      def add_server_header(request, call_next):
+          response = call_next(request)
+          response.headers["server"] = "tiny/0.1"
+
+      def wrap(middleware, call_next):
+          def layer(request):
+              return middleware(request, call_next)
+          return layer
+
+      app = wrap(add_server_header, handler)
+      response = app({"path": "/"})
+      print(response.status, response.headers)
+    solution: |
+      from dataclasses import dataclass, field
+
+      @dataclass
+      class Response:
+          status: int
+          headers: dict[str, str] = field(default_factory=dict)
+
+      def handler(request):
+          return Response(200)
+
+      def add_server_header(request, call_next):
+          response = call_next(request)
+          response.headers["server"] = "tiny/0.1"
+          return response
+
+      def wrap(middleware, call_next):
+          def layer(request):
+              return middleware(request, call_next)
+          return layer
+
+      app = wrap(add_server_header, handler)
+      response = app({"path": "/"})
+      print(response.status, response.headers)
+    expectedOutput: |
+      200 {'server': 'tiny/0.1'}
+    tests:
+      - name: the wrapped app returns the response
+        code: |
+          result = app({"path": "/x"})
+          assert result is not None, "The middleware must return the response it got from call_next."
+          assert result.status == 200, f"status should be 200, got {result.status!r}."
+      - name: the header is added
+        code: |
+          assert app({"path": "/y"}).headers.get("server") == "tiny/0.1", "Keep adding the server header before returning."
+    hints:
+      - What does a Python function return when it reaches the end without a return statement?
+      - The middleware receives the response from call_next - it must hand it back to its caller.
+    feedback:
+      - when: { errorType: AttributeError }
+        message: Something still returns None. Every layer must return a response - add return response at the end of the middleware.
+    explanation: >-
+      A function without a return statement returns None. Middleware sits in the middle of the call chain, so
+      it must pass the response back out; forgetting to is one of the most common middleware bugs.
+
+  # ----- Mastery check (new items) -----
+  - id: m-asgi-wsgi
+    type: mcq
+    skill: recognition
+    difficulty: 2
+    prompt: Which statement correctly contrasts WSGI and ASGI?
+    explanation: >-
+      WSGI (PEP 3333) is a synchronous callable app(environ, start_response) returning an iterable of bytes,
+      one request per call. ASGI is an asynchronous callable app(scope, receive, send) that exchanges event
+      dictionaries, which lets it support long-lived connections such as WebSockets.
+    options:
+      - id: a
+        text: WSGI apps are synchronous callables app(environ, start_response); ASGI apps are coroutines app(scope, receive, send) that also support WebSockets.
+        correct: true
+        feedback: Right. Flask is WSGI, FastAPI and Starlette are ASGI, Django supports both.
+      - id: b
+        text: ASGI is a web framework and WSGI is a web server.
+        feedback: Both are interfaces (contracts) between servers and applications, not programs.
+      - id: c
+        text: WSGI is for Python 2 only, so all WSGI apps are obsolete.
+        feedback: WSGI 1.0.1 (PEP 3333) supports Python 3 and is widely used, for example by Flask and Django under Gunicorn.
+      - id: d
+        text: ASGI makes every handler run faster than WSGI.
+        feedback: ASGI helps with many concurrent waiting requests; it does not speed up CPU-bound code.
+
+  - id: m-tf-async
+    type: true-false
+    skill: transfer
+    prompt: |
+      True or false: rewriting a handler that resizes images (pure CPU work) from `def` to `async def` in an
+      ASGI framework makes each request finish faster.
+    answer: false
+    explanation: >-
+      async lets one process interleave requests that are waiting on I/O. CPU-bound work still needs the CPU
+      for the same time - and running it inside an async function blocks the event loop, delaying other
+      requests. Use more processes or a background worker for CPU-heavy tasks.
+
+  - id: m-predict-short-circuit
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The request has no user. What does this print?
+    code: |
+      def handler(request):
+          print("handler")
+          return 200
+
+      def auth(request, call_next):
+          print("auth")
+          if request.get("user") is None:
+              return 401
+          return call_next(request)
+
+      def log(request, call_next):
+          print("log in")
+          status = call_next(request)
+          print("log out", status)
+          return status
+
+      app = lambda request: log(request, lambda r: auth(r, handler))
+      app({"user": None})
+    answer: |
+      log in
+      auth
+      log out 401
+    explanation: >-
+      log is outermost and calls inward. auth returns 401 without calling call_next, so the handler never
+      runs. The 401 travels back out, and log still prints its "out" line with that status.
+    wrongAnswers:
+      - answer: |
+          log in
+          auth
+          handler
+          log out 401
+        feedback: auth returns before calling call_next, so the handler is never reached - that is what short-circuiting means.
+      - answer: |
+          log in
+          auth
+        feedback: An early return from auth is a normal return to log, which then continues after its call_next line.
+
+  - id: m-auth-middleware
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write the middleware `require_api_key(request, call_next)`:
+
+      - If `request.path` is `"/health"`, always pass the request on (load balancers call it without a key).
+      - Otherwise, if the `x-api-key` header is missing or not equal to `API_KEY`, return
+        `Response(401, json.dumps({"detail": "Missing or invalid API key"}).encode("utf-8"))` **without**
+        calling `call_next`.
+      - Otherwise return whatever `call_next(request)` returns.
+    starterCode: |
+      import json
+      from dataclasses import dataclass, field
+
+      @dataclass
+      class Request:
+          method: str
+          path: str
+          headers: dict[str, str] = field(default_factory=dict)
+
+      @dataclass
+      class Response:
+          status: int
+          body: bytes = b""
+
+      API_KEY = "s3cret"
+
+      def require_api_key(request, call_next):
+          return call_next(request)
+
+      def handler(request):
+          return Response(200, b"ok")
+
+      print(require_api_key(Request("GET", "/notes"), handler).status)
+      print(require_api_key(Request("GET", "/notes", {"x-api-key": "s3cret"}), handler).status)
+      print(require_api_key(Request("GET", "/health"), handler).status)
+    solution: |
+      import json
+      from dataclasses import dataclass, field
+
+      @dataclass
+      class Request:
+          method: str
+          path: str
+          headers: dict[str, str] = field(default_factory=dict)
+
+      @dataclass
+      class Response:
+          status: int
+          body: bytes = b""
+
+      API_KEY = "s3cret"
+
+      def require_api_key(request, call_next):
+          if request.path == "/health":
+              return call_next(request)
+          if request.headers.get("x-api-key") != API_KEY:
+              body = json.dumps({"detail": "Missing or invalid API key"}).encode("utf-8")
+              return Response(401, body)
+          return call_next(request)
+
+      def handler(request):
+          return Response(200, b"ok")
+
+      print(require_api_key(Request("GET", "/notes"), handler).status)
+      print(require_api_key(Request("GET", "/notes", {"x-api-key": "s3cret"}), handler).status)
+      print(require_api_key(Request("GET", "/health"), handler).status)
+    expectedOutput: |
+      401
+      200
+      200
+    tests:
+      - name: missing key is rejected without calling the handler
+        code: |
+          calls_made = []
+          def spy(request):
+              calls_made.append(request.path)
+              return Response(200, b"ok")
+          result = require_api_key(Request("GET", "/notes"), spy)
+          assert result.status == 401, f"A request without x-api-key should get 401, got {result.status!r}."
+          assert calls_made == [], "Do not call call_next when rejecting the request."
+          assert json.loads(result.body) == {"detail": "Missing or invalid API key"}, f"Body should be the JSON detail message, got {result.body!r}."
+      - name: wrong key is rejected
+        code: |
+          result = require_api_key(Request("GET", "/notes", {"x-api-key": "guess"}), lambda r: Response(200, b"ok"))
+          assert result.status == 401, "A wrong key must also get 401."
+      - name: correct key passes through unchanged
+        code: |
+          sentinel = Response(204, b"")
+          result = require_api_key(Request("POST", "/notes", {"x-api-key": API_KEY}), lambda r: sentinel)
+          assert result is sentinel, "With the right key, return exactly what call_next returned."
+      - name: /health is public
+        code: |
+          result = require_api_key(Request("GET", "/health"), lambda r: Response(200, b"healthy"))
+          assert result.status == 200, "/health must be reachable without a key."
+    hints:
+      - Check the /health path first and pass it straight to call_next.
+      - "`request.headers.get(\"x-api-key\")` returns None when the header is missing, which is also not equal to API_KEY."
+      - Build the 401 Response yourself and return it before reaching call_next.
+    feedback:
+      - when: { outputEquals: "200\n200\n200\n" }
+        message: Every request is let through. Compare the x-api-key header with API_KEY and return a 401 Response when it does not match.
+    explanation: >-
+      Authentication middleware is the textbook short-circuit: it decides before the router runs, so no
+      handler can forget the check. Public paths such as health checks are excluded explicitly. (Production
+      code would also compare secrets with hmac.compare_digest to avoid timing leaks.)
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-asgi-wsgi, m-tf-async, m-predict-short-circuit, m-auth-middleware]
+
+cheatsheet: |
+  ```python
+  # Decorator factory registers routes at import time
+  def get(self, pattern):
+      def register(handler):
+          self.routes.append(("GET", pattern, handler))
+          return handler            # keep the original function
+      return register
+
+  # Middleware: before -> call_next -> after (or return early)
+  def mw(request, call_next):
+      response = call_next(request)
+      response.headers["x-thing"] = "1"
+      return response               # never forget this
+  ```
+  - Server (Uvicorn/Gunicorn) = sockets + HTTP · Framework = routing, validation, serialisation, middleware
+  - First matching route wins → specific paths before `{param}` paths; path params are strings until converted
+  - 404 no path · 405 wrong method (+ Allow) · 422 invalid input (FastAPI) · 500 unexpected error
+  - WSGI `app(environ, start_response)` sync · ASGI `async app(scope, receive, send)` + WebSockets
+  - FastAPI: `@app.get("/x/{id}")`, `id: int`, `HTTPException`, `@app.middleware("http")`, run with `fastapi dev`

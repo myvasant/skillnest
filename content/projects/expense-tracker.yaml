@@ -1,0 +1,227 @@
+id: expense-tracker
+title: Command-line Expense Tracker
+track: python-intermediate
+level: intermediate
+estimatedHours: 6
+environment: local
+starterKit: projects/expense-tracker
+summary: >-
+  Build a real command-line tool with argparse subcommands that records expenses in a JSON file,
+  validates every input, writes the file atomically and summarises spending by category and month,
+  with exact Decimal money arithmetic.
+concepts:
+  - python.dataclasses
+  - python.csv-json
+  - python.files
+  - python.pathlib
+  - python.raising-exceptions
+  - python.cli-apps
+  - python.type-hints
+  - python.testing
+problem: |
+  You want to know where your money goes without giving your bank data to an app. You will build
+  `expense_tracker.py`, a small but production-shaped command-line tool:
+
+  * `add AMOUNT CATEGORY [--date YYYY-MM-DD] [-d NOTE]` records an expense;
+  * `list [--category C] [--month YYYY-MM]` shows expenses, oldest first, with a total;
+  * `summary [--by category|month]` totals spending per category (largest first) or per month;
+  * a global `--file PATH` chooses the data file (default `expenses.json`).
+
+  **Inputs** are command-line arguments; **outputs** are aligned text tables on stdout, error
+  messages on stderr and an exit code (0 success, 1 a problem the user can fix, 2 bad usage).
+  The data lives in a versioned JSON file such as
+  `{"version": 1, "expenses": [{"amount": "12.50", "category": "groceries", "date": "2026-10-01", "description": "weekly shop"}]}`.
+
+  Three things make this harder than it looks:
+
+  1. **Money.** Binary floats cannot represent most decimal fractions (`0.1 + 0.2` is
+     `0.30000000000000004`), so amounts are `decimal.Decimal` and are stored in JSON as strings.
+  2. **Validation.** `-5`, `abc`, `1.234`, `2026-02-30`, `01/10/2026` and an empty category must be
+     rejected with a message that says what is wrong. The data file is validated again on load.
+  3. **Durability.** A crash or full disk in the middle of saving must never leave a half-written
+     file, and a corrupt file must be reported, not silently overwritten.
+
+  Example session:
+
+  ```text
+  > python expense_tracker.py add 12.50 Groceries --date 2026-10-01 -d "weekly shop"
+  Added 12.50 to groceries on 2026-10-01 (1 in total).
+  > python expense_tracker.py add 30 groceries --date 2026-09-28 -d "big shop"
+  Added 30.00 to groceries on 2026-09-28 (2 in total).
+  > python expense_tracker.py list
+  Date        Category             Amount  Description
+  2026-09-28  groceries             30.00  big shop
+  2026-10-01  groceries             12.50  weekly shop
+  2 expense(s), total 42.50
+  > python expense_tracker.py summary --by month
+  Month         Total
+  2026-09       30.00
+  2026-10       12.50
+  TOTAL         42.50
+  > python expense_tracker.py add -5 food
+  error: amount must be greater than zero, not '-5'
+  ```
+acceptanceCriteria:
+  - "Amounts are `Decimal` values with exactly two decimal places; zero, negative, non-numeric, NaN/Infinity, over-limit and more-than-two-decimal amounts raise `ExpenseError`."
+  - "Dates must be real calendar dates written `YYYY-MM-DD`; months must be `YYYY-MM` with a month from 01 to 12."
+  - "Categories are trimmed, lower-cased and whitespace-collapsed; empty or over-long categories are rejected."
+  - "`Expense` is a frozen dataclass whose `to_dict`/`from_dict` round-trip exactly, with the amount stored as a string."
+  - "A missing data file means no expenses; invalid JSON, a wrong shape or an invalid record raise `ExpenseError` naming the file (and the record number)."
+  - "Saving writes a temporary file in the same folder and swaps it in with `os.replace`; if saving fails, the old file is unchanged and no temporary file is left behind."
+  - "`list` filters by category and month and sorts by date (ties keep insertion order); `summary` totals by category (largest first, ties alphabetical) or by month (calendar order), with a TOTAL line."
+  - "`main(argv)` returns 0 on success and 1 with `error: ...` on stderr for invalid input or a corrupt file, which is never overwritten; argparse usage errors exit with code 2."
+  - "All tests pass with `GW_TARGET=solution` and the code is ruff-clean, typed and documented."
+architecture: |
+  One module, `expense_tracker.py`, in four layers. Each layer only calls the layers below it,
+  so every part can be tested on its own.
+
+  ```text
+   argv ──► build_parser() ──► main() ──► _run_add / _run_list / _run_summary ──► print / stderr
+                                              │                 │
+                     ┌────────────────────────┘                 │
+                     ▼                                          ▼
+           storage: load_expenses()  save_expenses()   reports: filter_expenses()  total()
+                    add_expense()    (mkstemp + os.replace)     summarise_by_category/_month()
+                     │                                          format_expenses/_summary()
+                     ▼                                          │
+           model: Expense (frozen dataclass) ◄──────────────────┘
+                  make_expense() ─► parse_amount / parse_date / parse_month / normalise_category
+  ```
+
+  * **Model** ([dataclasses](concept:python.dataclasses)): `Expense(amount: Decimal, category: str,
+    spent_on: date, description: str)`. Validation lives in small `parse_*` functions that raise a
+    single custom exception, `ExpenseError` ([raising exceptions](concept:python.raising-exceptions)).
+  * **Storage** ([JSON](concept:python.csv-json), [files](concept:python.files)): a versioned JSON
+    document. Loading re-validates every record. Saving is atomic: write to
+    `tempfile.mkstemp(dir=path.parent)`, flush and `fsync`, then `os.replace(temp, path)`, which
+    is a single rename on both Windows and POSIX (it only works within one file system, which is why
+    the temporary file must be in the same folder).
+  * **Reports**: pure functions over lists of expenses; they do no I/O, so they are trivial to test.
+  * **CLI** ([command-line apps](concept:python.cli-apps)): argparse subcommands. `main` is the only
+    place that prints or decides exit codes, and it takes `today` as a parameter so tests never
+    depend on the clock.
+setup: |
+  You need Python 3.11 or newer. The program uses only the standard library; `pytest` is installed
+  just for the tests. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\expense-tracker
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+  `.\.venv\Scripts\python.exe -m pytest` without activating.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/expense-tracker
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Edit `starter/expense_tracker.py`. Run it with `python starter/expense_tracker.py --help`.
+milestones:
+  - id: model
+    title: Model and validation
+    description: |
+      Implement the `Expense` dataclass helpers (`month`, `to_dict`, `from_dict`) and the validators
+      `parse_amount`, `parse_date`, `parse_month`, `normalise_category`, `clean_description` and
+      `make_expense`. Use `Decimal` and `quantize(Decimal("0.01"))` for money, and raise
+      `ExpenseError` with a helpful message for every invalid value.
+
+      The tests check accepted and rejected amounts, dates, months and categories (with
+      `pytest.mark.parametrize`), that `0.10 + 0.20 == 0.30` exactly, that `Expense` is immutable,
+      and that `to_dict`/`from_dict` round-trip. Run `python -m pytest -k Milestone1`.
+  - id: storage
+    title: Safe JSON storage
+    description: |
+      Implement `load_expenses`, `save_expenses` and `add_expense`. A missing file means an empty
+      list; invalid JSON, a wrong shape, an unsupported version or an invalid record raise
+      `ExpenseError` that names the file (and `#N` for the record). Save atomically with
+      `tempfile.mkstemp` in the same folder plus `os.replace`, and delete the temporary file if
+      anything fails.
+
+      The tests round-trip data through `tmp_path`, inspect the JSON on disk, feed corrupt files,
+      and patch `os.replace` to fail to prove the old file survives and no temporary file is left.
+      Run `python -m pytest -k Milestone2`.
+  - id: reports
+    title: Filters and summaries
+    description: |
+      Implement `filter_expenses` (category and/or month, sorted by date), `total`,
+      `summarise_by_category` (largest first, ties alphabetical), `summarise_by_month` (calendar
+      order), and the text formatters `format_expenses` and `format_summary`.
+
+      The tests check filtering, stable ordering, exact totals and the table layout (including the
+      `No expenses found.` case). Run `python -m pytest -k Milestone3`.
+  - id: cli
+    title: Command-line interface
+    description: |
+      Implement `build_parser` (a global `--file` option and `add`, `list` and `summary` subcommands)
+      and `main(argv, today=...)`. `main` prints results to stdout, prints `error: ...` to stderr
+      and returns 1 for `ExpenseError`/`OSError`, and lets argparse exit with code 2 for bad usage.
+
+      The tests call `main([...])` directly and read the output with `capsys`: adding and listing,
+      the default date, rejected amounts (nothing saved), filters, both summaries, a corrupt file
+      that must not be overwritten, and the default `expenses.json` in the current folder.
+      Run `python -m pytest -k Milestone4`.
+testing: |
+  The kit ships 73 pytest tests in `tests/test_expense_tracker.py`, one class per milestone
+  (`TestMilestone1Model` … `TestMilestone4Cli`). By default they import your `starter/` code:
+
+  ```bash
+  python -m pytest                 # everything
+  python -m pytest -k Milestone2   # one milestone
+  python -m pytest -x -q           # stop at the first failure, short output
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The tests are deterministic: every file lives in pytest's `tmp_path`, dates are passed explicitly
+  (`main(..., today=date(2026, 10, 22))`), and the CLI is tested in-process with `capsys`, not with
+  subprocesses. When you add a feature, add a test for it in the matching class first.
+security:
+  - The data file holds personal financial information. Keep expenses.json out of version control (add it to .gitignore) and out of shared or synced folders you do not control.
+  - Treat the data file as untrusted input. It is re-validated on load, so a hand-edited or tampered file cannot smuggle in negative, NaN or absurd amounts.
+  - Use json for data files, never pickle or eval. Loading a pickle can run arbitrary code.
+  - Atomic writes (temporary file in the same folder plus os.replace) prevent a crash from destroying data. tempfile.mkstemp also creates the file readable only by the current user on macOS and Linux.
+  - Bound every input (maximum amount, category and description length) and collapse whitespace and newlines so a crafted note cannot break the table output or bloat the file.
+extensions:
+  - Add edit and delete subcommands that address expenses by a stable id stored in the file, with a --dry-run flag that shows what would change.
+  - Support a monthly budget per category and make summary warn when a category is over budget.
+  - Add export and import subcommands for CSV, escaping cells that start with = + - or @ to prevent spreadsheet formula injection.
+  - Support several currencies by storing a currency code with each amount and refusing to add totals across currencies.
+  - Replace the JSON file with SQLite (sqlite3 in the standard library) behind the same load/save interface and compare the trade-offs.
+rubric:
+  - criterion: Correctness of money and validation
+    needsWork: Uses float for amounts or accepts invalid input such as negative amounts or impossible dates.
+    meets: Decimal amounts with two decimals; every invalid amount, date, month and category raises ExpenseError with a clear message.
+    exceeds: Validation is reused for loading files and CLI input alike, and messages tell the user exactly how to fix the value.
+  - criterion: Safe persistence
+    needsWork: Writes the file in place, crashes on a corrupt file, or overwrites it.
+    meets: Atomic save with a temporary file and os.replace, temporary file cleaned up on failure, corrupt files reported with the file name.
+    exceeds: Versioned file format with a clear upgrade path, fsync before replace, and a documented recovery procedure.
+  - criterion: Code structure and readability
+    needsWork: Parsing, storage, reporting and printing are mixed in long functions.
+    meets: Separate model, storage, report and CLI layers; small typed functions with docstrings; ruff-clean.
+    exceeds: Report functions are pure, main is the only place that prints, and the design makes the extensions easy to add.
+  - criterion: Testing
+    needsWork: Only some provided tests pass, or tests touch real files or depend on today's date.
+    meets: All provided tests pass with the starter replaced by your code.
+    exceeds: You added tests for your own edge cases or extensions using fixtures, parametrize and tmp_path.

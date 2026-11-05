@@ -1,0 +1,210 @@
+id: de.pipeline-quality
+concept: de.pipeline-quality
+title: Data quality in pipelines
+subtitle: Tests on every pipeline stage, data contracts with producers, freshness and volume monitoring, and quarantining
+  bad records
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: Tests on every pipeline stage, data contracts with producers, freshness and volume monitoring, and quarantining
+  bad records.
+objectives:
+- Explain the role of data quality in pipelines in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: Add data tests to your DAG
+  url: https://docs.getdbt.com/docs/build/data-tests
+  publisher: dbt Labs
+- title: Great Expectations documentation
+  url: https://docs.greatexpectations.io/docs/home/
+  publisher: Great Expectations
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Tests on every pipeline stage, data contracts with producers, freshness and volume monitoring, and quarantining
+      bad records. Bad data fails silently — models degrade and dashboards mislead without a single error — so checks
+      must catch problems where they enter.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness
+      (latest timestamp), volume (row-count anomalies) and distribution drift.
+
+      - Test at the boundaries — on ingestion, after each transformation (for example dbt tests) and before publishing
+      to consumers.
+
+      - A data contract is a producer''s commitment to a schema, semantics and freshness, checked in the producer''s
+      CI so breaking changes are caught before deployment.
+
+      - Quarantine failing records in a separate table with the failure reason instead of silently dropping them
+      or crashing the whole run.
+
+      - Give each check a severity — block publishing, or warn and continue — because not every anomaly should stop
+      delivery.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+
+      - Silently filtering out bad rows hides upstream bugs; count them, store them and alert on them.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def validate_record(row):\n    errors=[]\n    if not row.get(\"id\"): errors.append(\"missing id\")\n\
+      \    if not isinstance(row.get(\"amount\"), (int,float)): errors.append(\"amount must be numeric\")\n    elif\
+      \ row[\"amount\"] < 0: errors.append(\"amount must be non-negative\")\n    return errors\n\nprint(validate_record({\"\
+      id\":\"o1\",\"amount\":-2}))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: pipeline-quality-code
+  - type: item
+    ref: pipeline-quality-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness (latest
+      timestamp), volume (row-count anomalies) and distribution drift.
+
+      - Test at the boundaries — on ingestion, after each transformation (for example dbt tests) and before publishing
+      to consumers.
+
+      - A data contract is a producer''s commitment to a schema, semantics and freshness, checked in the producer''s
+      CI so breaking changes are caught before deployment.
+
+      - Quarantine failing records in a separate table with the failure reason instead of silently dropping them
+      or crashing the whole run.
+
+      - Give each check a severity — block publishing, or warn and continue — because not every anomaly should stop
+      delivery.
+
+
+      **Watch for**
+
+      - Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+
+      - Silently filtering out bad rows hides upstream bugs; count them, store them and alert on them.'
+  - type: item
+    ref: pipeline-quality-mcq
+  - type: item
+    ref: pipeline-quality-tf
+  - type: item
+    ref: pipeline-quality-code
+items:
+- id: pipeline-quality-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of data quality in pipelines?
+  explanation: Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness
+    (latest timestamp), volume (row-count anomalies) and distribution drift.
+  options:
+  - id: a
+    text: Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness (latest
+      timestamp), volume (row-count anomalies) and distribution drift.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: pipeline-quality-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: pipeline-quality-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying data quality in pipelines to a dataset that may contain missing, duplicate or malformed
+    records. Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: pipeline-quality-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for data quality in pipelines. The assertions test the main behaviour and an important
+    edge case.
+  starterCode: "def validate_record(row):\n    raise NotImplementedError('Complete this function')"
+  solution: "def validate_record(row):\n    errors=[]\n    if not row.get(\"id\"): errors.append(\"missing id\"\
+    )\n    if not isinstance(row.get(\"amount\"), (int,float)): errors.append(\"amount must be numeric\")\n    elif\
+    \ row[\"amount\"] < 0: errors.append(\"amount must be non-negative\")\n    return errors"
+  tests:
+  - name: Core transformation
+    code: assert validate_record({"id":"o1","amount":2}) == []
+  - name: Edge case
+    code: 'assert "missing id" in validate_record({"amount":-1})
+
+      assert "amount must be non-negative" in validate_record({"id":"x","amount":-1})'
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - pipeline-quality-mcq
+  - pipeline-quality-tf
+  - pipeline-quality-code
+cheatsheet: '**Key ideas**
+
+  - Check schema, key uniqueness and nulls, accepted values and ranges, referential integrity, freshness (latest
+  timestamp), volume (row-count anomalies) and distribution drift.
+
+  - Test at the boundaries — on ingestion, after each transformation (for example dbt tests) and before publishing
+  to consumers.
+
+  - A data contract is a producer''s commitment to a schema, semantics and freshness, checked in the producer''s
+  CI so breaking changes are caught before deployment.
+
+  - Quarantine failing records in a separate table with the failure reason instead of silently dropping them or
+  crashing the whole run.
+
+  - Give each check a severity — block publishing, or warn and continue — because not every anomaly should stop
+  delivery.
+
+
+  **Data quality risks**
+
+  - Zero failed tests does not mean the data is right; tests only cover what someone thought to check.
+
+  - Silently filtering out bad rows hides upstream bugs; count them, store them and alert on them.'

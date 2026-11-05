@@ -1,0 +1,490 @@
+category:
+  id: cs
+  title: Computer science and algorithms
+  summary: Complexity, data structures, algorithms and engineering practice.
+questions:
+  # ------------------------------------------------------------- complexity
+  - id: cs.complexity.duplicate-check
+    level: junior
+    kind: coding
+    concepts: [cs.complexity]
+    question: |
+      What are the time and space complexity of this function, and how would you make it faster?
+
+      ```python
+      def has_duplicates(items):
+          for i in range(len(items)):
+              for j in range(i + 1, len(items)):
+                  if items[i] == items[j]:
+                      return True
+          return False
+      ```
+    answer: |
+      The inner loop runs n − 1, n − 2, …, 1 times, so in the worst case (no duplicates) it makes
+      n(n − 1)/2 comparisons: O(n²) time. It uses only two indices, so O(1) extra space. A faster version
+      remembers what it has seen in a set: one pass, each membership test and insert O(1) on average, so O(n)
+      time but O(n) extra space for the set — a classic time–space trade-off. `len(set(items)) != len(items)`
+      is a one-line equivalent. Both set versions require hashable items; for unhashable items you could sort
+      a copy (O(n log n)) and compare neighbours.
+    keyPoints:
+      - Nested loops over the same input give n(n − 1)/2 comparisons, which is O(n²); constants and the halving do not change the class.
+      - The original uses O(1) extra space.
+      - A set of seen items gives O(n) average time at the cost of O(n) extra space.
+      - States the hashability requirement and the sort-then-scan alternative (O(n log n)).
+    followUps:
+      - What is the best case of the original function?
+      - How would you handle a list of lists?
+    pitfalls:
+      - Calling it O(n²/2) instead of O(n²).
+      - Forgetting to mention the extra memory used by the set.
+
+  - id: cs.complexity.hidden-linear-operations
+    level: mid
+    kind: debugging
+    concepts: [cs.complexity]
+    question: |
+      A nightly job processes orders. It was fast with 10,000 orders but takes hours with 2 million. The
+      main loop is below. What is wrong and how do you fix it?
+
+      ```python
+      processed = []
+      while pending:
+          order = pending.pop(0)
+          if order.id not in processed:
+              handle(order)
+              processed.append(order.id)
+      ```
+    answer: |
+      The loop looks linear but contains two hidden O(n) operations. `pending.pop(0)` removes from the front
+      of a list, which shifts every remaining element, and `order.id not in processed` scans a growing list.
+      With n orders the job is O(n²): roughly 2 × 10¹² basic steps for 2 million orders. The fix keeps the
+      logic and changes the data structures: use `collections.deque` and `popleft()` (O(1)) for the queue —
+      or simply iterate over the list — and keep `processed` as a set so membership is O(1) on average. The
+      job becomes O(n). I would confirm with a profiler on realistic data, and add a test with a large input
+      so the regression cannot come back unnoticed.
+    keyPoints:
+      - Identifies list.pop(0) as O(n) because elements shift.
+      - Identifies `in` on a list as an O(n) linear scan inside the loop, making the whole job O(n²).
+      - Fixes with deque.popleft() (or plain iteration) and a set for processed ids.
+      - Mentions measuring with a profiler and guarding with a scale test.
+    followUps:
+      - Why does the slowdown appear only at scale?
+      - What would change if order ids were unhashable?
+    pitfalls:
+      - Blaming Python or the database without analysing the loop.
+      - Fixing only one of the two hidden linear operations.
+
+  - id: cs.complexity.amortised-append
+    level: senior
+    kind: conceptual
+    concepts: [cs.complexity]
+    question: |
+      `list.append` is described as "amortised O(1)". What does that mean, why is it true, and when might the
+      distinction from worst-case O(1) matter in production?
+    answer: |
+      Amortised cost is the average cost per operation over a sequence of operations. A Python list keeps
+      spare capacity; most appends just write into the next free slot, but when it is full the list
+      allocates a larger block and copies every element — an O(n) step. Because the capacity grows
+      proportionally to the current size (CPython over-allocates by a fraction of the size), these copies
+      become rarer as the list grows, and their total cost over n appends is O(n), so each append is O(1) on
+      average. Growing by a fixed number of slots would make n appends O(n²). The distinction matters when
+      individual latency matters: a single append can still take O(n) time, so in latency-sensitive code
+      (real-time systems, request handlers with tight tail-latency targets) you might pre-allocate, bound
+      the size, or use a structure without large copies. Hash tables have the same property for inserts,
+      because they resize and rehash.
+    keyPoints:
+      - Defines amortised cost as total cost over a sequence divided by the number of operations.
+      - Explains proportional (geometric) growth, so copies happen rarely and total O(n) for n appends.
+      - Contrasts with fixed-increment growth, which gives O(n²) total.
+      - Notes that a single operation can still be O(n), which matters for tail latency; mentions dict resizing as a parallel.
+    followUps:
+      - How would you prove the bound for a doubling array?
+      - Is `list.insert(0, x)` amortised O(1)?
+    pitfalls:
+      - Equating amortised with average case over random inputs.
+      - Claiming every single append is constant time.
+
+  # -------------------------------------------------------------- recursion
+  - id: cs.recursion.trace-factorial
+    level: junior
+    kind: conceptual
+    concepts: [cs.recursion]
+    question: |
+      Walk through what happens on the call stack when `factorial(3)` runs, and state its time and space
+      complexity.
+
+      ```python
+      def factorial(n):
+          if n == 0:
+              return 1
+          return n * factorial(n - 1)
+      ```
+    answer: |
+      factorial(3) is not the base case, so it evaluates `3 * factorial(2)` and pauses while factorial(2)
+      runs in a new frame with its own n. That frame pauses on factorial(1), which pauses on factorial(0).
+      factorial(0) is the base case and returns 1; its frame is removed. Then the paused frames resume in
+      reverse order: factorial(1) returns 1 × 1 = 1, factorial(2) returns 2, factorial(3) returns 6. There are
+      n + 1 calls doing constant work each, so O(n) time, and up to n + 1 frames exist at once, so O(n) stack
+      space. In Python a loop would use O(1) space and avoid the recursion limit (1000 by default) for large n.
+    keyPoints:
+      - Identifies the base case (n == 0) and the recursive case.
+      - Each call has its own frame and local n; callers pause until the inner call returns.
+      - Frames return in reverse order, combining results on the way back.
+      - O(n) time and O(n) stack space; mentions the recursion limit / iterative alternative.
+    followUps:
+      - What happens with factorial(-1)?
+      - Does CPython optimise the tail call in `return countdown(n - 1)`?
+    pitfalls:
+      - Forgetting the stack space cost of recursion.
+      - Describing the calls as overwriting a shared variable n.
+
+  - id: cs.recursion.recursion-error
+    level: mid
+    kind: debugging
+    concepts: [cs.recursion]
+    question: |
+      A function that walks nested JSON recursively raises `RecursionError: maximum recursion depth
+      exceeded` on some production documents. A teammate proposes `sys.setrecursionlimit(100000)`. How do you
+      investigate and fix it?
+    answer: |
+      First decide which of two causes it is. If the base case is missing or unreachable — for example the
+      code recurses on a value that is not getting smaller, or a data structure contains a cycle (an object
+      that refers back to an ancestor) — the recursion is infinite and no limit will help; fix the base case
+      or track visited objects. If the documents are simply very deep (thousands of nesting levels), the
+      code is correct but recursion is the wrong tool in CPython: each level uses a frame, the default limit
+      is 1000, and there is no tail-call optimisation. Rewrite the traversal with an explicit stack (a list of
+      containers still to process), which is limited only by memory. Raising the limit is a last resort: the
+      sys docs warn a too-high limit can crash the interpreter, and with untrusted input it invites
+      denial-of-service. I would also validate or cap document depth at the input boundary.
+    keyPoints:
+      - Distinguishes infinite recursion (missing/unreachable base case or cyclic data) from legitimately deep input.
+      - Explains the default limit (1000), one frame per call, and no tail-call optimisation in CPython.
+      - Converts to an iterative traversal with an explicit stack for deep input.
+      - Explains why raising the limit is risky (crash, does not fix infinite recursion) and suggests validating depth.
+    followUps:
+      - How would you detect a cycle in a nested object graph?
+      - When is recursion still the better choice?
+    pitfalls:
+      - Accepting the larger recursion limit as the fix.
+      - Wrapping the call in try/except and returning a default value.
+
+  - id: cs.recursion.fibonacci-cost
+    level: mid
+    kind: coding
+    concepts: [cs.recursion, cs.dynamic-programming]
+    question: |
+      Why is `fib(n) = fib(n - 1) + fib(n - 2)` implemented naively so slow, and how would you make it fast?
+      Give the complexities.
+    answer: |
+      The naive version recomputes the same sub-problems over and over: fib(n) calls fib(n − 1) and
+      fib(n − 2), but fib(n − 1) calls fib(n − 2) again, and so on. The number of calls grows like φⁿ
+      (φ ≈ 1.618) — exponential; fib(25) already makes 242,785 calls. Recursion itself is not the problem;
+      overlapping sub-problems are. Memoisation, e.g. `@functools.lru_cache(maxsize=None)` or
+      `@functools.cache`, stores each result the first time, so each fib(k) is computed once: O(n) time and
+      O(n) space for the cache plus O(n) recursion depth. A bottom-up loop keeping only the last two values is
+      O(n) time and O(1) space and has no recursion-depth limit, which is what I would ship.
+    keyPoints:
+      - Explains overlapping sub-problems and the exponential (about 1.6ⁿ, often bounded as O(2ⁿ)) number of calls.
+      - Memoisation with lru_cache/cache makes it O(n) time, O(n) space.
+      - Iterative two-variable version gives O(n) time, O(1) space and avoids the recursion limit.
+      - States that recursion is not inherently slow — repeated work is.
+    followUps:
+      - What are the requirements for a function to be safely cached?
+      - Can you compute fib(n) in O(log n) arithmetic operations?
+    pitfalls:
+      - Claiming memoisation makes each call faster rather than avoiding calls.
+      - Ignoring the recursion depth of the memoised version for large n.
+
+  # -------------------------------------------------------------- searching
+  - id: cs.searching.implement-binary-search
+    level: mid
+    kind: coding
+    concepts: [cs.searching]
+    question: |
+      Implement binary search returning the index of the **first** occurrence of a target in a sorted list
+      (or -1), and explain how you know it is correct.
+    answer: |
+      I use a half-open range and search for the boundary rather than a match:
+
+      ```python
+      def first_index(items, target):
+          lo, hi = 0, len(items)
+          while lo < hi:
+              mid = (lo + hi) // 2
+              if items[mid] < target:
+                  lo = mid + 1
+              else:
+                  hi = mid
+          return lo if lo < len(items) and items[lo] == target else -1
+      ```
+
+      Invariant: everything before lo is smaller than target, and everything from hi onwards is greater than
+      or equal to it. It holds initially (both regions empty) and each branch preserves it. Every pass
+      shrinks [lo, hi) because mid is strictly less than hi and lo moves past mid, so the loop terminates;
+      when lo == hi, lo is the first index whose item is ≥ target. A final check confirms the target is
+      actually there. It is O(log n) time and O(1) space. I would test empty input, one element, a target
+      smaller or larger than everything, and runs of duplicates — and in real code use
+      `bisect.bisect_left`, which computes the same boundary.
+    keyPoints:
+      - Correct loop with consistent conventions (half-open or closed) and no infinite-loop update such as lo = mid.
+      - States a loop invariant and argues termination.
+      - Handles duplicates by finding the boundary (first ≥ target) and checks presence at the end.
+      - Lists edge cases and mentions bisect_left; O(log n).
+    followUps:
+      - How would you find the last occurrence?
+      - Why is `lo + (hi - lo) // 2` used in Java or C?
+    pitfalls:
+      - Returning the first match found, which may not be the first occurrence.
+      - Mixing `while lo <= hi` with `hi = mid`, causing a hang or an IndexError.
+
+  - id: cs.searching.sort-first
+    level: junior
+    kind: scenario
+    concepts: [cs.searching, cs.complexity]
+    question: |
+      You have an unsorted list of a million customer IDs. When should you sort it and use binary search,
+      when should you build a set, and when is a plain `in` check fine?
+    answer: |
+      It depends on how many lookups you do and what you ask. For one or a few lookups, a linear scan
+      (`x in ids`) is O(n) each and cheapest overall, because sorting costs O(n log n) — about 20 million
+      comparisons for a million items — before the first search. If you will do many membership checks
+      ("is this ID present?"), build a set once in O(n) and get O(1) average lookups. Sort and use `bisect`
+      when you need ordered questions as well: the nearest ID, all IDs in a range, counts between two values,
+      or the k-th smallest; each is then O(log n). As a rule of thumb, sorting pays off once you search more
+      than about log₂ n times, and a set beats it for pure membership.
+    keyPoints:
+      - Few lookups → linear scan; sorting costs O(n log n) up front.
+      - Many membership lookups → set (O(n) build, O(1) average lookup).
+      - Ordered queries (range, nearest, rank) → sort once + bisect, O(log n) each.
+      - Quantifies the trade-off (n log n vs k · n).
+    followUps:
+      - What if the IDs arrive continuously and must stay sorted?
+      - How do database indexes relate to this choice?
+    pitfalls:
+      - Sorting to perform a single search.
+      - Forgetting that sets cannot answer range or nearest-value queries.
+
+  - id: cs.searching.binary-search-on-answer
+    level: senior
+    kind: design
+    concepts: [cs.searching]
+    question: |
+      A service must process a batch of jobs within 8 hours. You can choose the number of worker machines
+      (1 to 10,000), and a simulator tells you whether a given number of workers finishes in time, but each
+      simulation takes a minute. How do you find the minimum number of workers efficiently?
+    answer: |
+      The answer to "does k workers finish in time?" is monotonic: if k workers suffice, any larger number
+      does too (assuming adding workers never slows the batch). So the answers over k = 1..10,000 look like
+      no, no, …, yes, yes, and I can binary search for the first "yes" instead of trying every k. Keep the
+      invariant that the answer lies in [lo, hi] with hi known to succeed: start lo = 1, hi = 10,000; test
+      mid; if it succeeds set hi = mid, otherwise lo = mid + 1; stop when lo == hi. That needs about
+      log₂ 10,000 ≈ 14 simulations — 14 minutes instead of up to a week of trying each value. I would verify
+      the monotonicity assumption (contention or coordination overhead can break it), check that hi = 10,000
+      actually succeeds before searching, and cache results so a retry does not re-run the same simulation.
+    keyPoints:
+      - Recognises a monotonic yes/no predicate over an ordered range.
+      - Binary searches for the first k that succeeds with a clear invariant and update rules.
+      - Quantifies cost as O(log range) predicate evaluations (~14 instead of 10,000).
+      - Validates the monotonicity assumption and the upper bound before relying on it.
+    followUps:
+      - What if the predicate is noisy (the simulator is randomised)?
+      - How does git bisect apply the same idea?
+    pitfalls:
+      - Linear search over all k without noticing the monotonic structure.
+      - Assuming monotonicity without checking it.
+
+  # ---------------------------------------------------------------- hashing
+  - id: cs.hashing.how-hash-tables-work
+    level: mid
+    kind: conceptual
+    concepts: [cs.hashing]
+    question: How does a hash table achieve O(1) lookups, and when does that guarantee break down?
+    answer: |
+      The key is passed through a hash function that returns an integer; the table maps that integer to an
+      index in an array of buckets (e.g. hash % number_of_buckets). Lookup computes the bucket directly, so
+      the work does not depend on how many keys are stored — as long as each bucket holds only a few
+      entries. Different keys can land in the same bucket (collisions); they are resolved by chaining (a list
+      per bucket) or open addressing (probe other slots; CPython's dict and set do this), comparing keys with
+      == to find the right one. To keep buckets short, the table tracks its load factor (entries / buckets)
+      and resizes — allocating a larger array and rehashing every key — when it gets too full (CPython: about
+      two-thirds). Each resize is O(n), but proportional growth makes inserts amortised O(1). The guarantee is
+      average-case: if many keys share a hash (a poor custom __hash__, or attacker-crafted keys), lookups
+      degrade to O(n). Python randomises str and bytes hashes per process to make such hash-flooding attacks
+      impractical.
+    keyPoints:
+      - Hash → bucket index gives direct access independent of n.
+      - Collisions handled by chaining or open addressing, comparing keys with ==.
+      - Load factor and resizing/rehashing keep chains short; inserts amortised O(1).
+      - O(1) is average-case; worst case O(n) with many collisions; mentions hash randomisation.
+    followUps:
+      - Why must equal keys have equal hashes?
+      - How does deletion work with open addressing?
+    pitfalls:
+      - Saying lookups are O(1) in every case.
+      - Forgetting the equality comparison after hashing.
+
+  - id: cs.hashing.mutable-keys
+    level: junior
+    kind: conceptual
+    concepts: [cs.hashing]
+    question: |
+      Why can't a list be a dictionary key in Python, and what should you use instead? What must be true of
+      `__eq__` and `__hash__` in your own classes?
+    answer: |
+      A dict stores a key in the bucket chosen by its hash at insertion time. If the key could change
+      afterwards, its hash would change and lookups would search the wrong bucket, stranding the entry.
+      Python therefore makes mutable built-ins — list, dict, set — unhashable, and `{[1, 2]: "x"}` raises
+      `TypeError` (in 3.14: "cannot use 'list' as a dict key (unhashable type: 'list')"). Use an immutable
+      equivalent: a tuple (if all its items are hashable) or a frozenset. For your own classes the rule is: if
+      a == b then hash(a) == hash(b), and the hash must not change while the object is in a dict or set.
+      Defining `__eq__` alone sets `__hash__` to None, making instances unhashable; implement `__hash__` from
+      exactly the fields `__eq__` compares, e.g. `hash((self.x, self.y))`, or use `@dataclass(frozen=True)`.
+    keyPoints:
+      - The bucket is chosen from the hash when the key is stored; mutating it would strand the entry.
+      - Lists, dicts and sets are unhashable; use tuples or frozensets.
+      - Contract — equal objects must have equal hashes, and the hash must stay stable.
+      - Defining __eq__ removes __hash__; hash the same fields or use a frozen dataclass.
+    followUps:
+      - Is `(1, [2])` hashable?
+      - What goes wrong if `__hash__` uses a field that `__eq__` ignores?
+    pitfalls:
+      - Saying lists are unhashable "because they are slow to hash".
+      - Hashing by id() while comparing by value.
+
+  - id: cs.hashing.slow-custom-keys
+    level: senior
+    kind: debugging
+    concepts: [cs.hashing]
+    question: |
+      After a refactor, a service that caches results in a dict keyed by a custom `RequestKey` object became
+      100× slower as the cache grew, although the hit rate is unchanged. Profiling shows most time in
+      `RequestKey.__eq__`. What is likely wrong, and how do you fix and prevent it?
+    answer: |
+      Heavy time in `__eq__` during dict operations means many keys are colliding: the dict only calls
+      `__eq__` for entries whose hash matches (after an identity check), so normally a lookup compares about
+      once. The refactor probably made `__hash__` return a constant or hash only a low-variety field (say,
+      the HTTP method) while `__eq__` compares the full key — still correct, but most keys now share a few
+      hash values, turning lookups into O(n) scans of colliding entries. Fix `__hash__` to hash the same
+      tuple of fields that `__eq__` compares, e.g. `hash((self.method, self.path, self.params))`, with params
+      converted to a hashable, canonical form such as a sorted tuple; a frozen dataclass does this
+      automatically. Prevent recurrences with a test asserting that a sample of distinct keys produces many
+      distinct hashes and that equal keys hash equally, and keep the key fields immutable. If keys come from
+      untrusted input, remember hash-flooding: built-in str hashing is randomised, but a custom hash built
+      from predictable arithmetic is not.
+    keyPoints:
+      - Diagnoses collisions from time spent in __eq__ during lookups.
+      - Identifies a low-variety or constant __hash__ as the cause; correctness intact, performance O(n).
+      - Fixes by hashing exactly the fields __eq__ compares, using an immutable canonical form; or a frozen dataclass.
+      - Adds tests for hash spread and the equal-implies-equal-hash contract; considers adversarial input.
+    followUps:
+      - How would you measure the collision rate?
+      - Why does the dict check identity before calling __eq__?
+    pitfalls:
+      - Blaming the dict implementation or proposing a different cache library first.
+      - Fixing __eq__ instead of __hash__.
+
+  # ----------------------------------------------------------------- graphs
+  - id: cs.graphs.bfs-vs-dfs
+    level: junior
+    kind: conceptual
+    concepts: [cs.graphs]
+    question: What is the difference between BFS and DFS, and when would you choose each?
+    answer: |
+      Both visit every vertex reachable from a start vertex in O(V + E) time with an adjacency list, using a
+      visited set so cycles do not cause infinite loops. BFS uses a FIFO queue (`collections.deque` with
+      `popleft()`) and explores level by level, so the first time it reaches a vertex is via a path with the
+      fewest edges — choose it for shortest paths in unweighted graphs (fewest moves in a grid, degrees of
+      separation, nearest matching node). DFS uses recursion or a LIFO stack and follows one branch as deep
+      as possible before backtracking — choose it for reachability, connected components, cycle detection and
+      topological ordering of dependencies, and when the natural recursive structure helps. DFS does not
+      give shortest paths, and recursive DFS can hit Python's recursion limit on long paths, so iterative
+      DFS is common for big graphs. Memory differs too: BFS stores a whole frontier level, DFS the current
+      path.
+    keyPoints:
+      - BFS = queue, level order, shortest paths by edge count in unweighted graphs.
+      - DFS = recursion or stack, deep first; components, cycles, topological order.
+      - Both O(V + E) with a visited set.
+      - Notes DFS does not give shortest paths and the recursion-depth concern in Python.
+    followUps:
+      - How do you reconstruct the actual shortest path from BFS?
+      - What changes for weighted graphs?
+    pitfalls:
+      - Saying DFS finds shortest paths.
+      - Forgetting the visited set.
+
+  - id: cs.graphs.grid-shortest-path
+    level: mid
+    kind: coding
+    concepts: [cs.graphs]
+    question: |
+      Given a grid of strings where "." is open, "#" is a wall, "S" is the start and "G" the goal, return the
+      minimum number of moves (up, down, left, right) from S to G, or -1 if impossible. Explain the approach
+      and its complexity.
+    answer: |
+      Treat each open cell as a vertex with edges to its open neighbours; all moves cost 1, so BFS gives the
+      fewest moves. I don't need to build the graph explicitly:
+
+      ```python
+      from collections import deque
+
+      def min_moves(grid):
+          rows, cols = len(grid), len(grid[0])
+          start = next((r, c) for r in range(rows) for c in range(cols) if grid[r][c] == "S")
+          dist = {start: 0}
+          queue = deque([start])
+          while queue:
+              r, c = queue.popleft()
+              if grid[r][c] == "G":
+                  return dist[(r, c)]
+              for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+                  if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != "#" and (nr, nc) not in dist:
+                      dist[(nr, nc)] = dist[(r, c)] + 1
+                      queue.append((nr, nc))
+          return -1
+      ```
+
+      The dist dict doubles as the visited set, and cells are marked when enqueued so each enters the queue
+      once. With R × C cells and at most four edges each, it is O(R·C) time and space. If moves had different
+      costs I would switch to Dijkstra's algorithm with a heap.
+    keyPoints:
+      - Models cells as vertices and moves as unweighted edges.
+      - Uses BFS with a deque and marks cells visited when enqueued.
+      - Handles bounds, walls and the unreachable case.
+      - States O(R·C) time and space; mentions Dijkstra for weighted moves.
+    followUps:
+      - How would you return the path itself?
+      - What if you may break through at most one wall?
+    pitfalls:
+      - Using DFS and returning the first path found.
+      - Using list.pop(0) as the queue.
+
+  - id: cs.graphs.dependency-cycles
+    level: senior
+    kind: design
+    concepts: [cs.graphs, cs.shortest-paths]
+    question: |
+      You are building a task runner where each task declares the tasks it depends on. How do you compute a
+      valid execution order, detect impossible configurations, and report them usefully?
+    answer: |
+      Model tasks as vertices and dependencies as directed edges; a valid order is a topological order, which
+      exists exactly when the graph is a DAG. Two standard algorithms: Kahn's algorithm repeatedly runs tasks
+      with no unfinished dependencies (in-degree zero), and if some tasks are never released there is a cycle;
+      or DFS that emits each task after all its dependencies (post-order) and detects a cycle when it meets a
+      task that is still "in progress" on the current path. Both are O(V + E). In Python,
+      `graphlib.TopologicalSorter` implements this, raises `CycleError` with the cycle in `args[1]`, and its
+      `prepare()`/`get_ready()`/`done()` interface supports running independent tasks in parallel. For a good
+      user experience, validate the configuration up front, report the actual cycle path ("build → test →
+      build") rather than a generic failure, report references to unknown tasks separately, and do not
+      recurse naively on user-defined graphs, which could exceed the recursion limit. Topological orders are
+      not unique, so if reproducibility matters, break ties deterministically (e.g. by name).
+    keyPoints:
+      - Recognises topological sorting of a DAG; a cycle means no valid order.
+      - Describes Kahn's algorithm or DFS post-order with in-progress (grey) detection, O(V + E).
+      - Mentions graphlib.TopologicalSorter, CycleError and parallel scheduling via get_ready/done.
+      - Covers error reporting (cycle path, unknown tasks), recursion-depth safety and deterministic tie-breaking.
+    followUps:
+      - How would you run independent tasks concurrently?
+      - How do you handle a task whose dependency failed?
+    pitfalls:
+      - Using a visited set alone, which cannot distinguish a cycle from a shared dependency.
+      - Assuming the topological order is unique.

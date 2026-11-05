@@ -1,0 +1,209 @@
+id: genai.local-inference
+concept: genai.local-inference
+title: Running models locally
+subtitle: Open-weight models run on your own hardware with runtimes such as Ollama or llama
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Open-weight models run on your own hardware with runtimes such as Ollama or llama.cpp; quantisation trades
+  quality for memory, and RAM/VRAM decide what fits.
+objectives:
+- Explain the role of running models locally in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: llama.cpp
+  url: https://github.com/ggml-org/llama.cpp
+  publisher: ggml-org
+- title: Ollama documentation
+  url: https://docs.ollama.com/
+  publisher: Ollama
+- title: GGUF
+  url: https://huggingface.co/docs/hub/gguf
+  publisher: Hugging Face
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Open-weight models run on your own hardware with runtimes such as Ollama or llama.cpp; quantisation trades
+      quality for memory, and RAM/VRAM decide what fits. Local models keep data on your machine, work offline, remove
+      per-token fees and make experimentation cheap — within the limits of your hardware.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for PyTorch-based
+      stacks — that run on your CPU or GPU.
+
+      - Rough memory estimate: parameters x bytes per weight, plus KV cache and overhead; an 8B model needs about
+      5 GB at 4-bit and about 16 GB at 16-bit.
+
+      - Quantisation levels (for example GGUF `Q4_K_M` or `Q8_0`) cut memory and raise speed; fewer bits lose more
+      quality, especially on small models.
+
+      - Generation speed is bound by memory bandwidth — GPU VRAM is fastest, Apple unified memory works well, CPU-only
+      is slower; layers can be split between GPU and CPU.
+
+      - Ollama and llama.cpp''s `llama-server` expose local HTTP APIs, including OpenAI-compatible endpoints, so
+      application code can switch between local and hosted models.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Open-weight does not mean licence-free; check the model''s licence before commercial use.
+
+      - A local server is not automatically private or safe; exposing it on a network without authentication lets
+      anyone use it.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def model_fits(model_bytes, available_bytes, reserve_bytes):\n    return model_bytes + reserve_bytes\
+      \ <= available_bytes\n\nprint(model_fits(4_000_000_000, 8_000_000_000, 2_000_000_000))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: local-inference-code
+  - type: item
+    ref: local-inference-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for PyTorch-based
+      stacks — that run on your CPU or GPU.
+
+      - Rough memory estimate: parameters x bytes per weight, plus KV cache and overhead; an 8B model needs about
+      5 GB at 4-bit and about 16 GB at 16-bit.
+
+      - Quantisation levels (for example GGUF `Q4_K_M` or `Q8_0`) cut memory and raise speed; fewer bits lose more
+      quality, especially on small models.
+
+      - Generation speed is bound by memory bandwidth — GPU VRAM is fastest, Apple unified memory works well, CPU-only
+      is slower; layers can be split between GPU and CPU.
+
+      - Ollama and llama.cpp''s `llama-server` expose local HTTP APIs, including OpenAI-compatible endpoints, so
+      application code can switch between local and hosted models.
+
+
+      **Limitations**
+
+      - Open-weight does not mean licence-free; check the model''s licence before commercial use.
+
+      - A local server is not automatically private or safe; exposing it on a network without authentication lets
+      anyone use it.'
+  - type: item
+    ref: local-inference-mcq
+  - type: item
+    ref: local-inference-tf
+  - type: item
+    ref: local-inference-code
+items:
+- id: local-inference-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of running models locally?
+  explanation: Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for
+    PyTorch-based stacks — that run on your CPU or GPU.
+  options:
+  - id: a
+    text: Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for PyTorch-based
+      stacks — that run on your CPU or GPU.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: Open-weight does not mean licence-free; check the model's licence before commercial use.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: local-inference-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Open-weight does not mean licence-free; check the model's licence before commercial use.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: local-inference-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding running models locally to an application. Describe the design, one failure mode, and how
+    you would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: local-inference-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for running models locally. The assertions include the normal path and
+    a meaningful edge case.
+  starterCode: "def model_fits(model_bytes, available_bytes, reserve_bytes):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def model_fits(model_bytes, available_bytes, reserve_bytes):\n    return model_bytes + reserve_bytes\
+    \ <= available_bytes"
+  tests:
+  - name: Core behaviour
+    code: assert model_fits(4, 8, 2) is True
+  - name: Edge case
+    code: assert model_fits(7, 8, 2) is False
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - local-inference-mcq
+  - local-inference-tf
+  - local-inference-code
+cheatsheet: '**Key ideas**
+
+  - Open-weight models are downloadable weight files — GGUF for llama.cpp and Ollama, safetensors for PyTorch-based
+  stacks — that run on your CPU or GPU.
+
+  - Rough memory estimate: parameters x bytes per weight, plus KV cache and overhead; an 8B model needs about 5
+  GB at 4-bit and about 16 GB at 16-bit.
+
+  - Quantisation levels (for example GGUF `Q4_K_M` or `Q8_0`) cut memory and raise speed; fewer bits lose more quality,
+  especially on small models.
+
+  - Generation speed is bound by memory bandwidth — GPU VRAM is fastest, Apple unified memory works well, CPU-only
+  is slower; layers can be split between GPU and CPU.
+
+  - Ollama and llama.cpp''s `llama-server` expose local HTTP APIs, including OpenAI-compatible endpoints, so application
+  code can switch between local and hosted models.
+
+
+  **Failure modes**
+
+  - Open-weight does not mean licence-free; check the model''s licence before commercial use.
+
+  - A local server is not automatically private or safe; exposing it on a network without authentication lets anyone
+  use it.'

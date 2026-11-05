@@ -1,0 +1,396 @@
+id: python.virtual-environments
+concept: python.virtual-environments
+title: Python Virtual Environments and Dependencies
+subtitle: Give each project its own packages and make installs repeatable
+estimatedMinutes: 45
+reviewedOn: 2026-11-04
+summary: >-
+  Learn why Python projects should not share one global package collection. Create a virtual environment with
+  venv, activate or call it directly, install packages through the selected interpreter, record dependencies
+  and understand the difference between an isolated environment and a reproducible dependency lock.
+objectives:
+  - Explain what a virtual environment isolates and what it does not isolate.
+  - Create a project environment with `python -m venv` using the intended Python interpreter.
+  - Activate, verify and deactivate the environment on Windows, macOS and Linux.
+  - Install and inspect packages using `python -m pip` inside the environment.
+  - Record and restore application dependencies with a requirements file.
+  - Explain why applications usually pin resolved versions while reusable libraries declare compatible ranges.
+  - Keep environment directories out of version control.
+sources:
+  - title: venv — Creation of virtual environments
+    url: https://docs.python.org/3/library/venv.html
+    publisher: Python Software Foundation
+  - title: Installing packages using pip and virtual environments
+    url: https://packaging.python.org/en/latest/guides/installing-using-pip-and-virtual-environments/
+    publisher: Python Packaging Authority
+  - title: pip User Guide
+    url: https://pip.pypa.io/en/stable/user_guide/
+    publisher: Python Packaging Authority
+sections:
+  - id: why-environments-matter
+    title: Why each project needs its own environment
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          Imagine two projects on one computer. Project A needs version 1 of a package; Project B needs
+          version 2. If both projects install into the same global package directory, changing a package
+          for one project can unexpectedly break the other.
+
+          A **virtual environment** is a directory containing a Python environment with its own interpreter
+          entry points and its own installed packages. It lets each project manage its dependencies without
+          changing the packages used by unrelated projects.
+
+          The standard library module `venv` creates these environments. A common convention is to create
+          one named `.venv` inside each project folder:
+
+          ```text
+          weather-app/
+          ├── .venv/          # local environment; do not commit this folder
+          ├── requirements.txt
+          ├── src/
+          │   └── main.py
+          └── README.md
+          ```
+      - type: callout
+        variant: analogy
+        title: Separate toolboxes for separate projects
+        body: |
+          A global Python installation is like one toolbox shared by every project. A virtual environment
+          gives each project a separate set of Python packages, so changing one toolbox does not normally
+          change the others.
+      - type: callout
+        variant: misconception
+        title: A virtual environment is not a security sandbox
+        body: |
+          A venv separates Python packages and interpreter configuration. It does not isolate the process
+          from your files, network, user account or operating system. Code inside a venv still has the OS
+          permissions of the user who runs it.
+
+  - id: create-environment
+    title: Create a virtual environment
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          First open a terminal in the project folder. Then create the environment with the interpreter you
+          intend to use:
+
+          **Windows PowerShell or Command Prompt**
+
+          ```powershell
+          py -m venv .venv
+          ```
+
+          **macOS or Linux**
+
+          ```bash
+          python3 -m venv .venv
+          ```
+
+          If your machine uses `python` for the intended version, `python -m venv .venv` is also valid.
+          If multiple versions are installed, choose the desired interpreter explicitly before creating
+          the environment. The venv is based on that interpreter; it does not download a different Python
+          version for you.
+      - type: code
+        language: powershell
+        status: illustrative
+        code: |
+          # Create the environment from the Python selected by the Windows launcher.
+          py -3.14 -m venv .venv
+        caption: |
+          Illustrative version-specific command. Use the Python version your project supports and that is
+          actually installed on your computer; the version number here is an example.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          # Create the environment from the python3 command resolved by this shell.
+          python3 -m venv .venv
+        caption: |
+          Illustrative macOS/Linux command. If the project requires a specific interpreter, check the
+          resolved executable and version first.
+      - type: callout
+        variant: note
+        title: What gets created?
+        body: |
+          The environment directory contains scripts and package locations that point back to the base
+          Python installation. It is not a complete duplicate of every Python file on your computer.
+          Recreate the environment from dependency declarations when moving the project to another machine.
+
+  - id: activate-and-verify
+    title: Activate and verify the environment
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Activation** changes the current shell environment so commands such as `python` and `pip` resolve
+          to the virtual environment first. The activation command depends on the shell:
+
+          | Platform / shell | Activation command |
+          |---|---|
+          | Windows PowerShell | `.\.venv\Scripts\Activate.ps1` |
+          | Windows Command Prompt | `.venv\Scripts\activate.bat` |
+          | macOS / Linux bash or zsh | `source .venv/bin/activate` |
+
+          After activation, the shell prompt often shows `(.venv)`. This is a visual hint, not proof. Verify
+          the interpreter and package location:
+
+          ```text
+          python --version
+          python -c "import sys; print(sys.executable)"
+          python -m pip --version
+          ```
+
+          The interpreter path should point inside your project's `.venv` directory. The pip path should
+          also belong to that environment.
+      - type: code
+        language: python
+        runnable: true
+        code: |
+          import sys
+
+          print(sys.prefix != sys.base_prefix)
+        expectedOutput: |
+          False
+        annotations:
+          - line: 1
+            text: "`sys` exposes information about the active Python interpreter."
+          - line: 3
+            text: In this browser runtime the result is False because the example is not running inside a local venv. In an activated local venv, the result is normally True.
+        caption: |
+          This check demonstrates the documented venv test. The browser lesson is not itself inside a local
+          virtual environment, so False is the expected result here.
+      - type: callout
+        variant: warning
+        title: PowerShell activation may be restricted
+        body: |
+          Some Windows systems restrict running local PowerShell scripts. Do not weaken the machine-wide
+          execution policy just to activate a venv. You can run the environment's interpreter directly:
+
+          ```powershell
+          .\.venv\Scripts\python.exe --version
+          .\.venv\Scripts\python.exe -m pip --version
+          ```
+
+          You can also use Command Prompt activation or follow your organisation's approved policy.
+      - type: item
+        ref: venv-detection-predict
+
+  - id: install-packages
+    title: Install packages into the active environment
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Activate the environment first, then use the environment's interpreter to run pip:
+
+          ```text
+          python -m pip install requests
+          python -m pip show requests
+          python -m pip list
+          ```
+
+          The `python -m pip` form matters because it ties pip to the interpreter named by `python`. It avoids
+          accidentally installing into a different Python that happens to have a `pip` command earlier on
+          PATH.
+
+          When you finish working, run `deactivate` in the shell. This returns command lookup to the shell's
+          previous environment; it does not delete the `.venv` directory or uninstall its packages.
+      - type: callout
+        variant: tip
+        title: Activation is convenient, not mandatory
+        body: |
+          You can always call the environment's interpreter directly. On Windows use
+          `.venv\\Scripts\\python.exe`; on macOS/Linux use `.venv/bin/python`. This is useful for IDE run
+          configurations and automation scripts that should not depend on an interactive activation step.
+
+  - id: record-dependencies
+    title: Record and restore project dependencies
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A virtual environment stores installed packages on one computer. A dependency file records what
+          another developer or deployment should install.
+
+          A common pip workflow for an application is:
+
+          ```text
+          # Record the packages currently installed in this environment
+          python -m pip freeze > requirements.txt
+
+          # Recreate them in a newly created and activated environment
+          python -m pip install -r requirements.txt
+          ```
+
+          `pip freeze` reports installed distributions and versions. It is a useful snapshot, but a plain
+          requirements file is not automatically a complete reproducibility guarantee: it does not by itself
+          capture the Python interpreter build, operating system, package indexes, external system libraries
+          or every installation detail. More advanced projects use a lockfile workflow that records a
+          resolved dependency set and may include hashes.
+
+          **Applications and libraries have different goals:**
+
+          - An application is deployed as a complete product. Pinning the resolved dependency versions makes
+            installations more repeatable, for example `requests==2.32.4`.
+          - A reusable library is installed inside someone else's application. It normally declares a
+            compatible version range rather than forcing every user to install one exact version.
+
+          Do not copy version numbers from an old tutorial without checking current package releases and
+          compatibility. The example version above illustrates pin syntax; it is not a recommendation to use
+          that version for a new project.
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          # requirements.txt — illustrative exact pins for an application
+          requests==2.32.4
+          pydantic==2.11.7
+        caption: |
+          Example syntax only. Before using pins, verify the versions against the project's Python version,
+          security status and compatibility requirements.
+      - type: item
+        ref: requirements-predict
+
+  - id: keep-environment-out-of-git
+    title: Keep local environment files out of Git
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          Do not commit the `.venv/` directory. It contains machine-specific paths, many generated files and
+          installed package copies. It can be recreated from the dependency declarations.
+
+          Add these entries to `.gitignore`:
+
+          ```gitignore
+          .venv/
+          __pycache__/
+          ```
+
+          Commit the source code, dependency declarations and setup instructions instead. Also avoid
+          committing `.env` files containing credentials; secret management is covered in a later lesson.
+      - type: callout
+        variant: warning
+        title: Do not delete the wrong directory
+        body: |
+          Before removing an environment, confirm the path is the project's `.venv` and that the terminal is
+          in the intended project. Deleting `.venv` removes that environment's installed packages; it does
+          not delete your source files when the directory is separate.
+      - type: item
+        ref: venv-gitignore-mcq
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A virtual environment isolates Python packages for one project; it is not a security sandbox.
+          - Create one with `python -m venv .venv` using the intended base interpreter.
+          - Activate it or call its interpreter directly, then verify `sys.executable` and `python -m pip`.
+          - Use `python -m pip` so installation targets the selected interpreter.
+          - Record dependencies and restore them in a new environment; applications generally pin resolved versions.
+          - Keep `.venv/` out of version control.
+      - type: item
+        ref: venv-implementation
+items:
+  - id: venv-detection-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: |
+      A local Python process reports `sys.prefix` as `/work/app/.venv` and `sys.base_prefix` as `/usr/local`.
+      What does the following expression print?
+    code: |
+      prefix = "/work/app/.venv"
+      base_prefix = "/usr/local"
+      print(prefix != base_prefix)
+    answer: |
+      True
+    wrongAnswers:
+      - answer: |
+          False
+        feedback: The prefixes are different, which is the usual signal that the interpreter is running in a virtual environment.
+    explanation: |
+      A venv uses a different `sys.prefix` from the base interpreter's `sys.base_prefix`. This check is
+      documented by Python and is more reliable than looking only for a prompt prefix.
+
+  - id: requirements-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does the `==` operator mean in this requirements line?
+    code: |
+      requirement = "requests==2.32.4"
+      print(requirement.split("==")[1])
+    answer: |
+      2.32.4
+    explanation: The double equals in a requirements specification pins the package to that exact version.
+
+  - id: venv-gitignore-mcq
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: Why should a project's `.venv/` directory normally be excluded from Git?
+    explanation: |
+      A virtual environment contains generated, machine-specific interpreter and package files. The source
+      and dependency declarations are what other developers need to recreate it.
+    options:
+      - id: a
+        text: It contains the project's Python source code.
+        feedback: Source code belongs in the repository; the environment directory contains generated runtime files.
+      - id: b
+        text: It is machine-specific and can be recreated from dependency declarations.
+        correct: true
+        feedback: Correct. Commit the source and dependency declarations, not the generated environment.
+      - id: c
+        text: Git cannot store directories.
+        feedback: Git tracks files and represents directories through their contents; it can store environment files, but doing so is usually undesirable.
+      - id: d
+        text: Excluding it prevents Python from importing packages.
+        feedback: The local environment still works; `.gitignore` only affects what Git tracks.
+
+  - id: venv-implementation
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Implement `is_virtual_environment(prefix, base_prefix)`. It should return True when the active Python
+      environment has a different prefix from the base interpreter and False otherwise.
+    explanation: |
+      Python's documented check compares the active prefix with the base interpreter prefix. Different
+      values indicate a virtual environment; equal values indicate the base environment.
+    starterCode: |
+      def is_virtual_environment(prefix, base_prefix):
+          return prefix == base_prefix
+    solution: |
+      def is_virtual_environment(prefix, base_prefix):
+          return prefix != base_prefix
+    tests:
+      - name: detects a virtual environment
+        code: |
+          assert is_virtual_environment("/work/app/.venv", "/usr/local") is True
+      - name: detects the base environment
+        code: |
+          assert is_virtual_environment("/usr/local", "/usr/local") is False
+    hints:
+      - Compare the two prefixes.
+      - A virtual environment has a different prefix from the base interpreter.
+    feedback:
+      - when: { codeContains: "==" }
+        message: The function should return True when the prefixes differ, not when they are equal.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [venv-detection-predict, requirements-predict, venv-gitignore-mcq, venv-implementation]
+cheatsheet: |
+  - Create: `python -m venv .venv`
+  - Windows PowerShell: `.\.venv\Scripts\Activate.ps1`
+  - macOS/Linux: `source .venv/bin/activate`
+  - Verify: `python -c "import sys; print(sys.executable)"`
+  - Install: `python -m pip install package-name`
+  - Record: `python -m pip freeze > requirements.txt`
+  - Restore: `python -m pip install -r requirements.txt`
+  - Ignore `.venv/`; commit source and dependency declarations, not the environment directory.

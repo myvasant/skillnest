@@ -1,0 +1,1373 @@
+id: python.closures
+concept: python.closures
+title: Closures
+subtitle: Inner functions that remember their enclosing variables
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  A function defined inside another function can keep using the outer function's variables even after
+  the outer call has returned. This lesson builds that idea step by step — inner functions, returning
+  them, updating enclosed state with nonlocal — and then tackles the famous late-binding trap in loops.
+objectives:
+  - Explain a closure as an inner function together with the enclosing variables it uses, which stay alive after the outer function returns.
+  - Predict what closures return, including independent state created by separate calls to the outer function.
+  - Use nonlocal to update enclosed state, and fix the UnboundLocalError that appears without it.
+  - Recognise the late-binding trap in loops and fix it with a default argument or a factory function.
+  - Decide when a closure is enough and when a small class is clearer.
+sources:
+  - title: "Python Language Reference: Resolution of names"
+    url: https://docs.python.org/3/reference/executionmodel.html#resolution-of-names
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: The nonlocal statement"
+    url: https://docs.python.org/3/reference/simple_stmts.html#the-nonlocal-statement
+    publisher: Python Software Foundation
+  - title: "PEP 3104: Access to Names in Outer Scopes"
+    url: https://peps.python.org/pep-3104/
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Data model — function.__closure__"
+    url: https://docs.python.org/3/reference/datamodel.html#function.__closure__
+    publisher: Python Software Foundation
+  - title: "Programming FAQ: Why do lambdas defined in a loop with different values all return the same result?"
+    url: https://docs.python.org/3/faq/programming.html#why-do-lambdas-defined-in-a-loop-with-different-values-all-return-the-same-result
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why functions need to remember things
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Many tools call *your* function for you: `filter()` calls it once per item, `sorted(key=...)`
+          calls it to get a sort key, a button calls it when clicked. These callers decide the arguments —
+          usually exactly one. But often your function also needs some **configuration**: a cut-off
+          value, a currency, a priority order.
+
+          Here is a common first attempt, which keeps the configuration in a global variable:
+      - type: code
+        runnable: true
+        code: |
+          scores = [35, 80, 62, 47, 91]
+
+          threshold = 50
+
+          def above_threshold(score):
+              return score > threshold
+
+          print(list(filter(above_threshold, scores)))
+
+          threshold = 75          # a different cut-off? change the global...
+          print(list(filter(above_threshold, scores)))
+        expectedOutput: |
+          [80, 62, 91]
+          [80, 91]
+        caption: It works, but the function's behaviour depends on a global that any code can change.
+      - type: markdown
+        body: |
+          The problems: you can only have **one** threshold at a time, any line of the program can change
+          it, and reading `above_threshold` alone does not tell you what it will do.
+
+          A better design is a function that **builds** a configured function and hands it back:
+      - type: code
+        runnable: true
+        code: |
+          scores = [35, 80, 62, 47, 91]
+
+          def make_above(threshold):
+              def above(score):
+                  return score > threshold
+              return above
+
+          passed = make_above(50)
+          distinction = make_above(75)
+
+          print(list(filter(passed, scores)))
+          print(list(filter(distinction, scores)))
+          print(passed(60), distinction(60))
+        expectedOutput: |
+          [80, 62, 91]
+          [80, 91]
+          True False
+        annotations:
+          - line: 4
+            text: "`above` uses `threshold`, a parameter of the *outer* function."
+          - line: 6
+            text: "Return the inner function itself — no parentheses, so it is not called here."
+          - line: 8
+            text: Each call to make_above creates a new `above` that remembers its own threshold.
+      - type: markdown
+        body: |
+          `passed` and `distinction` are two functions with **their own remembered threshold**, living side
+          by side, with no global variable. Functions like these are called
+          [closures](glossary:closure), and `make_above` is a [factory function](glossary:factory-function).
+          You will use them constantly: as sort keys and callbacks, and as the building block of
+          [decorators](concept:python.decorators) in the next lesson.
+
+  - id: inner-functions
+    title: "Step 1: functions inside functions"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A `def` statement can appear inside another function's body. It is an ordinary statement: each
+          time the outer function runs, `def` creates a **new function object** and binds it to a
+          **local name** of the outer function.
+
+          The inner function can **read** the outer function's variables. This is the *E* (Enclosing) in
+          the LEGB lookup order you met in [scope and namespaces](concept:python.scope): Local, then
+          Enclosing functions, then Global, then Built-in.
+      - type: code
+        runnable: true
+        code: |
+          def print_receipt(items):
+              currency = "Rs"
+
+              def line(name, price):
+                  return f"{name:<8}{currency} {price:>6.2f}"
+
+              for name, price in items:
+                  print(line(name, price))
+
+          print_receipt([("Tea", 40), ("Samosa", 25.5)])
+        expectedOutput: |
+          Tea     Rs  40.00
+          Samosa  Rs  25.50
+        annotations:
+          - line: 4
+            text: "`line` is created every time print_receipt runs. It is a local name of print_receipt."
+          - line: 5
+            text: "`currency` is not defined in `line`, so Python finds it in the enclosing function."
+      - type: markdown
+        body: |
+          Because the inner function's name is local to the outer function, it does not exist outside it —
+          exactly like any other local variable:
+      - type: code
+        runnable: true
+        code: |
+          def outer():
+              def helper():
+                  return "hi"
+              return helper()
+
+          print(outer())
+          print(helper())
+        expectError: NameError
+        caption: "The first print works (outer calls its own helper). The second fails: `helper` only exists inside outer."
+
+  - id: returning-functions
+    title: "Step 2: returning the inner function"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Functions are objects, so — as you saw with
+          [higher-order functions](concept:python.higher-order-functions) — a function can **return**
+          another function. Write `return multiply` (the function object), not `return multiply()` (the
+          result of calling it).
+      - type: code
+        runnable: true
+        code: |
+          def make_multiplier(factor):
+              def multiply(x):
+                  return x * factor
+              return multiply
+
+          double = make_multiplier(2)
+          triple = make_multiplier(3)
+
+          print(double(5))
+          print(triple(5))
+          print(double(triple(10)))
+        expectedOutput: |
+          10
+          15
+          60
+        annotations:
+          - line: 6
+            text: make_multiplier(2) runs to completion and returns a function. The name double now refers to it.
+          - line: 9
+            text: make_multiplier has already returned — yet multiply still finds factor = 2.
+      - type: markdown
+        body: |
+          This is the puzzle closures solve. Normally a call's local variables disappear when the call
+          returns. But `double(5)` runs long after `make_multiplier(2)` has finished, and it still finds
+          `factor`.
+
+          > A **closure** is a function that keeps access to variables of the enclosing function in which
+          > it was defined, even after that enclosing function has returned.
+
+          The variables a closure keeps are its [free variables](glossary:free-variable): names the
+          function **uses** but does not assign itself (they are not its parameters or its own locals) and
+          that belong to an enclosing function. For `multiply`, `x` is a parameter (local) and `factor` is
+          free.
+      - type: item
+        ref: predict-greeter
+
+  - id: mental-model
+    title: "Mental model: each call makes new variables, and the closure keeps the ones it uses"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Follow `double = make_multiplier(2)` precisely:
+
+          1. Calling `make_multiplier(2)` creates a **fresh local namespace** for that call, with
+             `factor → 2`.
+          2. `def multiply` creates a new function object. Python already knows (from compiling the code)
+             that `multiply` uses `factor` from the enclosing function, so the new function object gets a
+             **reference to the variable `factor` of this call** — not a copy of its value.
+          3. `make_multiplier` returns. Its other locals are discarded, but `factor` stays alive because
+             the returned function still refers to it.
+          4. `make_multiplier(3)` is a **separate call**, so it creates a separate `factor`. `double` and
+             `triple` never share it.
+
+          Step through it. Watch the `multiply` frame: `factor` appears there even though the
+          `make_multiplier` frame is long gone.
+      - type: visualization
+        component: python-tracer
+        title: Two closures, two remembered factors
+        caption: >-
+          Each call to make_multiplier creates its own factor. When double(5) runs, its frame can still see
+          factor = 2, and triple's frame sees factor = 3.
+        props:
+          code: |
+            def make_multiplier(factor):
+                def multiply(x):
+                    return x * factor
+                return multiply
+
+            double = make_multiplier(2)
+            triple = make_multiplier(3)
+            print(double(5))
+            print(triple(5))
+      - type: callout
+        variant: analogy
+        title: A function that carries references, not photocopies
+        body: |
+          Picture each call of the outer function as a room with its own furniture (its variables). When
+          the call ends the room is cleared — except for any furniture that an inner function is still
+          holding a string tied to. The inner function does not take a photo of the furniture; it holds the
+          real thing. If someone rearranges that furniture before the room closes, the function sees the
+          change. (This is a simplification: the deep dive below shows the real mechanism, called a
+          *cell*.)
+      - type: callout
+        variant: misconception
+        title: '"A closure stores the value the variable had when the function was defined"'
+        body: |
+          It stores the **variable**, and reads its current value **each time the function runs**. If the
+          enclosing function rebinds the variable after defining the inner function, the closure sees the
+          new value:
+
+          ```python
+          def make_reporter():
+              status = "starting"
+              def report():
+                  return "status: " + status
+              status = "ready"        # rebinding AFTER report was defined
+              return report
+
+          print(make_reporter()())    # status: ready
+          ```
+
+          This one fact explains the late-binding trap later in this lesson.
+      - type: code
+        runnable: true
+        code: |
+          def make_reporter():
+              status = "starting"
+              def report():
+                  return "status: " + status
+              status = "ready"
+              return report
+
+          print(make_reporter()())
+        expectedOutput: |
+          status: ready
+        caption: Run it to confirm. The closure reads status when report() runs, not when report was defined.
+
+  - id: nonlocal
+    title: Updating enclosed state with nonlocal
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Reading an enclosed variable is automatic. **Assigning** to it is different. Recall the scope
+          rule: *assigning to a name anywhere in a function makes that name local to that function*. Watch
+          what that rule does to a counter factory:
+      - type: code
+        runnable: true
+        code: |
+          def make_counter():
+              count = 0
+              def counter():
+                  count += 1
+                  return count
+              return counter
+
+          tick = make_counter()
+          print(tick())
+        expectError: UnboundLocalError
+        caption: "Run it and read the last line of the error."
+      - type: markdown
+        body: |
+          ```text
+          UnboundLocalError: cannot access local variable 'count' where it is not associated with a value
+          ```
+
+          `count += 1` means `count = count + 1`, which **assigns** to `count`. So Python decides, when it
+          compiles `counter`, that `count` is a *local* variable of `counter` — a brand-new one, unrelated to
+          the `count` in `make_counter`. Then `count + 1` tries to read that local before it has a value.
+
+          The fix is the [`nonlocal` statement](glossary:nonlocal-statement). It tells Python: "assignments
+          to this name inside me should rebind the variable in the nearest enclosing function":
+      - type: code
+        runnable: true
+        code: |
+          def make_counter():
+              count = 0
+              def counter():
+                  nonlocal count
+                  count += 1
+                  return count
+              return counter
+
+          tick = make_counter()
+          tock = make_counter()
+          print(tick(), tick(), tick())
+          print(tock())
+          print(tick())
+        expectedOutput: |
+          1 2 3
+          1
+          4
+        annotations:
+          - line: 4
+            text: "`count` now refers to make_counter's variable, so `count += 1` updates it."
+          - line: 10
+            text: A second call to make_counter creates a second, independent count.
+          - line: 13
+            text: tick continues from 3 — its count survived between calls, and tock did not touch it.
+      - type: visualization
+        component: python-tracer
+        title: State that survives between calls
+        caption: >-
+          Each tick() call gets a new frame, but count is not stored in that frame — it belongs to the
+          finished make_counter call and is shared with every call of this tick.
+        props:
+          code: |
+            def make_counter():
+                count = 0
+                def counter():
+                    nonlocal count
+                    count += 1
+                    return count
+                return counter
+
+            tick = make_counter()
+            tick()
+            print(tick())
+      - type: markdown
+        body: |
+          **The rules of `nonlocal`:**
+
+          - `nonlocal name` makes assignments to `name` rebind the variable of the **nearest enclosing
+            function** that has one.
+          - The name must be a variable of an enclosing **function** (assigned somewhere in it). Otherwise
+            Python refuses to compile the code: `SyntaxError: no binding for nonlocal 'name' found` — even if a *global* with
+            that name exists. (`nonlocal` never refers to module-level variables; that is what `global` is
+            for, and you should rarely need it.)
+          - You need `nonlocal` only to **rebind** the name. **Mutating** an enclosed mutable object —
+            `history.append(...)`, `cache[key] = value` — does not assign to the name, so it works without
+            `nonlocal`:
+      - type: code
+        runnable: true
+        code: |
+          def make_recorder():
+              history = []
+              def record(event):
+                  history.append(event)     # mutates the list; the name is not rebound
+                  return len(history)
+              return record
+
+          record = make_recorder()
+          print(record("login"), record("view page"), record("logout"))
+        expectedOutput: |
+          1 2 3
+      - type: item
+        ref: mcq-why-unbound
+      - type: item
+        ref: explain-two-counters
+
+  - id: late-binding
+    title: The late-binding trap in loops
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Because closures keep **variables**, not values, there is a famous surprise when you create
+          functions in a loop. Predict the output before running:
+      - type: code
+        runnable: true
+        code: |
+          functions = [lambda: i for i in range(3)]
+          print([f() for f in functions])
+        expectedOutput: |
+          [2, 2, 2]
+        caption: Three lambdas — and all of them return 2.
+      - type: markdown
+        body: |
+          There are three lambda functions but only **one** variable `i`, which the loop rebinds to 0, 1
+          and 2. Each lambda looks `i` up **when it is called**. By then the loop has finished and `i` is 2.
+          Looking up a free variable at call time rather than definition time is called
+          [late binding](glossary:late-binding).
+
+          The same thing happens with an ordinary `for` loop and `def`. Step through it and watch the
+          single `i` in `make_functions`:
+      - type: visualization
+        component: python-tracer
+        title: Three functions, one shared variable
+        caption: >-
+          The loop rebinds one variable i. All three lambdas refer to it, so after the loop each of them
+          sees its final value, 2.
+        props:
+          code: |
+            def make_functions():
+                functions = []
+                for i in range(3):
+                    functions.append(lambda: i)
+                return functions
+
+            for f in make_functions():
+                print(f())
+      - type: markdown
+        body: |
+          **Three standard fixes** — each gives every function its *own* value:
+
+          1. **Default argument** — `lambda i=i: i`. Default values are evaluated **once, when the function
+             is defined** (you met this rule in [parameters](concept:python.parameters)), so each lambda
+             gets its own parameter `i` holding the value of that moment.
+          2. **Factory function** — call a function that creates the closure. Every call creates a new
+             enclosing scope, so every closure has its own variable.
+          3. **`functools.partial`** — stores the argument values inside a new callable object.
+      - type: code
+        runnable: true
+        code: |
+          import functools
+
+          with_default = [lambda i=i: i for i in range(3)]
+          print([f() for f in with_default])
+
+          def make_getter(value):
+              return lambda: value
+
+          with_factory = [make_getter(i) for i in range(3)]
+          print([f() for f in with_factory])
+
+          def show(value):
+              return value
+
+          with_partial = [functools.partial(show, i) for i in range(3)]
+          print([f() for f in with_partial])
+        expectedOutput: |
+          [0, 1, 2]
+          [0, 1, 2]
+          [0, 1, 2]
+        annotations:
+          - line: 3
+            text: "`i=i`: a parameter named i whose default is the current value of the loop's i."
+          - line: 6
+            text: Each make_getter call has its own `value` variable.
+          - line: 14
+            text: partial(show, i) remembers the current value of i as show's first argument.
+      - type: callout
+        variant: tip
+        title: Which fix should I use?
+        body: |
+          The default-argument trick is short but leaks into the signature: someone can call `f(99)` and
+          override the value. For anything other people will call, prefer a factory function or
+          `functools.partial`.
+      - type: item
+        ref: predict-late-binding
+
+  - id: closures-vs-classes
+    title: Closures or a small class?
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          A closure bundles **behaviour with a little remembered state**. So does an object. Here is the
+          counter as a class:
+      - type: code
+        runnable: true
+        code: |
+          class Counter:
+              def __init__(self):
+                  self.count = 0
+
+              def increment(self):
+                  self.count += 1
+                  return self.count
+
+          clicks = Counter()
+          clicks.increment()
+          print(clicks.increment(), clicks.count)
+        expectedOutput: |
+          2 2
+        annotations:
+          - line: 11
+            text: Unlike a closure's variable, the state is easy to inspect from outside.
+      - type: markdown
+        body: |
+          | Prefer a **closure** when… | Prefer a **class** when… |
+          |---|---|
+          | You need **one** callable: a key function, a callback, a decorator. | You need **several operations** on the same state (`deposit`, `withdraw`, `balance`). |
+          | The state is a little configuration or a private counter. | Other code should **read** the state (`clicks.count`) or tests need to inspect it. |
+          | The code stays a few lines long. | The state grows, or you want a readable `repr`, equality, or inheritance. |
+
+          Both are correct tools; the question is which one a reader will understand faster. A factory
+          returning three inner functions that share state is usually a class in disguise — write the class.
+      - type: item
+        ref: mcq-closure-or-class
+
+  - id: under-the-hood
+    title: "Under the hood: cells and __closure__"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          When CPython compiles a function, it already knows which of its variables are used by inner
+          functions. Those variables are stored in a small box called a [cell](glossary:cell-object)
+          instead of directly in the call's frame. The inner function object keeps a tuple of references to
+          those cells in its `__closure__` attribute. Reading or writing the variable — from either
+          function — goes through the cell, which is why both see the same value.
+
+          You can inspect this:
+
+          - `outer.__code__.co_cellvars` — the outer function's variables that live in cells.
+          - `inner.__code__.co_freevars` — the inner function's free variables.
+          - `inner.__closure__` — a tuple of cell objects (or `None` if there are no free variables).
+          - `cell.cell_contents` — the value currently in the cell.
+      - type: code
+        runnable: true
+        code: |
+          def make_multiplier(factor):
+              def multiply(x):
+                  return x * factor
+              return multiply
+
+          double = make_multiplier(2)
+          print(make_multiplier.__code__.co_cellvars)
+          print(double.__code__.co_freevars)
+          print(len(double.__closure__), type(double.__closure__[0]).__name__)
+          print(double.__closure__[0].cell_contents)
+
+          def plain(x):
+              return x * 2
+
+          print(plain.__closure__)
+        expectedOutput: |
+          ('factor',)
+          ('factor',)
+          1 cell
+          2
+          None
+      - type: markdown
+        body: |
+          **One cell per variable per call.** Functions created in the *same* call share a cell; functions
+          created by *different* calls get different cells. That is exactly why `tick` and `tock` counted
+          independently, and why all the lambdas in the late-binding loop saw the same `i`.
+      - type: code
+        runnable: true
+        code: |
+          def make_pair():
+              value = 0
+              def get():
+                  return value
+              def set_value(new):
+                  nonlocal value
+                  value = new
+              return get, set_value
+
+          get_a, set_a = make_pair()
+          get_b, set_b = make_pair()
+          print(get_a.__closure__[0] is set_a.__closure__[0])
+          print(get_a.__closure__[0] is get_b.__closure__[0])
+          set_a(42)
+          print(get_a(), get_b())
+        expectedOutput: |
+          True
+          False
+          42 0
+      - type: markdown
+        body: |
+          **Bytecode (a CPython 3.14 implementation detail).** The compiler emits special instructions for
+          cell variables: `MAKE_CELL` creates the cell in the outer frame, `COPY_FREE_VARS` copies the cell
+          references into the inner function's frame when it is called, and `LOAD_DEREF` / `STORE_DEREF`
+          read and write through a cell. Instruction names change between CPython versions; the behaviour
+          above is what the language guarantees.
+      - type: code
+        runnable: true
+        code: |
+          import dis
+
+          def make_counter():
+              count = 0
+              def counter():
+                  nonlocal count
+                  count += 1
+                  return count
+              return counter
+
+          def cell_ops(func):
+              return [ins.opname for ins in dis.get_instructions(func)
+                      if "DEREF" in ins.opname or "CELL" in ins.opname or "FREE" in ins.opname]
+
+          print(cell_ops(make_counter))
+          print(cell_ops(make_counter()))
+        expectedOutput: |
+          ['MAKE_CELL', 'STORE_DEREF']
+          ['COPY_FREE_VARS', 'LOAD_DEREF', 'STORE_DEREF', 'LOAD_DEREF']
+        caption: Verified on CPython 3.14 (the browser runtime). Other versions may print different instruction names.
+      - type: markdown
+        body: |
+          **Other facts worth knowing:**
+
+          - **Globals are not captured.** A module-level function that uses a global variable has
+            `__closure__` set to `None`; the global is looked up in the module namespace each time the
+            function runs. (That is why the late-binding surprise also happens at module level, without any
+            cell involved.)
+          - **Reading a free variable before it is assigned** in the enclosing function raises
+            `NameError: cannot access free variable 'value' where it is not associated with a value in
+            enclosing scope`.
+          - **Memory.** A closure keeps every object its cells refer to alive for as long as the closure
+            exists. A closure over a huge list keeps the whole list in memory.
+          - **Not a lambda thing.** `lambda` and `def` create the same kind of function object; both form
+            closures in exactly the same way.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `UnboundLocalError: cannot access local variable 'count' where it is not associated with a value` | The inner function assigns (`=`, `+=`) to an enclosed name without `nonlocal`, so the name became local. | Add `nonlocal count` as the first line of the inner function. |
+          | `SyntaxError: no binding for nonlocal 'total' found` | `nonlocal` names a variable that no enclosing *function* assigns (it is a global, misspelled, or only assigned in a different function). | Create the variable in the outer function before defining the inner function, or fix the spelling. |
+          | `TypeError: 'NoneType' object is not callable` when calling the result of a factory | The factory forgot `return inner`, so it returned `None`. | Add `return inner` at the end of the outer function. |
+          | `TypeError: ...multiply() missing 1 required positional argument` | `return multiply()` **called** the inner function instead of returning it. | Return the function object: `return multiply`. |
+          | Every function built in a loop returns the last value | Late binding: they all share the loop variable. | Use a default argument (`i=i`), a factory function, or `functools.partial`. |
+          | Two "independent" things share state, or state resets unexpectedly | One closure reused where you needed two, or the factory called again where you needed the same one. | Call the factory **once per independent piece of state** and keep the result. |
+      - type: code
+        runnable: true
+        code: |
+          def make_multiplier(factor):
+              def multiply(x):
+                  return x * factor
+
+          double = make_multiplier(2)
+          print(double(5))
+        expectError: TypeError
+        caption: "make_multiplier has no return statement, so double is None. Calling None gives \"'NoneType' object is not callable\"."
+      - type: code
+        runnable: true
+        code: |
+          def make_multiplier(factor):
+              def multiply(x):
+                  return x * factor
+              return multiply()
+
+          double = make_multiplier(2)
+        expectError: TypeError
+        caption: "The parentheses call multiply immediately, without an x — the error appears inside the factory, before you ever use double."
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Each exercise is checked by calling your functions with new values, so make them work in general —
+          not just for the example at the bottom of the starter code.
+      - type: item
+        ref: accumulator
+      - type: item
+        ref: debug-buttons
+      - type: item
+        ref: priority-key
+      - type: item
+        ref: parsons-counter
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - An **inner function** is created each time the outer function runs; its name is local to the
+            outer function.
+          - A **closure** is an inner function that keeps access to the enclosing function's variables after
+            the outer call returns. Those variables are its **free variables**.
+          - Closures keep **variables, not values**: they read the current value each time they run.
+          - Each call of the outer function creates **new** variables, so each closure it returns has
+            independent state.
+          - To **rebind** an enclosed variable, declare it `nonlocal`; mutating an enclosed list or dict
+            needs no declaration.
+          - **Late binding** in loops: functions created in a loop share the loop variable. Fix with
+            `i=i`, a factory function or `functools.partial`.
+          - One callable with a little state → closure. Several operations or inspectable state → class.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What does `[lambda: i for i in range(3)]` return when you call each lambda, and why?" — Answer
+          `[2, 2, 2]`, explain that the lambdas close over the variable `i` (late binding), not its value,
+          and give two fixes (`lambda i=i: i` or a factory function). Strong answers also explain `nonlocal`
+          and when a class would be clearer than a closure.
+
+items:
+  - id: predict-greeter
+    type: predict-output
+    skill: prediction
+    prompt: Predict the output (two lines).
+    code: |
+      def make_greeter(greeting):
+          def greet(name):
+              return greeting + ", " + name
+          return greet
+
+      hello = make_greeter("Hello")
+      hi = make_greeter("Hi")
+      print(hi("Ada"))
+      print(hello("Grace"))
+    answer: |
+      Hi, Ada
+      Hello, Grace
+    explanation: >-
+      Each call to make_greeter creates its own `greeting` variable and returns a new greet function that
+      keeps it. hi remembers "Hi" and hello remembers "Hello"; the second call does not overwrite the
+      first one's variable.
+    wrongAnswers:
+      - answer: |
+          Hi, Ada
+          Hi, Grace
+        feedback: >-
+          This assumes there is one shared `greeting` that the second call overwrote. Every call to
+          make_greeter creates a fresh local `greeting`, so hello still has "Hello".
+      - answer: |
+          Hello, Ada
+          Hello, Grace
+        feedback: >-
+          hi was created by make_greeter("Hi"), so its greeting is "Hi". Each returned function remembers
+          the variable from the call that created it.
+      - answer: |
+          Ada, Hi
+          Grace, Hello
+        feedback: The function returns greeting + ", " + name — the greeting comes first.
+
+  - id: mcq-why-unbound
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Calling `add(5)` on the function returned by this factory raises
+      `UnboundLocalError: cannot access local variable 'total' where it is not associated with a value`.
+      Why?
+
+      ```python
+      def make_adder():
+          total = 0
+          def add(amount):
+              total = total + amount
+              return total
+          return add
+      ```
+    explanation: >-
+      Because add assigns to total, the compiler makes total a local variable of add. The right-hand side
+      then reads that local before it has a value. `nonlocal total` tells Python the assignment should
+      rebind make_adder's variable instead.
+    options:
+      - id: a
+        text: The assignment inside add makes total a local variable of add, and it is read before it has a value.
+        correct: true
+        feedback: Right. Assignment anywhere in a function makes the name local there. Add `nonlocal total`.
+      - id: b
+        text: make_adder has already returned, so its variables have been deleted.
+        feedback: >-
+          Enclosed variables survive the outer call — that is what closures do. Reading total without
+          assigning to it would work fine.
+      - id: c
+        text: Inner functions can never see variables of the outer function.
+        feedback: They can read them (the E in LEGB). The problem is only the assignment.
+      - id: d
+        text: total must be declared global inside make_adder.
+        feedback: >-
+          total is not a global variable, and global would refer to the module namespace, not to
+          make_adder. The right declaration is `nonlocal total` inside add.
+
+  - id: explain-two-counters
+    type: explain
+    skill: explanation
+    prompt: >-
+      With the `make_counter` factory above, `tick = make_counter()` and `tock = make_counter()` count
+      independently, yet each one remembers its count between calls. Explain both facts in your own words.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that each call to make_counter creates a new local variable count.
+      - Explains that the returned inner function keeps a reference to the count variable of the call that created it (a closure), so it survives after make_counter returns.
+      - Explains that tick and tock come from different calls, so they refer to different count variables.
+      - Explains that nonlocal makes count += 1 update the enclosed variable rather than create a new local.
+    modelAnswer: |
+      Every call to make_counter runs its body again, so it creates a brand-new variable count set to 0
+      and a brand-new counter function. The counter function uses count from its enclosing function, so it
+      keeps a reference to that particular variable; when make_counter returns, the variable stays alive
+      because the function still refers to it. That is why tick remembers its count between calls. tock
+      was produced by a second call, which created a second count, so the two never interfere. Inside
+      counter, `nonlocal count` makes `count += 1` rebind the enclosed variable instead of creating a new
+      local one.
+
+  - id: predict-late-binding
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output (three lines).
+    code: |
+      callbacks = []
+      for name in ["save", "open", "quit"]:
+          callbacks.append(lambda: "clicked " + name)
+
+      for callback in callbacks:
+          print(callback())
+    answer: |
+      clicked quit
+      clicked quit
+      clicked quit
+    explanation: >-
+      All three lambdas look up the same variable `name` when they are called. By then the first loop has
+      finished and name refers to "quit". (Here name is a global, so the lookup goes to the module
+      namespace — the effect is the same as with a closure.) Fix it with `lambda name=name: ...`.
+    wrongAnswers:
+      - answer: |
+          clicked save
+          clicked open
+          clicked quit
+        feedback: >-
+          This assumes each lambda captured the value of name when it was created. Functions look names up
+          when they run (late binding), and by then name is "quit".
+      - answer: |
+          clicked save
+          clicked save
+          clicked save
+        feedback: The single name variable is rebound on every iteration; after the loop it refers to the last item, "quit".
+
+  - id: mcq-closure-or-class
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      You are modelling a shopping cart. Code elsewhere must add items, remove items, read the current
+      list of items, and compute the total. Which design is the clearest?
+    explanation: >-
+      Several operations share the same state, and other code must read that state. That is exactly what
+      a class is for. A closure shines when you need a single callable with a little private state.
+    options:
+      - id: a
+        text: A class Cart with an items attribute and add, remove and total methods.
+        correct: true
+        feedback: Yes. Several operations plus inspectable state is the classic case for a class.
+      - id: b
+        text: A factory make_cart() that returns four inner functions sharing a nonlocal list.
+        feedback: >-
+          It works, but it is a class in disguise: harder to read, harder to inspect in a debugger or a
+          test, and there is no single object to pass around.
+      - id: c
+        text: A global list items plus four module-level functions.
+        feedback: Globals allow only one cart and let any code change it. Bundle the state with its operations instead.
+      - id: d
+        text: A lambda for each operation, created in a loop.
+        feedback: Lambdas created in a loop also invite the late-binding trap — and this still does not group the state.
+
+  - id: accumulator
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a factory `make_accumulator()` that returns a function `add(amount)`. Each call to `add` adds
+      `amount` to a running total (which starts at 0) and returns the new total.
+
+      - Two accumulators must not share a total.
+      - Do not use global variables — keep the total inside `make_accumulator`.
+    starterCode: |
+      def make_accumulator():
+          # Create the running total here, then define and return add(amount).
+          pass
+
+
+      wallet = make_accumulator()
+      print(wallet(100))
+      print(wallet(50))
+    solution: |
+      def make_accumulator():
+          total = 0
+
+          def add(amount):
+              nonlocal total
+              total += amount
+              return total
+
+          return add
+
+
+      wallet = make_accumulator()
+      print(wallet(100))
+      print(wallet(50))
+    expectedOutput: |
+      100
+      150
+    tests:
+      - name: make_accumulator returns a function
+        code: |
+          acc = make_accumulator()
+          assert callable(acc), "make_accumulator() should return the inner function. End it with `return add` (no parentheses)."
+      - name: keeps a running total
+        code: |
+          acc = make_accumulator()
+          results = [acc(10), acc(5), acc(-3)]
+          assert results == [10, 15, 12], f"Adding 10, then 5, then -3 should return 10, 15, 12, but returned {results}."
+      - name: accumulators are independent
+        code: |
+          a = make_accumulator()
+          b = make_accumulator()
+          a(100)
+          a(100)
+          assert b(1) == 1, "A second accumulator should start from 0. Create the total inside make_accumulator so each call gets its own."
+      - name: total lives in the enclosing function
+        code: |
+          assert not uses("Global"), "Do not use `global`. Store the total in make_accumulator and use `nonlocal` in add."
+          assert getattr(make_accumulator(), "__closure__", None), "add should be a closure over a variable of make_accumulator (define add inside make_accumulator)."
+    hints:
+      - Start make_accumulator with `total = 0`, then define `def add(amount):` inside it.
+      - add needs to change total. Which statement lets an inner function rebind an enclosing variable?
+      - "Inside add: `nonlocal total`, then `total += amount`, then `return total`. Finally `return add` from make_accumulator."
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: >-
+          add assigns to total, so Python treats total as a new local variable of add. Put
+          `nonlocal total` as the first line of add.
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: make_accumulator returned None. End it with `return add` so the caller gets the inner function.
+    explanation: >-
+      Each call to make_accumulator creates a new total and a new add function that closes over it.
+      `nonlocal total` lets add rebind that enclosed variable, so the total survives between calls and
+      separate accumulators never interfere.
+
+  - id: debug-buttons
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program builds three click handlers, but every handler prints `Button 3 clicked`. Fix it so
+      handler number *n* reports its own number. Keep building the handlers with the comprehension (don't
+      write each message by hand).
+    starterCode: |
+      handlers = [lambda: f"Button {n} clicked" for n in range(1, 4)]
+
+      for handler in handlers:
+          print(handler())
+    solution: |
+      handlers = [lambda n=n: f"Button {n} clicked" for n in range(1, 4)]
+
+      for handler in handlers:
+          print(handler())
+    expectedOutput: |
+      Button 1 clicked
+      Button 2 clicked
+      Button 3 clicked
+    tests:
+      - name: each handler reports its own number
+        code: |
+          got = [h() for h in handlers]
+          assert got == ["Button 1 clicked", "Button 2 clicked", "Button 3 clicked"], f"The handlers returned {got}. Each lambda needs its own copy of n."
+      - name: handlers are still generated
+        code: |
+          assert uses("ListComp", "For"), "Keep creating the handlers with a comprehension or loop."
+          assert "Button 1" not in source and "Button 2" not in source, "Don't type each message by hand; fix the lambda instead."
+      - name: works for more buttons
+        code: |
+          import re
+          changed = re.sub(r"range\(\s*1\s*,\s*4\s*\)", "range(1, 6)", source, count=1)
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert len(ns["handlers"]) == 5, "Keep `range(1, 4)` in your code so this check can re-run it with five buttons."
+          assert ns["handlers"][3]() == "Button 4 clicked", "With five buttons, handler 4 should say 'Button 4 clicked'."
+    hints:
+      - All three lambdas share one variable n. What is its value after the comprehension finishes?
+      - Default argument values are evaluated when the function is created, not when it is called.
+      - "Change the lambda to `lambda n=n: f\"Button {n} clicked\"`."
+    feedback:
+      - when: { outputContains: "Button 3 clicked\nButton 3 clicked" }
+        message: >-
+          Still late binding: every lambda reads n after the loop has finished. Give each lambda its own
+          value with a default argument (`lambda n=n: ...`) or build them with a factory function.
+    explanation: >-
+      The lambdas looked up n when called, after the comprehension had set it to 3. `lambda n=n:` creates a
+      parameter whose default is evaluated at definition time, so each handler stores its own number.
+      A factory such as `def make_handler(n): return lambda: f"Button {n} clicked"` works too.
+
+  - id: priority-key
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Tasks have a `"priority"` of `"high"`, `"medium"` or `"low"`. Write a factory
+      `make_priority_key(order)` that takes a list of priorities in the order you want them and **returns a
+      key function** for `sorted()`. Given a task dict, the key function returns the position of the task's
+      priority in `order`.
+
+      The starter sorts the tasks with it and prints the titles.
+    starterCode: |
+      tasks = [
+          {"title": "Write report", "priority": "low"},
+          {"title": "Fix outage", "priority": "high"},
+          {"title": "Review code", "priority": "medium"},
+      ]
+
+      def make_priority_key(order):
+          pass
+
+
+      by_priority = sorted(tasks, key=make_priority_key(["high", "medium", "low"]))
+      print([task["title"] for task in by_priority])
+    solution: |
+      tasks = [
+          {"title": "Write report", "priority": "low"},
+          {"title": "Fix outage", "priority": "high"},
+          {"title": "Review code", "priority": "medium"},
+      ]
+
+      def make_priority_key(order):
+          rank = {priority: position for position, priority in enumerate(order)}
+
+          def key(task):
+              return rank[task["priority"]]
+
+          return key
+
+
+      by_priority = sorted(tasks, key=make_priority_key(["high", "medium", "low"]))
+      print([task["title"] for task in by_priority])
+    expectedOutput: |
+      ['Fix outage', 'Review code', 'Write report']
+    tests:
+      - name: returns a key function
+        code: |
+          key = make_priority_key(["high", "medium", "low"])
+          assert callable(key), "make_priority_key should return a function (the key), not call it."
+          got = key({"title": "x", "priority": "medium"})
+          assert got == 1, f"With order ['high', 'medium', 'low'], a 'medium' task should get key 1, but got {got!r}."
+      - name: respects any order
+        code: |
+          key = make_priority_key(["low", "medium", "high"])
+          got = [key({"priority": p}) for p in ["low", "medium", "high"]]
+          assert got == [0, 1, 2], f"With order ['low', 'medium', 'high'] the keys should be [0, 1, 2], got {got}. Use the order you were given."
+          titles = [t["title"] for t in sorted(tasks, key=key)]
+          assert titles == ["Write report", "Review code", "Fix outage"], f"Sorting low-first should give {['Write report', 'Review code', 'Fix outage']}, got {titles}."
+      - name: the key is a closure over order
+        code: |
+          key = make_priority_key(["high", "low"])
+          assert getattr(key, "__closure__", None), "Define the key function inside make_priority_key so it remembers `order`."
+      - name: prints the sorted titles
+        code: |
+          assert output().strip() == "['Fix outage', 'Review code', 'Write report']", f"Your program printed {output()!r}."
+    hints:
+      - Inside make_priority_key, define `def key(task):` and return key at the end.
+      - "`order.index(task[\"priority\"])` gives the position of the task's priority in the list."
+      - "For speed you can build a dict once: `rank = {p: i for i, p in enumerate(order)}` — the closure keeps it."
+    feedback:
+      - when: { errorMessageContains: "not supported between instances of 'dict' and 'dict'" }
+        message: >-
+          make_priority_key returned None, so sorted() tried to compare the task dicts themselves. Define a
+          key function inside make_priority_key and `return key`.
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: sorted() got None as its key. make_priority_key must `return key`.
+    explanation: >-
+      sorted() calls the key with one argument, the task, but the key also needs the priority order. The
+      factory solves that: the returned function closes over order (or over a rank dict built once from
+      it), so each key function remembers its own ordering.
+
+  - id: parsons-counter
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a counter factory that starts from a given number, then use it so the program
+      prints `12`. Two lines are distractors.
+    solution: |
+      def make_counter(start):
+          count = start
+          def counter():
+              nonlocal count
+              count += 1
+              return count
+          return counter
+      tick = make_counter(10)
+      tick()
+      print(tick())
+    distractors:
+      - "        global count"
+      - "    return counter()"
+    expectedOutput: |
+      12
+    explanation: >-
+      count must be created in make_counter before counter is defined; counter declares it nonlocal before
+      updating it; make_counter returns the function object itself. `global count` would look for a
+      module-level variable, and `return counter()` would call the function instead of returning it.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-shared
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      def make_account():
+          balance = 0
+          def deposit(amount):
+              nonlocal balance
+              balance += amount
+          def get_balance():
+              return balance
+          return deposit, get_balance
+
+      deposit, get_balance = make_account()
+      deposit(30)
+      deposit(20)
+      print(get_balance())
+    answer: "50"
+    explanation: >-
+      deposit and get_balance were created by the same call, so they close over the same balance
+      variable. Two deposits rebind it to 30 and then 50, and get_balance reads the current value.
+    wrongAnswers:
+      - answer: "0"
+        feedback: >-
+          This assumes each inner function has its own copy of balance. Functions created in the same call
+          share the enclosing variable.
+      - answer: "20"
+        feedback: "`balance += amount` adds to the current value; it does not replace it. 0 + 30 + 20 = 50."
+
+  - id: m-predict-rebound
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      def make_labels():
+          labels = []
+          for size in ["S", "M", "L"]:
+              labels.append(lambda: "size " + size)
+          size = "XL"
+          return labels
+
+      print(make_labels()[0]())
+    answer: size XL
+    explanation: >-
+      The lambdas close over the variable size of make_labels, not its value. After the loop the function
+      rebinds size to "XL" before returning, so every lambda — including the first — reads "XL".
+    wrongAnswers:
+      - answer: size S
+        feedback: Closures do not capture the value at definition time; they read the variable when called.
+      - answer: size L
+        feedback: >-
+          Good thinking about late binding, but size was rebound once more after the loop. The lambda reads
+          its value at call time, which is "XL".
+
+  - id: m-mcq-nonlocal-global
+    type: mcq
+    skill: recognition
+    difficulty: 2
+    prompt: |
+      What happens when Python tries to run this file?
+
+      ```python
+      total = 0
+
+      def make_adder():
+          def add(x):
+              nonlocal total
+              total += x
+              return total
+          return add
+
+      print(make_adder()(5))
+      ```
+    explanation: >-
+      nonlocal only searches enclosing function scopes, never the module (global) scope. make_adder has no
+      variable called total, so the compiler rejects the file with
+      "SyntaxError: no binding for nonlocal 'total' found" before anything runs.
+    options:
+      - id: a
+        text: "SyntaxError: no binding for nonlocal 'total' found — nothing runs."
+        correct: true
+        feedback: Right. The module-level total does not count; nonlocal needs an enclosing function variable.
+      - id: b
+        text: It prints 5, updating the global total.
+        feedback: That would need `global total`. nonlocal deliberately ignores module-level names.
+      - id: c
+        text: UnboundLocalError when add runs.
+        feedback: The problem is found at compile time, so the program never gets as far as calling add.
+      - id: d
+        text: It silently creates a new variable total inside make_adder.
+        feedback: nonlocal never creates variables; it only refers to existing ones in enclosing functions.
+
+  - id: m-code-limiter
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a factory `make_limiter(max_calls)` that returns a function `allow()`. `allow()` returns `True`
+      for the first `max_calls` calls and `False` for every call after that. Each limiter has its own
+      count, and you must not use global variables.
+    starterCode: |
+      def make_limiter(max_calls):
+          pass
+
+
+      allow = make_limiter(2)
+      print(allow(), allow(), allow())
+    solution: |
+      def make_limiter(max_calls):
+          calls = 0
+
+          def allow():
+              nonlocal calls
+              calls += 1
+              return calls <= max_calls
+
+          return allow
+
+
+      allow = make_limiter(2)
+      print(allow(), allow(), allow())
+    expectedOutput: |
+      True True False
+    tests:
+      - name: allows exactly max_calls calls
+        code: |
+          allow = make_limiter(3)
+          got = [allow() for _ in range(5)]
+          assert got == [True, True, True, False, False], f"make_limiter(3) should allow 3 calls: expected [True, True, True, False, False], got {got}."
+      - name: a limit of 0 allows nothing
+        code: |
+          allow = make_limiter(0)
+          assert allow() is False, "make_limiter(0)() should return False straight away."
+      - name: limiters are independent
+        code: |
+          a = make_limiter(1)
+          b = make_limiter(1)
+          a()
+          a()
+          assert b() is True, "Using one limiter must not use up another one's calls. Create the counter inside make_limiter."
+      - name: state lives in the closure
+        code: |
+          assert not uses("Global"), "Do not use `global`; keep the count inside make_limiter."
+          assert getattr(make_limiter(1), "__closure__", None), "Define allow inside make_limiter so it closes over the count."
+    hints:
+      - Keep a count of calls in make_limiter, starting at 0.
+      - allow must update that count, so it needs `nonlocal`.
+      - Increase the count, then return whether it is still at most max_calls.
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: allow assigns to the counter, which makes it local. Declare it with `nonlocal` first.
+      - when: { errorMessageContains: "'NoneType' object is not callable" }
+        message: make_limiter returned None. Define allow inside it and end with `return allow`.
+    explanation: >-
+      The factory creates a fresh calls variable for each limiter. allow uses nonlocal to increase it and
+      compares it with max_calls, which it also remembers from the enclosing call.
+
+  - id: m-debug-toggle
+    type: debug
+    skill: debugging
+    prompt: |
+      `make_toggle()` should return a function that flips between `True` and `False` on each call,
+      starting with `True`. It crashes instead. Fix it.
+    starterCode: |
+      def make_toggle():
+          on = False
+
+          def toggle():
+              on = not on
+              return on
+
+          return toggle
+
+
+      switch = make_toggle()
+      print(switch(), switch(), switch())
+    solution: |
+      def make_toggle():
+          on = False
+
+          def toggle():
+              nonlocal on
+              on = not on
+              return on
+
+          return toggle
+
+
+      switch = make_toggle()
+      print(switch(), switch(), switch())
+    expectedOutput: |
+      True False True
+    tests:
+      - name: flips on every call
+        code: |
+          t = make_toggle()
+          got = [t(), t(), t(), t()]
+          assert got == [True, False, True, False], f"Expected [True, False, True, False], got {got}."
+      - name: toggles are independent
+        code: |
+          a = make_toggle()
+          b = make_toggle()
+          a()
+          assert b() is True, "A new toggle should start fresh and return True on its first call."
+      - name: no global state
+        code: |
+          assert not uses("Global"), "Keep `on` inside make_toggle; use `nonlocal`, not `global`."
+    hints:
+      - Read the error. Which variable does Python say is local and has no value?
+      - toggle assigns to on. What statement makes that assignment update make_toggle's variable?
+    feedback:
+      - when: { errorType: UnboundLocalError }
+        message: "`on = not on` makes on local to toggle. Add `nonlocal on` as the first line of toggle."
+    explanation: >-
+      Assigning to on inside toggle made it a new local variable, which `not on` read before it had a
+      value. `nonlocal on` makes the assignment rebind make_toggle's variable, so its value persists and
+      flips on every call.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-shared, m-predict-rebound, m-mcq-nonlocal-global, m-code-limiter, m-debug-toggle]
+
+cheatsheet: |
+  ```python
+  def make_multiplier(factor):       # factory function
+      def multiply(x):               # inner function
+          return x * factor          # factor is a free variable
+      return multiply                # return the function, don't call it
+
+  double = make_multiplier(2)        # a closure: remembers factor = 2
+
+  def make_counter():
+      count = 0
+      def counter():
+          nonlocal count             # needed to REBIND an enclosed name
+          count += 1
+          return count
+      return counter
+
+  [lambda: i for i in range(3)]      # late binding: all return 2
+  [lambda i=i: i for i in range(3)]  # fix: default evaluated at definition time
+  ```
+  - Closures keep **variables**, not values. Each outer call creates new variables.
+  - Mutating an enclosed list/dict needs no `nonlocal`; rebinding the name does.
+  - `f.__closure__` → tuple of cells · `cell.cell_contents` → current value

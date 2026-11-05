@@ -1,0 +1,235 @@
+id: testing-legacy-code
+title: Testing and Refactoring Legacy Code
+track: python-intermediate
+level: intermediate
+estimatedHours: 7
+environment: local
+starterKit: projects/testing-legacy-code
+summary: >-
+  Make untested legacy pricing code safe to change: pin its behaviour (quirks included) with
+  characterisation tests, restructure the tests with fixtures and parametrize, refactor into
+  small Decimal-based functions proven equivalent to the original, then fix its bugs on purpose.
+concepts:
+  - python.testing
+  - cs.testing-strategy
+  - cs.refactoring
+  - cs.clean-code
+  - python.raising-exceptions
+  - python.dataclasses
+  - python.type-hints
+problem: |
+  You have joined a team that runs a small web shop. Its prices are calculated by
+  `legacy_pricing.calc(cart, cust, code=None, ship="std")`: one long function from 2019 with
+  single-letter names, magic numbers, binary floats for money, a global list of every order, an
+  out-of-date comment ("15% VAT" above code that charges 20%) and no tests. The docstring says
+  *DO NOT TOUCH - this works!!*. You have been asked to add new features, so you must touch it.
+
+  The rules it implements: per line, quantity x price, 5% off from 10 items, then VAT (books
+  0%, food 5%, other 20%); then a customer discount (member 10%, staff 30%), a coupon (`SAVE10`
+  10% off, `FLAT5` 5 off above 50) and shipping (`std` 4.99, free from 50; `express` 12.50). It
+  also does things nobody wrote down:
+
+  ```python
+  >>> calc([{"sku": "B", "price": 30.0, "qty": 1, "cat": "books"}], "regular", None, "EXPRESS")
+  30.0       # an unknown shipping method ships for free
+  >>> calc([{"sku": "R", "price": 20.0, "qty": -3, "cat": "books"}], "regular")
+  -55.01     # negative quantities give negative totals
+  >>> calc([], "regular")
+  4.99       # an empty order still costs shipping
+  >>> calc([{"sku": "SW", "price": 0.1, "qty": 3, "cat": "food"}], "regular", None, "express")
+  12.81      # the exact total is 12.815: float rounding went down
+  ```
+
+  **Your output** is a new module, `pricing_engine.py`, with the same rules as small pure
+  functions, named constants, `Decimal` money, a validated `LineItem` dataclass and a
+  `PricingError` for anything it cannot price, plus a `price_cart(...)` drop-in replacement for
+  `calc`. Every valid order must cost exactly the same as before, to the cent, and every
+  behaviour change must be a deliberate, documented, tested decision. The legacy file stays
+  untouched (it is identical in `starter/` and `solution/`) so the tests can compare old and new.
+acceptanceCriteria:
+  - "Your own characterisation tests pin every pricing rule and every quirk of `calc` (free unknown shipping, ignored unknown coupons and customers, negative totals, shipping on empty carts, float half-cent rounding, the global `ORDERS` list), with expected values obtained by running the legacy code."
+  - "Tests are written in a fixture-based style: fixtures for carts and isolated global state (`monkeypatch`), `@pytest.mark.parametrize` tables with readable ids, and `pytest.raises` with `match=`."
+  - "`pricing_engine.py` has one small pure function per rule, named constants instead of magic numbers, read-only rate tables, no module-level lists or dicts, and never imports the legacy module."
+  - "Money is `Decimal` built from strings, rounded once at the end with `ROUND_HALF_UP`; `to_decimal(0.1)` is `Decimal(\"0.1\")`."
+  - "`price_cart` equals `legacy_pricing.calc` to the cent on a 72-order grid of valid inputs."
+  - "Deliberate changes are each pinned by a test: half-up rounding, `PricingError` for unknown customers, coupons and shipping methods, invalid quantities or prices and empty carts (naming the cart line), and no global order log."
+  - "Boundary tests cover 9 versus 10 items, 50.00 versus 50.01 for `FLAT5`, 49.99 versus 50.00 for free shipping and stacked discounts, and all 192 tests pass with `GW_TARGET=solution`."
+architecture: |
+  Two modules side by side, and tests that hold them together:
+
+  ```text
+   tests/test_legacy_pricing.py ──► legacy_pricing.calc()          (never edited)
+          characterisation              ▲
+                                        │ equivalence grid: same inputs, totals must match
+   tests/test_pricing_engine.py ──► pricing_engine.price_cart(cart, customer, coupon, shipping)
+                                          │  LineItem.from_dict  (to_decimal, validation)
+                                          ▼
+                                     order_total(items, customer=, coupon=, shipping=)
+                                          │
+                     line_total ── apply_bulk_discount, tax_rate
+                     apply_customer_discount ─► apply_coupon ─► shipping_cost ─► to_money
+  ```
+
+  * **Characterisation first** ([testing](concept:python.testing)): tests describe what the code
+    *does*. They are the safety net that makes [refactoring](concept:cs.refactoring) possible:
+    changing structure without changing behaviour.
+  * **Pure functions and constants** ([clean code](concept:cs.clean-code)): each rule is a
+    function of its inputs only, which is why it can be tested with one line per case. Rate
+    tables are `types.MappingProxyType`, so nothing can change them at run time.
+  * **Values that validate themselves**: `LineItem` is a frozen [dataclass](concept:python.dataclasses)
+    whose `__post_init__` rejects negative prices and quantities below 1; everything that cannot
+    be priced raises `PricingError`, a `ValueError` subclass
+    ([raising exceptions](concept:python.raising-exceptions)).
+  * **Equivalence as a test** ([testing strategy](concept:cs.testing-strategy)): a parametrized
+    golden-master grid runs the old and new code on the same 72 orders. Where the two must differ,
+    a separate test names the change, so "different from legacy" is never an accident.
+setup: |
+  You need Python 3.11 or newer. The code uses only the standard library; `pytest` is installed
+  for the tests, and `coverage` is an optional extra. Work inside the kit folder.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects\testing-legacy-code
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  If activation is blocked, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+  `.\.venv\Scripts\python.exe -m pytest` without activating.
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/testing-legacy-code
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Optional coverage report: `python -m pip install coverage`, then
+  `python -m coverage run --branch --source=starter -m pytest` and `python -m coverage report -m`.
+milestones:
+  - id: characterise
+    title: Pin the current behaviour
+    description: |
+      Create `tests/test_my_characterisation.py` and write at least 15 tests of
+      `legacy_pricing.calc` **before** reading the provided ones: one per rule (VAT per category,
+      bulk discount, member and staff discounts, both coupons, both shipping methods), the float
+      return type, `calc_many`, the global `ORDERS` list (isolate it with
+      `monkeypatch.setattr(legacy_pricing, "ORDERS", [])`) and every quirk you can find. Get the
+      expected numbers by running the code in a Python shell, and write a comment saying where
+      each comes from.
+
+      Then compare with `TestMilestone1Characterisation` in `tests/test_legacy_pricing.py`
+      (`python -m pytest -k Milestone1`). These tests already pass: they describe code that
+      exists. Did you find all seven quirks?
+  - id: test-design
+    title: Fixtures, parametrize and pytest.raises
+    description: |
+      Restructure your tests: a fixture that builds carts from `(price, qty, category)` tuples, an
+      `autouse` fixture that gives every test a fresh `ORDERS` list, a golden-master table with
+      `@pytest.mark.parametrize` and readable `ids`, and `pytest.raises` for the errors the legacy
+      code raises today (`KeyError` for a missing price or quantity, `TypeError` for a price
+      written as text or a missing cart).
+
+      Compare with `TestMilestone2FixtureStyle` (`python -m pytest -k Milestone2`) and notice how
+      a failing case now reports its id, such as `test_golden_master[bulk-member]`.
+  - id: extract
+    title: Extract pure functions with Decimal money
+    description: |
+      In `starter/pricing_engine.py`, implement `to_decimal`, `to_money`, the `LineItem`
+      validation and `from_dict`, `tax_rate`, `apply_bulk_discount`, `line_total`,
+      `apply_customer_discount`, `apply_coupon` and `shipping_cost`. Replace every magic number
+      with a named constant, make rate tables read-only with `types.MappingProxyType`, and build
+      `Decimal`s from strings.
+
+      The tests check half-up rounding, float-to-Decimal conversion without binary artefacts,
+      seven kinds of invalid line item, every rate and threshold, that unknown customers, coupons
+      and shipping methods raise `PricingError`, that the module has no global lists or dicts, and
+      that it does not import `legacy_pricing`. Run `python -m pytest -k Milestone3`.
+  - id: equivalence
+    title: Prove equivalence, then fix on purpose
+    description: |
+      Implement `order_total` and `price_cart`. Then run the golden-master grid: 4 carts x 3
+      customer types x 3 coupon options x 2 shipping methods, where `price_cart` must equal
+      `legacy_pricing.calc` to the cent.
+
+      Separate tests pin each deliberate change: half-up rounding (12.815 becomes 12.82 where the
+      legacy code said 12.81), `PricingError` for unknown shipping, coupon or customer, zero or
+      negative quantities, negative prices, a missing price, a non-dictionary line and an empty
+      cart (errors name the line, such as `cart item #2`), numeric text prices accepted, and no
+      writes to the global order log. Record each change in the module docstring. Run
+      `python -m pytest -k Milestone4`.
+  - id: boundaries
+    title: Boundaries and mutation thinking
+    description: |
+      Make the boundary tests pass and check that the legacy code agrees on each: 9 versus 10
+      items (bulk discount), exactly 50.00 versus 50.01 with `FLAT5` (the coupon needs *more*
+      than 50, and then shipping applies again), 49.99 versus 50.00 for free shipping, staff plus
+      `SAVE10`, member plus `FLAT5`, and a free item that still ships.
+
+      Ask of every comparison in your code: would a test fail if `>` became `>=`? If not, add the
+      boundary pair. Optionally install `coverage` and run it with `--branch` until
+      `pricing_engine.py` is fully covered. Run `python -m pytest -k Milestone5`.
+testing: |
+  The kit ships 192 pytest tests: 36 characterisation tests in `tests/test_legacy_pricing.py`
+  (`TestMilestone1Characterisation`, `TestMilestone2FixtureStyle`) and 156 tests of the
+  refactored API in `tests/test_pricing_engine.py` (`TestMilestone3PureFunctions`,
+  `TestMilestone4Equivalence` with the 72-case grid, `TestMilestone5Boundaries`). Your own
+  characterisation tests go in `tests/test_my_characterisation.py` and run with the rest.
+
+  ```bash
+  python -m pytest                                  # everything, against starter/
+  python -m pytest -k Milestone4                    # one milestone
+  python -m pytest tests/test_my_characterisation.py
+  python -m pytest -k "one-book-member-SAVE10-express"   # one row of the equivalence grid
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest
+  Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  With the starter, the 36 legacy tests pass and the `pricing_engine` tests fail until you
+  implement it. Everything is deterministic: no clock, no network, and the global `ORDERS` list
+  is replaced per test with `monkeypatch`. Coverage (`python -m pip install coverage`) is an
+  optional extra and no test depends on it.
+security:
+  - Validate quantities and prices before any arithmetic. Accepting a negative quantity turns an order into a refund, a classic e-commerce exploit.
+  - Fail closed. An unknown shipping method or coupon must be an error, not "free" or "ignored", so that typos and tampered requests cannot change prices silently.
+  - Use Decimal built from strings for money and round once, at the end, with an explicit rounding mode; never use binary floats for amounts customers pay.
+  - Remove hidden global state. A module-level list shared by every caller grows without limit and leaks data between requests, users and threads in a server.
+  - Treat refactoring of payment code as a change that needs evidence. The equivalence grid and the deliberate-change tests are the evidence a reviewer can check.
+extensions:
+  - Add a PERCENT20 coupon and a "gold" customer type through the constant tables only, with characterisation of the legacy behaviour for the same inputs first.
+  - Replace the hand-picked equivalence grid with randomly generated valid carts from a seeded random.Random, and keep the seed in the test so failures are reproducible.
+  - Make price_cart return a receipt (a dataclass with line totals, discounts, shipping and total) and test that its parts add up to the total.
+  - Try mutation testing (for example mutmut on macOS or Linux) on pricing_engine.py and add tests for every mutant that survives.
+  - Switch the legacy call sites to price_cart behind a feature flag and write a test that runs both and logs any difference instead of failing (a "shadow mode" rollout).
+rubric:
+  - criterion: Characterisation
+    needsWork: Tests assert what the code should do rather than what it does, or miss most quirks.
+    meets: Every rule and the main quirks are pinned with values obtained by running the legacy code; global state is isolated.
+    exceeds: Tests explain each expected value, and you found quirks beyond the provided tests.
+  - criterion: Test design
+    needsWork: Copy-pasted test functions, shared mutable state between tests, or bare try/except instead of pytest.raises.
+    meets: Fixtures, parametrize tables with ids and pytest.raises with match are used where they fit.
+    exceeds: Tests read like a specification, and a failure message pinpoints the case without debugging.
+  - criterion: Refactoring quality
+    needsWork: The new code mixes rules in one function, keeps magic numbers or floats, or imports the legacy module.
+    meets: Small pure functions, named constants, read-only tables, Decimal money and a validated LineItem.
+    exceeds: Adding a new coupon or customer type needs only a table entry, and the module docstring lists every behaviour change.
+  - criterion: Safe behaviour change
+    needsWork: Behaviour changed without a test, or the equivalence grid was edited to make it pass.
+    meets: The equivalence grid matches to the cent, and each deliberate change has its own named test.
+    exceeds: Boundary pairs show the tests would catch off-by-one mutations, and coverage confirms nothing is untested.

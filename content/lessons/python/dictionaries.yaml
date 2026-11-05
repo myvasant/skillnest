@@ -1,0 +1,1162 @@
+id: python.dictionaries
+concept: python.dictionaries
+title: Dictionaries
+subtitle: Look values up by key, not by position
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  A dictionary maps keys to values, so you can find "Ben's phone number" or "the price of ink" directly
+  instead of searching a list. Learn lookup, KeyError versus .get(), adding, updating and deleting,
+  iterating with .items(), the counting pattern, why keys must be hashable, nested data, and how hash
+  tables make lookups fast.
+objectives:
+  - Create dictionaries and look values up by key, choosing between d[key], d.get(key, default) and the in operator.
+  - Add, update and delete entries, and predict the resulting dictionary, including its insertion order.
+  - Iterate over keys, values and key-value pairs with .items(), and count occurrences with the counting pattern.
+  - Explain why keys must be hashable and fix the TypeError raised by list keys.
+  - Read and update nested dictionaries and lists of dictionaries.
+  - Explain, in terms of hash tables, why dictionary lookups stay fast as the dictionary grows.
+sources:
+  - title: "The Python Tutorial: Dictionaries"
+    url: https://docs.python.org/3/tutorial/datastructures.html#dictionaries
+    publisher: Python Software Foundation
+  - title: "Built-in Types: Mapping Types — dict"
+    url: https://docs.python.org/3.14/library/stdtypes.html#mapping-types-dict
+    publisher: Python Software Foundation
+    version: "3.14"
+  - title: "Glossary: hashable"
+    url: https://docs.python.org/3/glossary.html#term-hashable
+    publisher: Python Software Foundation
+  - title: "What's New In Python 3.7 (dict insertion order becomes part of the language)"
+    url: https://docs.python.org/3/whatsnew/3.7.html
+    publisher: Python Software Foundation
+  - title: "Design and History FAQ: How are dictionaries implemented in CPython?"
+    url: https://docs.python.org/3/faq/design.html#how-are-dictionaries-implemented-in-cpython
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why look things up by name?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A phone book, a price list, a user's settings: in each case you know a **name** and want the
+          **value that goes with it**. With only lists, you have to keep two lists in sync and search one
+          of them to find a position:
+      - type: code
+        runnable: true
+        code: |
+          names = ["Asha", "Ben", "Chen"]
+          numbers = ["555-0101", "555-0102", "555-0103"]
+          position = names.index("Ben")
+          print(numbers[position])
+        expectedOutput: |
+          555-0102
+        annotations:
+          - line: 3
+            text: index() checks the names one by one until it finds "Ben". With a million names, that is up to a million checks.
+        caption: It works, but the two lists must never get out of step, and every lookup is a search.
+      - type: markdown
+        body: |
+          A [dictionary](glossary:dictionary) stores each name **together with** its value and finds it
+          directly:
+      - type: code
+        runnable: true
+        code: |
+          phone = {"Asha": "555-0101", "Ben": "555-0102", "Chen": "555-0103"}
+          print(phone["Ben"])
+        expectedOutput: |
+          555-0102
+        annotations:
+          - line: 1
+            text: 'Each "name": number pair is stored together. There is nothing to keep in sync.'
+          - line: 2
+            text: Look up by key. On average this takes about the same time whether the dict has 3 entries or 3 million.
+      - type: markdown
+        body: |
+          Dictionaries (type `dict`) are one of the most used data structures in Python. Configuration
+          files, JSON data from web APIs, database rows, caches, counters — they are all dictionaries
+          underneath.
+
+  - id: what
+    title: Keys and values
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A dictionary is a collection of [key-value pairs](glossary:key-value-pair). You write it with
+          curly braces, a colon between each key and its value, and commas between pairs:
+
+          ```text
+          {key1: value1, key2: value2, ...}
+          ```
+
+          - **Keys are unique.** A dictionary can't contain the same key twice.
+          - **Values can be anything**: numbers, strings, lists, even other dictionaries — and they may
+            repeat.
+          - **Keys are usually strings or numbers.** (The exact rule — keys must be
+            [hashable](glossary:hashable) — comes later in this lesson.)
+          - `{}` is an empty dictionary; `len(d)` counts the pairs.
+      - type: code
+        runnable: true
+        code: |
+          ages = {"Asha": 31, "Ben": 27, "Chen": 45}
+          print(ages)
+          print(ages["Ben"])
+          print(len(ages))
+          print(type(ages))
+        expectedOutput: |
+          {'Asha': 31, 'Ben': 27, 'Chen': 45}
+          27
+          3
+          <class 'dict'>
+        annotations:
+          - line: 3
+            text: Square brackets with a key, not a position. Python finds the pair whose key equals "Ben".
+      - type: callout
+        variant: misconception
+        title: Dictionaries have no positions
+        body: |
+          `ages[0]` does **not** mean "the first entry". It means "the value whose key is 0" — and since
+          there is no such key, it raises `KeyError: 0` (not `IndexError`). Look values up by key, or loop
+          over the dictionary.
+      - type: markdown
+        body: |
+          You can also build a dictionary with `dict()`, either from keyword arguments or from a list of
+          (key, value) tuples:
+      - type: code
+        runnable: true
+        code: |
+          settings = dict(theme="dark", font_size=14)
+          print(settings)
+          pairs = [("IN", "India"), ("JP", "Japan")]
+          print(dict(pairs))
+        expectedOutput: |
+          {'theme': 'dark', 'font_size': 14}
+          {'IN': 'India', 'JP': 'Japan'}
+
+  - id: missing-keys
+    title: "Missing keys: KeyError, .get() and in"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Looking up a key that isn't there with square brackets raises a
+          [KeyError](glossary:key-error). The error message shows the key that was missing:
+      - type: code
+        runnable: true
+        code: |
+          ages = {"Asha": 31, "Ben": 27}
+          print(ages["Zed"])
+        expectError: KeyError
+        caption: "KeyError: 'Zed'. Check for typos and capitalisation first: 'asha' and 'Asha' are different keys."
+      - type: markdown
+        body: |
+          When a missing key is **normal**, use `.get()`. It never raises KeyError: it returns `None`, or
+          the default you give as a second argument.
+      - type: code
+        runnable: true
+        code: |
+          ages = {"Asha": 31, "Ben": 27}
+          print(ages.get("Ben"))
+          print(ages.get("Zed"))
+          print(ages.get("Zed", 0))
+        expectedOutput: |
+          27
+          None
+          0
+      - type: markdown
+        body: |
+          To **ask** whether a key is present, use `in`. It checks **keys only** — to search the values,
+          use `.values()`:
+      - type: code
+        runnable: true
+        code: |
+          ages = {"Asha": 31, "Ben": 27}
+          print("Asha" in ages)
+          print(31 in ages)
+          print(31 in ages.values())
+          if "Zed" not in ages:
+              print("No age recorded for Zed")
+        expectedOutput: |
+          True
+          False
+          True
+          No age recorded for Zed
+        annotations:
+          - line: 3
+            text: 31 is a value, not a key, so this is False.
+      - type: markdown
+        body: |
+          **Which one should you use?**
+
+          | Situation | Use | Why |
+          |---|---|---|
+          | The key **must** exist; a missing key means a bug | `d[key]` | Fails loudly and early, with the key in the message. |
+          | Missing is normal and there is a sensible default | `d.get(key, default)` | No error, no extra `if`. |
+          | You need to do something different when it's missing | `if key in d:` | Makes the two paths explicit. |
+      - type: item
+        ref: mcq-lookup
+      - type: item
+        ref: explain-get-vs-brackets
+
+  - id: changing
+    title: Adding, updating and deleting
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Dictionaries are mutable: you can change them in place.
+
+          - `d[key] = value` **adds** the pair if the key is new, or **replaces** the value if the key
+            already exists. Because keys are unique, there is never a duplicate.
+          - `del d[key]` removes a pair (KeyError if it's missing).
+          - `d.pop(key)` removes a pair **and returns its value**; `d.pop(key, default)` returns the default
+            instead of raising.
+          - `d.update(other)` copies every pair from another dictionary in, replacing existing values.
+
+          Step through the program and watch the single dictionary object change:
+      - type: visualization
+        component: python-tracer
+        title: One dictionary, changed in place
+        caption: >-
+          The name stock keeps pointing at the same dict object the whole time. Adding, replacing and
+          deleting all change that object.
+        props:
+          code: |
+            stock = {"apples": 5}
+            stock["pears"] = 3
+            stock["apples"] = 4
+            del stock["pears"]
+            print(stock)
+      - type: code
+        runnable: true
+        code: |
+          stock = {"apples": 5, "pears": 2}
+          stock["plums"] = 8          # new key: added at the end
+          stock["apples"] = 4         # existing key: value replaced
+          sold = stock.pop("pears")   # removed, and its value returned
+          print(stock, sold)
+          stock.update({"kiwis": 6, "plums": 1})
+          print(stock)
+        expectedOutput: |
+          {'apples': 4, 'plums': 8} 2
+          {'apples': 4, 'plums': 1, 'kiwis': 6}
+        annotations:
+          - line: 3
+            text: Replacing a value keeps the key in its original position.
+          - line: 6
+            text: plums already exists, so its value is replaced; kiwis is new, so it is added at the end.
+      - type: callout
+        variant: warning
+        title: Assigning to an existing key overwrites silently
+        body: |
+          `{"a": 1, "a": 2}` is just `{'a': 2}` — the second value wins, without any error. The same happens
+          with `d[key] = value`. If you must not overwrite, check `if key in d:` first.
+      - type: item
+        ref: predict-update
+
+  - id: iterating
+    title: Looping over a dictionary
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A `for` loop over a dictionary gives you its **keys**. Three methods give you other views of it:
+
+          - `.keys()` — the keys
+          - `.values()` — the values
+          - `.items()` — the pairs, as `(key, value)` tuples, ready for
+            [unpacking](glossary:unpacking)
+      - type: code
+        runnable: true
+        code: |
+          ages = {"Asha": 31, "Ben": 27, "Chen": 45}
+          for name in ages:
+              print(name)
+          for name, age in ages.items():
+              print(name, "is", age)
+          print(list(ages.values()))
+        expectedOutput: |
+          Asha
+          Ben
+          Chen
+          Asha is 31
+          Ben is 27
+          Chen is 45
+          [31, 27, 45]
+        annotations:
+          - line: 4
+            text: Each item is a (key, value) tuple, unpacked into two names, exactly as in the tuples lesson.
+      - type: markdown
+        body: |
+          **Order is guaranteed.** Dictionaries remember the order in which keys were first inserted, and
+          loops follow that order. This has been an official language guarantee since Python 3.7 (in
+          CPython 3.6 it was an implementation detail). Replacing a value doesn't move its key; deleting a
+          key and adding it again puts it at the end.
+
+          If you want a different order, loop over `sorted(d)`, which gives the keys in sorted order:
+      - type: code
+        runnable: true
+        code: |
+          prices = {"pen": 12, "bag": 450, "ink": 30}
+          for item in sorted(prices):
+              print(item, prices[item])
+        expectedOutput: |
+          bag 450
+          ink 30
+          pen 12
+      - type: callout
+        variant: note
+        title: Sorting by value
+        body: |
+          Sorting the pairs by their *values* (for example, cheapest first) needs a `key=` function, which you
+          will meet in [lambdas and higher-order functions](concept:python.higher-order-functions).
+
+  - id: counting
+    title: The counting pattern
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          "How many times does each thing appear?" is one of the most common questions in programming:
+          words in a document, visitors per country, errors per type. A dictionary answers it naturally —
+          the things are the keys, and the counts are the values.
+      - type: code
+        runnable: true
+        code: |
+          words = ["red", "blue", "red", "green", "red", "blue"]
+          counts = {}
+          for word in words:
+              if word in counts:
+                  counts[word] += 1
+              else:
+                  counts[word] = 1
+          print(counts)
+        expectedOutput: |
+          {'red': 3, 'blue': 2, 'green': 1}
+        annotations:
+          - line: 4
+            text: Seen before? Then there is already a count to increase.
+          - line: 7
+            text: First time? Then create the key with a count of 1. `counts[word] += 1` here would raise KeyError.
+      - type: markdown
+        body: |
+          `.get()` with a default of 0 shortens the four-line `if`/`else` to one line: "take the current
+          count, or 0 if there isn't one, add 1, and store it". Step through it:
+      - type: visualization
+        component: python-tracer
+        title: Counting with .get()
+        caption: >-
+          The first "tea" creates the key with 1; "milk" creates another key; the second "tea" finds the
+          existing count and replaces it with 2.
+        props:
+          code: |
+            counts = {}
+            for drink in ["tea", "milk", "tea"]:
+                counts[drink] = counts.get(drink, 0) + 1
+            print(counts)
+      - type: callout
+        variant: tip
+        title: There is a ready-made counter
+        body: |
+          The standard library's `collections.Counter` does this in one call. Write the loop yourself first
+          so you understand it; you'll meet Counter in the
+          [standard library lesson](concept:python.stdlib).
+
+  - id: hashable-keys
+    title: What can be a key?
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Keys must be [hashable](glossary:hashable): Python must be able to compute a fixed number from the
+          key (its [hash value](glossary:hash-value)), and that number must never change while the key is
+          in the dictionary.
+
+          | Hashable — can be keys | Not hashable — can't be keys |
+          |---|---|
+          | `int`, `float`, `bool`, `str`, `None` | `list` |
+          | `tuple` — if everything inside it is hashable | `dict` |
+          | `frozenset` | `set` |
+
+          In short: **immutable built-in values can be keys; mutable containers can't.** Values have no
+          such restriction — a value can be a list, a dict, anything.
+      - type: code
+        runnable: true
+        code: |
+          seat_owner = {}
+          seat_owner[[3, 7]] = "Asha"
+        expectError: TypeError
+        caption: >-
+          Python 3.14 says: TypeError: cannot use 'list' as a dict key (unhashable type: 'list'). Older
+          versions print only "unhashable type: 'list'".
+      - type: code
+        runnable: true
+        code: |
+          seat_owner = {}
+          seat_owner[(3, 7)] = "Asha"
+          print(seat_owner[(3, 7)])
+          print(seat_owner)
+        expectedOutput: |
+          Asha
+          {(3, 7): 'Asha'}
+        caption: The fix - use a tuple for a key made of several parts (here row 3, seat 7).
+      - type: markdown
+        body: |
+          Why the rule? A dictionary uses the key's hash to decide **where to store** the pair. If a key
+          could change after being stored, its hash would change too, and the dictionary would look for it
+          in the wrong place. The deep dive below shows exactly how this works.
+      - type: item
+        ref: tf-list-key
+
+  - id: nested
+    title: Nested data
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Because values can be anything, dictionaries are often combined with lists and other dictionaries
+          to describe structured data. Chain the lookups from left to right:
+      - type: code
+        runnable: true
+        code: |
+          student = {
+              "name": "Asha",
+              "scores": [88, 92, 79],
+              "address": {"city": "Pune", "pin": "411001"},
+          }
+          print(student["address"]["city"])
+          print(max(student["scores"]))
+          student["scores"].append(95)
+          print(student["scores"])
+        expectedOutput: |
+          Pune
+          92
+          [88, 92, 79, 95]
+        annotations:
+          - line: 6
+            text: student["address"] is a dict, so ["city"] looks up inside it.
+          - line: 8
+            text: student["scores"] is a list, so it has append(). The list inside the dict changes in place.
+      - type: markdown
+        body: |
+          A **list of dictionaries** is the classic shape of records — rows from a database or a
+          spreadsheet, or JSON from a web API (you'll read such files in
+          [CSV and JSON data](concept:python.csv-json)):
+      - type: code
+        runnable: true
+        code: |
+          orders = [
+              {"id": 1, "item": "pen", "qty": 3},
+              {"id": 2, "item": "ink", "qty": 1},
+          ]
+          total_qty = 0
+          for order in orders:
+              total_qty += order["qty"]
+          print(total_qty)
+          print(orders[1]["item"])
+        expectedOutput: |
+          4
+          ink
+        annotations:
+          - line: 9
+            text: orders[1] is a position in the list (the second order); ["item"] is a key in that dict.
+
+  - id: hash-tables
+    title: "Under the hood: how hash tables make lookup fast"
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          Why can `phone["Ben"]` find one entry among millions without checking them one by one? A Python
+          dictionary is a [hash table](glossary:hash-table) (see also [hashing](concept:cs.hashing)).
+
+          **Step 1 — hash the key.** `hash(key)` turns the key into an integer. Two rules make everything
+          work: the hash of an object never changes while it is alive, and **objects that compare equal must
+          have equal hashes**.
+      - type: code
+        runnable: true
+        code: |
+          print(hash("Ben") == hash("Ben"))
+          print(hash(42))
+          print(hash(1) == hash(1.0) == hash(True))
+          d = {1: "int"}
+          d[1.0] = "float"
+          print(d)
+        expectedOutput: |
+          True
+          42
+          True
+          {1: 'float'}
+        annotations:
+          - line: 2
+            text: In CPython a small int hashes to itself. That is an implementation detail - never rely on specific hash values.
+          - line: 5
+            text: 1.0 == 1 and their hashes are equal, so this is the SAME key. The original key 1 stays; only the value is replaced.
+      - type: markdown
+        body: |
+          **Step 2 — jump to a slot.** The table is an array of slots whose size is a power of two. CPython
+          keeps only the lowest bits of the hash to get a slot number, so the work is the same however many
+          entries there are.
+
+          **Step 3 — check, and probe on collisions.** Different keys can land in the same slot (a
+          *collision*), so Python checks the entry it finds: the very same object, or the same hash **and**
+          `==`. If it is a different key, CPython computes another slot from more bits of the hash and tries
+          again. Reaching an empty slot proves the key is absent.
+
+          Step through a lookup:
+      - type: visualization
+        component: step-diagram
+        title: Looking up phone["Ben"]
+        caption: A simplified picture of CPython's dict lookup. Real tables also store each key's hash so most mismatches are rejected without calling ==.
+        props:
+          width: 720
+          height: 330
+          nodes:
+            - { id: key, label: 'key "Ben"', x: 80, y: 60, shape: pill }
+            - { id: hash, label: 'hash("Ben")', x: 250, y: 60 }
+            - { id: slot, label: "slot = hash & 7", x: 420, y: 60 }
+            - { id: table, label: "8-slot table", x: 610, y: 60, shape: store }
+            - { id: compare, label: "same key?", x: 610, y: 175 }
+            - { id: probe, label: "next slot", x: 420, y: 175 }
+            - { id: missing, label: "KeyError", x: 230, y: 175, shape: pill }
+            - { id: value, label: 'value "555-0102"', x: 610, y: 290, shape: pill }
+          edges:
+            - { id: e1, from: key, to: hash }
+            - { id: e2, from: hash, to: slot }
+            - { id: e3, from: slot, to: table }
+            - { id: e4, from: table, to: compare }
+            - { id: e5, from: compare, to: value, label: "yes" }
+            - { id: e6, from: compare, to: probe, label: "no" }
+            - { id: e7, from: probe, to: table, label: "try again" }
+            - { id: e8, from: probe, to: missing, label: "empty" }
+          steps:
+            - title: Start with the key
+              body: '`phone["Ben"]` must find one entry among possibly millions, without checking them one by one.'
+              active: [key]
+            - title: Hash the key
+              body: '`hash("Ben")` turns the key into a large integer. Equal keys always produce equal hashes.'
+              active: [key, hash, e1]
+            - title: Turn the hash into a slot number
+              body: "CPython's table size is a power of two (8, 16, 32, ...). Keeping the lowest bits of the hash, here `hash & 7`, gives a slot from 0 to 7."
+              active: [hash, slot, e2]
+            - title: Jump straight to that slot
+              body: Computing the slot takes the same time whether the dict holds 3 entries or 3 million. No scanning.
+              active: [slot, table, e3]
+            - title: Check the key stored there
+              body: Different keys can share a slot (a collision), so Python checks the entry it found - the same object, or the same hash and equal with ==.
+              active: [table, compare, e4]
+            - title: Found it
+              body: If the keys match, the value is returned. On average this takes only one or two checks.
+              active: [compare, value, e5]
+            - title: "Collision: probe another slot"
+              body: If a different key is there, CPython picks another slot using more bits of the hash and checks again. The table grows before it gets about two-thirds full, so these chains stay short.
+              active: [compare, probe, e6, e7]
+            - title: "Empty slot: the key is missing"
+              body: 'Reaching an empty slot proves the key is absent: `d[key]` raises KeyError, `d.get(key)` returns the default and `key in d` is False.'
+              active: [probe, missing, e8]
+      - type: markdown
+        body: |
+          **Performance.** Lookup, insertion and deletion take **constant time on average**, O(1) in
+          [complexity](concept:cs.complexity) terms, regardless of size. When the table fills up, CPython
+          allocates a bigger one and re-inserts every entry; that occasional cost is spread over many
+          insertions. The worst case (many keys colliding) is O(n), but well-distributed hashes make it
+          vanishingly rare. Compare `x in some_list`, which must check items one by one: O(n).
+
+          **Why keys must not change.** Imagine a list `[3, 7]` stored as a key in the slot chosen by its
+          hash. If you then appended to it, its value — and therefore its hash — would change, and every
+          later lookup would compute a different slot and never find it. That's why `list`, `dict` and `set`
+          refuse to be hashed at all.
+
+          **Why order is preserved.** Since CPython 3.6 a dict is stored as two arrays: a compact **entries**
+          array holding (hash, key, value) in insertion order, and a smaller **index** table of slots that
+          point into it. Loops simply walk the entries array, which is why iteration follows insertion order
+          (now a language guarantee), and the layout also uses less memory than the older design.
+
+          **Hash randomisation.** The hash of a `str` is computed with a random per-process "salt", so the
+          same string has a different hash in each run of Python. This protects web servers from attackers
+          who send many keys crafted to collide (hash flooding). It doesn't change dict *order*, which follows
+          insertion — but it means you must never save `hash()` values to a file and expect them to match
+          later. (You'll see a visible effect of this in the [sets lesson](concept:python.sets).)
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `KeyError: 'Zed'` | The key isn't there — often a typo or different capitalisation | Print `list(d)` to see the real keys; use `in` or `.get()` if missing is normal. |
+          | `KeyError: 0` when you wanted "the first entry" | Dictionaries have no positions | Look up by key, or loop over the dict. |
+          | `TypeError: cannot use 'list' as a dict key (unhashable type: 'list')` | A list (or dict/set) used as a key | Use a tuple: `d[(3, 7)]`. |
+          | `RuntimeError: dictionary changed size during iteration` | Adding or deleting keys inside `for key in d:` | Loop over a snapshot: `for key in list(d):`. |
+          | `TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'` | `d.get(key) + 1` on a missing key: `.get` returned None | Give a default: `d.get(key, 0) + 1`. |
+          | `NameError: name 'Asha' is not defined` | Missing quotes: `ages[Asha]` | `ages["Asha"]` — without quotes Python looks for a variable. |
+          | A value you stored earlier has "disappeared" | Assigned to the same key twice | Keys are unique; check `if key in d` before overwriting. |
+          | `31 in ages` is False although 31 is in the dict | `in` checks keys only | `31 in ages.values()` |
+      - type: markdown
+        body: |
+          Changing the **values** of existing keys during a loop is fine. Adding or removing **keys** is
+          not:
+      - type: code
+        runnable: true
+        code: |
+          scores = {"Asha": 40, "Ben": 75, "Chen": 30}
+          for name in scores:
+              if scores[name] < 50:
+                  del scores[name]
+        expectError: RuntimeError
+        caption: "RuntimeError: dictionary changed size during iteration."
+      - type: code
+        runnable: true
+        code: |
+          scores = {"Asha": 40, "Ben": 75, "Chen": 30}
+          for name in list(scores):
+              if scores[name] < 50:
+                  del scores[name]
+          print(scores)
+        expectedOutput: |
+          {'Ben': 75}
+        caption: list(scores) makes a separate list of the keys first, so deleting from the dict is safe.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Write each program yourself before opening the hints. Every check explains what it expects.
+      - type: item
+        ref: tally-votes
+      - type: item
+        ref: debug-unknown-items
+      - type: item
+        ref: invert-codes
+      - type: item
+        ref: parsons-stock
+      - type: item
+        ref: predict-in-values
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **dict** maps unique, hashable **keys** to **values**: `{"Asha": 31}`.
+          - `d[key]` looks up (KeyError if missing); `d.get(key, default)` never raises; `key in d` checks
+            keys only.
+          - `d[key] = value` adds or replaces; `del d[key]` and `d.pop(key)` remove.
+          - Loop with `for key in d`, or `for key, value in d.items()`. Order = insertion order (guaranteed
+            since 3.7).
+          - Counting pattern: `counts[x] = counts.get(x, 0) + 1`.
+          - Keys must be hashable: str, int, float, tuples of hashables — not lists, dicts or sets.
+          - Don't add or remove keys while looping over the dict; loop over `list(d)` instead.
+          - Lookups are fast on average because a dict is a **hash table**.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Why is looking up a key in a dict faster than searching a list?" — Explain hashing: the key's hash
+          picks a slot directly, collisions are resolved by probing, and the table is resized to stay sparse,
+          giving O(1) average time versus O(n) for a list scan. Then explain why keys must be hashable
+          (immutable), and mention that insertion order is guaranteed since Python 3.7.
+
+items:
+  - id: mcq-lookup
+    type: mcq
+    skill: recognition
+    prompt: |
+      `prices = {"pen": 12, "ink": 30}`. Which expression gives `0` for a product that is not in the
+      dictionary, **without** raising an error?
+    explanation: >-
+      `.get(key, default)` returns the default when the key is missing. Square-bracket lookup raises
+      KeyError for a missing key, and `.get` without a default returns None.
+    options:
+      - id: a
+        text: '`prices["glue"]`'
+        feedback: "Square brackets raise KeyError: 'glue' when the key is missing."
+      - id: b
+        text: '`prices.get("glue")`'
+        feedback: Without a second argument, .get() returns None, not 0.
+      - id: c
+        text: '`prices.get("glue", 0)`'
+        correct: true
+        feedback: Right. The second argument is the default returned for a missing key.
+      - id: d
+        text: '`prices[0]`'
+        feedback: "This looks for the key 0, not a position. There is no such key, so it raises KeyError: 0."
+
+  - id: explain-get-vs-brackets
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      At checkout, a web shop looks up a product's price with `prices[product_id]`, but looks up an
+      optional discount with `discounts.get(product_id, 0)`. Explain why using two different kinds of
+      lookup here is good design.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Every product must have a price, so a missing price is a bug and d[key] rightly fails loudly with a KeyError.
+      - Most products have no discount, so a missing discount is normal and .get() with a default of 0 is correct.
+      - Defaulting a missing price to 0 (or None) would hide the bug - for example selling the product for free or crashing later.
+      - Mentions that .get() without a default returns None, which could cause a TypeError later in a calculation.
+    modelAnswer: |
+      The two lookups express different expectations. Every product is supposed to have a price, so if
+      `prices[product_id]` finds nothing, something is wrong with the data and the program should stop with
+      a KeyError that names the product, instead of carrying on. Discounts are optional: most products have
+      none, so `discounts.get(product_id, 0)` treats "missing" as "no discount" without any error. Using
+      `.get(product_id, 0)` for the price would silently sell broken products for free, and `.get()` without
+      a default would return None and crash later with a confusing TypeError.
+
+  - id: predict-update
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      stock = {"apples": 5, "pears": 2}
+      stock["apples"] = 7
+      stock["plums"] = 1
+      del stock["pears"]
+      print(stock)
+    answer: "{'apples': 7, 'plums': 1}"
+    explanation: >-
+      Assigning to the existing key "apples" replaces its value and keeps its position. "plums" is new, so
+      it is added at the end. del removes "pears".
+    wrongAnswers:
+      - answer: "{'apples': 5, 'apples': 7, 'plums': 1}"
+        feedback: Keys are unique. Assigning to an existing key replaces the value; it never adds a second "apples".
+      - answer: "{'plums': 1, 'apples': 7}"
+        feedback: Replacing a value doesn't move the key. Order is the order in which keys were first inserted.
+      - answer: "{'apples': 7, 'pears': 2, 'plums': 1}"
+        feedback: "`del stock[\"pears\"]` removes that pair from the dictionary."
+
+  - id: tf-list-key
+    type: true-false
+    skill: recognition
+    prompt: "True or false: a list can be used as a dictionary key, as long as you never modify that list."
+    answer: false
+    explanation: >-
+      Lists are never hashable, whether or not you modify them, because they *could* change. Python refuses
+      immediately: `TypeError: cannot use 'list' as a dict key (unhashable type: 'list')`. Use a tuple
+      instead.
+
+  - id: tally-votes
+    type: code
+    skill: implementation
+    prompt: |
+      An office is choosing a drink for its kitchen. Count the votes: build a dictionary `tally` that maps
+      each drink to the number of votes it got, using a loop, then print `tally`. For the votes below the
+      output must be:
+
+      ```text
+      {'tea': 3, 'coffee': 2, 'juice': 1}
+      ```
+
+      Your loop must work for any list of votes.
+    starterCode: |
+      votes = ["tea", "coffee", "tea", "juice", "tea", "coffee"]
+      tally = {}
+
+    solution: |
+      votes = ["tea", "coffee", "tea", "juice", "tea", "coffee"]
+      tally = {}
+      for vote in votes:
+          tally[vote] = tally.get(vote, 0) + 1
+      print(tally)
+    expectedOutput: |
+      {'tea': 3, 'coffee': 2, 'juice': 1}
+    tests:
+      - name: tally has the right counts
+        code: |
+          assert tally == {"tea": 3, "coffee": 2, "juice": 1}, f"tally should be {{'tea': 3, 'coffee': 2, 'juice': 1}}, but it is {tally!r}."
+      - name: drinks appear in first-vote order
+        code: |
+          assert list(tally) == ["tea", "coffee", "juice"], f"Add each drink the first time it is seen, so the keys are in first-vote order. Your keys are {list(tally)}."
+      - name: counts with a loop
+        code: |
+          assert uses("For"), "Use a for loop over votes to count them."
+      - name: works for other votes
+        code: |
+          import re
+          changed = re.sub(r"votes\s*=\s*\[.*?\]\n", 'votes = ["milk", "water", "milk"]\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates votes so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("tally") == {"milk": 2, "water": 1}, "With other votes, tally was wrong. Count from the votes list instead of typing the numbers."
+      - name: prints tally
+        code: |
+          assert output().strip() == "{'tea': 3, 'coffee': 2, 'juice': 1}", f"Print tally. Your program printed {output()!r}."
+    hints:
+      - Loop over votes. For each vote, the count for that drink goes up by one.
+      - The first time a drink appears it has no count yet. `tally.get(vote, 0)` gives 0 in that case.
+      - "`tally[vote] = tally.get(vote, 0) + 1`"
+    feedback:
+      - when: { errorType: KeyError }
+        message: >-
+          `tally[vote] += 1` fails the first time a drink appears, because the key doesn't exist yet. Use
+          `tally.get(vote, 0) + 1`, or check `if vote in tally` first.
+      - when: { outputEquals: "{'tea': 1, 'coffee': 1, 'juice': 1}\n" }
+        message: Every count is 1, so each vote is replacing the count instead of adding to it. Start from the current count and add 1.
+    explanation: >-
+      For each vote, `tally.get(vote, 0)` reads the current count (0 for a new drink), adds 1 and stores
+      the result back under that key. New drinks are inserted the first time they appear, so the dictionary
+      keeps them in first-vote order.
+
+  - id: debug-unknown-items
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This program adds up the price of a shopping basket, but it crashes with `KeyError: 'eraser'`.
+      Change it so that items missing from `prices` are reported with a line like `Unknown item: eraser`
+      and skipped. For this basket the output must be:
+
+      ```text
+      Unknown item: eraser
+      Total: 57
+      ```
+    starterCode: |
+      prices = {"pen": 12, "notebook": 45}
+      basket = ["pen", "eraser", "notebook"]
+      total = 0
+      for item in basket:
+          total += prices[item]
+      print("Total:", total)
+    solution: |
+      prices = {"pen": 12, "notebook": 45}
+      basket = ["pen", "eraser", "notebook"]
+      total = 0
+      for item in basket:
+          if item in prices:
+              total += prices[item]
+          else:
+              print("Unknown item:", item)
+      print("Total:", total)
+    expectedOutput: |
+      Unknown item: eraser
+      Total: 57
+    tests:
+      - name: reports the unknown item and the total
+        code: |
+          assert output_lines() == ["Unknown item: eraser", "Total: 57"], f"Expected the two lines 'Unknown item: eraser' and 'Total: 57', but your program printed {output()!r}."
+      - name: works for another basket
+        code: |
+          import re
+          changed = re.sub(r"basket\s*=\s*\[.*?\]\n", 'basket = ["glue", "pen", "pen", "tape"]\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates basket so the checks can try another basket."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("total") == 24, "With the basket ['glue', 'pen', 'pen', 'tape'] the total should be 24. Check each item against prices instead of hard-coding."
+      - name: prices are unchanged
+        code: |
+          assert prices == {"pen": 12, "notebook": 45}, "Don't add items to prices; skip the ones that are missing."
+    hints:
+      - Which line raises the KeyError, and for which item?
+      - Before looking up the price, check whether the item is a key of prices with `in`.
+      - "Use if item in prices: ... else: print(\"Unknown item:\", item)."
+    feedback:
+      - when: { errorType: KeyError }
+        message: An item is still being looked up with prices[item] even though it isn't a key. Check `if item in prices:` first.
+      - when: { outputEquals: "Total: 57\n" }
+        message: The total is right, but unknown items must be reported. Print "Unknown item:" and the item name in the else branch.
+    explanation: >-
+      `prices[item]` raises KeyError for a key that doesn't exist. Checking `item in prices` first lets the
+      loop take a different path for unknown items: report them and skip them, while known items are added
+      to the total.
+
+  - id: invert-codes
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      `codes` maps country codes to country names. Build a new dictionary `by_name` that goes the other way
+      — from each name to its code — by looping over `codes.items()`. Then print `by_name["Japan"]`, which
+      should be `JP`.
+    starterCode: |
+      codes = {"IN": "India", "JP": "Japan", "BR": "Brazil"}
+      by_name = {}
+
+    solution: |
+      codes = {"IN": "India", "JP": "Japan", "BR": "Brazil"}
+      by_name = {}
+      for code, name in codes.items():
+          by_name[name] = code
+      print(by_name["Japan"])
+    expectedOutput: |
+      JP
+    tests:
+      - name: by_name maps names to codes
+        code: |
+          assert by_name == {"India": "IN", "Japan": "JP", "Brazil": "BR"}, f"by_name should map each name to its code, but it is {by_name!r}."
+      - name: codes is unchanged
+        code: |
+          assert codes == {"IN": "India", "JP": "Japan", "BR": "Brazil"}, "Build a new dictionary; don't change codes."
+      - name: built with a loop over items()
+        code: |
+          assert uses("For") and calls("items"), "Loop over codes.items() and add each pair to by_name the other way round."
+      - name: works for other codes
+        code: |
+          import re
+          changed = re.sub(r"codes\s*=\s*\{.*?\}\n", 'codes = {"FR": "France", "KE": "Kenya", "JP": "Japan"}\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates codes so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("by_name") == {"France": "FR", "Kenya": "KE", "Japan": "JP"}, "With other codes, by_name was wrong. Build it from codes in the loop."
+      - name: prints JP
+        code: |
+          assert output().strip() == "JP", f"Print by_name['Japan']. Your program printed {output()!r}."
+    hints:
+      - "`for code, name in codes.items():` gives you both halves of each pair."
+      - In the new dictionary, the name is the key and the code is the value.
+      - "`by_name[name] = code`"
+    feedback:
+      - when: { outputEquals: "Japan\n" }
+        message: by_name seems to map codes to names, like codes does. Swap them - use the name as the key and the code as the value.
+      - when: { errorType: KeyError, errorMessageContains: "Japan" }
+        message: '"Japan" is not a key of by_name. Make the country name the key: by_name[name] = code.'
+    explanation: >-
+      Looping over `.items()` unpacks each pair into code and name. Assigning `by_name[name] = code` stores
+      the pair the other way round. This only works cleanly because the names are unique — if two codes
+      mapped to the same name, the later one would overwrite the earlier one.
+
+  - id: parsons-stock
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to report every product that is out of stock, then the number of products. Two
+      lines are distractors.
+    solution: |
+      inventory = {"pens": 12, "ink": 0, "paper": 40}
+      for item, qty in inventory.items():
+          if qty == 0:
+              print(item, "is out of stock")
+      print(len(inventory), "products")
+    distractors:
+      - "for item, qty in inventory:"
+      - "    if inventory[qty] == 0:"
+    expectedOutput: |
+      ink is out of stock
+      3 products
+    explanation: >-
+      `.items()` produces (key, value) pairs that unpack into item and qty. Looping over the dict itself
+      gives only keys, so `for item, qty in inventory:` would try to unpack each key string. qty is a value,
+      not a key, so `inventory[qty]` would raise KeyError.
+
+  - id: predict-in-values
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      ages = {"Asha": 31, "Ben": 27}
+      print("Ben" in ages, 27 in ages, 27 in ages.values())
+    answer: "True False True"
+    explanation: >-
+      `in` on a dictionary checks keys only: "Ben" is a key, 27 is not. `ages.values()` is a view of the
+      values, so `27 in ages.values()` is True.
+    wrongAnswers:
+      - answer: "True True True"
+        feedback: "`in` on a dict checks the keys only. 27 is a value, so `27 in ages` is False."
+      - answer: "False False True"
+        feedback: '"Ben" is one of the keys, so "Ben" in ages is True.'
+
+  # ----- Mastery check (new items, not used in the sections above) -----
+  - id: m-predict-count-get
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      counts = {}
+      for ch in "banana":
+          counts[ch] = counts.get(ch, 0) + 1
+      print(counts)
+    answer: "{'b': 1, 'a': 3, 'n': 2}"
+    explanation: >-
+      Each character's count starts at 0 via .get() and increases by one per occurrence: b once, a three
+      times, n twice. Keys appear in the order they were first inserted: b, a, n.
+    wrongAnswers:
+      - answer: "{'a': 3, 'b': 1, 'n': 2}"
+        feedback: Dictionaries are not sorted; they keep insertion order. "b" was inserted first.
+      - answer: "{'b': 1, 'a': 1, 'n': 1}"
+        feedback: .get(ch, 0) returns the current count when the key exists, so repeated letters keep increasing.
+      - answer: "{'b': 1, 'a': 1, 'n': 1, 'a': 2, 'n': 2, 'a': 3}"
+        feedback: Keys are unique; assigning to an existing key replaces its value instead of adding a pair.
+
+  - id: m-mcq-iterate-delete
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This loop crashes with `RuntimeError: dictionary changed size during iteration`. Which change fixes
+      it?
+
+      ```python
+      stock = {"pens": 0, "ink": 4, "glue": 0}
+      for item in stock:
+          if stock[item] == 0:
+              del stock[item]
+      ```
+    explanation: >-
+      A dictionary can't have keys added or removed while it is being looped over. `list(stock)` makes a
+      separate list of the keys before the loop starts, so deleting from the dictionary no longer disturbs
+      the loop.
+    options:
+      - id: a
+        text: "Loop over `list(stock)` instead of `stock`."
+        correct: true
+        feedback: Right. The loop walks a separate list of keys, so removing keys from the dict is safe.
+      - id: b
+        text: "Replace `del stock[item]` with `stock.pop(item)`."
+        feedback: pop() also removes the key, so the dictionary still changes size during the loop.
+      - id: c
+        text: "Add `if item in stock:` before the `del` line."
+        feedback: The key is always in stock at that point; the problem is deleting while looping over the dict itself.
+      - id: d
+        text: "Loop over `stock.values()` instead."
+        feedback: A values view is still tied to the dictionary, and you wouldn't have the keys to delete.
+
+  - id: m-mcq-design
+    type: mcq
+    skill: design
+    prompt: |
+      A library system must find a book's details from its ISBN thousands of times per second, among
+      2 million books. Which data structure fits best?
+    explanation: >-
+      A dictionary keyed by ISBN finds a book in constant time on average, however many books there are.
+      Every list-based option has to search, which takes time proportional to the number of books.
+    options:
+      - id: a
+        text: A list of (isbn, details) tuples, searched with a for loop
+        feedback: Each lookup may check up to 2 million tuples - far too slow at thousands of lookups per second.
+      - id: b
+        text: "A dict mapping each ISBN to that book's details"
+        correct: true
+        feedback: Right. Hash-table lookup by key stays fast regardless of size, and keeps each ISBN with its details.
+      - id: c
+        text: Two parallel lists, isbns and details, using isbns.index(isbn)
+        feedback: index() is a linear search, and two parallel lists can easily get out of step.
+      - id: d
+        text: One long string of all ISBNs, searched with in
+        feedback: That only says whether an ISBN appears (slowly), and gives you no way to get the details.
+
+  - id: m-code-group
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Group names by their first letter. Build a dictionary `groups` whose keys are first letters and whose
+      values are **lists** of the names starting with that letter, in their original order. Then print
+      `groups`. For the names below the output must be:
+
+      ```text
+      {'A': ['Asha', 'Amir'], 'B': ['Ben', 'Bea'], 'C': ['Chen']}
+      ```
+    starterCode: |
+      names = ["Asha", "Ben", "Amir", "Bea", "Chen"]
+      groups = {}
+
+    solution: |
+      names = ["Asha", "Ben", "Amir", "Bea", "Chen"]
+      groups = {}
+      for name in names:
+          letter = name[0]
+          if letter not in groups:
+              groups[letter] = []
+          groups[letter].append(name)
+      print(groups)
+    expectedOutput: |
+      {'A': ['Asha', 'Amir'], 'B': ['Ben', 'Bea'], 'C': ['Chen']}
+    tests:
+      - name: groups is correct
+        code: |
+          assert groups == {"A": ["Asha", "Amir"], "B": ["Ben", "Bea"], "C": ["Chen"]}, f"groups is {groups!r}."
+      - name: works for other names
+        code: |
+          import re
+          changed = re.sub(r"names\s*=\s*\[.*?\]\n", 'names = ["Zed", "Yan", "Zoe"]\n', source, count=1, flags=re.S)
+          assert changed != source, "Keep the line that creates names so the checks can try other data."
+          ns = {}
+          exec(compile(changed, "<variant>", "exec"), ns)
+          assert ns.get("groups") == {"Z": ["Zed", "Zoe"], "Y": ["Yan"]}, "With other names, groups was wrong. Build it from names in a loop."
+      - name: prints groups
+        code: |
+          assert output().strip() == "{'A': ['Asha', 'Amir'], 'B': ['Ben', 'Bea'], 'C': ['Chen']}", f"Print groups. Your program printed {output()!r}."
+    hints:
+      - "`name[0]` is the first letter of a name."
+      - The first time a letter appears, store an empty list under it.
+      - Then append the name to the list stored under its letter - append changes the list inside the dict in place.
+    feedback:
+      - when: { errorType: KeyError }
+        message: "groups[letter].append(...) fails the first time a letter appears, because there is no list there yet. Create one with groups[letter] = [] first."
+      - when: { outputEquals: "{'A': ['Amir'], 'B': ['Bea'], 'C': ['Chen']}\n" }
+        message: Each name replaces the list for its letter. Only create a new list when the letter is not yet in groups; otherwise append.
+    explanation: >-
+      For each name, the first letter is the key. A new letter gets an empty list; then the name is appended
+      to that letter's list. Because the list is a value stored in the dictionary, append() changes it in
+      place and the dictionary sees the change.
+
+  - id: m-debug-nested
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print `db.example.com:5432` but crashes with `KeyError: 'port'`. Fix the lookup
+      without typing the number 5432 again.
+    starterCode: |
+      config = {
+          "app": {"name": "shop", "debug": False},
+          "database": {"host": "db.example.com", "port": 5432},
+      }
+      host = config["database"]["host"]
+      port = config["port"]
+      print(f"{host}:{port}")
+    solution: |
+      config = {
+          "app": {"name": "shop", "debug": False},
+          "database": {"host": "db.example.com", "port": 5432},
+      }
+      host = config["database"]["host"]
+      port = config["database"]["port"]
+      print(f"{host}:{port}")
+    expectedOutput: |
+      db.example.com:5432
+    tests:
+      - name: prints host and port
+        code: |
+          assert output().strip() == "db.example.com:5432", f"Expected db.example.com:5432 but your program printed {output()!r}."
+      - name: port is looked up in config
+        code: |
+          assert port == 5432, f"port should be 5432, but it is {port!r}."
+          assert source.count("5432") == 1, "Look the port up in config instead of typing 5432 again."
+    hints:
+      - "Which keys does the outer dictionary have? Print `list(config)` to see."
+      - The port lives inside the dictionary stored under "database".
+      - Chain two lookups, the same way host does.
+    feedback:
+      - when: { errorType: KeyError }
+        message: The outer dictionary only has the keys "app" and "database". Look up "database" first, then "port" inside it.
+    explanation: >-
+      config has two keys, "app" and "database"; "port" is a key of the inner dictionary. Chaining
+      `config["database"]["port"]` first gets the inner dict, then looks up "port" in it.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-count-get, m-mcq-iterate-delete, m-mcq-design, m-code-group, m-debug-nested]
+
+cheatsheet: |
+  ```python
+  d = {"Asha": 31, "Ben": 27}     # key: value pairs; {} is empty
+  d["Asha"]                       # 31 (KeyError if missing)
+  d.get("Zed", 0)                 # 0 - default instead of an error
+  "Asha" in d                     # True - checks KEYS only
+  d["Chen"] = 45                  # add or replace
+  del d["Ben"]; d.pop("Chen")     # remove (pop returns the value)
+  for key, value in d.items(): ...
+  counts[x] = counts.get(x, 0) + 1    # counting pattern
+  for key in list(d): del d[key]      # delete safely while looping
+  ```
+  - Keys: hashable (str, int, float, tuple of hashables) · values: anything
+  - Order = insertion order (guaranteed since 3.7) · lookups O(1) on average (hash table)

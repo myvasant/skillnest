@@ -1,0 +1,1460 @@
+id: python.classes
+concept: python.classes
+title: Classes and Objects
+subtitle: Bundling data with the behaviour that keeps it valid
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  Define your own types with class. Learn what really happens when you create an object, why __init__
+  initialises rather than creates, what self is, how instance and class attributes differ (and the
+  shared-list bug that catches everyone), and how methods keep an object's rules true.
+objectives:
+  - Explain what a class is and how an instance differs from the class it was created from.
+  - Describe the steps Python performs for `BankAccount("Ada", 100)`, including the role of `__init__` and `self`.
+  - Predict attribute lookups involving instance attributes, class attributes and shadowing.
+  - Write a class with `__init__`, methods and a `__repr__` that keeps its invariants with validation.
+  - Diagnose the shared mutable class attribute bug and the common errors caused by a missing `self`.
+sources:
+  - title: "The Python Tutorial: Classes"
+    url: https://docs.python.org/3/tutorial/classes.html
+    publisher: Python Software Foundation
+  - title: "The Python Tutorial: Class and Instance Variables"
+    url: https://docs.python.org/3/tutorial/classes.html#class-and-instance-variables
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Class definitions"
+    url: https://docs.python.org/3/reference/compound_stmts.html#class-definitions
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Data model — object.__init__"
+    url: https://docs.python.org/3/reference/datamodel.html#object.__init__
+    publisher: Python Software Foundation
+  - title: "Python Language Reference: Data model — object.__repr__"
+    url: https://docs.python.org/3/reference/datamodel.html#object.__repr__
+    publisher: Python Software Foundation
+  - title: "PEP 8: Class Names"
+    url: https://peps.python.org/pep-0008/#class-names
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why classes exist
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          You already know how to store related values together in a dictionary and how to write
+          functions that work on them. Here is a bank account built that way. The rule "you cannot
+          withdraw more than you have" lives in a function:
+      - type: code
+        runnable: true
+        code: |
+          account = {"owner": "Ada", "balance": 100}
+
+          def withdraw(account, amount):
+              if amount > account["balance"]:
+                  raise ValueError("insufficient funds")
+              account["balance"] -= amount
+
+          withdraw(account, 30)
+          account["balance"] -= 500      # nothing connects this line to the rule
+          print(account)
+        expectedOutput: |
+          {'owner': 'Ada', 'balance': -430}
+        caption: The rule exists, but nothing ties it to the data. Any code can skip it.
+      - type: markdown
+        body: |
+          The data (`account`) and the behaviour that keeps it valid (`withdraw`) are separate things
+          that merely happen to be used together. Someone reading the program — or writing new code
+          months later — has no reason to know that `withdraw` exists, or that a dictionary with these
+          keys is meant to be an "account" at all.
+
+          A [class](glossary:class) fixes this by **bundling the data with the behaviour that maintains
+          its rules**, under one name:
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  self.owner = owner
+                  self.balance = balance
+
+              def withdraw(self, amount):
+                  if amount > self.balance:
+                      raise ValueError("insufficient funds")
+                  self.balance -= amount
+
+              def __repr__(self):
+                  return f"BankAccount({self.owner!r}, {self.balance})"
+
+          account = BankAccount("Ada", 100)
+          account.withdraw(30)
+          print(account)
+        expectedOutput: |
+          BankAccount('Ada', 70)
+        caption: The account and its rules travel together. Every account is built the same way and knows how to withdraw.
+        annotations:
+          - line: 1
+            text: "`class` defines a new type called BankAccount."
+          - line: 2
+            text: "`__init__` sets up each new account's starting data."
+          - line: 6
+            text: A method — a function that belongs to the class and works on one account (`self`).
+          - line: 14
+            text: Calling the class creates a new account object.
+      - type: callout
+        variant: note
+        title: A class is not a lock
+        body: |
+          Python does not stop other code from writing `account.balance -= 500` directly — the language
+          trusts programmers. What a class gives you is a **single, obvious home for the rules**: the
+          correct way to change an account is right there as `account.withdraw(...)`, every account is
+          created through the same validated `__init__`, and the object has a real type name
+          (`BankAccount`) instead of being "some dictionary".
+
+  - id: define
+    title: Classes and instances
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **class** is a blueprint for a new [type](glossary:type) of object. An
+          [instance](glossary:instance) is one object made from that blueprint. `int` is a class and `42`
+          is an instance of it; in the same way, `BankAccount` is a class and each account you create is an
+          instance.
+
+          - You define a class with the `class` statement. Class names use `CapWords` by convention
+            (`BankAccount`, not `bank_account`).
+          - You create an instance by **calling** the class like a function: `Point()`.
+          - Each instance has its own [attributes](glossary:attribute) — names attached to that object,
+            reached with a dot: `p.x`.
+
+          The smallest possible class has an empty body (`pass`). Even that is enough to see that each
+          instance is a separate object with its own attributes:
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              pass
+
+          p = Point()
+          q = Point()
+          p.x = 3
+          p.y = 4
+          print(p.x + p.y)
+          print(type(p).__name__, isinstance(p, Point))
+          print(p is q)
+        expectedOutput: |
+          7
+          Point True
+          False
+        annotations:
+          - line: 4
+            text: Calling the class creates a brand-new instance.
+          - line: 6
+            text: Assigning `p.x` attaches an attribute to the object p refers to — q is unaffected.
+          - line: 10
+            text: Two calls, two different objects.
+      - type: markdown
+        body: |
+          Attaching attributes from outside like this works, but it is not how real classes are written:
+          nothing guarantees every Point has an `x`. The next section shows the normal way — giving every
+          new instance its attributes as soon as it is created.
+
+  - id: init
+    title: "__init__ initialises a new object"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [method](glossary:method) is a function defined inside a class. One method has a special name,
+          [`__init__`](glossary:init-method) (two underscores on each side, often read "dunder init"). When
+          you call `Point(3, 4)`, Python does **three things, in this order**:
+
+          1. **Create** a new, empty Point object.
+          2. **Initialise** it by calling `Point.__init__(new_object, 3, 4)` — the new object arrives as the
+             first parameter, conventionally named `self`, followed by your arguments.
+          3. **Return** the new object, which you usually bind to a name.
+
+          So `__init__` does **not** create the object — the object already exists when `__init__` starts.
+          Its job is to give that object its starting attributes. It must not return anything (it returns
+          `None`).
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  print("__init__ received an object that already exists:", type(self).__name__)
+                  self.x = x
+                  self.y = y
+
+          p = Point(3, 4)
+          print(p.x, p.y)
+        expectedOutput: |
+          __init__ received an object that already exists: Point
+          3 4
+        annotations:
+          - line: 2
+            text: You pass two arguments (3, 4); Python passes the new object as `self` in front of them.
+          - line: 4
+            text: "`self.x = x` attaches an attribute named x to the object. The parameter x is just a local name."
+          - line: 7
+            text: "Point(3, 4) → create, then Point.__init__(new_object, 3, 4), then hand back the object."
+      - type: callout
+        variant: misconception
+        title: '"__init__ is the constructor"'
+        body: |
+          People often call `__init__` "the constructor", and in casual speech that is fine. Strictly, the
+          object is constructed by a different special method, `__new__`, before `__init__` runs; `__init__`
+          only *initialises* it. You will almost never need `__new__` — but remembering that `self` already
+          exists inside `__init__` explains why `__init__` cannot return a different object.
+      - type: item
+        ref: init-role
+
+  - id: methods
+    title: Methods and self
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Any function defined in a class body is a method. When you call a method **on an instance**,
+          Python passes that instance as the first argument automatically:
+
+          ```text
+          account.withdraw(30)     is translated to     BankAccount.withdraw(account, 30)
+          ```
+
+          That first parameter is how the method knows *which* object to work on. It is called
+          [`self`](glossary:self) by universal convention, but `self` is **not a keyword** — it is an
+          ordinary parameter name. This example names it `this` to prove the point (please don't do this in
+          real code; every Python programmer expects `self`):
+      - type: code
+        runnable: true
+        code: |
+          class Greeter:
+              def __init__(this, name):
+                  this.name = name
+
+              def greet(this, greeting="Hello"):
+                  return greeting + ", " + this.name
+
+          g = Greeter("Ada")
+          print(g.greet())
+          print(Greeter.greet(g, "Hi"))
+        expectedOutput: |
+          Hello, Ada
+          Hi, Ada
+        annotations:
+          - line: 9
+            text: "g.greet() → Greeter.greet(g): g becomes `this`, greeting uses its default."
+          - line: 10
+            text: The same call written out by hand. Both forms run the same function.
+      - type: markdown
+        body: |
+          Inside a method, **every attribute access goes through `self`**. A bare name like `balance` is a
+          local or global variable, exactly as in any other function; `self.balance` is the attribute of
+          the object. Methods can also call other methods the same way:
+      - type: code
+        runnable: true
+        code: |
+          class Order:
+              def __init__(self, price, quantity):
+                  self.price = price
+                  self.quantity = quantity
+
+              def subtotal(self):
+                  return self.price * self.quantity
+
+              def total_with_tax(self, rate):
+                  return self.subtotal() * (1 + rate)
+
+          order = Order(200, 3)
+          print(order.subtotal(), order.total_with_tax(0.5))
+        expectedOutput: |
+          600 900.0
+        annotations:
+          - line: 10
+            text: A method calling another method on the same object, through self.
+
+  - id: mental-model
+    title: "Mental model: every object has its own namespace"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          From the variables lesson you know that a [namespace](glossary:namespace) maps names to objects.
+          A class adds two more namespaces to that picture:
+
+          - **Each instance has its own namespace** for its attributes. `self.count = 0` binds the name
+            `count` in *that object's* namespace — like a small private dictionary of names → objects.
+          - **The class has a namespace** too. That is where the methods live: they are defined once and
+            shared by every instance.
+
+          When you write `obj.name`, Python looks in the **instance first, then the class**. Step through
+          this program and watch each Counter object get its own `count`:
+      - type: visualization
+        component: python-tracer
+        title: Two instances, two separate namespaces
+        caption: >-
+          Watch the objects on the right. Each Counter instance lists its own attributes. When
+          increment runs, self refers to whichever object the method was called on.
+        props:
+          code: |
+            class Counter:
+                def __init__(self, start):
+                    self.count = start
+
+                def increment(self):
+                    self.count += 1
+
+                def __repr__(self):
+                    return f"Counter({self.count})"
+
+            a = Counter(0)
+            b = Counter(10)
+            a.increment()
+            a.increment()
+            b.increment()
+            print(a, b)
+      - type: markdown
+        body: |
+          You can look at an instance's namespace directly with `vars(obj)`, which returns it as a
+          dictionary. Notice that the method `increment` is **not** in the instance's namespace — it is
+          found on the class:
+      - type: code
+        runnable: true
+        code: |
+          class Counter:
+              def __init__(self, start):
+                  self.count = start
+
+              def increment(self):
+                  self.count += 1
+
+          a = Counter(0)
+          b = Counter(10)
+          a.increment()
+          print(vars(a), vars(b))
+          print("increment" in vars(a), "increment" in vars(Counter))
+        expectedOutput: |
+          {'count': 1} {'count': 10}
+          False True
+      - type: callout
+        variant: note
+        title: How accurate is this model?
+        body: |
+          "Instance namespace first, then the class" is the rule you will use every day, and it stays true.
+          Two refinements come later: with [inheritance](concept:python.inheritance) the search continues
+          into parent classes, and some special attributes (properties and other *descriptors*) take
+          priority over the instance. CPython also stores instance attributes more compactly than a plain
+          dictionary — but `vars()` still shows them as one.
+
+  - id: class-attributes
+    title: Instance attributes vs class attributes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An assignment inside a method, like `self.owner = owner`, creates an
+          [instance attribute](glossary:instance-attribute): one per object. An assignment directly in the
+          class body creates a [class attribute](glossary:class-attribute): **one object, shared by every
+          instance**, because it lives in the class's namespace.
+      - type: code
+        runnable: true
+        code: |
+          class Account:
+              bank = "Groundwork Bank"       # class attribute: shared
+
+              def __init__(self, owner):
+                  self.owner = owner          # instance attribute: one per object
+
+          a = Account("Ada")
+          b = Account("Grace")
+          print(a.bank, "|", b.bank)
+          Account.bank = "GW Bank"
+          print(a.bank, "|", b.bank)
+          a.bank = "Ada's Bank"
+          print(a.bank, "|", b.bank, "|", Account.bank)
+          print(vars(a))
+        expectedOutput: |
+          Groundwork Bank | Groundwork Bank
+          GW Bank | GW Bank
+          Ada's Bank | GW Bank | GW Bank
+          {'owner': 'Ada', 'bank': "Ada's Bank"}
+        annotations:
+          - line: 9
+            text: Neither instance has its own `bank`, so both lookups fall through to the class.
+          - line: 10
+            text: Rebinding the class attribute is seen by every instance that does not shadow it.
+          - line: 12
+            text: "Assigning through an instance creates a NEW instance attribute on a only — it shadows the class attribute."
+      - type: markdown
+        body: |
+          The key rule: **reading** `obj.name` searches the instance, then the class. **Assigning**
+          `obj.name = value` always writes to the instance's own namespace. Use that rule to predict this
+          program:
+      - type: item
+        ref: predict-counter-shadow
+      - type: markdown
+        body: |
+          ### The shared mutable class attribute bug
+
+          Class attributes are fine for values that are genuinely shared and never mutated, such as
+          constants. They become a trap when the shared value is **mutable**, like a list:
+      - type: code
+        runnable: true
+        code: |
+          class Dog:
+              tricks = []                     # BUG: one list for every Dog
+
+              def __init__(self, name):
+                  self.name = name
+
+              def add_trick(self, trick):
+                  self.tricks.append(trick)
+
+          rex = Dog("Rex")
+          fido = Dog("Fido")
+          rex.add_trick("roll over")
+          print(fido.tricks)
+          print(rex.tricks is fido.tricks, vars(rex))
+        expectedOutput: |
+          ['roll over']
+          True {'name': 'Rex'}
+        caption: Fido learned Rex's trick. vars(rex) shows that tricks is not even on the instance.
+      - type: markdown
+        body: |
+          `self.tricks.append(...)` is **not an assignment**. Python looks up `self.tricks`, finds no
+          instance attribute, falls through to the class, and mutates that single shared list. This is the
+          same trap as the [mutable default argument](concept:python.parameters): one mutable object,
+          created once, reused by everyone.
+
+          **The fix:** create mutable state in `__init__`, so each instance gets its own new object. Step
+          through the corrected version and look for two separate list objects:
+      - type: visualization
+        component: python-tracer
+        title: Each instance gets its own list
+        caption: The list is created inside __init__, so every call makes a new one. Rex's and Fido's tricks point at different lists.
+        props:
+          code: |
+            class Dog:
+                def __init__(self, name):
+                    self.name = name
+                    self.tricks = []
+
+                def add_trick(self, trick):
+                    self.tricks.append(trick)
+
+                def __repr__(self):
+                    return f"Dog({self.name!r}, {self.tricks})"
+
+            rex = Dog("Rex")
+            fido = Dog("Fido")
+            rex.add_trick("roll over")
+            print(rex, fido)
+
+  - id: repr
+    title: "Readable objects: __repr__ and __str__"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          If a class does not say how to display itself, Python falls back to a default that shows the
+          class name and the object's **memory address** — which changes every time the program runs and
+          tells a human nothing useful. We check only the start of it here, because the address part is
+          different on every run:
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  self.x = x
+                  self.y = y
+
+          p = Point(3, 4)
+          text = repr(p)
+          print(text.startswith("<__main__.Point object at 0x"))
+        expectedOutput: |
+          True
+        caption: The default looks like <__main__.Point object at 0x7f3a2c1b9d30>, with a different number each run.
+      - type: markdown
+        body: |
+          Two special methods control how an object is shown as text:
+
+          | Method | Audience | Used by | Convention |
+          |---|---|---|---|
+          | [`__repr__`](glossary:repr-method) | developers (debugging, logs) | `repr(obj)`, the REPL, items inside lists/dicts, `f"{obj!r}"` | Unambiguous; ideally looks like the code that would recreate the object |
+          | `__str__` | end users | `print(obj)`, `str(obj)`, `f"{obj}"` | Friendly; falls back to `__repr__` if you don't define it |
+
+          Both must **return** a string (not print it). **Always define `__repr__`** for your own classes —
+          it makes every debugging print, error message and test failure readable. Add `__str__` only when
+          users need a different, friendlier form.
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  self.x = x
+                  self.y = y
+
+              def __repr__(self):
+                  return f"Point({self.x!r}, {self.y!r})"
+
+              def __str__(self):
+                  return f"({self.x}, {self.y})"
+
+          p = Point(3, 4)
+          print(p)
+          print(repr(p))
+          print([p, Point(0, 0)])
+          print(f"{p} and {p!r}")
+        expectedOutput: |
+          (3, 4)
+          Point(3, 4)
+          [Point(3, 4), Point(0, 0)]
+          (3, 4) and Point(3, 4)
+        annotations:
+          - line: 7
+            text: "`!r` inserts repr(value), so string attributes would appear with quotes."
+          - line: 13
+            text: print uses __str__.
+          - line: 15
+            text: A list shows its items with repr, even when you print the list.
+      - type: item
+        ref: predict-str-repr
+
+  - id: invariants
+    title: Invariants and validation
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          An [invariant](glossary:invariant) is a rule that must be true for **every** valid object of a
+          class, at every moment between method calls: "a balance is never negative", "a rectangle's sides
+          are positive", "an end time is after its start time". Classes exist largely to protect
+          invariants. The recipe has three parts:
+
+          1. **Validate in `__init__`**, so an invalid object can never be created. Raise an exception —
+             usually `ValueError` — instead of storing bad data. Failing early, at the line that caused
+             the problem, makes bugs far easier to find than discovering a bad value much later.
+          2. **Every method that changes state preserves the invariant.** Check *before* you change
+             anything, so a refused operation leaves the object exactly as it was.
+          3. **Change state through methods**, not by assigning attributes from outside. A leading
+             underscore (`self._balance`) is the convention for "internal — please use the methods".
+      - type: code
+        runnable: true
+        code: |
+          class BankAccount:
+              def __init__(self, owner, balance=0):
+                  if balance < 0:
+                      raise ValueError("opening balance cannot be negative")
+                  self.owner = owner
+                  self.balance = balance
+
+              def deposit(self, amount):
+                  if amount <= 0:
+                      raise ValueError("deposit must be positive")
+                  self.balance += amount
+
+              def withdraw(self, amount):
+                  if amount <= 0:
+                      raise ValueError("withdrawal must be positive")
+                  if amount > self.balance:
+                      raise ValueError("insufficient funds")
+                  self.balance -= amount
+
+              def __repr__(self):
+                  return f"BankAccount({self.owner!r}, {self.balance})"
+
+          acct = BankAccount("Ada", 50)
+          acct.deposit(25)
+          try:
+              acct.withdraw(500)
+          except ValueError as error:
+              print("Refused:", error)
+          print(acct)
+
+          try:
+              BankAccount("Bob", -10)
+          except ValueError as error:
+              print("Refused:", error)
+        expectedOutput: |
+          Refused: insufficient funds
+          BankAccount('Ada', 75)
+          Refused: opening balance cannot be negative
+        annotations:
+          - line: 3
+            text: The invariant is checked before any attribute is stored.
+          - line: 16
+            text: Check first, change second — a refused withdrawal leaves the balance untouched.
+          - line: 29
+            text: Still 75 after the refused withdrawal.
+      - type: callout
+        variant: production
+        title: Why fail fast?
+        body: |
+          A negative balance stored silently might be noticed days later, in a report, far from the code
+          that caused it. Raising `ValueError` in `__init__` or the method points at the exact call that
+          broke the rule. Production code adds the same checks to any data arriving from users, files or
+          networks — never trust input just because it reached your class.
+      - type: item
+        ref: explain-why-class
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: Dog.bark() takes 0 positional arguments but 1 was given` | The method has no `self` parameter, but Python always passes the instance | Add `self` as the first parameter: `def bark(self):` |
+          | `NameError: name 'balance' is not defined` inside a method | You wrote `balance` instead of `self.balance` | Attributes are always reached through `self.` |
+          | `TypeError: Account() takes no arguments` | `__init__` is misspelled (`__int__`, `_init_`, `__init`), so Python never calls it | Spell it with two underscores on each side: `__init__` |
+          | `TypeError: Account.__init__() missing 1 required positional argument: 'owner'` | The call passes fewer arguments than `__init__` needs (not counting `self`) | Pass every argument, or give the parameter a default |
+          | `AttributeError: 'Account' object has no attribute 'balance'` | The attribute was never set — often `balance = balance` instead of `self.balance = balance` in `__init__` | Set every attribute on `self` in `__init__` |
+          | Data "leaks" between instances | A mutable class attribute (`items = []` in the class body) | Create it in `__init__`: `self.items = []` |
+          | `<__main__.Point object at 0x...>` printed | No `__repr__` (or `__str__`) defined | Define `__repr__` returning a string |
+          | `TypeError: __init__() should return None, not 'int'` | `__init__` has `return something` | `__init__` only sets attributes; Python returns the object for you |
+      - type: code
+        runnable: true
+        code: |
+          class Dog:
+              def bark():
+                  return "Woof"
+
+          rex = Dog()
+          print(rex.bark())
+        expectError: TypeError
+        caption: "rex.bark() becomes Dog.bark(rex) — one argument for a function that accepts none."
+      - type: code
+        runnable: true
+        code: |
+          class Account:
+              def __init__(self, balance):
+                  self.balance = balance
+
+              def report(self):
+                  return f"Balance: {balance}"
+
+          print(Account(10).report())
+        expectError: NameError
+        caption: Inside a method, a bare name is a local or global variable. The attribute is self.balance.
+      - type: item
+        ref: mcq-no-arguments
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Write each class yourself before opening the hints. The checks create extra objects with
+          different values, so the class has to work in general, not just for the example.
+      - type: item
+        ref: rectangle
+      - type: item
+        ref: debug-shared-playlist
+      - type: item
+        ref: stock-tracker
+      - type: item
+        ref: parsons-counter
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **A class statement is executed.** When Python reaches `class Point:` it runs the class body
+          like a little program in a fresh namespace. The `def` statements in it bind function objects to
+          names in that namespace. Then Python calls `type("Point", bases, namespace)` to build the class
+          object and binds the name `Point` to it. Classes are objects too — instances of `type`.
+
+          **Calling a class** runs `type.__call__`, which calls `Point.__new__(Point, ...)` to create the
+          object and then `__init__(obj, ...)` to initialise it. If `__init__` returns anything other than
+          `None`, `type.__call__` raises `TypeError`.
+
+          **Methods are plain functions stored on the class.** Looking up `p.norm2` finds the function in
+          the class namespace and wraps it, together with `p`, in a new *bound method* object. Calling the
+          bound method calls the function with `p` inserted as the first argument. That is the entire
+          mechanism behind `self`. A new bound method is created on every lookup, which is why
+          `p.norm2 is p.norm2` is `False` even though the two compare equal.
+
+          **Instance storage (CPython detail).** Instance attributes behave like a per-object dictionary,
+          exposed as `obj.__dict__` (what `vars()` returns). To save memory, CPython shares one table of
+          attribute *names* between instances of the same class (key-sharing dictionaries, PEP 412) and
+          recent versions store the values inline in the object until you ask for `__dict__`. A class can
+          declare `__slots__ = ("x", "y")` to give up the per-instance dictionary entirely — instances then
+          use less memory but cannot gain new attributes.
+      - type: code
+        runnable: true
+        code: |
+          class Point:
+              def __init__(self, x, y):
+                  self.x = x
+                  self.y = y
+
+              def norm2(self):
+                  return self.x ** 2 + self.y ** 2
+
+          p = Point(3, 4)
+          print(type(Point), type(p) is Point)
+          print(sorted(name for name in vars(Point) if not name.startswith("__")))
+          method = p.norm2
+          print(method(), method.__self__ is p, method.__func__ is Point.norm2)
+          print(p.norm2 is p.norm2, p.norm2 == p.norm2)
+        expectedOutput: |
+          <class 'type'> True
+          ['norm2']
+          25 True True
+          False True
+        annotations:
+          - line: 10
+            text: The class itself is an object whose type is type.
+          - line: 13
+            text: A bound method remembers the instance (__self__) and the plain function (__func__).
+          - line: 14
+            text: Two lookups, two new bound-method objects that wrap the same function and instance.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **class** defines a new type; an **instance** is one object of that type, created by calling
+            the class.
+          - `Point(3, 4)` → create an empty object → `Point.__init__(obj, 3, 4)` → return obj.
+            `__init__` **initialises**; it does not create, and it returns `None`.
+          - `self` is just the first parameter: `obj.method(a)` means `Class.method(obj, a)`. It is a
+            convention, not a keyword.
+          - `obj.name` looks in the instance, then the class. `obj.name = value` always writes to the
+            instance.
+          - Class attributes are shared. **Never** put a mutable default (list, dict, set) in the class
+            body for per-object data — create it in `__init__`.
+          - Always define `__repr__`; add `__str__` for a user-facing form.
+          - Protect **invariants**: validate in `__init__`, check before changing state, raise `ValueError`.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What is `self`?" and "What is the difference between a class attribute and an instance
+          attribute?" are classic warm-ups. Show `obj.method(x)` → `Class.method(obj, x)`, explain the
+          lookup order (instance, then class), and finish with the shared-list bug and its fix — that
+          shows you understand mutation, not just syntax.
+
+items:
+  - id: init-role
+    type: mcq
+    skill: recognition
+    prompt: 'When `acct = BankAccount("Ada", 100)` runs, what does `BankAccount.__init__` do?'
+    explanation: >-
+      Python creates the new object first, then calls __init__ with that object as self (plus your
+      arguments) so it can set the starting attributes. Python itself returns the object; __init__
+      returns None.
+    options:
+      - id: a
+        text: It creates the new object and returns it.
+        feedback: >-
+          The object already exists when __init__ starts — it arrives as self. __init__ must return None;
+          Python hands the object back to you.
+      - id: b
+        text: It receives the newly created object as self and sets up its starting attributes.
+        correct: true
+        feedback: Exactly. Create, then initialise, then return — and __init__ is only the middle step.
+      - id: c
+        text: It defines the class BankAccount.
+        feedback: The class statement defines the class. __init__ runs again for every new instance.
+      - id: d
+        text: It runs once, when the class is defined, to set values shared by all accounts.
+        feedback: >-
+          Code directly in the class body runs once at definition time. __init__ runs each time you call
+          BankAccount(...).
+
+  - id: predict-counter-shadow
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      class Ticket:
+          issued = 0
+
+          def __init__(self):
+              self.issued += 1
+
+      a = Ticket()
+      b = Ticket()
+      print(a.issued, b.issued, Ticket.issued)
+    answer: "1 1 0"
+    explanation: >-
+      `self.issued += 1` means `self.issued = self.issued + 1`. The read finds no instance attribute, so it
+      uses the class attribute 0; the assignment then creates an instance attribute with the value 1. Each
+      ticket gets its own `issued = 1` and the class attribute stays 0. To count on the class, write
+      `Ticket.issued += 1`.
+    wrongAnswers:
+      - answer: "1 2 2"
+        feedback: >-
+          This assumes self.issued updates the shared class attribute. Assignment through self always
+          creates or rebinds an INSTANCE attribute, so the class attribute is never changed.
+      - answer: "2 2 2"
+        feedback: >-
+          A shared counter would need `Ticket.issued += 1`. With `self.issued`, each instance reads the class
+          value 0 and stores its own 1.
+      - answer: "1 1 2"
+        feedback: >-
+          The class attribute is only read, never assigned, so Ticket.issued is still 0 — the 1s live on the
+          instances.
+
+  - id: predict-str-repr
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print? (Two lines.)
+    code: |
+      class Temp:
+          def __init__(self, celsius):
+              self.celsius = celsius
+
+          def __repr__(self):
+              return f"Temp({self.celsius})"
+
+          def __str__(self):
+              return f"{self.celsius} degrees"
+
+      t = Temp(21)
+      print(t)
+      print([t])
+    answer: |
+      21 degrees
+      [Temp(21)]
+    explanation: >-
+      print(t) converts t with str(), which uses __str__. Printing a list converts the list with str(), but
+      a list always shows its items with repr(), so __repr__ is used for t inside the brackets.
+    wrongAnswers:
+      - answer: |
+          21 degrees
+          [21 degrees]
+        feedback: >-
+          Containers display their items with repr(), not str(). That is why always defining __repr__
+          matters — it is what you see inside lists and dicts.
+      - answer: |
+          Temp(21)
+          [Temp(21)]
+        feedback: print() uses __str__ when the class defines one. __repr__ is only the fallback.
+
+  - id: mcq-no-arguments
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Running this program fails with `TypeError: Account() takes no arguments`. What is the cause?
+
+      ```python
+      class Account:
+          def _init_(self, owner):
+              self.owner = owner
+
+      acct = Account("Ada")
+      ```
+    explanation: >-
+      Python only calls a method named exactly __init__ (two underscores on each side). `_init_` is an
+      ordinary method nobody calls, so the class falls back to the default initialiser, which accepts no
+      arguments — hence the message.
+    options:
+      - id: a
+        text: The method is named _init_ with single underscores, so Python never calls it as the initialiser.
+        correct: true
+        feedback: Right. Rename it to __init__ and the call works.
+      - id: b
+        text: Classes cannot receive arguments when they are called.
+        feedback: They can — any arguments after self in a correctly named __init__ are passed through.
+      - id: c
+        text: You must pass the object yourself, as Account(acct, "Ada").
+        feedback: Python passes the new object as self automatically; you never pass it when calling the class.
+      - id: d
+        text: owner needs a default value.
+        feedback: A default would make the argument optional, but the real problem is that this method is never called at all.
+
+  - id: explain-why-class
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate says: "Classes are just dictionaries with extra syntax — I'll keep using a dict plus some
+      functions for bank accounts." Explain what a class gives you here, and be honest about what it does
+      not do.
+    explanation: Compare your answer with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says a class bundles the data with the methods that operate on it, so the rules live in one obvious place.
+      - Mentions validating in __init__ so every object starts valid, and methods that keep the invariant true.
+      - Mentions that every instance gets the same attributes from __init__ and the class is a named type (isinstance, a readable __repr__).
+      - Acknowledges that Python does not stop code from assigning attributes directly; it relies on convention (use the methods, _name for internal).
+    modelAnswer: |
+      With a dict, the rule "never overdraw" lives in a separate function that nothing connects to the
+      data; any code can change the balance directly and nobody reading the dict knows the rule exists. A
+      BankAccount class puts the data and the behaviour together: __init__ validates the opening balance so
+      an invalid account can never be created, and deposit/withdraw check the rules before changing
+      anything, so the invariant "balance >= 0" stays true. Every account is built the same way, has a real
+      type name and prints readably through __repr__. It is not a lock, though: Python still allows
+      account.balance = -5. The class makes the correct path obvious; conventions such as calling methods
+      and naming internal attributes _balance do the rest.
+
+  - id: rectangle
+    type: code
+    skill: implementation
+    prompt: |
+      Write a class `Rectangle`:
+
+      - `__init__(self, width, height)` stores the attributes `width` and `height`;
+      - `area()` returns width × height;
+      - `perimeter()` returns 2 × (width + height);
+      - `__repr__()` returns text like `Rectangle(3, 4)`.
+
+      The last three lines of the starter must then print:
+
+      ```text
+      Rectangle(3, 4)
+      12 14
+      ```
+    starterCode: |
+      class Rectangle:
+          # Write __init__, area, perimeter and __repr__ here.
+          pass
+
+
+      r = Rectangle(3, 4)
+      print(r)
+      print(r.area(), r.perimeter())
+    solution: |
+      class Rectangle:
+          def __init__(self, width, height):
+              self.width = width
+              self.height = height
+
+          def area(self):
+              return self.width * self.height
+
+          def perimeter(self):
+              return 2 * (self.width + self.height)
+
+          def __repr__(self):
+              return f"Rectangle({self.width}, {self.height})"
+
+
+      r = Rectangle(3, 4)
+      print(r)
+      print(r.area(), r.perimeter())
+    expectedOutput: |
+      Rectangle(3, 4)
+      12 14
+    tests:
+      - name: __init__ stores width and height on the instance
+        code: |
+          r2 = Rectangle(5, 2)
+          assert vars(r2).get("width") == 5, "Store the width on the object with self.width = width."
+          assert vars(r2).get("height") == 2, "Store the height on the object with self.height = height."
+      - name: area and perimeter work for any size
+        code: |
+          r2 = Rectangle(5, 2)
+          assert r2.area() == 10, f"Rectangle(5, 2).area() should be 10, got {r2.area()!r}. Use self.width and self.height."
+          assert r2.perimeter() == 14, f"Rectangle(5, 2).perimeter() should be 14, got {r2.perimeter()!r}."
+          assert Rectangle(1, 7).area() == 7, "area() must be calculated from the attributes, not typed in."
+      - name: each rectangle keeps its own size
+        code: |
+          small = Rectangle(1, 1)
+          big = Rectangle(10, 20)
+          assert small.area() == 1 and big.area() == 200, "Two rectangles must not share their width and height."
+      - name: __repr__ returns the expected text
+        code: |
+          text = repr(Rectangle(7, 1))
+          assert text == "Rectangle(7, 1)", f"repr(Rectangle(7, 1)) should be 'Rectangle(7, 1)', got {text!r}. Make __repr__ return (not print) an f-string."
+      - name: prints the two lines
+        code: |
+          assert output_lines() == ["Rectangle(3, 4)", "12 14"], f"Your program printed {output()!r}."
+    hints:
+      - "Start with `def __init__(self, width, height):` and store each value with `self.width = width`."
+      - "Methods read the attributes through self: `return self.width * self.height`."
+      - '`__repr__` must return a string: `return f"Rectangle({self.width}, {self.height})"`.'
+    feedback:
+      - when: { errorMessageContains: "takes no arguments" }
+        message: Python cannot find your initialiser. Name it exactly __init__, with two underscores on each side.
+      - when: { errorMessageContains: "positional argument" }
+        message: Check that every method has self as its first parameter, and that __init__ takes width and height after it.
+      - when: { outputContains: "object at 0x" }
+        message: The default representation is being shown. Define __repr__ so it returns "Rectangle(width, height)".
+      - when: { outputContains: "None" }
+        message: A method printed instead of returning, or returned nothing. area, perimeter and __repr__ must use return.
+    explanation: >-
+      __init__ stores the two measurements on self, so each Rectangle has its own. area and perimeter read
+      them back through self, which is why they work for any rectangle. __repr__ returns a string that looks
+      like the code that creates the object.
+
+  - id: debug-shared-playlist
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Every playlist shows every song, no matter which playlist it was added to. Fix the class so each
+      playlist keeps its own songs. The program should print:
+
+      ```text
+      Playlist('Road trip', ['Highway Song'])
+      Playlist('Study', ['Quiet Piano'])
+      ```
+    starterCode: |
+      class Playlist:
+          songs = []
+
+          def __init__(self, name):
+              self.name = name
+
+          def add(self, song):
+              self.songs.append(song)
+
+          def __repr__(self):
+              return f"Playlist({self.name!r}, {self.songs})"
+
+
+      road_trip = Playlist("Road trip")
+      study = Playlist("Study")
+      road_trip.add("Highway Song")
+      study.add("Quiet Piano")
+      print(road_trip)
+      print(study)
+    solution: |
+      class Playlist:
+          def __init__(self, name):
+              self.name = name
+              self.songs = []
+
+          def add(self, song):
+              self.songs.append(song)
+
+          def __repr__(self):
+              return f"Playlist({self.name!r}, {self.songs})"
+
+
+      road_trip = Playlist("Road trip")
+      study = Playlist("Study")
+      road_trip.add("Highway Song")
+      study.add("Quiet Piano")
+      print(road_trip)
+      print(study)
+    expectedOutput: |
+      Playlist('Road trip', ['Highway Song'])
+      Playlist('Study', ['Quiet Piano'])
+    tests:
+      - name: prints each playlist with only its own song
+        code: |
+          assert output_lines() == ["Playlist('Road trip', ['Highway Song'])", "Playlist('Study', ['Quiet Piano'])"], f"Your program printed {output()!r}."
+      - name: each new playlist starts with its own empty list
+        code: |
+          a = Playlist("a")
+          b = Playlist("b")
+          a.add("x")
+          assert b.songs == [], f"Adding to one playlist changed another: b.songs is {b.songs!r}."
+          assert "songs" in vars(a), "songs should be an instance attribute: create it in __init__ with self.songs = []."
+          assert a.songs is not b.songs, "Two playlists still share the same list object."
+      - name: no shared list left in the class body
+        code: |
+          assert not isinstance(vars(Playlist).get("songs"), list), "Delete `songs = []` from the class body; the list now belongs in __init__."
+    hints:
+      - Where is `songs` created — once per playlist, or once for the whole class?
+      - "`self.songs.append(...)` does not assign anything, so it finds the class's single list and mutates it."
+      - Create the list inside __init__ with `self.songs = []`, so every call makes a new one.
+    feedback:
+      - when: { outputContains: "'Highway Song', 'Quiet Piano'" }
+        message: Both playlists still share one list. A list in the class body is created once and shared by every instance.
+      - when: { errorType: AttributeError }
+        message: The songs attribute is missing. Add `self.songs = []` inside __init__.
+    explanation: >-
+      The class body runs once, so `songs = []` created a single list shared by all playlists, and
+      `self.songs.append` mutated it. Creating `self.songs = []` in __init__ gives every playlist its own new
+      list.
+
+  - id: stock-tracker
+    type: code
+    skill: design
+    difficulty: 3
+    prompt: |
+      Write a class `Stock` that tracks how many of each product a shop has. Its invariant: **no
+      quantity is ever negative**, and a refused operation changes nothing.
+
+      - `__init__(self)` gives each Stock its own empty dictionary `self.items`.
+      - `add(self, name, quantity)` raises `ValueError` if quantity is not greater than 0; otherwise adds it.
+      - `remove(self, name, quantity)` raises `ValueError` if quantity is not greater than 0 **or** is more
+        than is in stock; otherwise subtracts it.
+      - `count(self, name)` returns the quantity in stock (0 for products never added).
+
+      The starter's last lines should print `7 0`.
+    starterCode: |
+      class Stock:
+          def __init__(self):
+              pass
+
+          def add(self, name, quantity):
+              pass
+
+          def remove(self, name, quantity):
+              pass
+
+          def count(self, name):
+              pass
+
+
+      shop = Stock()
+      shop.add("pen", 10)
+      shop.remove("pen", 3)
+      print(shop.count("pen"), shop.count("ink"))
+    solution: |
+      class Stock:
+          def __init__(self):
+              self.items = {}
+
+          def add(self, name, quantity):
+              if quantity <= 0:
+                  raise ValueError("quantity must be positive")
+              self.items[name] = self.items.get(name, 0) + quantity
+
+          def remove(self, name, quantity):
+              if quantity <= 0:
+                  raise ValueError("quantity must be positive")
+              if quantity > self.count(name):
+                  raise ValueError(f"only {self.count(name)} {name} in stock")
+              self.items[name] -= quantity
+
+          def count(self, name):
+              return self.items.get(name, 0)
+
+
+      shop = Stock()
+      shop.add("pen", 10)
+      shop.remove("pen", 3)
+      print(shop.count("pen"), shop.count("ink"))
+    expectedOutput: |
+      7 0
+    tests:
+      - name: add and count
+        code: |
+          s = Stock()
+          s.add("pen", 10)
+          s.add("pen", 5)
+          s.add("ink", 2)
+          assert s.count("pen") == 15, f"After adding 10 and 5 pens, count('pen') should be 15, got {s.count('pen')!r}."
+          assert s.count("ink") == 2, f"count('ink') should be 2, got {s.count('ink')!r}."
+          assert s.count("glue") == 0, f"count() of a product never added should be 0, got {s.count('glue')!r}."
+      - name: remove subtracts
+        code: |
+          s = Stock()
+          s.add("pen", 10)
+          s.remove("pen", 4)
+          assert s.count("pen") == 6, f"10 - 4 should leave 6 pens, got {s.count('pen')!r}."
+      - name: refuses to go below zero and changes nothing
+        code: |
+          s = Stock()
+          s.add("pen", 2)
+          try:
+              s.remove("pen", 5)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("remove('pen', 5) with only 2 in stock should raise ValueError.")
+          assert s.count("pen") == 2, f"A refused remove must leave the stock unchanged; count('pen') is {s.count('pen')!r}, expected 2."
+          try:
+              s.remove("ink", 1)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Removing a product that was never added should raise ValueError.")
+      - name: rejects zero and negative quantities
+        code: |
+          s = Stock()
+          for call, args in [(s.add, ("pen", 0)), (s.add, ("pen", -3)), (s.remove, ("pen", 0))]:
+              try:
+                  call(*args)
+              except ValueError:
+                  continue
+              raise AssertionError(f"{call.__name__}{args} should raise ValueError: quantities must be greater than 0.")
+          assert s.count("pen") == 0, "A refused add must not change the stock."
+      - name: each Stock has its own items
+        code: |
+          one = Stock()
+          two = Stock()
+          one.add("pen", 3)
+          assert two.count("pen") == 0, "Two Stock objects share data. Create self.items = {} inside __init__."
+      - name: prints 7 0
+        code: |
+          assert output().strip() == "7 0", f"Your program printed {output()!r}."
+    hints:
+      - "In `__init__`, create the dictionary on the object: `self.items = {}`."
+      - "`self.items.get(name, 0)` gives the current quantity, or 0 if the product is missing."
+      - "In `remove`, check both rules and `raise ValueError(...)` BEFORE subtracting, so a refused call changes nothing."
+    feedback:
+      - when: { outputEquals: "None None\n" }
+        message: count() must return the quantity. A method that never reaches a return statement returns None.
+      - when: { errorType: KeyError }
+        message: A product that was never added has no key yet. Use self.items.get(name, 0) instead of self.items[name].
+      - when: { errorType: AttributeError }
+        message: An attribute is missing — make sure __init__ creates self.items = {}.
+    explanation: >-
+      The dictionary is created in __init__, so each Stock owns its data. Both mutating methods validate
+      first and only then change self.items, which keeps the invariant "no negative quantities" true even
+      when a call is refused. count() uses .get(name, 0) so unknown products read as 0.
+
+  - id: parsons-counter
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a class whose counter starts at 0 and goes up by one each time `increment()`
+      is called. The program should print `2`. Two lines are distractors.
+    solution: |
+      class Counter:
+          def __init__(self):
+              self.count = 0
+          def increment(self):
+              self.count += 1
+      c = Counter()
+      c.increment()
+      c.increment()
+      print(c.count)
+    distractors:
+      - "    def increment():"
+      - "        count += 1"
+    expectedOutput: |
+      2
+    explanation: >-
+      __init__ creates the count attribute on each new object; increment needs self to know which object
+      to update, and must write self.count rather than a bare local name count.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-mutate-vs-assign
+    type: predict-output
+    skill: prediction
+    difficulty: 3
+    prompt: What does this program print?
+    code: |
+      class Team:
+          members = []
+
+          def __init__(self, name):
+              self.name = name
+
+      red = Team("red")
+      blue = Team("blue")
+      red.members.append("Ana")
+      blue.members = ["Ben"]
+      print(red.members, blue.members, Team.members)
+    answer: "['Ana'] ['Ben'] ['Ana']"
+    explanation: >-
+      `red.members.append("Ana")` reads members (found on the class) and mutates the shared class list.
+      `blue.members = ["Ben"]` is an assignment, so it creates an instance attribute on blue only. red still
+      sees the class list, which now holds "Ana".
+    wrongAnswers:
+      - answer: "['Ana'] ['Ben'] []"
+        feedback: >-
+          append does not create an instance attribute — it mutates the object it finds. red has no members
+          of its own, so it mutated the class's list.
+      - answer: "['Ben'] ['Ben'] ['Ben']"
+        feedback: >-
+          Assigning through an instance never changes the class attribute; blue.members = [...] creates an
+          attribute on blue only.
+      - answer: "['Ana', 'Ben'] ['Ana', 'Ben'] ['Ana', 'Ben']"
+        feedback: blue.members = ["Ben"] rebinds a name on blue to a brand-new list; it does not append to the shared one.
+
+  - id: m-mcq-where-validate
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      A `Booking` class stores `start_hour` and `end_hour`, and the end must be after the start. A method
+      `reschedule(start, end)` can change both. Where should the check go?
+    explanation: >-
+      The invariant must hold for every object at all times, so it belongs where state is set: in __init__
+      (no invalid object can be created) and in every method that changes the hours, raising ValueError
+      before anything is changed.
+    options:
+      - id: a
+        text: In __init__ and in reschedule, raising ValueError before any attribute is changed.
+        correct: true
+        feedback: Yes — guard every place that sets the state, and check before you change it.
+      - id: b
+        text: In the function that prints bookings, which can skip invalid ones.
+        feedback: By then the invalid object already exists and may have been saved or used elsewhere. Fail at the source.
+      - id: c
+        text: In a separate validate(booking) function that callers should remember to call.
+        feedback: Rules that callers must remember will be forgotten. The class should enforce its own invariant.
+      - id: d
+        text: Only in __init__ — once an object is valid it stays valid.
+        feedback: reschedule can break the rule later. Every method that changes state must preserve the invariant.
+
+  - id: m-tf-self-keyword
+    type: true-false
+    skill: recognition
+    prompt: "True or false: `self` is a Python keyword, so a method's first parameter must be named self."
+    answer: false
+    explanation: >-
+      self is an ordinary parameter name. Python passes the instance as the first argument whatever the
+      parameter is called. Using self is a very strong convention (PEP 8), so always follow it — but it is
+      not enforced by the language.
+
+  - id: m-code-temperature
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a class `Temperature`:
+
+      - `__init__(self, celsius)` raises `ValueError` if celsius is below -273.15 (absolute zero), otherwise
+        stores it as the attribute `celsius`;
+      - `to_fahrenheit()` returns celsius × 9 / 5 + 32;
+      - `__repr__()` returns text like `Temperature(25)`.
+
+      The last two lines should print `Temperature(25) 77.0`.
+    starterCode: |
+      class Temperature:
+          pass
+
+
+      t = Temperature(25)
+      print(t, t.to_fahrenheit())
+    solution: |
+      class Temperature:
+          def __init__(self, celsius):
+              if celsius < -273.15:
+                  raise ValueError("below absolute zero")
+              self.celsius = celsius
+
+          def to_fahrenheit(self):
+              return self.celsius * 9 / 5 + 32
+
+          def __repr__(self):
+              return f"Temperature({self.celsius})"
+
+
+      t = Temperature(25)
+      print(t, t.to_fahrenheit())
+    expectedOutput: |
+      Temperature(25) 77.0
+    tests:
+      - name: converts any temperature
+        code: |
+          assert Temperature(100).to_fahrenheit() == 212.0, "Temperature(100).to_fahrenheit() should be 212.0."
+          assert Temperature(-40).to_fahrenheit() == -40.0, "Temperature(-40).to_fahrenheit() should be -40.0."
+      - name: stores celsius on the instance
+        code: |
+          assert vars(Temperature(12)).get("celsius") == 12, "Store the value with self.celsius = celsius."
+      - name: rejects temperatures below absolute zero
+        code: |
+          try:
+              Temperature(-300)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Temperature(-300) should raise ValueError.")
+          assert Temperature(-273.15).celsius == -273.15, "-273.15 itself is allowed; only values below it are invalid."
+      - name: __repr__ returns the expected text
+        code: |
+          assert repr(Temperature(3.5)) == "Temperature(3.5)", f"repr(Temperature(3.5)) should be 'Temperature(3.5)', got {repr(Temperature(3.5))!r}."
+      - name: prints the example
+        code: |
+          assert output().strip() == "Temperature(25) 77.0", f"Your program printed {output()!r}."
+    hints:
+      - Check the value at the top of __init__ and raise ValueError before storing anything.
+      - "to_fahrenheit reads self.celsius: `return self.celsius * 9 / 5 + 32`."
+      - '`__repr__` returns `f"Temperature({self.celsius})"`.'
+    feedback:
+      - when: { errorMessageContains: "takes no arguments" }
+        message: Define __init__(self, celsius) — with two underscores on each side — so Temperature(25) is accepted.
+      - when: { outputContains: "object at 0x" }
+        message: Define __repr__ to return "Temperature(...)" instead of the default representation.
+    explanation: >-
+      Validation happens first in __init__, so an impossible temperature is never stored. The conversion
+      reads the attribute through self, and __repr__ returns a string describing the object.
+
+  - id: m-debug-forgot-self
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This timer should print `45 seconds`, but it crashes. There are **two** bugs, both about `self`.
+      Fix them.
+    starterCode: |
+      class Timer:
+          def __init__(self, seconds):
+              seconds = seconds
+
+          def add(self, extra):
+              self.seconds += extra
+
+          def describe():
+              return f"{self.seconds} seconds"
+
+
+      t = Timer(30)
+      t.add(15)
+      print(t.describe())
+    solution: |
+      class Timer:
+          def __init__(self, seconds):
+              self.seconds = seconds
+
+          def add(self, extra):
+              self.seconds += extra
+
+          def describe(self):
+              return f"{self.seconds} seconds"
+
+
+      t = Timer(30)
+      t.add(15)
+      print(t.describe())
+    expectedOutput: |
+      45 seconds
+    tests:
+      - name: prints 45 seconds
+        code: |
+          assert output().strip() == "45 seconds", f"Your program printed {output()!r}."
+      - name: stores seconds on the object
+        code: |
+          assert vars(Timer(5)).get("seconds") == 5, "__init__ must store the value on the object: self.seconds = seconds."
+      - name: describe works for any timer
+        code: |
+          assert Timer(10).describe() == "10 seconds", f"Timer(10).describe() should be '10 seconds', got {Timer(10).describe()!r}."
+    hints:
+      - Read the first error. Which attribute does Python say the Timer object does not have?
+      - "`seconds = seconds` only rebinds the local parameter. Attributes are created with `self.`."
+      - "After that, look at describe: Python passes the instance to every method, so it needs a parameter for it."
+    feedback:
+      - when: { errorType: AttributeError }
+        message: "`seconds = seconds` rebinds the local parameter and is thrown away. Store it on the object: self.seconds = seconds."
+      - when: { errorMessageContains: "takes 0 positional arguments" }
+        message: describe() has no self parameter, but Python passes the instance automatically. Write def describe(self).
+    explanation: >-
+      In __init__, `seconds = seconds` assigned the parameter to itself, so the object never got a seconds
+      attribute and add() failed. describe() lacked the self parameter that every method receives. With
+      `self.seconds = seconds` and `def describe(self)`, the program prints 45 seconds.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-mutate-vs-assign, m-mcq-where-validate, m-tf-self-keyword, m-code-temperature, m-debug-forgot-self]
+
+cheatsheet: |
+  ```python
+  class BankAccount:                       # CapWords name
+      fee = 2                              # class attribute: shared by all instances
+      def __init__(self, owner, balance=0):
+          if balance < 0:                  # validate: protect the invariant
+              raise ValueError("negative balance")
+          self.owner = owner               # instance attributes: one per object
+          self.balance = balance
+          self.history = []                # mutable state ALWAYS in __init__
+      def deposit(self, amount):           # method: self = the instance
+          self.balance += amount
+      def __repr__(self):                  # for developers; also used inside lists
+          return f"BankAccount({self.owner!r}, {self.balance})"
+
+  acct = BankAccount("Ada", 100)           # create -> __init__(acct, "Ada", 100) -> acct
+  acct.deposit(5)                          # same as BankAccount.deposit(acct, 5)
+  vars(acct)                               # the instance's own attributes
+  ```
+  - Lookup: instance first, then class · assignment writes to the instance
+  - No `self` parameter → "takes 0 positional arguments but 1 was given"
+  - Misspelled `__init__` → "Account() takes no arguments"

@@ -1,0 +1,1595 @@
+id: databases.sql-basics
+concept: databases.sql-basics
+title: "SQL Queries: SELECT, WHERE, ORDER BY"
+subtitle: Describe the rows you want and let the database fetch them
+estimatedMinutes: 50
+reviewedOn: 2026-10-22
+summary: >-
+  Read data with SQL: choose columns with SELECT, filter rows with WHERE (comparisons, AND/OR, IN,
+  BETWEEN, LIKE), handle missing values with IS NULL and three-valued logic, then sort, limit and
+  de-duplicate results. Every query runs for real in SQLite through Python's built-in sqlite3 module,
+  and the lesson points out where PostgreSQL behaves differently.
+objectives:
+  - Write SELECT queries that pick columns, compute expressions and rename them with AS.
+  - Filter rows with comparison operators, AND/OR/NOT, IN, BETWEEN and LIKE, using parentheses when mixing AND with OR.
+  - Explain three-valued logic and test for missing values with IS NULL and IS NOT NULL instead of = NULL.
+  - Sort, limit and de-duplicate results with ORDER BY, LIMIT/OFFSET and DISTINCT, and explain why LIMIT needs ORDER BY.
+  - Predict a query's result by applying the logical evaluation order FROM, WHERE, SELECT, ORDER BY, LIMIT.
+  - Contrast declarative SQL with an imperative Python loop that computes the same result.
+sources:
+  - title: "PostgreSQL Tutorial: Querying a Table"
+    url: https://www.postgresql.org/docs/current/tutorial-select.html
+    publisher: PostgreSQL Global Development Group
+  - title: "PostgreSQL: SELECT (reference, including the processing order)"
+    url: https://www.postgresql.org/docs/current/sql-select.html
+    publisher: PostgreSQL Global Development Group
+  - title: "PostgreSQL: Pattern Matching (LIKE and ILIKE)"
+    url: https://www.postgresql.org/docs/current/functions-matching.html
+    publisher: PostgreSQL Global Development Group
+  - title: "SQLite: SELECT"
+    url: https://www.sqlite.org/lang_select.html
+    publisher: SQLite
+  - title: "SQLite: SQL Language Expressions (LIKE, BETWEEN, IS, NULL)"
+    url: https://www.sqlite.org/lang_expr.html
+    publisher: SQLite
+  - title: "SQLite: Quirks, Caveats, and Gotchas"
+    url: https://www.sqlite.org/quirks.html
+    publisher: SQLite
+  - title: "SQLite: EXPLAIN QUERY PLAN"
+    url: https://www.sqlite.org/eqp.html
+    publisher: SQLite
+sections:
+  - id: why
+    title: Why a query language?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A shop keeps its products in a table. A colleague asks: *"Which products cost less than 10 and
+          are in stock? Cheapest first, please."*
+
+          With what you know from Python, you would write a loop that walks through every product, checks
+          each condition, collects matches and sorts them:
+      - type: code
+        runnable: true
+        code: |
+          products = [
+              ("Notebook", "stationery", 4, 120),
+              ("Pen", "stationery", 2, 500),
+              ("Desk lamp", "home", 24, 15),
+              ("Mug", "home", 8, None),          # stock not recorded yet
+              ("USB cable", "electronics", 7, 80),
+              ("Headphones", "electronics", 59, 0),
+          ]
+
+          result = []
+          for name, category, price, stock in products:
+              if price < 10 and stock is not None and stock > 0:
+                  result.append((name, price))
+          result.sort(key=lambda row: row[1])
+          for row in result:
+              print(row)
+        expectedOutput: |
+          ('Pen', 2)
+          ('Notebook', 4)
+          ('USB cable', 7)
+        caption: "Imperative: you spell out every step — loop, test, collect, sort."
+      - type: markdown
+        body: |
+          Now the same question in [SQL](glossary:sql), the language relational databases speak. You do not
+          describe *how* to find the rows; you describe *which* rows you want:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (
+                  id       INTEGER PRIMARY KEY,
+                  name     TEXT NOT NULL,
+                  category TEXT,
+                  price    INTEGER NOT NULL,
+                  stock    INTEGER
+              );
+              INSERT INTO products VALUES
+                  (1, 'Notebook',   'stationery',  4,  120),
+                  (2, 'Pen',        'stationery',  2,  500),
+                  (3, 'Desk lamp',  'home',        24, 15),
+                  (4, 'Mug',        'home',        8,  NULL),
+                  (5, 'USB cable',  'electronics', 7,  80),
+                  (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card',  NULL,          25, NULL);
+          """)
+
+          query = """
+              SELECT name, price
+              FROM products
+              WHERE price < 10 AND stock > 0
+              ORDER BY price
+          """
+          for row in con.execute(query):
+              print(row)
+        expectedOutput: |
+          ('Pen', 2)
+          ('Notebook', 4)
+          ('USB cable', 7)
+        caption: "Declarative: four lines say what you want. The database decides how to get it."
+        annotations:
+          - line: 3
+            text: A brand-new, empty database that lives in memory for this run only.
+          - line: 4
+            text: Setup — creates and fills the table. You will learn CREATE and INSERT properly later.
+          - line: 25
+            text: "`stock > 0` is not true for the Mug's missing stock, so it is left out automatically — more on that in the NULL section."
+      - type: markdown
+        body: |
+          The SQL version is shorter, but that is not the main win. Because the query says **what** and not
+          **how**, the same four lines work on 7 rows or 70 million: the database may scan every row, or use
+          an [index](concept:databases.indexes) to jump straight to the matches, and your query does not
+          change. SQL is a [declarative language](glossary:declarative-language), and it is the common
+          language of PostgreSQL, MySQL, SQLite, SQL Server and data warehouses, so it is a daily tool for
+          backend, data and ML engineers.
+
+  - id: tables-recap
+    title: Tables, rows and columns — and how we run SQL here
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A quick recap from [the relational model](concept:databases.relational-model):
+
+          - A **table** has named **columns**, each with a type (`INTEGER`, `TEXT`, …).
+          - Each **row** records one fact about one thing — here, one product.
+          - The **primary key** (`id`) uniquely identifies each row.
+          - **NULL** marks a value that is missing or unknown (the Mug's stock, the Gift card's category).
+
+          | id | name | category | price | stock |
+          |---|---|---|---|---|
+          | 1 | Notebook | stationery | 4 | 120 |
+          | 2 | Pen | stationery | 2 | 500 |
+          | 3 | Desk lamp | home | 24 | 15 |
+          | 4 | Mug | home | 8 | NULL |
+          | 5 | USB cable | electronics | 7 | 80 |
+          | 6 | Headphones | electronics | 59 | 0 |
+          | 7 | Gift card | NULL | 25 | NULL |
+
+          **How this lesson runs SQL.** Python ships with the [SQLite](https://www.sqlite.org/) database
+          engine in its `sqlite3` module, so every query here runs for real in your browser. You only need
+          three calls for now (the full API is in [SQL from Python](concept:databases.sqlite-python)):
+
+          - `sqlite3.connect(":memory:")` creates an empty in-memory database and returns a connection.
+          - `con.executescript(...)` runs several SQL statements — we use it to create and fill the table.
+          - `con.execute(query)` runs **one** query; looping over the result gives one Python tuple per row.
+
+          Every example starts by recreating the same table, so you can run any of them on its own. A small
+          helper, `show(sql)`, prints each row of a query.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          def show(sql):
+              for row in con.execute(sql):
+                  print(row)
+
+          show("SELECT * FROM products ORDER BY id")
+        expectedOutput: |
+          (1, 'Notebook', 'stationery', 4, 120)
+          (2, 'Pen', 'stationery', 2, 500)
+          (3, 'Desk lamp', 'home', 24, 15)
+          (4, 'Mug', 'home', 8, None)
+          (5, 'USB cable', 'electronics', 7, 80)
+          (6, 'Headphones', 'electronics', 59, 0)
+          (7, 'Gift card', None, 25, None)
+        caption: The whole table. SQL NULL arrives in Python as None.
+        annotations:
+          - line: 15
+            text: "`con.execute` returns a cursor; a for loop over it yields one tuple per row."
+          - line: 18
+            text: "`*` means every column. `ORDER BY id` fixes the row order (rows have no guaranteed order otherwise)."
+      - type: callout
+        variant: tip
+        title: Style conventions
+        body: |
+          SQL keywords are case-insensitive: `select`, `SELECT` and `Select` all work. The convention is
+          UPPERCASE keywords and lowercase table and column names, which makes queries easy to scan. Text
+          values go in **single quotes** (`'home'`). A statement may end with `;` — `execute` accepts it
+          with or without.
+
+  - id: select
+    title: "SELECT: choosing columns"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `SELECT` lists the columns you want, in the order you want them. Each item can be a column name or
+          an **expression** — arithmetic, string concatenation with `||`, a function call — and `AS` gives
+          the result column a name (an *alias*).
+
+          ```text
+          SELECT column_or_expression [AS alias], ...
+          FROM table
+          ```
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          cur = con.execute("SELECT name, price, price * 3 AS price_for_three FROM products ORDER BY id")
+          print([col[0] for col in cur.description])
+          for row in cur:
+              print(row)
+        expectedOutput: |
+          ['name', 'price', 'price_for_three']
+          ('Notebook', 4, 12)
+          ('Pen', 2, 6)
+          ('Desk lamp', 24, 72)
+          ('Mug', 8, 24)
+          ('USB cable', 7, 21)
+          ('Headphones', 59, 177)
+          ('Gift card', 25, 75)
+        annotations:
+          - line: 14
+            text: "`price * 3` is computed for every row; `AS price_for_three` names the new column."
+          - line: 15
+            text: "`cur.description` describes the result columns; the first item of each entry is the column name."
+      - type: markdown
+        body: |
+          A few rules worth knowing early:
+
+          - **The table is not changed.** SELECT only reads; `price_for_three` exists only in this result.
+          - **`SELECT *` is for exploring.** In application code, name the columns you need. If someone adds
+            or reorders columns later, `SELECT *` silently changes what your code receives.
+          - **Integer division.** In both SQLite and PostgreSQL, dividing two integers truncates:
+            `SELECT 7 / 2` gives `3`. Write `7 / 2.0` (or cast) when you want `3.5`.
+          - **NULL spreads.** Almost any expression involving NULL is NULL: `NULL + 1` and
+            `'Gift card' || NULL` are both NULL.
+      - type: item
+        ref: select-columns
+
+  - id: where
+    title: "WHERE: choosing rows"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          `WHERE condition` keeps only the rows for which the condition is **true**. Conditions are built
+          from comparisons:
+
+          | Operator | Meaning | Example |
+          |---|---|---|
+          | `=` | equal (one `=`, not `==`) | `category = 'home'` |
+          | `<>` or `!=` | not equal (`<>` is the SQL standard) | `category <> 'home'` |
+          | `<`, `<=`, `>`, `>=` | ordering | `price >= 20` |
+
+          and combined with `AND`, `OR` and `NOT`. **Precedence matters:** `NOT` binds tightest, then `AND`,
+          then `OR` — exactly like `not`, `and`, `or` in Python. So `a OR b AND c` means `a OR (b AND c)`.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          def show(sql):
+              for row in con.execute(sql):
+                  print(row)
+
+          print("Intended: home or electronics, with more than 10 in stock")
+          print("Without parentheses:")
+          show("""SELECT name, category, stock FROM products
+                  WHERE category = 'home' OR category = 'electronics' AND stock > 10
+                  ORDER BY id""")
+          print("With parentheses:")
+          show("""SELECT name, category, stock FROM products
+                  WHERE (category = 'home' OR category = 'electronics') AND stock > 10
+                  ORDER BY id""")
+        expectedOutput: |
+          Intended: home or electronics, with more than 10 in stock
+          Without parentheses:
+          ('Desk lamp', 'home', 15)
+          ('Mug', 'home', None)
+          ('USB cable', 'electronics', 80)
+          With parentheses:
+          ('Desk lamp', 'home', 15)
+          ('USB cable', 'electronics', 80)
+        caption: The Mug slips into the first result because AND was applied before OR.
+        annotations:
+          - line: 21
+            text: "Read as `home OR (electronics AND stock > 10)` — every home product passes, whatever its stock."
+          - line: 25
+            text: Parentheses make the intent explicit. Use them whenever you mix AND with OR.
+      - type: item
+        ref: predict-and-or
+      - type: markdown
+        body: |
+          Three shorthands make common conditions easier to read:
+
+          - **`IN (...)`** — matches any value in a list: `category IN ('home', 'electronics')` is the same
+            as two `=` tests joined by OR.
+          - **`BETWEEN low AND high`** — a range, **inclusive at both ends**: `price BETWEEN 7 AND 25` means
+            `price >= 7 AND price <= 25`.
+          - **`LIKE pattern`** — simple text patterns: `%` matches any run of characters (including none)
+            and `_` matches exactly one character.
+
+          Each has a `NOT` form: `NOT IN`, `NOT BETWEEN`, `NOT LIKE`.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          def show(sql):
+              for row in con.execute(sql):
+                  print(row)
+
+          show("SELECT name, category FROM products WHERE category IN ('home', 'electronics') ORDER BY id")
+          print("--")
+          show("SELECT name, price FROM products WHERE price BETWEEN 7 AND 25 ORDER BY price")
+          print("--")
+          show("SELECT name FROM products WHERE name LIKE 'p%' ORDER BY id")
+          print("--")
+          show("SELECT name FROM products WHERE name LIKE '_ug' ORDER BY id")
+        expectedOutput: |
+          ('Desk lamp', 'home')
+          ('Mug', 'home')
+          ('USB cable', 'electronics')
+          ('Headphones', 'electronics')
+          --
+          ('USB cable', 7)
+          ('Mug', 8)
+          ('Desk lamp', 24)
+          ('Gift card', 25)
+          --
+          ('Pen',)
+          --
+          ('Mug',)
+        annotations:
+          - line: 20
+            text: Both 7 and 25 are included — BETWEEN is inclusive.
+          - line: 22
+            text: "Lowercase `'p%'` matched `Pen`: SQLite's LIKE ignores case for ASCII letters by default."
+          - line: 24
+            text: "`_` is exactly one character, so `'_ug'` matches Mug but would not match Plug."
+      - type: callout
+        variant: warning
+        title: "PostgreSQL difference: LIKE is case-sensitive"
+        body: |
+          In PostgreSQL, `name LIKE 'p%'` would match **nothing** here, because `P` and `p` differ.
+          PostgreSQL offers `ILIKE` for case-insensitive matching. The portable way, which behaves the same
+          in both databases, is to lower-case first: `lower(name) LIKE 'p%'`.
+
+  - id: null-values
+    title: "NULL and three-valued logic"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          [NULL](glossary:null-value) means **unknown or missing** — not zero and not an empty string. The
+          Headphones have a stock of `0` (we *know* there are none); the Mug's stock is `NULL` (nobody has
+          counted).
+
+          Because NULL is unknown, asking "is the Mug's stock greater than 10?" has no true-or-false answer.
+          SQL therefore uses [three-valued logic](glossary:three-valued-logic): a condition is **TRUE**,
+          **FALSE** or **UNKNOWN** (written NULL). Any comparison with NULL — even `NULL = NULL` — is
+          UNKNOWN. AND, OR and NOT follow the rule "UNKNOWN might be either, so the answer is known only if
+          it would be the same both ways":
+
+          | a | b | a AND b | a OR b |
+          |---|---|---|---|
+          | TRUE | UNKNOWN | UNKNOWN | TRUE |
+          | FALSE | UNKNOWN | FALSE | UNKNOWN |
+          | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+
+          and `NOT UNKNOWN` is UNKNOWN. The rule that matters most: **WHERE keeps a row only when the
+          condition is TRUE.** FALSE and UNKNOWN rows are both dropped.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          print(con.execute("SELECT NULL = NULL, 1 > NULL, NULL IS NULL").fetchone())
+          print(con.execute("SELECT NULL AND 0, NULL AND 1, NULL OR 1, NULL OR 0, NOT NULL").fetchone())
+        expectedOutput: |
+          (None, None, 1)
+          (0, None, 1, None, None)
+        caption: SQLite writes TRUE as 1, FALSE as 0 and UNKNOWN as NULL (None in Python).
+        annotations:
+          - line: 4
+            text: "`NULL = NULL` is unknown, not true. Only `IS NULL` gives a definite answer."
+          - line: 5
+            text: "FALSE AND anything is FALSE; TRUE OR anything is TRUE. Every other combination with NULL stays unknown."
+      - type: markdown
+        body: |
+          So `= NULL` can never select anything. To test for a missing value, use the special operators
+          **`IS NULL`** and **`IS NOT NULL`**, which always return TRUE or FALSE:
+      - type: item
+        ref: predict-null-compare
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          def show(sql):
+              for row in con.execute(sql):
+                  print(row)
+
+          print("category <> 'home':")
+          show("SELECT name, category FROM products WHERE category <> 'home' ORDER BY id")
+          print("...including unknown categories:")
+          show("""SELECT name, category FROM products
+                  WHERE category <> 'home' OR category IS NULL ORDER BY id""")
+        expectedOutput: |
+          category <> 'home':
+          ('Notebook', 'stationery')
+          ('Pen', 'stationery')
+          ('USB cable', 'electronics')
+          ('Headphones', 'electronics')
+          ...including unknown categories:
+          ('Notebook', 'stationery')
+          ('Pen', 'stationery')
+          ('USB cable', 'electronics')
+          ('Headphones', 'electronics')
+          ('Gift card', None)
+        caption: The Gift card is not 'home', yet the first query drops it. Why?
+        annotations:
+          - line: 19
+            text: "For the Gift card, `NULL <> 'home'` is UNKNOWN, so WHERE drops the row."
+          - line: 22
+            text: "`IS NULL` is always TRUE or FALSE, so adding it with OR brings the row back."
+      - type: item
+        ref: explain-not-equal-null
+      - type: callout
+        variant: note
+        title: Null-safe comparisons and defaults
+        body: |
+          The SQL standard has a null-safe comparison, `a IS DISTINCT FROM b`, which treats two NULLs as
+          equal and NULL versus a value as different. PostgreSQL supports it, and so does SQLite from version
+          3.39 (SQLite also accepts the shorter `a IS NOT b`). To substitute a default for a missing value,
+          use `COALESCE(stock, 0)`, which returns the first non-NULL argument. Only do that when "missing"
+          really means zero for your question.
+
+  - id: order-limit
+    title: ORDER BY, LIMIT and DISTINCT
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **`ORDER BY`** sorts the result: `ASC` (ascending, the default) or `DESC`. List several columns to
+          break ties: `ORDER BY category, price DESC` sorts by category, then by price (highest first)
+          within each category.
+
+          **Without ORDER BY, row order is not guaranteed.** A small table often *looks* sorted, but the
+          database may return rows in any order — a different plan, an index or a later version can change
+          it. If the order matters, say so.
+
+          **`LIMIT n`** keeps the first n rows of the sorted result, and **`OFFSET m`** skips m rows first
+          (`LIMIT 10 OFFSET 20` is page 3 of a 10-per-page list). LIMIT without ORDER BY returns an
+          arbitrary n rows, not "the first" ones.
+
+          **`DISTINCT`** removes duplicate rows from the result. It compares whole result rows, and it treats
+          NULLs as equal to each other, so all the NULLs collapse into one row.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          def show(sql):
+              for row in con.execute(sql):
+                  print(row)
+
+          show("SELECT category, name, price FROM products ORDER BY category, price DESC")
+          print("-- top 3 by price")
+          show("SELECT name, price FROM products ORDER BY price DESC LIMIT 3")
+          print("-- the next 3")
+          show("SELECT name, price FROM products ORDER BY price DESC LIMIT 3 OFFSET 3")
+          print("-- distinct categories")
+          show("SELECT DISTINCT category FROM products ORDER BY category NULLS LAST")
+        expectedOutput: |
+          (None, 'Gift card', 25)
+          ('electronics', 'Headphones', 59)
+          ('electronics', 'USB cable', 7)
+          ('home', 'Desk lamp', 24)
+          ('home', 'Mug', 8)
+          ('stationery', 'Notebook', 4)
+          ('stationery', 'Pen', 2)
+          -- top 3 by price
+          ('Headphones', 59)
+          ('Gift card', 25)
+          ('Desk lamp', 24)
+          -- the next 3
+          ('Mug', 8)
+          ('USB cable', 7)
+          ('Notebook', 4)
+          -- distinct categories
+          ('electronics',)
+          ('home',)
+          ('stationery',)
+          (None,)
+        annotations:
+          - line: 18
+            text: SQLite sorts NULL before every other value in ascending order, so the uncategorised Gift card comes first.
+          - line: 24
+            text: "`NULLS LAST` (SQLite 3.30+, PostgreSQL) states where NULLs go instead of relying on the default."
+      - type: callout
+        variant: warning
+        title: "PostgreSQL difference: where NULLs sort"
+        body: |
+          SQLite treats NULL as **smaller** than any value, so NULLs come first with `ASC` and last with
+          `DESC`. PostgreSQL treats NULL as **larger** than any value: NULLs come last with `ASC` and first
+          with `DESC`. If the position of NULLs matters to you, write `NULLS FIRST` or `NULLS LAST` and the
+          query behaves the same in both.
+      - type: callout
+        variant: tip
+        title: Make "top N" deterministic
+        body: |
+          If two rows tie on the sort key, their relative order is arbitrary, and with LIMIT that decides
+          which one you get. Add a unique column as the last sort key — `ORDER BY price DESC, id` — so the
+          result is the same every time. PostgreSQL also accepts the standard spelling
+          `FETCH FIRST 3 ROWS ONLY` for `LIMIT 3`.
+      - type: item
+        ref: mcq-limit-order
+
+  - id: logical-order
+    title: "Mental model: the order SQL is evaluated in"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          You **write** a query as SELECT … FROM … WHERE … ORDER BY … LIMIT, but it is **evaluated**
+          (logically) in a different order:
+
+          ```text
+          FROM  →  WHERE  →  (GROUP BY → HAVING)  →  SELECT  →  DISTINCT  →  ORDER BY  →  LIMIT / OFFSET
+          ```
+
+          Think of it as a pipeline: each clause takes the rows produced by the one before it. (GROUP BY and
+          HAVING belong to [aggregation](concept:databases.sql-aggregation), the next topic; they slot in
+          after WHERE.) Step through the pipeline for one query:
+      - type: visualization
+        component: step-diagram
+        title: "Pipeline for: SELECT name, price FROM products WHERE stock > 0 ORDER BY price DESC LIMIT 3"
+        caption: Each step receives the rows from the previous step. The payload shows the rows at that point.
+        props:
+          width: 800
+          height: 140
+          nodes:
+            - { id: from, label: FROM products, x: 80, y: 70, shape: store }
+            - { id: where, label: WHERE stock > 0, x: 240, y: 70 }
+            - { id: select, label: "SELECT name, price", x: 400, y: 70 }
+            - { id: order, label: ORDER BY price, x: 560, y: 70 }
+            - { id: limit, label: LIMIT 3, x: 720, y: 70, shape: pill }
+          edges:
+            - { id: e1, from: from, to: where }
+            - { id: e2, from: where, to: select }
+            - { id: e3, from: select, to: order }
+            - { id: e4, from: order, to: limit }
+          steps:
+            - title: FROM picks the source rows
+              body: The pipeline starts with every row of every column of `products` — 7 rows.
+              active: [from]
+              payload: |
+                (1, 'Notebook',   'stationery',  4,  120)
+                (2, 'Pen',        'stationery',  2,  500)
+                (3, 'Desk lamp',  'home',        24, 15)
+                (4, 'Mug',        'home',        8,  NULL)
+                (5, 'USB cable',  'electronics', 7,  80)
+                (6, 'Headphones', 'electronics', 59, 0)
+                (7, 'Gift card',  NULL,          25, NULL)
+            - title: WHERE keeps rows where the condition is TRUE
+              body: "Headphones (0 > 0 is FALSE) are dropped, and so are the Mug and the Gift card (NULL > 0 is UNKNOWN). 4 rows remain."
+              active: [from, e1, where]
+              payload: |
+                (1, 'Notebook',  'stationery',  4,  120)
+                (2, 'Pen',       'stationery',  2,  500)
+                (3, 'Desk lamp', 'home',        24, 15)
+                (5, 'USB cable', 'electronics', 7,  80)
+            - title: SELECT chooses and computes columns
+              body: Only now are the output columns produced. Any alias defined here did not exist while WHERE was running.
+              active: [where, e2, select]
+              payload: |
+                ('Notebook', 4)
+                ('Pen', 2)
+                ('Desk lamp', 24)
+                ('USB cable', 7)
+            - title: ORDER BY sorts the result
+              body: "`ORDER BY price DESC` sorts highest first. ORDER BY runs after SELECT, so it can use aliases defined in SELECT."
+              active: [select, e3, order]
+              payload: |
+                ('Desk lamp', 24)
+                ('USB cable', 7)
+                ('Notebook', 4)
+                ('Pen', 2)
+            - title: LIMIT cuts the sorted result
+              body: LIMIT is last, which is why "top 3" needs ORDER BY to mean anything.
+              active: [order, e4, limit]
+              payload: |
+                ('Desk lamp', 24)
+                ('USB cable', 7)
+                ('Notebook', 4)
+      - type: markdown
+        body: |
+          Here is the same pipeline written as plain Python, one line per clause, next to the real query.
+          This is a **simplified model** of the *result* SQL guarantees — the database is free to execute it
+          differently (for example, use an index instead of reading every row), as long as the answer is the
+          same.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          rows = con.execute("SELECT * FROM products").fetchall()          # FROM
+          rows = [r for r in rows if r[4] is not None and r[4] > 0]        # WHERE stock > 0
+          rows = [(r[1], r[3]) for r in rows]                              # SELECT name, price
+          rows = sorted(rows, key=lambda r: r[1], reverse=True)            # ORDER BY price DESC
+          rows = rows[:3]                                                  # LIMIT 3
+          print(rows)
+
+          sql = "SELECT name, price FROM products WHERE stock > 0 ORDER BY price DESC LIMIT 3"
+          print(con.execute(sql).fetchall())
+        expectedOutput: |
+          [('Desk lamp', 24), ('USB cable', 7), ('Notebook', 4)]
+          [('Desk lamp', 24), ('USB cable', 7), ('Notebook', 4)]
+        annotations:
+          - line: 14
+            text: "`fetchall()` returns every row as a list of tuples."
+          - line: 15
+            text: "In Python we must handle None explicitly; in SQL, `NULL > 0` being UNKNOWN does it for us."
+      - type: markdown
+        body: |
+          **Consequences you will meet in practice:**
+
+          1. **A column alias from SELECT cannot be used in WHERE** in standard SQL, because WHERE runs
+             first. ORDER BY *can* use it, because it runs after SELECT.
+          2. **LIMIT applies last**, after sorting.
+          3. **With DISTINCT, ORDER BY should only use selected columns** — PostgreSQL rejects anything else
+             with `for SELECT DISTINCT, ORDER BY expressions must appear in select list`.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          portable = """SELECT name, price * 2 AS double_price FROM products
+                        WHERE price * 2 > 40 ORDER BY double_price DESC"""
+          sqlite_only = """SELECT name, price * 2 AS double_price FROM products
+                           WHERE double_price > 40 ORDER BY double_price DESC"""
+          print(con.execute(portable).fetchall())
+          print(con.execute(sqlite_only).fetchall())
+        expectedOutput: |
+          [('Headphones', 118), ('Gift card', 50), ('Desk lamp', 48)]
+          [('Headphones', 118), ('Gift card', 50), ('Desk lamp', 48)]
+        caption: SQLite is lenient and resolves the alias in WHERE. Do not rely on it.
+        annotations:
+          - line: 14
+            text: Portable — repeat the expression in WHERE; ORDER BY may use the alias.
+          - line: 17
+            text: SQLite accepts the alias in WHERE as an extension. PostgreSQL rejects this query.
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          shop=# SELECT name, price * 2 AS double_price FROM products WHERE double_price > 40;
+          ERROR:  column "double_price" does not exist
+        caption: >-
+          What PostgreSQL's psql client reports for the second query (shown, not run — PostgreSQL cannot run
+          in the browser). To try it, install PostgreSQL locally and run the query in psql.
+      - type: item
+        ref: mcq-logical-order
+
+  - id: declarative
+    title: Declarative, not imperative
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          In an **imperative** program (your Python loops) you list the steps: loop over this, test that,
+          append, sort. In a **declarative** language you describe the result, and an engine works out the
+          steps. A database's **query planner** reads your SQL, considers different strategies — read the
+          whole table, or use an index, in which order to visit tables — estimates their cost, and runs the
+          cheapest.
+
+          You can watch SQLite change strategy without the query changing. `EXPLAIN QUERY PLAN` shows the
+          plan instead of running the query:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES
+                  (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+                  (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+                  (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+                  (7, 'Gift card', NULL, 25, NULL);
+          """)
+
+          query = "SELECT name, price FROM products WHERE category = 'home'"
+
+          def plan():
+              return [row[3] for row in con.execute("EXPLAIN QUERY PLAN " + query)]
+
+          print(plan(), sorted(con.execute(query)))
+          con.execute("CREATE INDEX idx_products_category ON products (category)")
+          print(plan(), sorted(con.execute(query)))
+        expectedOutput: |
+          ['SCAN products'] [('Desk lamp', 24), ('Mug', 8)]
+          ['SEARCH products USING INDEX idx_products_category (category=?)'] [('Desk lamp', 24), ('Mug', 8)]
+        caption: Same query, same answer, different strategy. SCAN reads every row; SEARCH jumps to matches through the index.
+        annotations:
+          - line: 17
+            text: Each plan row is a tuple; its fourth item is the human-readable description.
+          - line: 20
+            text: An index is a sorted lookup structure on a column. The query text did not change.
+      - type: markdown
+        body: |
+          This is why SQL is so durable: the same query keeps working — and often gets faster — as data
+          grows and indexes are added. The exact plan text is SQLite-specific; PostgreSQL has its own
+          `EXPLAIN` output, which you will learn to read in [query plans](concept:databases.query-plans).
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **SQLite** compiles each SQL statement into a small program for its own virtual machine (the
+          *VDBE*) and then runs that program step by step; `EXPLAIN` (without `QUERY PLAN`) lists its
+          instructions. Python's `sqlite3` module keeps a cache of recently compiled statements so repeated
+          queries skip the compile step.
+
+          **PostgreSQL** runs a query through a parser, a rewriter (which expands views), a cost-based
+          planner that uses statistics about the data, and an executor. Its planner can choose different
+          join algorithms and index strategies for the same SQL depending on table sizes.
+
+          **Typing differs.** SQLite uses *flexible typing*: a column's declared type is a preference (an
+          "affinity"), and by default SQLite will store a text value in an INTEGER column if it cannot be
+          converted. `STRICT` tables (SQLite 3.37+) enforce types. PostgreSQL is strictly typed and rejects
+          the insert.
+
+          **Quirks to avoid.** SQLite accepts `==` as a synonym for `=`, and — for historical compatibility —
+          treats a double-quoted word that is not a column name as a string literal, so
+          `WHERE category = "home"` happens to work. In PostgreSQL and the SQL standard, double quotes always
+          mean an identifier (a table or column name), so the same query fails with
+          `column "home" does not exist`. Use single quotes for text and you will never hit this.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE TABLE t (category TEXT)")
+          con.execute("INSERT INTO t VALUES ('home')")
+          print(con.execute('SELECT count(*) FROM t WHERE category = "home"').fetchone())
+          print(con.execute("SELECT count(*) FROM t WHERE category = 'home'").fetchone())
+        expectedOutput: |
+          (1,)
+          (1,)
+        caption: Both work in SQLite, but only the single-quoted version is standard SQL.
+        annotations:
+          - line: 6
+            text: '"home" is not a column, so SQLite falls back to treating it as text. PostgreSQL would raise an error.'
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `sqlite3.OperationalError: no such column: nme` | Typo, or the column belongs to another table | Check the spelling; list columns with `PRAGMA table_info(products)`. |
+          | `OperationalError: no such table: product` | Wrong table name, or a fresh `:memory:` database that was never filled | Check the name; remember every `connect(":memory:")` starts empty. |
+          | `OperationalError: near "Brien": syntax error` | An apostrophe inside a string literal: `'O'Brien'` | Double it inside SQL: `'O''Brien'`. From Python, pass values as parameters (next lessons). |
+          | `OperationalError: incomplete input` | The statement stops half-way, e.g. ends with `WHERE` | Finish the clause, or remove it. |
+          | `WHERE x = NULL` returns nothing | Comparisons with NULL are UNKNOWN | Use `IS NULL` / `IS NOT NULL`. |
+          | Rows with NULL vanish from `<>` or `NOT IN` filters | UNKNOWN rows are dropped by WHERE | Add `OR x IS NULL`, or use `IS DISTINCT FROM`. |
+          | More rows than expected with AND and OR | AND binds tighter than OR | Add parentheses around the OR part. |
+          | The "first 10 rows" change between runs | LIMIT without ORDER BY | Add ORDER BY with a unique tie-breaker. |
+          | `7 / 2` gives `3` | Integer division | Use `7 / 2.0` or `CAST(x AS REAL)`. |
+          | Works in SQLite, fails in PostgreSQL | Double-quoted strings, alias in WHERE, case-insensitive LIKE | Use single quotes, repeat the expression, use `lower(...)` or `ILIKE`. |
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price INTEGER)")
+          print(con.execute("SELECT nme, price FROM products").fetchall())
+        expectError: OperationalError
+        caption: Run it and read the last line of the error. SQLite names the column it could not find.
+      - type: markdown
+        body: |
+          SQL errors from SQLite arrive in Python as `sqlite3.OperationalError` (problems with the SQL text
+          or the database) or `sqlite3.IntegrityError` (a constraint was violated). The message after the
+          colon is SQLite's own description — usually precise enough to point at the exact word.
+      - type: item
+        ref: debug-null-stock
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          In these exercises you write the query in a string called `QUERY`. The checks run your query
+          against the lesson's table **and** against a different table with the same columns, so the query
+          must really filter and sort — typing the expected rows will not pass.
+      - type: item
+        ref: code-cheap-in-stock
+      - type: item
+        ref: parsons-top-cheap
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `SELECT cols FROM table` reads data; expressions and `AS` aliases create computed columns.
+          - `WHERE` keeps rows whose condition is **TRUE**: `=`, `<>`, `<`, `>`, `AND`, `OR`, `NOT`, `IN`,
+            `BETWEEN` (inclusive), `LIKE` (`%` any run, `_` one char). Parenthesise OR inside AND.
+          - NULL means unknown. Comparisons with NULL are UNKNOWN, so test with `IS NULL` / `IS NOT NULL`.
+          - `ORDER BY` sorts (add a unique tie-breaker), `LIMIT`/`OFFSET` cut the sorted result,
+            `DISTINCT` removes duplicate rows. Without ORDER BY, order is not guaranteed.
+          - Logical order: FROM → WHERE → (GROUP BY → HAVING) → SELECT → DISTINCT → ORDER BY → LIMIT.
+          - SQL is declarative: the planner chooses how to execute, so the same query benefits from indexes.
+          - SQLite vs PostgreSQL: LIKE case sensitivity, NULL sort position, aliases in WHERE, double quotes.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Why can't I use a SELECT alias in WHERE?" — explain the logical evaluation order (WHERE runs before
+          SELECT; ORDER BY runs after). "Why does `WHERE x = NULL` return nothing?" — three-valued logic.
+          Be ready to write a filter-sort-limit query on a whiteboard and to say why LIMIT without ORDER BY
+          is a bug.
+
+items:
+  - id: select-columns
+    type: mcq
+    skill: recognition
+    prompt: Which query returns only the **name** and **price** of every product, with the most expensive first?
+    explanation: >-
+      SELECT lists the output columns, FROM names the table, and ORDER BY ... DESC sorts from highest to
+      lowest. WHERE filters rows; it does not choose columns.
+    options:
+      - id: a
+        text: "`SELECT name, price FROM products ORDER BY price DESC`"
+        correct: true
+        feedback: Correct — two columns, every row, sorted by price from highest to lowest.
+      - id: b
+        text: "`SELECT * FROM products ORDER BY price DESC`"
+        feedback: "`*` returns every column, not just name and price."
+      - id: c
+        text: "`SELECT name, price FROM products ORDER BY price`"
+        feedback: ORDER BY defaults to ascending (ASC), so this lists the cheapest first.
+      - id: d
+        text: "`SELECT products FROM name, price WHERE price DESC`"
+        feedback: The columns go after SELECT and the table after FROM; DESC belongs to ORDER BY, not WHERE.
+
+  - id: predict-and-or
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: |
+      Using the lesson's `products` table, what does this print? Apply operator precedence carefully —
+      and remember what happens to NULL.
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      query = """
+          SELECT name FROM products
+          WHERE category = 'stationery' OR price > 20 AND stock < 100
+          ORDER BY id
+      """
+      print([row[0] for row in con.execute(query)])
+    answer: "['Notebook', 'Pen', 'Desk lamp', 'Headphones']"
+    explanation: >-
+      AND binds tighter than OR, so the condition is `category = 'stationery' OR (price > 20 AND stock < 100)`.
+      Notebook and Pen pass the first part. Desk lamp (24, 15) and Headphones (59, 0) pass the second. The
+      Gift card has price 25 but stock NULL, so `stock < 100` is UNKNOWN; its category is NULL too, so the
+      whole condition is UNKNOWN and the row is dropped.
+    wrongAnswers:
+      - answer: "['Desk lamp', 'Headphones']"
+        feedback: >-
+          That reads the condition left to right, as `(stationery OR price > 20) AND stock < 100`. SQL applies
+          AND first, so the stationery products pass on their own, whatever their stock.
+      - answer: "['Notebook', 'Pen', 'Desk lamp', 'Headphones', 'Gift card']"
+        feedback: >-
+          The Gift card's stock is NULL, and `NULL < 100` is UNKNOWN, not TRUE. Its category is NULL as well,
+          so nothing makes the condition TRUE and WHERE drops the row.
+      - answer: "['Notebook', 'Pen']"
+        feedback: >-
+          The OR also lets through rows where `price > 20 AND stock < 100` — the Desk lamp (24, 15) and the
+          Headphones (59, 0).
+
+  - id: predict-null-compare
+    type: predict-output
+    skill: prediction
+    prompt: What does this print? (Same `products` table as the lesson.)
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      equals = con.execute("SELECT name FROM products WHERE stock = NULL").fetchall()
+      is_null = con.execute("SELECT name FROM products WHERE stock IS NULL").fetchall()
+      print(len(equals), len(is_null))
+    answer: "0 2"
+    explanation: >-
+      `stock = NULL` is UNKNOWN for every row — even for rows whose stock is NULL — so WHERE keeps nothing.
+      `stock IS NULL` is TRUE for the Mug and the Gift card. The Headphones' stock is 0, a known value, not NULL.
+    wrongAnswers:
+      - answer: "2 2"
+        feedback: "`= NULL` never matches: comparing anything with NULL, including NULL itself, gives UNKNOWN. Only IS NULL works."
+      - answer: "0 3"
+        feedback: The Headphones have stock 0. Zero is a known number, not a missing value, so IS NULL is FALSE for them.
+      - answer: "7 2"
+        feedback: UNKNOWN is not TRUE, and WHERE keeps only TRUE rows, so `= NULL` returns no rows rather than all of them.
+
+  - id: explain-not-equal-null
+    type: explain
+    skill: explanation
+    prompt: >-
+      A teammate is puzzled: "The Gift card's category is NULL, which is obviously not 'home', so why
+      doesn't `WHERE category <> 'home'` return it?" Explain what happens, and give a fix.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says NULL means unknown, so comparing it with 'home' gives UNKNOWN rather than TRUE or FALSE.
+      - States that WHERE keeps only rows where the condition is TRUE, so UNKNOWN rows are dropped.
+      - "Gives a correct fix, such as `category <> 'home' OR category IS NULL` (or `IS DISTINCT FROM`)."
+      - "Notes that `= NULL` / `<> NULL` never work and IS NULL / IS NOT NULL must be used to test for missing values."
+    modelAnswer: |
+      NULL does not mean "no category"; it means "we don't know the category". It could be 'home' for all
+      the database knows, so `NULL <> 'home'` evaluates to UNKNOWN, not TRUE. WHERE keeps a row only when its
+      condition is TRUE, so the Gift card is dropped. To include unknown categories, say so explicitly:
+      `WHERE category <> 'home' OR category IS NULL`, or use the null-safe `category IS DISTINCT FROM 'home'`
+      (PostgreSQL, and SQLite 3.39+). The same reasoning is why `= NULL` never matches and you must use
+      IS NULL / IS NOT NULL.
+
+  - id: mcq-limit-order
+    type: mcq
+    skill: explanation
+    prompt: |
+      A dashboard shows "the 5 newest sign-ups" with `SELECT email FROM users LIMIT 5`. In testing it always
+      showed the right users. Is the query correct?
+    explanation: >-
+      Without ORDER BY, SQL guarantees no row order, so LIMIT 5 returns any 5 rows. It may look right on a
+      small test table (often insertion order) and silently change as the table grows, rows are updated or
+      indexes are added. "Newest" needs `ORDER BY created_at DESC, id DESC LIMIT 5` (or similar).
+    options:
+      - id: a
+        text: Yes — rows are stored in insertion order, so LIMIT 5 returns the first five inserted.
+        feedback: Tables have no guaranteed order. What you saw in testing is an accident of the current physical layout and plan.
+      - id: b
+        text: No — without ORDER BY, LIMIT returns an arbitrary 5 rows; it needs an ORDER BY on the sign-up time (plus a tie-breaker).
+        correct: true
+        feedback: Right. LIMIT is applied to the sorted result, and only ORDER BY defines that sort.
+      - id: c
+        text: No — LIMIT must come before FROM.
+        feedback: LIMIT is written at the end of the query. The problem is the missing ORDER BY, not the clause position.
+      - id: d
+        text: Yes, as long as the table has a primary key.
+        feedback: A primary key guarantees uniqueness, not the order in which rows are returned.
+
+  - id: mcq-logical-order
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      This query works in SQLite but PostgreSQL rejects it with `column "total" does not exist`:
+
+      ```sql
+      SELECT price * stock AS total FROM products WHERE total > 100 ORDER BY total;
+      ```
+
+      Why?
+    explanation: >-
+      WHERE is evaluated before SELECT, so when WHERE runs the alias `total` has not been defined yet.
+      ORDER BY runs after SELECT, so the alias is fine there. Repeat the expression in WHERE
+      (`WHERE price * stock > 100`) or compute it in a subquery or CTE. SQLite accepts the alias in WHERE
+      as a non-standard extension.
+    options:
+      - id: a
+        text: WHERE is evaluated before SELECT, so the alias does not exist yet when WHERE runs.
+        correct: true
+        feedback: Exactly. Repeat the expression in WHERE; ORDER BY may keep using the alias.
+      - id: b
+        text: Aliases can never be used anywhere except in the SELECT list.
+        feedback: ORDER BY can use SELECT aliases, because it is evaluated after SELECT.
+      - id: c
+        text: PostgreSQL requires aliases to be written in double quotes.
+        feedback: Double quotes are for identifiers with unusual characters or case; quoting would not change the evaluation order.
+      - id: d
+        text: "`total` is a reserved word in PostgreSQL."
+        feedback: It is not reserved; the same error appears with any alias name.
+
+  - id: code-cheap-in-stock
+    type: code
+    skill: implementation
+    prompt: |
+      Write `QUERY` so that it returns the **name and price** of products that cost **less than 25** and
+      have **stock greater than 0**, most expensive first.
+
+      On the lesson's table the program should print:
+
+      ```text
+      ('Desk lamp', 24)
+      ('USB cable', 7)
+      ('Notebook', 4)
+      ('Pen', 2)
+      ```
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT * FROM products
+      """
+
+      for row in con.execute(QUERY):
+          print(row)
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT name, price
+          FROM products
+          WHERE price < 25 AND stock > 0
+          ORDER BY price DESC
+      """
+
+      for row in con.execute(QUERY):
+          print(row)
+    expectedOutput: |
+      ('Desk lamp', 24)
+      ('USB cable', 7)
+      ('Notebook', 4)
+      ('Pen', 2)
+    tests:
+      - name: QUERY returns the right rows on the lesson table
+        code: |
+          assert defined("QUERY"), "Keep the variable QUERY holding your SQL."
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Desk lamp", 24), ("USB cable", 7), ("Notebook", 4), ("Pen", 2)], (
+              f"Your query returned {rows}. Select only name and price, keep price < 25 AND stock > 0, "
+              "and sort with ORDER BY price DESC."
+          )
+      - name: QUERY works on a different table (it really filters in SQL)
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES (1, 'Kettle', 'home', 30, 4), (2, 'Stapler', 'office', 9, 0),
+                  (3, 'Torch', 'outdoor', 12, 6), (4, 'Map', NULL, 3, NULL), (5, 'Ruler', 'office', 1, 40);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Torch", 12), ("Ruler", 1)], (
+              f"On a different products table your query returned {got}, but it should return "
+              "[('Torch', 12), ('Ruler', 1)]. Filter with WHERE instead of relying on specific names or ids."
+          )
+      - name: prints each row
+        code: |
+          assert output_lines() == ["('Desk lamp', 24)", "('USB cable', 7)", "('Notebook', 4)", "('Pen', 2)"], (
+              f"Print each row of the result (the loop at the bottom does this). Your program printed {output()!r}."
+          )
+    hints:
+      - "Start with the columns: `SELECT name, price FROM products`."
+      - "Both conditions must hold, so join them with AND: `WHERE price < 25 AND stock > 0`."
+      - "Most expensive first means descending order: `ORDER BY price DESC`."
+    feedback:
+      - when: { outputContains: "Headphones" }
+        message: The Headphones cost 59 and have no stock, so a WHERE clause should remove them. Is your WHERE clause missing?
+      - when: { outputContains: "('Pen', 2)\n('Notebook', 4)" }
+        message: The rows are sorted cheapest first. Add DESC after ORDER BY price.
+      - when: { errorType: OperationalError }
+        message: SQLite could not run the query. Read the message after the colon — it names the word it did not understand.
+    explanation: >-
+      `WHERE price < 25 AND stock > 0` keeps four rows. The Mug and the Gift card disappear because their stock
+      is NULL (`NULL > 0` is UNKNOWN), and the Headphones fail both tests. `ORDER BY price DESC` then sorts
+      them from most to least expensive.
+
+  - id: debug-null-stock
+    type: debug
+    skill: debugging
+    prompt: |
+      The warehouse wants the **names of products whose stock has not been recorded**, in id order. This
+      query returns nothing at all. Find the bug and fix it.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = "SELECT name FROM products WHERE stock = NULL ORDER BY id"
+
+      for row in con.execute(QUERY):
+          print(row)
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = "SELECT name FROM products WHERE stock IS NULL ORDER BY id"
+
+      for row in con.execute(QUERY):
+          print(row)
+    expectedOutput: |
+      ('Mug',)
+      ('Gift card',)
+    tests:
+      - name: returns the products with unknown stock
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Mug",), ("Gift card",)], f"Expected [('Mug',), ('Gift card',)] but the query returned {rows}."
+      - name: works on other data
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES (1, 'Kettle', 'home', 30, NULL), (2, 'Stapler', 'office', 9, 0),
+                  (3, 'Torch', 'outdoor', 12, NULL);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Kettle",), ("Torch",)], f"On other data the query returned {got}. Test the stock column for NULL rather than naming products."
+      - name: does not compare with = NULL
+        code: |
+          import re
+          assert not re.search(r"(?<![!<>])=\s*NULL", QUERY, re.IGNORECASE), "Comparing with = NULL is never TRUE. Use IS NULL."
+    hints:
+      - Run the starter. What is `NULL = NULL` in SQL — TRUE, FALSE or something else?
+      - Comparisons with NULL are UNKNOWN, and WHERE drops UNKNOWN rows. SQL has a special operator for this test.
+      - "Replace `= NULL` with `IS NULL`."
+    feedback:
+      - when: { outputContains: "Headphones" }
+        message: The Headphones' stock is 0, which is a known number. Only missing values are NULL.
+      - when: { codeMatches: "stock\\s*=\\s*0" }
+        message: Zero is not the same as unknown. Test for NULL with IS NULL.
+    explanation: >-
+      `stock = NULL` evaluates to UNKNOWN for every row, so WHERE keeps none of them. `stock IS NULL` is TRUE
+      exactly when the value is missing, which selects the Mug and the Gift card.
+
+  - id: parsons-top-cheap
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines so the program prints the names of the **two most expensive items that cost less
+      than 30**: `[('cable',), ('mug',)]`. The SQL clauses must be in the order SQL requires. Two lines are
+      distractors.
+    solution: |
+      import sqlite3
+      con = sqlite3.connect(":memory:")
+      con.executescript("CREATE TABLE items (name TEXT, price INTEGER); INSERT INTO items VALUES ('pen', 5), ('lamp', 50), ('mug', 15), ('cable', 25);")
+      query = """
+      SELECT name
+      FROM items
+      WHERE price < 30
+      ORDER BY price DESC
+      LIMIT 2
+      """
+      print(con.execute(query).fetchall())
+    distractors:
+      - WHERE price > 30
+      - ORDER BY price ASC
+    expectedOutput: |
+      [('cable',), ('mug',)]
+    explanation: >-
+      The written order is SELECT, FROM, WHERE, ORDER BY, LIMIT. WHERE keeps pen, mug and cable (all under 30);
+      ORDER BY price DESC puts cable (25) before mug (15) before pen (5); LIMIT 2 keeps the first two.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-between
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print? (Same `products` table as the lesson.)
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      query = """SELECT name FROM products
+                 WHERE price BETWEEN 4 AND 25 AND category <> 'home'
+                 ORDER BY price DESC"""
+      print([row[0] for row in con.execute(query)])
+    answer: "['USB cable', 'Notebook']"
+    explanation: >-
+      BETWEEN 4 AND 25 is inclusive: Notebook (4), USB cable (7), Mug (8), Desk lamp (24) and Gift card (25).
+      `category <> 'home'` removes the Mug and the Desk lamp, and is UNKNOWN for the Gift card's NULL category,
+      so it is removed too. Sorted by price descending: USB cable, Notebook.
+    wrongAnswers:
+      - answer: "['Gift card', 'USB cable', 'Notebook']"
+        feedback: "The Gift card's category is NULL, so `NULL <> 'home'` is UNKNOWN and WHERE drops the row."
+      - answer: "['USB cable']"
+        feedback: BETWEEN includes both ends, so the Notebook at exactly 4 is inside the range.
+      - answer: "['Notebook', 'USB cable']"
+        feedback: ORDER BY price DESC puts the higher price (USB cable, 7) first.
+
+  - id: m-mcq-null-logic
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: Which WHERE clause returns the products whose stock is **unknown or below 10**?
+    explanation: >-
+      `stock < 10` handles known values; rows with NULL stock make it UNKNOWN, so they need their own
+      `IS NULL` test joined with OR.
+    options:
+      - id: a
+        text: "`WHERE stock < 10 OR stock = NULL`"
+        feedback: "`stock = NULL` is never TRUE, so this behaves like `stock < 10` alone."
+      - id: b
+        text: "`WHERE stock < 10 OR stock IS NULL`"
+        correct: true
+        feedback: Correct. IS NULL is TRUE for missing values, and OR combines the two cases.
+      - id: c
+        text: "`WHERE NOT stock >= 10`"
+        feedback: For NULL stock, `stock >= 10` is UNKNOWN and NOT UNKNOWN is still UNKNOWN, so those rows are dropped.
+      - id: d
+        text: "`WHERE stock < 10 AND stock IS NULL`"
+        feedback: No row can be both below 10 and unknown, so this returns nothing.
+
+  - id: m-tf-alias-order
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: in PostgreSQL, `SELECT price * 2 AS doubled FROM products ORDER BY doubled` is valid,
+      because ORDER BY is evaluated after SELECT.
+    answer: true
+    explanation: >-
+      ORDER BY runs after SELECT in the logical order, so it can refer to output column aliases. It is WHERE
+      (evaluated before SELECT) that cannot use them.
+
+  - id: m-code-report
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      The shop wants to check its **home** and **electronics** products that are **not out of stock**.
+      Out of stock means stock is exactly 0. Products with **unknown** stock must be **included**, because
+      someone needs to count them. Return only the `name` column, sorted by name A to Z.
+
+      On the lesson's table the result is `[('Desk lamp',), ('Mug',), ('USB cable',)]`.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT name FROM products
+      """
+
+      print(con.execute(QUERY).fetchall())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT name FROM products
+          WHERE category IN ('home', 'electronics')
+            AND (stock <> 0 OR stock IS NULL)
+          ORDER BY name
+      """
+
+      print(con.execute(QUERY).fetchall())
+    expectedOutput: |
+      [('Desk lamp',), ('Mug',), ('USB cable',)]
+    tests:
+      - name: correct rows on the lesson table
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Desk lamp",), ("Mug",), ("USB cable",)], (
+              f"Your query returned {rows}. Keep home and electronics products, drop stock = 0, "
+              "keep NULL stock, and ORDER BY name."
+          )
+      - name: correct rows on a different table
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES (1, 'Kettle', 'home', 30, 0), (2, 'Radio', 'electronics', 45, NULL),
+                  (3, 'Toaster', 'home', 20, 3), (4, 'Map', NULL, 3, NULL), (5, 'Cable', 'electronics', 5, 9),
+                  (6, 'Torch', 'outdoor', 12, 6);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Cable",), ("Radio",), ("Toaster",)], (
+              f"On a different table your query returned {got}; expected [('Cable',), ('Radio',), ('Toaster',)]. "
+              "Check the NULL handling and the parentheses around the OR."
+          )
+    hints:
+      - "Two categories: `category IN ('home', 'electronics')`."
+      - "`stock <> 0` is UNKNOWN when stock is NULL, so those rows need `OR stock IS NULL`."
+      - "Mixing AND with OR? Put the OR part in parentheses: `AND (stock <> 0 OR stock IS NULL)`."
+    feedback:
+      - when: { outputContains: "Headphones" }
+        message: The Headphones have stock 0, so they are out of stock and should be excluded.
+      - when: { outputEquals: "[('Desk lamp',), ('USB cable',)]\n" }
+        message: The Mug is missing. Its stock is NULL, and `stock <> 0` is UNKNOWN for NULL — add an IS NULL test.
+      - when: { outputContains: "Gift card" }
+        message: "The Gift card's category is NULL, not home or electronics. Check your parentheses: AND binds tighter than OR."
+    explanation: >-
+      `category IN ('home', 'electronics')` picks the categories. `stock <> 0` alone would drop the Mug because
+      `NULL <> 0` is UNKNOWN, so `OR stock IS NULL` adds unknown stock back — and the parentheses keep that OR
+      from swallowing the category test.
+
+  - id: m-debug-precedence
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This query should list **home or electronics products that cost less than 10**, but it also returns the
+      Desk lamp, which costs 24. Fix the query.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT name, price FROM products
+          WHERE category = 'home' OR category = 'electronics' AND price < 10
+          ORDER BY id
+      """
+
+      print(con.execute(QUERY).fetchall())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                 category TEXT, price INTEGER NOT NULL, stock INTEGER);
+          INSERT INTO products VALUES
+              (1, 'Notebook', 'stationery', 4, 120),  (2, 'Pen', 'stationery', 2, 500),
+              (3, 'Desk lamp', 'home', 24, 15),       (4, 'Mug', 'home', 8, NULL),
+              (5, 'USB cable', 'electronics', 7, 80), (6, 'Headphones', 'electronics', 59, 0),
+              (7, 'Gift card', NULL, 25, NULL);
+      """)
+
+      QUERY = """
+          SELECT name, price FROM products
+          WHERE (category = 'home' OR category = 'electronics') AND price < 10
+          ORDER BY id
+      """
+
+      print(con.execute(QUERY).fetchall())
+    expectedOutput: |
+      [('Mug', 8), ('USB cable', 7)]
+    tests:
+      - name: correct rows
+        code: |
+          rows = con.execute(QUERY).fetchall()
+          assert rows == [("Mug", 8), ("USB cable", 7)], f"Expected [('Mug', 8), ('USB cable', 7)] but got {rows}."
+      - name: works on other data
+        code: |
+          import sqlite3
+          other = sqlite3.connect(":memory:")
+          other.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+                                     category TEXT, price INTEGER NOT NULL, stock INTEGER);
+              INSERT INTO products VALUES (1, 'Sofa', 'home', 300, 2), (2, 'Plug', 'electronics', 3, 50),
+                  (3, 'Candle', 'home', 6, 9), (4, 'Laptop', 'electronics', 900, 1), (5, 'Pin', 'office', 1, 99);
+          """)
+          got = other.execute(QUERY).fetchall()
+          assert got == [("Plug", 3), ("Candle", 6)], f"On other data the query returned {got}. The price test must apply to both categories."
+    hints:
+      - Which runs first, AND or OR?
+      - "As written, the query means `home OR (electronics AND price < 10)`."
+      - Put parentheses around the two category tests (or use `category IN (...)`).
+    feedback:
+      - when: { outputContains: "Desk lamp" }
+        message: "AND binds tighter than OR, so every home product still passes. Group the OR in parentheses."
+    explanation: >-
+      Without parentheses SQL reads `home OR (electronics AND price < 10)`, so every home product passes
+      regardless of price. `(category = 'home' OR category = 'electronics') AND price < 10` — or
+      `category IN ('home', 'electronics') AND price < 10` — applies the price test to both.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-between, m-mcq-null-logic, m-tf-alias-order, m-code-report, m-debug-precedence]
+
+cheatsheet: |
+  ```sql
+  SELECT name, price * 2 AS doubled        -- columns and expressions; AS names them
+  FROM products
+  WHERE (category = 'home' OR category = 'electronics')   -- parenthesise OR inside AND
+    AND price BETWEEN 5 AND 25             -- inclusive range
+    AND name LIKE 'm%'                      -- % = any run, _ = one char
+    AND stock IS NOT NULL                   -- never "= NULL"
+  ORDER BY price DESC, id                   -- unique tie-breaker last
+  LIMIT 10 OFFSET 20;                       -- page 3 of 10
+  SELECT DISTINCT category FROM products;   -- one row per distinct value (NULLs collapse)
+  ```
+  - Logical order: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT
+  - WHERE keeps only TRUE rows; any comparison with NULL is UNKNOWN
+  - SQLite vs PostgreSQL: LIKE case-insensitive vs case-sensitive (ILIKE) · NULLs sort first vs last (ASC) · SQLite allows SELECT aliases in WHERE, PostgreSQL does not
+  - Python: `con = sqlite3.connect(":memory:")` · `con.execute(sql).fetchall()` → list of tuples, NULL → None

@@ -1,0 +1,215 @@
+id: databases.indexes
+concept: databases.indexes
+title: Indexes
+subtitle: B-tree indexes make lookups and sorts fast at the cost of storage and slower writes; column order in composite
+  indexes matters
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: B-tree indexes make lookups and sorts fast at the cost of storage and slower writes; column order in composite
+  indexes matters.
+objectives:
+- Explain the core model behind indexes.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL: Indexes'
+  url: https://www.postgresql.org/docs/current/indexes.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: Multicolumn Indexes'
+  url: https://www.postgresql.org/docs/current/indexes-multicolumn.html
+  publisher: PostgreSQL Global Development Group
+- title: Use The Index, Luke (free book on SQL indexing)
+  url: https://use-the-index-luke.com/
+  publisher: Markus Winand
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: B-tree indexes make lookups and sorts fast at the cost of storage and slower writes; column order in composite
+      indexes matters. Without an index the database must read every row to find matches; with the right index,
+      a lookup in a table of millions of rows touches only a handful of pages.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on
+      the indexed columns take O(log n) steps instead of a full scan.
+
+      - Column order in a composite index matters: an index on `(user_id, created_at)` serves `WHERE user_id = ?`
+      and `WHERE user_id = ? ORDER BY created_at`, but not `WHERE created_at > ?` alone (the leftmost-prefix rule).
+
+      - Primary keys and UNIQUE constraints create indexes automatically; in PostgreSQL, foreign keys do not.
+
+      - Every index slows down inserts and updates and uses storage, so add indexes for real query patterns and
+      drop unused ones.
+
+      - Other index kinds include GIN (jsonb, arrays, full-text search), GiST, BRIN (very large, naturally ordered
+      tables), expression indexes such as `lower(email)`, and partial indexes such as `WHERE deleted_at IS NULL`.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- An index is not always used; when a query returns a large share of the table a sequential scan is often
+      faster, and the planner decides.
+
+      - Wrapping the column in a function, as in `WHERE lower(email) = ...`, prevents use of a plain index on `email`;
+      create an expression index instead.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def linear_scan(rows, target):\n    for row in rows:\n        if row[\"id\"] == target: return row\n\
+      \    return None\n\ndef build_index(rows):\n    return {row[\"id\"]: row for row in rows}\n\nrows = [{\"id\"\
+      :1,\"name\":\"Ada\"},{\"id\":2,\"name\":\"Grace\"}]\nprint(build_index(rows)[2])"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: indexes-code
+  - type: item
+    ref: indexes-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on the indexed
+      columns take O(log n) steps instead of a full scan.
+
+      - Column order in a composite index matters: an index on `(user_id, created_at)` serves `WHERE user_id = ?`
+      and `WHERE user_id = ? ORDER BY created_at`, but not `WHERE created_at > ?` alone (the leftmost-prefix rule).
+
+      - Primary keys and UNIQUE constraints create indexes automatically; in PostgreSQL, foreign keys do not.
+
+      - Every index slows down inserts and updates and uses storage, so add indexes for real query patterns and
+      drop unused ones.
+
+      - Other index kinds include GIN (jsonb, arrays, full-text search), GiST, BRIN (very large, naturally ordered
+      tables), expression indexes such as `lower(email)`, and partial indexes such as `WHERE deleted_at IS NULL`.
+
+
+      **Avoid**
+
+      - An index is not always used; when a query returns a large share of the table a sequential scan is often
+      faster, and the planner decides.
+
+      - Wrapping the column in a function, as in `WHERE lower(email) = ...`, prevents use of a plain index on `email`;
+      create an expression index instead.'
+  - type: item
+    ref: indexes-mcq
+  - type: item
+    ref: indexes-tf
+  - type: item
+    ref: indexes-code
+items:
+- id: indexes-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of indexes?
+  explanation: A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on
+    the indexed columns take O(log n) steps instead of a full scan.
+  options:
+  - id: a
+    text: A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on the
+      indexed columns take O(log n) steps instead of a full scan.
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: An index is not always used; when a query returns a large share of the table a sequential scan is often
+      faster, and the planner decides.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: indexes-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: An index is not always used; when a query returns a large share of the table a sequential scan is often
+    faster, and the planner decides.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: indexes-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing indexes in a real application. What design decisions would you make, what failure
+    case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: indexes-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for indexes. Implement the stated rule and make sure both ordinary and edge-case
+    tests pass.
+  starterCode: "def linear_scan(rows, target):\n    raise NotImplementedError('Complete this function')\n\ndef build_index(rows):\n\
+    \    raise NotImplementedError('Complete this function')"
+  solution: "def linear_scan(rows, target):\n    for row in rows:\n        if row[\"id\"] == target: return row\n\
+    \    return None\n\ndef build_index(rows):\n    return {row[\"id\"]: row for row in rows}"
+  tests:
+  - name: Core behaviour
+    code: rows = [{"id":1,"name":"Ada"},{"id":2,"name":"Grace"}]
+  - name: Edge cases
+    code: 'assert linear_scan(rows, 2) == build_index(rows)[2]
+
+      assert linear_scan(rows, 9) is None'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - indexes-mcq
+  - indexes-tf
+  - indexes-code
+cheatsheet: '**Core model**
+
+  - A B-tree index keeps keys sorted, so equality, range conditions (`<`, `BETWEEN`) and `ORDER BY` on the indexed
+  columns take O(log n) steps instead of a full scan.
+
+  - Column order in a composite index matters: an index on `(user_id, created_at)` serves `WHERE user_id = ?` and
+  `WHERE user_id = ? ORDER BY created_at`, but not `WHERE created_at > ?` alone (the leftmost-prefix rule).
+
+  - Primary keys and UNIQUE constraints create indexes automatically; in PostgreSQL, foreign keys do not.
+
+  - Every index slows down inserts and updates and uses storage, so add indexes for real query patterns and drop
+  unused ones.
+
+  - Other index kinds include GIN (jsonb, arrays, full-text search), GiST, BRIN (very large, naturally ordered tables),
+  expression indexes such as `lower(email)`, and partial indexes such as `WHERE deleted_at IS NULL`.
+
+
+  **Common mistakes**
+
+  - An index is not always used; when a query returns a large share of the table a sequential scan is often faster,
+  and the planner decides.
+
+  - Wrapping the column in a function, as in `WHERE lower(email) = ...`, prevents use of a plain index on `email`;
+  create an expression index instead.'

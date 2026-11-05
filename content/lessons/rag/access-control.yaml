@@ -1,0 +1,215 @@
+id: rag.access-control
+concept: rag.access-control
+title: Access control in RAG
+subtitle: Enforce document permissions at retrieval time so users can never get answers built from content they
+  may not see
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Enforce document permissions at retrieval time so users can never get answers built from content they may
+  not see.
+objectives:
+- Explain the role of access control in rag in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: LLM08:2025 Vector and Embedding Weaknesses
+  url: https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/
+  publisher: OWASP GenAI Security Project
+- title: Row Security Policies
+  url: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+  publisher: PostgreSQL Global Development Group
+- title: Authorization Cheat Sheet
+  url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+  publisher: OWASP
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Enforce document permissions at retrieval time so users can never get answers built from content they
+      may not see. A RAG system over company documents can leak salaries, HR cases or customer data to anyone who
+      asks the right question. Permissions must be enforced in retrieval, because the model cannot be trusted to
+      keep secrets that are in its context.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Enforce permissions before generation by filtering retrieval on the authenticated user''s identity
+      and groups, so unauthorised chunks never enter the prompt.
+
+      - Copy access metadata (owner, groups, tenant, classification) from the source system onto every chunk at
+      ingestion and keep it in sync when permissions change.
+
+      - Isolate tenants with separate collections or indexes, or a mandatory tenant filter; PostgreSQL row-level
+      security can enforce this inside the database.
+
+      - Caches, logs, traces and evaluation datasets also contain retrieved content; apply the same access rules
+      to them.
+
+      - Test it by running queries as low-privilege users and asserting that restricted documents never appear.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Telling the model "do not reveal confidential information" is not access control; prompt injection
+      or simple rephrasing defeats it.
+
+      - Deleting a document in the source system does not delete it from the index; deletions and permission changes
+      must propagate.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def authorised_chunks(chunks, user_groups):\n    return [chunk for chunk in chunks if set(chunk.get(\"\
+      allowed_groups\", [])) & set(user_groups)]\n\nprint(authorised_chunks([{\"id\":\"public\",\"allowed_groups\"\
+      :[\"all\"]},{\"id\":\"hr\",\"allowed_groups\":[\"hr\"]}], {\"hr\"}))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: access-control-code
+  - type: item
+    ref: access-control-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Enforce permissions before generation by filtering retrieval on the authenticated user''s identity and groups,
+      so unauthorised chunks never enter the prompt.
+
+      - Copy access metadata (owner, groups, tenant, classification) from the source system onto every chunk at
+      ingestion and keep it in sync when permissions change.
+
+      - Isolate tenants with separate collections or indexes, or a mandatory tenant filter; PostgreSQL row-level
+      security can enforce this inside the database.
+
+      - Caches, logs, traces and evaluation datasets also contain retrieved content; apply the same access rules
+      to them.
+
+      - Test it by running queries as low-privilege users and asserting that restricted documents never appear.
+
+
+      **Limitations**
+
+      - Telling the model "do not reveal confidential information" is not access control; prompt injection or simple
+      rephrasing defeats it.
+
+      - Deleting a document in the source system does not delete it from the index; deletions and permission changes
+      must propagate.'
+  - type: item
+    ref: access-control-mcq
+  - type: item
+    ref: access-control-tf
+  - type: item
+    ref: access-control-code
+items:
+- id: access-control-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of access control in rag?
+  explanation: Enforce permissions before generation by filtering retrieval on the authenticated user's identity
+    and groups, so unauthorised chunks never enter the prompt.
+  options:
+  - id: a
+    text: Enforce permissions before generation by filtering retrieval on the authenticated user's identity and
+      groups, so unauthorised chunks never enter the prompt.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: Telling the model "do not reveal confidential information" is not access control; prompt injection or
+      simple rephrasing defeats it.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: access-control-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Telling the model "do not reveal confidential information" is not access control; prompt injection or
+    simple rephrasing defeats it.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: access-control-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding access control in rag to an application. Describe the design, one failure mode, and how
+    you would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: access-control-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for access control in rag. The assertions include the normal path and
+    a meaningful edge case.
+  starterCode: "def authorised_chunks(chunks, user_groups):\n    raise NotImplementedError('Complete this function')"
+  solution: "def authorised_chunks(chunks, user_groups):\n    return [chunk for chunk in chunks if set(chunk.get(\"\
+    allowed_groups\", [])) & set(user_groups)]"
+  tests:
+  - name: Core behaviour
+    code: chunks=[{"id":"hr","allowed_groups":["hr"]},{"id":"eng","allowed_groups":["eng"]}]
+  - name: Edge case
+    code: 'assert [x["id"] for x in authorised_chunks(chunks,{"hr"})] == ["hr"]
+
+      assert authorised_chunks(chunks,set()) == []'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - access-control-mcq
+  - access-control-tf
+  - access-control-code
+cheatsheet: '**Key ideas**
+
+  - Enforce permissions before generation by filtering retrieval on the authenticated user''s identity and groups,
+  so unauthorised chunks never enter the prompt.
+
+  - Copy access metadata (owner, groups, tenant, classification) from the source system onto every chunk at ingestion
+  and keep it in sync when permissions change.
+
+  - Isolate tenants with separate collections or indexes, or a mandatory tenant filter; PostgreSQL row-level security
+  can enforce this inside the database.
+
+  - Caches, logs, traces and evaluation datasets also contain retrieved content; apply the same access rules to
+  them.
+
+  - Test it by running queries as low-privilege users and asserting that restricted documents never appear.
+
+
+  **Failure modes**
+
+  - Telling the model "do not reveal confidential information" is not access control; prompt injection or simple
+  rephrasing defeats it.
+
+  - Deleting a document in the source system does not delete it from the index; deletions and permission changes
+  must propagate.'

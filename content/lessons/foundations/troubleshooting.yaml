@@ -1,0 +1,337 @@
+id: foundations.troubleshooting
+concept: foundations.troubleshooting
+title: Troubleshooting and Reading Error Messages
+subtitle: Replace random fixes with a repeatable investigation
+estimatedMinutes: 45
+reviewedOn: 2026-11-04
+summary: >-
+  Learn a systematic debugging process: reproduce the problem, read the full error, locate the failure,
+  form a hypothesis, change one thing and verify the result. Distinguish syntax, runtime and logic errors,
+  use minimal reproducible examples, and protect private information when asking for help.
+objectives:
+  - Distinguish syntax errors, runtime exceptions and logic errors.
+  - Read a traceback to identify the exception type and the relevant line in your code.
+  - Reproduce a failure with a known input and reduce it to a minimal example.
+  - Form and test one hypothesis at a time instead of applying random changes.
+  - Use print statements, a debugger and tests as different sources of evidence.
+  - Ask for help with enough context while removing secrets and private data.
+sources:
+  - title: Python Tutorial — Errors and Exceptions
+    url: https://docs.python.org/3/tutorial/errors.html
+    publisher: Python Software Foundation
+  - title: Python FAQ — What is a traceback?
+    url: https://docs.python.org/3/faq/programming.html
+    publisher: Python Software Foundation
+  - title: Stack Overflow Help — How to create a Minimal, Reproducible Example
+    url: https://stackoverflow.com/help/minimal-reproducible-example
+    publisher: Stack Overflow
+  - title: The Missing Semester of Your CS Education — Debugging and Profiling
+    url: https://missing.csail.mit.edu/2020/debugging-profiling/
+    publisher: MIT
+sections:
+  - id: why
+    title: Why debugging is a reasoning process
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A program can fail in several ways. It may refuse to start because the code is invalid, crash while
+          running because an operation is not allowed, or finish successfully while producing the wrong
+          answer. These are different problems and need different evidence.
+
+          **Debugging** is the process of finding and correcting the cause of unexpected behaviour. It is
+          not the same as guessing a change until the error disappears. A good investigation narrows the
+          possible causes and checks each hypothesis.
+      - type: callout
+        variant: analogy
+        title: Investigate like a scientist
+        body: |
+          State what you observed, propose one explanation, predict what evidence you should see, and run a
+          test. If the evidence disagrees, reject or revise the explanation. Changing five things at once
+          makes it difficult to know which change mattered.
+
+  - id: error-types
+    title: Three common kinds of programming error
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Kind | What happens | Example |
+          |---|---|---|
+          | **Syntax error** | The code cannot be parsed | A missing closing parenthesis |
+          | **Runtime error / exception** | The program starts, then an operation fails | Dividing by zero or opening a missing file |
+          | **Logic error** | The program runs but the result is wrong | Adding each price with `total =+ price` instead of `total += price` |
+
+          A traceback is Python's report of the call path leading to an exception. Read from the bottom to
+          identify the exception type and message, then follow the file names and line numbers upward to
+          locate the relevant calls. The last frame is often where the exception occurred, but the cause
+          may be an earlier incorrect value.
+      - type: code
+        runnable: true
+        code: |
+          values = [10, 20, 30]
+          total = 0
+          for value in values:
+              total += value
+          print(total)
+        expectedOutput: |
+          60
+        annotations:
+          - line: 3
+            text: If the result is wrong, inspect `value` and `total` at each loop iteration.
+          - line: 4
+            text: The running total should preserve previous work and add the current value.
+      - type: item
+        ref: error-kind-check
+
+  - id: investigation
+    title: A repeatable debugging workflow
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Use this sequence when something does not behave as expected:
+
+          1. **Describe the symptom:** what did you expect, and what actually happened?
+          2. **Reproduce it:** record the input, command and environment that trigger the problem.
+          3. **Read the evidence:** inspect the full traceback, logs, output and exit status.
+          4. **Locate the boundary:** identify the smallest function, line or system layer where behaviour differs from expectation.
+          5. **Form one hypothesis:** state a specific reason that could explain the symptom.
+          6. **Test it:** use a print, breakpoint, focused test or measurement.
+          7. **Change one cause:** make the smallest justified correction.
+          8. **Verify and prevent regression:** rerun the failing case and the relevant test suite.
+
+          A **minimal reproducible example** is the smallest code and input that still demonstrates the
+          problem. It removes unrelated details so the cause becomes easier to see.
+      - type: visualization
+        component: step-diagram
+        title: The debugging loop
+        caption: Each hypothesis should be tested against observable evidence.
+        props:
+          nodes:
+            - { id: symptom, label: Observe, x: 10, y: 35, detail: State expected and actual behaviour. }
+            - { id: reproduce, label: Reproduce, x: 38, y: 35, detail: Record the smallest failing input and setup. }
+            - { id: hypothesis, label: Hypothesis, x: 66, y: 35, detail: State one possible cause. }
+            - { id: test, label: Test, x: 92, y: 35, detail: Collect evidence and verify the explanation. }
+          edges:
+            - { id: e1, from: symptom, to: reproduce, label: capture }
+            - { id: e2, from: reproduce, to: hypothesis, label: narrow }
+            - { id: e3, from: hypothesis, to: test, label: predict }
+            - { id: e4, from: test, to: hypothesis, label: revise if needed }
+          steps:
+            - title: Observe the mismatch
+              body: Write down the expected result and the actual result.
+              active: [symptom]
+            - title: Reproduce it
+              body: Find a small input and command that reliably trigger the behaviour.
+              active: [symptom, reproduce, e1]
+            - title: Test a hypothesis
+              body: Predict what a specific cause would produce, then collect evidence.
+              active: [reproduce, hypothesis, test, e2, e3]
+            - title: Revise and verify
+              body: If evidence disagrees, change the hypothesis. After fixing the cause, rerun the failing case.
+              active: [hypothesis, test, e4]
+      - type: item
+        ref: traceback-prediction
+
+  - id: tools
+    title: Choose the right debugging tool
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Different tools reveal different evidence:
+
+          - **Print or logging:** show selected values and events; useful for a quick check, but remove noisy or sensitive output.
+          - **Debugger:** pauses execution and lets you inspect variables and call stacks.
+          - **Unit test:** checks one small behaviour repeatedly with known inputs.
+          - **System measurement:** reveals timing, memory use, process state or network delay.
+          - **Documentation and source code:** clarify the intended API behaviour and version-specific rules.
+
+          Search for the exact exception type and message, but verify advice against the official documentation
+          and the version you are using. A fix for a different Python version or operating system may not apply.
+      - type: callout
+        variant: warning
+        title: Do not leak private data while debugging
+        body: |
+          Before sharing a traceback, configuration file or log, remove passwords, API keys, access tokens,
+          personal data, private host names and customer records. Keep enough structure to reproduce the
+          problem, but replace sensitive values with safe placeholders.
+      - type: item
+        ref: explain-debug-tool
+
+  - id: practice
+    title: Fix a logic error
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The code below runs without raising an exception, but it returns the wrong total. The operator
+          `=+` assigns a positive value; it does not add to the existing total. The correct augmented
+          assignment is `+=`.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          total = 0
+          total =+ 10
+          total =+ 20
+          print(total)  # 20, not 30
+        caption: "This is a logic error: valid Python, but it does not implement the intended running sum."
+      - type: item
+        ref: fix-running-total
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Syntax errors prevent parsing; runtime exceptions interrupt execution; logic errors produce incorrect behaviour.
+          - Reproduce the problem and read the full traceback before changing code.
+          - Form one testable hypothesis and change one cause at a time.
+          - Use a minimal reproducible example and verify the fix with tests.
+          - Remove secrets and private data before sharing diagnostic information.
+      - type: item
+        ref: mastery-debugging
+      - type: item
+        ref: mastery-fix
+      - type: item
+        ref: mastery-explain
+
+items:
+  - id: error-kind-check
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: A program finishes successfully but prints 20 when the expected total is 30. What kind of problem is this most likely to be?
+    options:
+      - id: a
+        text: A logic error
+        correct: true
+        feedback: Correct. The program runs, but its behaviour does not match the intended result.
+      - id: b
+        text: A syntax error
+        correct: false
+        feedback: Syntax errors prevent Python from parsing the code.
+      - id: c
+        text: A network error
+        correct: false
+        feedback: No network operation is involved in this example.
+    explanation: A logic error produces an incorrect result without necessarily raising an exception.
+  - id: traceback-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What exception type is raised by this code?
+    code: |
+      values = [1, 2]
+      try:
+          print(values[3])
+      except IndexError as error:
+          print(type(error).__name__)
+    answer: |
+      IndexError
+    explanation: The list has valid indexes 0 and 1; index 3 is outside the list.
+  - id: explain-debug-tool
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A program works on your machine but fails for a teammate. Name two pieces of information you should compare before changing the code.
+    rubric:
+      - Identifies differences in interpreter or dependency versions, operating system or environment configuration.
+      - Suggests comparing the exact command, input data or working directory to reproduce the failure.
+    modelAnswer: I would compare the Python interpreter and dependency versions, operating system and relevant environment settings. I would also compare the exact command, input and current working directory, then reproduce the failure before changing code.
+    explanation: Environment differences can explain inconsistent behaviour even when the source code is identical.
+  - id: fix-running-total
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: Correct the running-total function. It currently keeps only the most recent value because it uses `=+` instead of `+=`.
+    explanation: >-
+      The operator `=+` assigns the positive value on its right; it does not add to the existing total. `+=` reads the current total, adds the next value and stores the updated result.
+    starterCode: |
+      def total_values(values):
+          total = 0
+          for value in values:
+              total =+ value
+          return total
+    solution: |
+      def total_values(values):
+          total = 0
+          for value in values:
+              total += value
+          return total
+    tests:
+      - name: adds all values
+        code: assert total_values([10, 20, 30]) == 60
+      - name: handles negative values
+        code: assert total_values([-2, 5]) == 3
+      - name: empty input
+        code: assert total_values([]) == 0
+    hints:
+      - "`=+` assigns a positive value; `+=` updates the existing total."
+      - Inspect the value of total after each loop iteration.
+  - id: mastery-debugging
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: What is the best first action when a program produces an unexpected result?
+    options:
+      - id: a
+        text: Reproduce it with a known input and record expected versus actual behaviour.
+        correct: true
+        feedback: Correct. A repeatable symptom gives you evidence to investigate.
+      - id: b
+        text: Change several unrelated lines until the output looks correct.
+        correct: false
+        feedback: Multiple simultaneous changes make it difficult to identify the cause and can hide new bugs.
+      - id: c
+        text: Delete the traceback before reading it.
+        correct: false
+        feedback: The traceback is useful evidence about where an exception occurred.
+    explanation: Debugging starts by establishing a reliable symptom and gathering evidence.
+  - id: mastery-fix
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: Fix the accumulation bug so the function returns the sum.
+    explanation: >-
+      A running total must preserve the accumulated value on every iteration. Replacing `=+` with `+=` adds each new value instead of overwriting the total.
+    starterCode: |
+      def sum_values(values):
+          total = 0
+          for value in values:
+              total =+ value
+          return total
+    solution: |
+      def sum_values(values):
+          total = 0
+          for value in values:
+              total += value
+          return total
+    tests:
+      - name: multiple values
+        code: assert sum_values([1, 2, 3]) == 6
+      - name: zero values
+        code: assert sum_values([0, 0]) == 0
+    hints:
+      - Use `+=` to add to the existing running total.
+      - Test with more than one value; a one-item list may hide the bug.
+  - id: mastery-explain
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: Why is changing several lines at once a poor debugging strategy?
+    rubric:
+      - Explains that multiple changes make cause and effect difficult to isolate.
+      - Suggests testing one hypothesis and verifying each change separately.
+    modelAnswer: If several lines change together, a new result does not reveal which change fixed or caused the behaviour. Change one justified cause at a time and rerun the smallest failing test so the evidence remains clear.
+    explanation: Controlled changes make debugging conclusions more reliable.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-debugging, mastery-fix, mastery-explain]
+cheatsheet: |
+  Reproduce → read the traceback/log → isolate → hypothesise → test → change one cause → verify.
+  Syntax error = cannot parse. Runtime error = operation fails. Logic error = wrong result.
+  Use minimal examples and tests. Redact secrets and private information before sharing logs.

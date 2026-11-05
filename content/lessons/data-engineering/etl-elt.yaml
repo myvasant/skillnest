@@ -1,0 +1,205 @@
+id: de.etl-elt
+concept: de.etl-elt
+title: ETL and ELT pipelines
+subtitle: Extract, transform and load data between systems; ELT loads raw data first and transforms inside the warehouse
+estimatedMinutes: 40
+reviewedOn: '2026-11-04'
+summary: Extract, transform and load data between systems; ELT loads raw data first and transforms inside the warehouse.
+objectives:
+- Explain the role of etl and elt pipelines in a reliable data workflow.
+- Apply the core technique to a small dataset or pipeline example.
+- Identify data-quality, correctness or operational failure modes.
+sources:
+- title: Extract, transform, load (ETL)
+  url: https://learn.microsoft.com/en-us/azure/architecture/data-guide/relational-data/etl
+  publisher: Microsoft Azure Architecture Center
+- title: How we structure our dbt projects
+  url: https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview
+  publisher: dbt Labs
+- title: Debezium documentation
+  url: https://debezium.io/documentation/reference/stable/index.html
+  publisher: Debezium project
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Extract, transform and load data between systems; ELT loads raw data first and transforms inside the warehouse.
+      Business data is spread across many operational databases, SaaS tools and event streams; analytics, ML and
+      RAG need it combined, cleaned and in one place.
+- id: mental-model
+  title: Core concepts and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or incrementally.
+
+      - Transform cleans, deduplicates, casts types, joins and aggregates; Load writes the result to a warehouse,
+      lake or other target.
+
+      - ETL transforms on a separate engine before loading; ELT loads raw data first and transforms it with SQL
+      inside the warehouse or lakehouse, whose compute scales independently of storage.
+
+      - Keep an untouched raw (staging, bronze) layer so any downstream table can be rebuilt when logic changes;
+      layer cleaned and business-level tables on top.
+
+      - Change data capture (CDC) reads a database''s transaction log to stream inserts, updates and deletes instead
+      of re-copying whole tables.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+
+      - A pipeline run that "succeeded" only means no exception was raised — it is not evidence that the data is
+      correct.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: The following pure-Python model makes the underlying data operation executable without requiring a paid
+      service or optional package. Where the topic uses NumPy or pandas in practice, those APIs are explained separately;
+      this small example focuses on the data transformation itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def transform_order(order):\n    return {\"order_id\": order[\"id\"], \"amount_cents\": round(order[\"\
+      amount\"] * 100), \"currency\": order.get(\"currency\", \"USD\").upper()}\n\nprint(transform_order({\"id\"\
+      :7,\"amount\":12.5}))"
+    caption: Runnable standard-library example; production libraries may provide more efficient implementations.
+- id: practice
+  title: Practice and validation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the transformation, run the tests and consider missing values, duplicates, malformed records
+      and repeated execution where relevant.
+  - type: item
+    ref: etl-elt-code
+  - type: item
+    ref: etl-elt-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or incrementally.
+
+      - Transform cleans, deduplicates, casts types, joins and aggregates; Load writes the result to a warehouse,
+      lake or other target.
+
+      - ETL transforms on a separate engine before loading; ELT loads raw data first and transforms it with SQL
+      inside the warehouse or lakehouse, whose compute scales independently of storage.
+
+      - Keep an untouched raw (staging, bronze) layer so any downstream table can be rebuilt when logic changes;
+      layer cleaned and business-level tables on top.
+
+      - Change data capture (CDC) reads a database''s transaction log to stream inserts, updates and deletes instead
+      of re-copying whole tables.
+
+
+      **Watch for**
+
+      - ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+
+      - A pipeline run that "succeeded" only means no exception was raised — it is not evidence that the data is
+      correct.'
+  - type: item
+    ref: etl-elt-mcq
+  - type: item
+    ref: etl-elt-tf
+  - type: item
+    ref: etl-elt-code
+items:
+- id: etl-elt-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of etl and elt pipelines?
+  explanation: Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or
+    incrementally.
+  options:
+  - id: a
+    text: Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or incrementally.
+    correct: true
+    feedback: 'Correct: this is the core principle in the lesson.'
+  - id: b
+    text: ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+    feedback: This is a misconception; data contracts and evidence are needed.
+  - id: c
+    text: The pipeline does not need validation if the input file exists.
+    feedback: Existence is not the same as validity or correctness.
+- id: etl-elt-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+  answer: false
+  explanation: The statement is a known misconception. Validate data shape, semantics, edge cases and the expected
+    output.
+- id: etl-elt-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are applying etl and elt pipelines to a dataset that may contain missing, duplicate or malformed records.
+    Describe the approach, checks and trade-offs you would use.
+  rubric:
+  - Explain the data or pipeline operation and its assumptions.
+  - Describe concrete checks for missing, duplicate or malformed records.
+  - Explain how you would make the result reproducible and observable.
+  modelAnswer: Define the expected schema and business rules first. Apply the transformation in a deterministic
+    way, record rejected rows with reasons, and measure counts before and after each stage. Test edge cases and
+    make repeated runs safe where the workflow may be retried.
+  explanation: A strong response considers data contracts and operational evidence, not just the happy path.
+- id: etl-elt-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for etl and elt pipelines. The assertions test the main behaviour and an important
+    edge case.
+  starterCode: "def transform_order(order):\n    raise NotImplementedError('Complete this function')"
+  solution: "def transform_order(order):\n    return {\"order_id\": order[\"id\"], \"amount_cents\": round(order[\"\
+    amount\"] * 100), \"currency\": order.get(\"currency\", \"USD\").upper()}"
+  tests:
+  - name: Core transformation
+    code: assert transform_order({"id":7,"amount":12.5}) == {"order_id":7,"amount_cents":1250,"currency":"USD"}
+  - name: Edge case
+    code: assert transform_order({"id":8,"amount":1.25,"currency":"eur"})["currency"] == "EUR"
+  hints:
+  - Translate the data rule into deterministic steps.
+  - Handle missing values, invalid records or repeated input deliberately.
+  - Run the assertions and explain why the edge case is correct.
+  explanation: This exercise verifies the central transformation or model rule and asks you to handle a meaningful
+    edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - etl-elt-mcq
+  - etl-elt-tf
+  - etl-elt-code
+cheatsheet: '**Key ideas**
+
+  - Extract pulls data from sources (databases, APIs, files, event streams), either as full copies or incrementally.
+
+  - Transform cleans, deduplicates, casts types, joins and aggregates; Load writes the result to a warehouse, lake
+  or other target.
+
+  - ETL transforms on a separate engine before loading; ELT loads raw data first and transforms it with SQL inside
+  the warehouse or lakehouse, whose compute scales independently of storage.
+
+  - Keep an untouched raw (staging, bronze) layer so any downstream table can be rebuilt when logic changes; layer
+  cleaned and business-level tables on top.
+
+  - Change data capture (CDC) reads a database''s transaction log to stream inserts, updates and deletes instead
+  of re-copying whole tables.
+
+
+  **Data quality risks**
+
+  - ELT does not mean "no transformation"; it moves transformation later and into the warehouse.
+
+  - A pipeline run that "succeeded" only means no exception was raised — it is not evidence that the data is correct.'

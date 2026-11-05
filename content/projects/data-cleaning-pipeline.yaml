@@ -1,0 +1,212 @@
+id: data-cleaning-pipeline
+title: "Data-Cleaning Pipeline: From Messy Export to Validated Table"
+track: data-ml
+level: intermediate
+estimatedHours: 7
+environment: local
+starterKit: projects/data-cleaning-pipeline
+summary: >-
+  Build a pipeline of small pure functions — normalise columns, parse dates and numbers, deduplicate,
+  impute, validate a schema — with a step log, a validation report and a test that running it twice
+  changes nothing.
+concepts:
+  - data.data-cleaning
+  - data.data-quality
+  - data.pandas-transform
+  - de.idempotency-incremental
+  - python.higher-order-functions
+  - python.dataclasses
+  - python.testing
+problem: |
+  The marketing team exports customers from three systems and pastes them together. Before anyone
+  can analyse the result it needs [cleaning](concept:data.data-cleaning): the headers are padded,
+  dates come in three formats, spend is sometimes `"$300"` and sometimes `"1,200.50"`, missing values
+  are spelled `""`, `"n/a"` or `"N/A"`, and some people registered twice with `ADA@Example.com` and
+  `ada@example.com`.
+
+  You will write a pipeline of small, pure, individually tested functions, compose them, and finish
+  with automated [data-quality checks](concept:data.data-quality). Two properties matter as much as
+  the cleaned values:
+
+  * **Transparency** — a log of what every step did and a validation report that lists the problems
+    cleaning cannot fix (an invalid date, a negative spend) instead of hiding them.
+  * **Idempotency** — `clean(clean(raw)) == clean(raw)`. Pipelines are retried and re-run all the
+    time; a step that is not idempotent (for example one that re-parses already-parsed dates or keeps
+    adding indicator columns) corrupts data on the second run.
+
+  **Example session** (after you finish):
+
+  ```text
+  >>> from cleaning_pipeline import raw_customers, clean_customers
+  >>> result = clean_customers(raw_customers())
+  >>> result.data[["customer_id", "email", "country", "age"]].head(3)
+     customer_id              email country   age
+  0            1    ada@example.com      GB  36.0
+  1            2  grace@example.com      US  41.0
+  2            3   alan@example.com      GB  41.0
+  >>> print(result.report.to_markdown())
+  Validation found 2 issue(s) in 8 rows:
+
+  - `signup_date` failed **nullable** in 1 row(s): [3]
+  - `total_spend` failed **min** in 1 row(s): [4]
+  >>> clean_customers(result.data).data.equals(result.data)
+  True
+  ```
+acceptanceCriteria:
+  - "Every step returns a new DataFrame and leaves its input unchanged (tests compare the input before and after)."
+  - "`normalise_columns` produces snake_case names and raises `ValueError` when two columns would collide."
+  - "`parse_dates` tries formats in order, turns unparseable values into `NaT`, and passes datetime columns through unchanged; `parse_numbers` handles currency symbols and thousands separators."
+  - "`deduplicate` compares keys case- and whitespace-insensitively and never treats rows with a missing key as duplicates."
+  - "`fit_imputer` learns fill values separately from `apply_imputer`, supporting median, mean, mode and constant strategies with clear errors."
+  - "`validate` reports missing/unexpected columns, wrong kinds, nulls, duplicates, out-of-range values, disallowed categories and pattern failures with the offending row labels."
+  - "`clean_customers` turns the 10 raw rows into 8 clean ones, reports exactly the two problems it cannot fix, and is idempotent on both the hand-made and the generated data."
+architecture: |
+  Each step is a function `DataFrame -> DataFrame`. Steps that need settings are configured with
+  `functools.partial`, so the pipeline is just a list of `(name, step)` pairs that `run_pipeline`
+  applies in order.
+
+  ```text
+            steps = [(name, partial(fn, **settings)), ...]
+                               │
+  raw ──► step 1 ──► step 2 ──► ... ──► step n ──► clean DataFrame ──┐
+            │          │                 │                           ▼
+            └──────────┴── StepLog(rows in/out, missing in/out)   validate(schema)
+                                         │                           │
+                                         └──────► PipelineResult(data, log, report)
+  ```
+
+  * **Milestones 1–4** are the steps (normalise, parse, deduplicate, impute).
+  * **Milestone 5** is the schema: `ColumnRule` dataclasses checked by `validate`, which collects
+    `Issue`s into an immutable `ValidationReport` and never raises on bad data.
+  * **Milestone 6** wires everything together and proves idempotency. Every step is written so that
+    applying it to its own output is a no-op (parsers pass parsed columns through, category mapping
+    treats canonical values as known, deduplication leaves no duplicates).
+setup: |
+  You need Python 3.11+ and the folder `projects/data-cleaning-pipeline` from the repository.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/data-cleaning-pipeline
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/data-cleaning-pipeline
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  ```
+
+  `requirements.txt` installs numpy, pandas and pytest.
+milestones:
+  - id: normalise
+    title: Normalise names, text and categories
+    description: |
+      Implement `normalise_column_name` (`" Total Spend ($)"` → `total_spend`), `normalise_columns`
+      (refuse collisions such as `Age` and ` age `), `clean_text` (strip and turn placeholders into
+      missing values), `lowercase` and `standardise_categories` (case-insensitive mapping where the
+      canonical values map to themselves).
+
+      **Tests check** six header examples, the collision error, placeholders becoming missing,
+      non-text cells left alone, and that standardising twice changes nothing.
+  - id: parse-types
+    title: Parse dates and numbers
+    description: |
+      Implement `parse_dates` (try formats in order; unparseable values become `NaT`; datetime
+      columns pass through), `parse_numbers` (strip currency symbols and separators; `integer=True`
+      gives nullable `Int64`) and `nullify_out_of_range` (an age of 200 is not data).
+
+      **Tests check** that `01/05/2024` is 1 May with day-first formats and 5 January when a
+      month-first format comes first, `"$1,200.50"` → 1200.5, `"3.5"` is not an integer id, and that
+      parsing parsed columns changes nothing.
+  - id: deduplicate
+    title: Deduplicate
+    description: |
+      Implement `duplicate_mask` and `deduplicate`. Keys are compared after stripping and
+      case-folding; rows with a missing key are never duplicates; `keep="first"` or `"last"` decides
+      which copy survives; the index is renumbered.
+
+      **Tests check** case/space variants, composite keys, missing keys, and `keep="last"`.
+  - id: impute
+    title: Impute missing values
+    description: |
+      Implement `fit_imputer` (median, mean, mode with ties broken by the smallest value, or
+      `("constant", value)`), `apply_imputer` and `impute`. Keeping fit and apply separate is what
+      later lets you learn fill values on training data only and avoid
+      [leakage](concept:ml.data-leakage).
+
+      **Tests check** each strategy, clear errors (median of text, all-missing column, unknown
+      strategy, unknown column), and that values learned on one table fill another.
+  - id: validate-schema
+    title: Validate a schema
+    description: |
+      Implement `check_column` and `validate`. A schema maps column names to `ColumnRule(kind,
+      nullable, unique, min_value, max_value, allowed, pattern)`. The report lists every failed
+      check with the number of rows and their labels, plus missing and unexpected columns.
+
+      **Tests check** a clean table passes, a table that breaks every rule reports exactly the
+      expected `(column, check)` pairs and rows, and that text ids fail the `integer` kind check.
+  - id: pipeline-idempotency
+    title: Compose the pipeline and prove idempotency
+    description: |
+      Implement `run_pipeline` (apply steps, log rows and missing cells before/after each),
+      `customer_steps` (the ordered `(name, partial(...))` list) and `clean_customers`.
+
+      **Tests check** the exact cleaned values for the 10 raw rows (8 survive; median age 41 fills
+      three gaps), the two issues left in the report, the step log, that the input is not mutated,
+      and that cleaning the cleaned output — for the hand-made and the generated data — changes
+      nothing.
+testing: |
+  From `projects/data-cleaning-pipeline` with your virtual environment active:
+
+  ```bash
+  python -m pytest                  # tests your code in starter/
+  python -m pytest -k Milestone6    # one milestone
+  ```
+
+  To run the same tests against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Tests build tiny DataFrames inline (with `dtype=object`, as if read from CSV as text), so each one
+  documents a rule. They are deterministic and need no files or network.
+security:
+  - "Customer exports are personal data. Work on the minimum columns you need, keep raw files out of version control (add them to `.gitignore`), and delete intermediate copies when you are done."
+  - "Never `eval()` or `exec()` cell contents to 'parse' them; use explicit parsers such as `pd.to_numeric` and `pd.to_datetime` with formats, which cannot run code."
+  - "If cleaned data is exported back to CSV for spreadsheets, values starting with `=`, `+`, `-` or `@` can be executed as formulas (CSV injection); escape or prefix them."
+  - "Validation reports and logs should reference row labels, not copy personal values (emails, names) into log files that are shared more widely than the data."
+  - "Deduplication merges identities: a wrong key (for example, name only) can merge two different people's records. Choose keys deliberately and review merges before deleting data."
+extensions:
+  - "Add an `add_indicator=True` option to `impute` that records `<column>_was_missing` — and keep the pipeline idempotent (the second run must not overwrite the indicator with all False)."
+  - "Write a property-style test: for several seeds of `make_messy_customers`, `clean(clean(x)) == clean(x)` and the number of rows equals the number of distinct normalised emails plus rows without an email."
+  - "Make the pipeline configurable from a TOML file (steps and their settings) and validate the config before running."
+  - "Add a quarantine output: rows that fail validation go to a separate DataFrame with the reasons, and the clean output passes validation."
+  - "Measure the cost of each step on 100,000 generated rows and replace the slowest `Series.map` with a vectorised string method."
+rubric:
+  - criterion: Correctness of each step
+    needsWork: Some steps produce wrong values or crash on missing data.
+    meets: All milestone tests pass, including edge cases (placeholders, missing keys, already-parsed columns).
+    exceeds: Additional tests you wrote cover new edge cases (for example dates with time parts or negative numbers in parentheses).
+  - criterion: Purity and idempotency
+    needsWork: Steps modify their input or give different results on a second run.
+    meets: Every step returns a new DataFrame, and the pipeline is idempotent on both datasets.
+    exceeds: Idempotency is tested per step and with several random seeds.
+  - criterion: Transparency of the validation report
+    needsWork: Problems are silently dropped or fixed with guesses.
+    meets: The log and report show what changed and which rows still fail which rule.
+    exceeds: The report is useful to a non-programmer (plain language, counts, suggested actions) without leaking personal data.
+  - criterion: Design and readability
+    needsWork: One long function does everything; settings are hard-coded inside steps.
+    meets: Small typed functions with docstrings; settings passed with `partial`; the schema is data.
+    exceeds: Adding a new step or rule needs no change to `run_pipeline` or `validate`.

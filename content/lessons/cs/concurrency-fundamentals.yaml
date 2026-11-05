@@ -1,0 +1,350 @@
+id: cs.concurrency-fundamentals
+concept: cs.concurrency-fundamentals
+title: Concurrency Fundamentals
+subtitle: Atomicity, race conditions, synchronization and deadlock prevention
+estimatedMinutes: 55
+summary: Learn why shared mutable state is difficult under concurrency, how read-modify-write operations
+  can lose updates, how locks protect critical sections, how deadlocks form, and when message passing
+  is safer than shared state.
+objectives:
+- Explain atomicity and how task interleaving creates race conditions.
+- Identify the complete critical section that protects a shared invariant.
+- Use locks conceptually and explain why lock scope should be small.
+- Explain deadlock and prevent circular wait with a consistent lock order.
+- Compare locks, semaphores, events, conditions and thread-safe queues.
+- Design worker coordination around local results and message passing.
+sources:
+- title: threading — Thread-based parallelism
+  url: https://docs.python.org/3.14/library/threading.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: queue — A synchronized queue class
+  url: https://docs.python.org/3.14/library/queue.html
+  publisher: Python Software Foundation
+  version: '3.14'
+- title: 'Operating Systems: Three Easy Pieces — Concurrency'
+  url: https://pages.cs.wisc.edu/~remzi/OSTEP/
+  publisher: Remzi H. Arpaci-Dusseau and Andrea C. Arpaci-Dusseau
+- title: Python support for free threading
+  url: https://docs.python.org/3.14/howto/free-threading-python.html
+  publisher: Python Software Foundation
+  version: '3.14'
+reviewedOn: '2026-11-04'
+sections:
+- id: why-synchronization
+  title: Why synchronization is needed
+  kind: why
+  blocks:
+  - type: markdown
+    body: '**Concurrency** allows tasks to make progress during overlapping periods. When tasks share
+      mutable state, their operations can interleave in ways that produce results no single task intended.
+      A **synchronization primitive** coordinates access or signals when work is ready.
+
+
+      This lesson builds on Python threads and `asyncio`: it focuses on the shared-state rules that still
+      matter even when the execution model changes.'
+  - type: callout
+    variant: misconception
+    title: The GIL is not your business-rule lock
+    body: The GIL is an implementation detail of a GIL-enabled CPython build. It does not guarantee that
+      a multi-step application invariant is safe, and free-threaded builds can run without it.
+- id: atomicity-races
+  title: Atomicity, interleaving and lost updates
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'An operation is **atomic** relative to other tasks when it appears indivisible: another task
+      cannot observe or alter its intermediate steps. A line such as `balance += amount` looks like one
+      operation, but it is conceptually a read, calculation and write.
+
+
+      A **race condition** occurs when the result depends on timing or interleaving. The deterministic
+      example below simulates two workers that both read the same starting value before either writes.'
+  - type: code
+    language: python
+    code: 'balance = 0
+
+      worker_a_read = balance
+
+      worker_b_read = balance
+
+      worker_a_new = worker_a_read + 1
+
+      worker_b_new = worker_b_read + 1
+
+      balance = worker_a_new
+
+      balance = worker_b_new
+
+      print(balance)'
+    runnable: true
+    expectedOutput: '1'
+    caption: A deterministic lost-update simulation. It illustrates the interleaving but does not start
+      real operating-system threads.
+  - type: item
+    ref: sync-lost-update-predict
+- id: locks-critical-sections
+  title: Locks and critical sections
+  kind: concept
+  blocks:
+  - type: markdown
+    body: A **critical section** is the smallest complete region that must not overlap with another operation
+      changing the same invariant. A `threading.Lock` lets only one thread at a time hold the lock. Use
+      it as a context manager so the lock is released even if an exception occurs.
+  - type: code
+    language: python
+    code: "from threading import Lock, Thread\n\nbalance = 0\nbalance_lock = Lock()\n\ndef deposit(amount):\n\
+      \    global balance\n    with balance_lock:\n        # Read, validate and write as one protected\
+      \ operation.\n        if amount < 0:\n            raise ValueError(\"amount cannot be negative\"\
+      )\n        balance += amount\n\nworkers = [Thread(target=deposit, args=(1,)) for _ in range(100)]\n\
+      for worker in workers:\n    worker.start()\nfor worker in workers:\n    worker.join()\nprint(balance)"
+    runnable: false
+    caption: Run locally on CPython. The browser Pyodide runtime used by this platform does not provide
+      the operating-system threading environment required for this example.
+    status: illustrative
+  - type: callout
+    variant: warning
+    title: Keep the critical section small
+    body: Do not hold a lock while performing unrelated calculations or network I/O. Long critical sections
+      increase waiting and can cause throughput collapse.
+  - type: item
+    ref: sync-critical-section
+- id: deadlocks
+  title: Deadlocks and lock ordering
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A **deadlock** is a state where tasks wait forever for resources held by one another. A common
+      two-lock deadlock happens when one thread holds A and waits for B while another holds B and waits
+      for A.
+
+
+      The classic necessary conditions are mutual exclusion, hold-and-wait, no pre-emption and circular
+      wait. Preventing any one condition can prevent that deadlock pattern. In application code, a consistent
+      global lock order is a practical rule: if multiple locks are needed, every code path acquires them
+      in the same order.'
+  - type: callout
+    variant: tip
+    title: Prefer fewer shared invariants
+    body: If a design needs many locks to keep many shared objects consistent, consider a single owner,
+      a message queue, immutable messages or a database transaction instead.
+- id: coordination-primitives
+  title: Other coordination tools
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A lock is not the only synchronization primitive:
+
+
+      - **Semaphore:** limits how many tasks may use a resource at once, such as a connection pool.
+
+      - **Event:** one task signals that something has happened; other tasks wait for the signal.
+
+      - **Condition:** tasks wait until a predicate about shared state becomes true, then re-check it
+      while holding the associated lock.
+
+      - **Queue:** producers send messages and consumers receive them. A thread-safe queue coordinates
+      access without every caller manipulating the same list and flags.
+
+
+      Choose the primitive that matches the communication pattern. Do not use a lock as a universal substitute
+      for a clear ownership model.'
+  - type: code
+    language: python
+    code: "from queue import Queue\n\nmessages = Queue()\nmessages.put({\"type\": \"result\", \"value\"\
+      : 42})\nmessages.put({\"type\": \"stop\"})\n\nwhile True:\n    message = messages.get()\n    if\
+      \ message[\"type\"] == \"stop\":\n        break\n    print(message[\"value\"])\n"
+    runnable: true
+    expectedOutput: '42'
+    caption: A small single-threaded demonstration of the queue API and sentinel-message pattern. Queue
+      operations are synchronized for use by multiple threads; this snippet itself does not start worker
+      threads.
+- id: message-passing
+  title: Message passing and ownership
+  kind: concept
+  blocks:
+  - type: markdown
+    body: 'A robust way to reduce races is to avoid shared mutation:
+
+
+      1. Give each worker its own input and local state.
+
+      2. Let each worker return a result or send a message.
+
+      3. Have one coordinator combine the results.
+
+
+      This makes ownership explicit and reduces the number of places that can change an invariant. It
+      does not remove the need to validate messages or handle worker failures, timeouts and cancellation.'
+  - type: item
+    ref: sync-merge-results-code
+- id: practice
+  title: Practise synchronization decisions
+  kind: practice
+  blocks:
+  - type: item
+    ref: sync-critical-section
+  - type: item
+    ref: sync-gil-tf
+  - type: item
+    ref: sync-lost-update-predict
+  - type: item
+    ref: sync-merge-results-code
+  - type: item
+    ref: sync-deadlock-explain
+- id: summary
+  title: Synchronization checklist
+  kind: summary
+  blocks:
+  - type: markdown
+    body: 'Which state is shared? What invariant must remain true? Can one task own the state and receive
+      messages instead? If a lock is necessary, does it protect the entire critical section? Are locks
+      acquired in one order? Are queues, semaphores or events a better fit?
+
+
+      Do not rely on the GIL for application correctness. Test the invariant, not just one lucky execution.'
+items:
+- id: sync-critical-section
+  type: mcq
+  skill: recognition
+  difficulty: 1
+  prompt: Two threads update the same shared balance. Which operation should be protected by a lock?
+  options:
+  - id: print-only
+    text: Only the final print statement, because output is shared.
+    correct: false
+    feedback: The race occurs when the balance is read and updated, not when it is displayed.
+  - id: read-write
+    text: The complete read-check-update sequence that preserves the balance invariant.
+    correct: true
+    feedback: A lock must cover the entire critical section, including every step that must be indivisible
+      relative to other workers.
+  - id: sleep
+    text: The sleep call before the update.
+    correct: false
+    feedback: Sleeping does not protect shared state and may make interleaving more likely.
+  - id: whole-program
+    text: Every line in the program, including independent calculations.
+    correct: false
+    feedback: Overly broad locks reduce concurrency and can create unnecessary contention.
+  explanation: Protect the smallest complete operation that preserves the shared invariant. Locking only
+    one line of a multi-step update is insufficient.
+- id: sync-gil-tf
+  type: true-false
+  skill: recognition
+  difficulty: 1
+  prompt: The CPython GIL guarantees that compound business operations such as `balance += amount` are
+    thread-safe in every Python build.
+  answer: false
+  explanation: The GIL is an interpreter implementation mechanism, not an application-level lock for multi-step
+    invariants. Free-threaded CPython builds can run without it, and other Python implementations differ.
+- id: sync-lost-update-predict
+  type: predict-output
+  skill: prediction
+  difficulty: 2
+  prompt: Two workers read the same starting value before either writes. What final value does this deterministic
+    interleaving produce?
+  code: 'balance = 0
+
+    worker_a_read = balance
+
+    worker_b_read = balance
+
+    worker_a_new = worker_a_read + 1
+
+    worker_b_new = worker_b_read + 1
+
+    balance = worker_a_new
+
+    balance = worker_b_new
+
+    print(balance)'
+  answer: '1'
+  wrongAnswers:
+  - answer: '2'
+    feedback: Both workers calculate 1 from the same old value; the second write overwrites the first.
+  - answer: '0'
+    feedback: Both workers write a new value. The final write is 1.
+  - answer: '2.0'
+    feedback: All values are integers and each worker computes one.
+  explanation: 'This is a lost update: both workers read zero, independently calculate one, and the last
+    write leaves the balance at one rather than two.'
+- id: sync-merge-results-code
+  type: code
+  skill: implementation
+  difficulty: 3
+  prompt: Implement `merge_worker_results(partials)`. Each element is a dictionary mapping a non-empty
+    string key to a non-negative integer count (bool is not a valid count). Return a new dictionary containing
+    the sum for each key. Do not mutate the input dictionaries. Raise `ValueError` for invalid keys or
+    counts.
+  starterCode: "def merge_worker_results(partials):\n    # TODO: validate each partial and combine counts\
+    \ into a new dictionary\n    return {}\n"
+  solution: "def merge_worker_results(partials):\n    merged = {}\n    for partial in partials:\n    \
+    \    for key, count in partial.items():\n            if not isinstance(key, str) or not key:\n   \
+    \             raise ValueError(\"keys must be non-empty strings\")\n            if isinstance(count,\
+    \ bool) or not isinstance(count, int) or count < 0:\n                raise ValueError(\"counts must\
+    \ be non-negative integers\")\n            merged[key] = merged.get(key, 0) + count\n    return merged\n"
+  tests:
+  - name: merges partials
+    code: 'partials = [{"red": 2, "blue": 1}, {"red": 3, "green": 4}]
+
+      assert merge_worker_results(partials) == {"red": 5, "blue": 1, "green": 4}'
+  - name: empty input
+    code: assert merge_worker_results([]) == {}
+  - name: does not mutate inputs
+    code: 'parts = [{"x": 2}, {"x": 5}]
+
+      merge_worker_results(parts)
+
+      assert parts == [{"x": 2}, {"x": 5}]'
+  - name: rejects bool
+    code: "try:\n    merge_worker_results([{\"x\": True}])\nexcept ValueError:\n    pass\nelse:\n    raise\
+      \ AssertionError(\"bool must not be accepted as a count\")"
+  - name: rejects negative
+    code: "try:\n    merge_worker_results([{\"x\": -1}])\nexcept ValueError:\n    pass\nelse:\n    raise\
+      \ AssertionError(\"negative count must be rejected\")"
+  hints:
+  - Build a fresh result dictionary; do not update any partial dictionary.
+  - Validate the key and count before adding it.
+  - Use `merged.get(key, 0)` to combine repeated keys.
+  explanation: Worker-local results reduce shared mutation. The coordinator merges completed immutable-by-convention
+    result dictionaries into a new object, validating the data at the boundary.
+- id: sync-deadlock-explain
+  type: explain
+  skill: design
+  difficulty: 3
+  prompt: Two threads need locks A and B. Thread 1 acquires A and then waits for B; thread 2 acquires
+    B and then waits for A. Explain the deadlock and give two ways to prevent it.
+  explanation: Each thread holds a resource the other needs, so neither can make progress. This is a circular
+    wait over locks.
+  rubric:
+  - Identifies that each thread holds one lock while waiting for the other.
+  - Explains consistent global lock ordering as a prevention technique.
+  - Mentions reducing nested locks or combining protected state under one lock where appropriate.
+  - Explains that timeouts or cancellation can limit waiting but do not replace a sound design.
+  modelAnswer: Thread 1 holds A and waits for B while thread 2 holds B and waits for A, so both wait forever.
+    Require every code path to acquire locks in the same global order, such as A then B. Better still,
+    reduce the number of locks or redesign the operation around message passing so the two pieces of shared
+    state do not need nested locks. A timeout can help detect or recover from a wait, but it does not
+    make inconsistent lock ordering safe.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - sync-critical-section
+  - sync-gil-tf
+  - sync-lost-update-predict
+  - sync-merge-results-code
+  - sync-deadlock-explain
+cheatsheet: '- A race condition depends on timing/interleaving.
+
+  - A read-modify-write operation is not automatically atomic.
+
+  - Protect the whole critical section with a lock; release it with a context manager.
+
+  - Keep locks short and acquire multiple locks in one global order.
+
+  - Semaphore limits concurrent access; Event signals; Condition waits for a predicate; Queue passes messages.
+
+  - Prefer worker-local results and one coordinator over shared mutation.
+
+  - The GIL is not a substitute for application-level synchronization.'

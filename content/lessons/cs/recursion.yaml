@@ -1,0 +1,1312 @@
+id: cs.recursion
+concept: cs.recursion
+title: Recursion
+subtitle: Functions that solve smaller copies of the same problem
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  A recursive function solves a problem by calling itself on a smaller version of it, until it reaches a
+  base case it can answer directly. Learn to design recursive functions, trace their frames on the call
+  stack, handle nested lists and dicts, recognise RecursionError, choose between recursion and loops, and
+  see why naive recursive Fibonacci explodes — and how memoisation fixes it.
+objectives:
+  - Identify the base case and the recursive case of a recursive function, and check that every call moves toward the base case.
+  - Trace a recursive call on the call stack and predict the order of output before and after the recursive call.
+  - Write recursive functions over numbers, strings, lists and nested data such as folders or JSON.
+  - Explain RecursionError, Python's recursion limit and why raising the limit does not fix a missing base case.
+  - Rewrite a recursive function as a loop with an explicit stack, and choose the more suitable version.
+  - Explain why naive recursive Fibonacci is exponential and how memoisation with functools.lru_cache makes it linear.
+sources:
+  - title: "Composing Programs, 1.7 Recursive Functions"
+    url: https://composingprograms.com/pages/17-recursive-functions.html
+    publisher: John DeNero (UC Berkeley)
+  - title: sys.getrecursionlimit and sys.setrecursionlimit
+    url: https://docs.python.org/3/library/sys.html#sys.getrecursionlimit
+    publisher: Python Software Foundation
+  - title: "Built-in Exceptions: RecursionError"
+    url: https://docs.python.org/3/library/exceptions.html#RecursionError
+    publisher: Python Software Foundation
+  - title: functools.lru_cache
+    url: https://docs.python.org/3/library/functools.html#functools.lru_cache
+    publisher: Python Software Foundation
+  - title: "What's New in Python 3.11: Inlined Python function calls"
+    url: https://docs.python.org/3/whatsnew/3.11.html#inlined-python-function-calls
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why some problems want to call themselves
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          An online order contains items, but an item can also be a **box of items**, and a box can contain
+          more boxes. Represented as nested lists, the prices look like this:
+          `[12, [5, 8], [3, [10, 2]], 7]`. What is the total?
+
+          A plain loop handles one level and then trips over the first box:
+      - type: code
+        runnable: true
+        code: |
+          order = [12, [5, 8], [3, [10, 2]], 7]
+          total = 0
+          for item in order:
+              total += item
+        expectError: TypeError
+        caption: "TypeError: unsupported operand type(s) for +=: 'int' and 'list'. A nested loop would fix one more level, but you cannot know in advance how deep the boxes go."
+      - type: markdown
+        body: |
+          Look at the problem differently: **the total of a box is the total of its items, and an item that is
+          a box is… the same problem, only smaller.** A function that calls itself on that smaller problem
+          handles any depth:
+      - type: code
+        runnable: true
+        code: |
+          def total(items):
+              result = 0
+              for item in items:
+                  if isinstance(item, list):
+                      result += total(item)   # a box: solve the same problem on it
+                  else:
+                      result += item          # a price: just add it
+              return result
+
+          print(total([12, [5, 8], [3, [10, 2]], 7]))
+          print(total([1, [1, [1, [1, [1]]]]]))
+        expectedOutput: |
+          47
+          5
+        caption: One small function, any depth of nesting.
+        annotations:
+          - line: 5
+            text: The function calls itself on the inner list. That call has its own `result` and its own loop.
+      - type: markdown
+        body: |
+          A function that calls itself is **recursive**, and the technique is
+          [recursion](glossary:recursion). Trees, file systems, JSON documents, HTML pages and many fast
+          algorithms (merge sort, binary search, graph search) are defined in terms of smaller copies of
+          themselves, so recursion expresses them directly.
+
+  - id: base-and-recursive-case
+    title: The base case and the recursive case
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Every correct recursive function has two parts:
+
+          1. A [base case](glossary:base-case): an input small enough to answer **directly, without
+             recursing**. This is what stops the recursion.
+          2. A [recursive case](glossary:recursive-case): for any other input, call the function on a
+             **smaller** input and use that result to build the answer. "Smaller" must mean *closer to the
+             base case* — every chain of calls has to reach it.
+
+          The smallest example is a countdown:
+      - type: code
+        runnable: true
+        code: |
+          def countdown(n):
+              if n == 0:              # base case: nothing left to count
+                  print("Liftoff!")
+                  return
+              print(n)
+              countdown(n - 1)        # recursive case: a smaller countdown
+
+          countdown(3)
+        expectedOutput: |
+          3
+          2
+          1
+          Liftoff!
+        annotations:
+          - line: 2
+            text: Checked first, on every call. When n reaches 0 the function stops calling itself.
+          - line: 6
+            text: n - 1 is closer to 0 than n, so each call makes progress toward the base case.
+      - type: markdown
+        body: |
+          Recursion shines when the answer for n is naturally defined using the answer for a smaller input.
+          The factorial of n, written n!, is 1 × 2 × … × n. Notice that **n! = n × (n − 1)!**, and by
+          definition **0! = 1**. That sentence translates line by line into Python:
+      - type: code
+        runnable: true
+        code: |
+          def factorial(n):
+              if n == 0:
+                  return 1                    # 0! = 1
+              return n * factorial(n - 1)     # n! = n × (n − 1)!
+
+          print(factorial(5))
+          print(factorial(0))
+        expectedOutput: |
+          120
+          1
+      - type: item
+        ref: identify-base
+
+  - id: call-stack
+    title: "Mental model: every call gets its own frame"
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          From the [functions lesson](concept:python.functions) you know that each call creates a
+          [frame](glossary:stack-frame) — a private workspace holding that call's local variables — and that
+          paused calls wait on the [call stack](glossary:call-stack). Recursion is nothing more than this
+          rule applied to a function that happens to call itself:
+
+          - `factorial(4)` and `factorial(3)` are **separate calls with separate frames**, each with its own
+            `n`. Nothing is overwritten.
+          - A call that makes a recursive call **pauses** at that line until the inner call returns.
+          - Calls finish in **reverse order**: the deepest call (the base case) returns first, and the
+            results flow back up, one frame at a time.
+
+          Step through it and watch the frames stack up, then disappear:
+      - type: visualization
+        component: python-tracer
+        title: factorial(4) on the call stack
+        caption: >-
+          Four paused frames pile up, each with its own n, until factorial(0) hits the base case. Then each
+          frame resumes, multiplies by its own n, and returns: 1, 1, 2, 6, 24.
+        props:
+          code: |
+            def factorial(n):
+                if n == 0:
+                    return 1
+                return n * factorial(n - 1)
+
+            print(factorial(4))
+      - type: callout
+        variant: analogy
+        title: Which row am I in?
+        body: |
+          You are in a dark cinema and want to know your row number. You ask the person in front of you, who
+          asks the person in front of them, and so on. The person in the front row knows the answer — "row 1"
+          (the base case). Each person then turns round and answers "my row is one more than yours". Nobody
+          needed to know the whole picture; each only trusted the answer from the row in front.
+      - type: markdown
+        body: |
+          The cinema shows that code placed **after** a recursive call runs on the way back, in reverse order.
+          Predict this program's output before you step through it:
+      - type: item
+        ref: predict-unwind
+      - type: visualization
+        component: python-tracer
+        title: Going down, coming back
+        caption: Lines before the recursive call run as the stack grows; lines after it run as the stack shrinks.
+        props:
+          code: |
+            def show(n):
+                if n == 0:
+                    return
+                print("going down", n)
+                show(n - 1)
+                print("coming back", n)
+
+            show(3)
+      - type: callout
+        variant: tip
+        title: Trust the recursion
+        body: |
+          You do not have to trace every level to write a recursive function. Check two things: the base
+          case returns the right answer, and **if the smaller call returns the right answer**, your recursive
+          case combines it correctly. If both hold, the function is correct for every input that reaches the
+          base case. (This is proof by induction in disguise.)
+
+  - id: designing
+    title: A recipe for writing recursive functions
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          1. **Find the smallest input** and its answer directly: an empty list (sum 0), an empty or
+             one-character string, n = 0.
+          2. **Describe the problem in terms of a smaller one.** "The sum of a list is its first item plus
+             the sum of the rest." "A word reversed is the rest reversed, followed by the first letter."
+          3. **Write the recursive case** assuming the smaller call already works, and check that the input
+             really gets smaller each time.
+
+          Applied to lists and strings, using slicing to make the smaller input:
+      - type: code
+        runnable: true
+        code: |
+          def sum_list(items):
+              if not items:                           # base case: empty list
+                  return 0
+              return items[0] + sum_list(items[1:])   # first + sum of the rest
+
+          def reverse(text):
+              if len(text) <= 1:                      # "" and "a" are their own reverse
+                  return text
+              return reverse(text[1:]) + text[0]
+
+          def is_palindrome(word):
+              if len(word) <= 1:
+                  return True
+              if word[0] != word[-1]:
+                  return False                        # a second base case: mismatch found
+              return is_palindrome(word[1:-1])        # check the inside
+
+          print(sum_list([4, 8, 15, 16]))
+          print(reverse("stressed"))
+          print(is_palindrome("racecar"), is_palindrome("rocket"))
+        expectedOutput: |
+          43
+          desserts
+          True False
+        annotations:
+          - line: 4
+            text: "items[1:] is one shorter, so the chain of calls must reach the empty list."
+          - line: 15
+            text: A function may have several base cases. This one stops early as soon as the answer is known.
+      - type: callout
+        variant: production
+        title: Slicing makes a copy every time
+        body: |
+          `items[1:]` copies the rest of the list, so `sum_list` copies n − 1, then n − 2, … items: O(n²)
+          work in total. Passing an index instead avoids the copies and makes it O(n):
+
+          ```python
+          def sum_from(items, start=0):
+              if start == len(items):
+                  return 0
+              return items[start] + sum_from(items, start + 1)
+          ```
+
+          For a plain list, `sum(items)` is better still. The slicing versions are perfect for learning the
+          pattern; just know their cost.
+      - type: item
+        ref: parsons-count
+
+  - id: nested-structures
+    title: Recursion on nested data
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Recursion is at its best when the **data itself is recursive**: a folder contains files and
+          folders; a JSON object contains values that may be objects or lists; an HTML element contains
+          elements. The shape of the function follows the shape of the data — one branch for "a container:
+          recurse into it" and one for "a plain value: handle it directly".
+      - type: code
+        runnable: true
+        code: |
+          folder = {
+              "notes.txt": 120,
+              "photos": {"cat.jpg": 2048, "dog.jpg": 3072},
+              "code": {"app.py": 300, "tests": {"test_app.py": 150}},
+          }
+
+          def total_size(tree):
+              size = 0
+              for name, entry in tree.items():
+                  if isinstance(entry, dict):     # a sub-folder: same problem, smaller
+                      size += total_size(entry)
+                  else:                           # a file size: add it
+                      size += entry
+              return size
+
+          def show_tree(tree, indent=0):
+              for name, entry in tree.items():
+                  print(" " * indent + name)
+                  if isinstance(entry, dict):
+                      show_tree(entry, indent + 2)
+
+          print(total_size(folder))
+          show_tree(folder)
+        expectedOutput: |
+          5690
+          notes.txt
+          photos
+            cat.jpg
+            dog.jpg
+          code
+            app.py
+            tests
+              test_app.py
+        caption: File sizes in kilobytes. `show_tree` passes extra information (the indent) down to each deeper call.
+      - type: markdown
+        body: |
+          Where is the base case here? It is implicit: a folder containing only files makes **no** recursive
+          call, so the recursion stops there. The data is finite, so every path down the tree ends.
+
+          Predict what this function returns — it measures how deeply lists are nested:
+      - type: item
+        ref: predict-depth
+
+  - id: limits
+    title: Recursion depth and RecursionError
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Every paused call keeps its frame in memory, so recursion uses **O(depth)** extra space — 1,000
+          nested calls means 1,000 frames. To protect itself from runaway recursion, CPython enforces a
+          [recursion limit](glossary:recursion-limit): by default at most **1000** nested Python calls.
+      - type: code
+        runnable: true
+        code: |
+          import sys
+          print(sys.getrecursionlimit())
+        expectedOutput: |
+          1000
+      - type: markdown
+        body: |
+          Go past it and Python raises [RecursionError](glossary:recursion-error). A depth of 500 is fine; a
+          countdown from 5000 needs 5000 frames at once:
+      - type: code
+        runnable: true
+        code: |
+          def countdown(n):
+              if n == 0:
+                  return "done"
+              return countdown(n - 1)
+
+          print(countdown(500))
+          print(countdown(5000))
+        expectedOutput: |
+          done
+        expectError: RecursionError
+        caption: "RecursionError: maximum recursion depth exceeded. In a terminal the traceback shows the same line, then a note such as [Previous line repeated 996 more times]."
+      - type: markdown
+        body: |
+          The limit counts **every** Python frame on the stack, including the ones that called your
+          function, which is why you hit it slightly before 1000 levels of your own recursion.
+
+          Two different situations produce this error, and they need different fixes:
+
+          - **A missing or unreachable base case** — the recursion would never stop. This is a bug; fix the
+            base case.
+          - **Correct recursion on very deep input** — a list of 10,000 items processed one item per call.
+            The code is right but the approach does not fit Python; use a loop (next section).
+
+          `sys.setrecursionlimit(5000)` raises the cap, but use it with care: the
+          [documentation](https://docs.python.org/3/library/sys.html#sys.setrecursionlimit) warns that a
+          too-high limit can crash Python, and it does nothing for a bug — infinite recursion still fails,
+          just later.
+      - type: callout
+        variant: note
+        title: No tail-call optimisation in CPython
+        body: |
+          In `return countdown(n - 1)` the recursive call is the very last thing the function does — a
+          [tail call](glossary:tail-call). Some languages reuse the current frame for tail calls, so such
+          recursion runs in constant space. CPython deliberately does not (keeping complete tracebacks is
+          one reason), so the countdown above still needs one frame per call.
+      - type: item
+        ref: limit-mcq
+
+  - id: recursion-vs-iteration
+    title: Recursion versus iteration
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Anything written with recursion can be written with a loop. For *linear* recursion — one
+          recursive call per step, like factorial or a countdown — the loop is usually simpler, avoids the
+          depth limit and is faster in Python:
+      - type: code
+        runnable: true
+        code: |
+          def factorial_loop(n):
+              result = 1
+              for k in range(2, n + 1):
+                  result *= k
+              return result
+
+          print(factorial_loop(5), factorial_loop(0))
+        expectedOutput: |
+          120 1
+      - type: markdown
+        body: |
+          For *branching* data such as nested lists, the loop needs to remember the work still to do. That
+          is exactly what the call stack was doing for us, so we keep **our own stack** — a list of
+          containers not yet processed:
+      - type: code
+        runnable: true
+        code: |
+          def total(items):                      # recursive version from the start of the lesson
+              result = 0
+              for item in items:
+                  result += total(item) if isinstance(item, list) else item
+              return result
+
+          def total_iterative(items):
+              result = 0
+              stack = [items]                    # lists still to process
+              while stack:
+                  current = stack.pop()
+                  for item in current:
+                      if isinstance(item, list):
+                          stack.append(item)     # remember it instead of recursing
+                      else:
+                          result += item
+              return result
+
+          print(total([12, [5, 8], [3, [10, 2]], 7]), total_iterative([12, [5, 8], [3, [10, 2]], 7]))
+
+          deep = [1]
+          for _ in range(5000):
+              deep = [deep]                      # 5000 levels of nesting
+          print(total_iterative(deep))
+          try:
+              total(deep)
+          except RecursionError:
+              print("recursive version: RecursionError")
+        expectedOutput: |
+          47 47
+          1
+          recursive version: RecursionError
+        caption: The explicit stack lives in ordinary memory, so its depth is limited only by memory, not by the recursion limit.
+      - type: markdown
+        body: |
+          | Prefer recursion when… | Prefer a loop when… |
+          |---|---|
+          | the data is a tree or nested (folders, JSON, HTML) | you walk a sequence one item at a time |
+          | the algorithm splits work into parts (merge sort, binary search) | the depth could reach thousands |
+          | the recursive version is much clearer | speed in tight code matters |
+
+          Both are valid tools; clarity is usually the deciding factor, with depth as the hard limit.
+      - type: item
+        ref: loop-or-recursion
+
+  - id: fibonacci
+    title: When recursion repeats itself — Fibonacci and memoisation
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The Fibonacci numbers start 0, 1 and each later one is the sum of the previous two: 0, 1, 1, 2, 3,
+          5, 8, 13… The definition fib(n) = fib(n − 1) + fib(n − 2) turns directly into code. It is correct —
+          but count its calls:
+      - type: code
+        runnable: true
+        code: |
+          calls = 0
+
+          def fib(n):
+              global calls
+              calls += 1
+              if n < 2:
+                  return n
+              return fib(n - 1) + fib(n - 2)
+
+          for n in [10, 20, 25]:
+              calls = 0
+              print(f"fib({n}) = {fib(n)} using {calls:,} calls")
+        expectedOutput: |
+          fib(10) = 55 using 177 calls
+          fib(20) = 6765 using 21,891 calls
+          fib(25) = 75025 using 242,785 calls
+        caption: Adding 5 to n multiplies the work by about 11. fib(50) this way would need over 40 billion calls.
+      - type: markdown
+        body: |
+          Draw the [recursion tree](glossary:recursion-tree) for fib(5): fib(5) calls fib(4) and fib(3);
+          fib(4) calls fib(3) **again** and fib(2); and so on. fib(3) is computed twice, fib(2) three times,
+          fib(1) five times. Each extra n multiplies the number of calls by about 1.6, so the cost grows
+          **exponentially** — see [complexity](concept:cs.complexity).
+
+          The problem is not recursion. It is that the same **sub-problems overlap** and are solved over and
+          over. The fix is to remember each answer the first time it is computed —
+          [memoisation](glossary:memoization). `functools.lru_cache` (from the
+          [decorators lesson](concept:python.decorators)) does it for you:
+      - type: code
+        runnable: true
+        code: |
+          from functools import lru_cache
+
+          calls = 0
+
+          @lru_cache(maxsize=None)
+          def fib(n):
+              global calls
+              calls += 1                  # counts real computations only
+              if n < 2:
+                  return n
+              return fib(n - 1) + fib(n - 2)
+
+          print(fib(25), calls)
+          print(fib(100), calls)
+          print(fib.cache_info())
+        expectedOutput: |
+          75025 26
+          354224848179261915075 101
+          CacheInfo(hits=99, misses=101, maxsize=None, currsize=101)
+        caption: Each fib(k) is computed once and then served from the cache, so the work is linear in n. fib(100) reused the 26 answers it already had.
+        annotations:
+          - line: 5
+            text: "maxsize=None keeps every result. `@functools.cache` (Python 3.9+) is the same thing."
+      - type: markdown
+        body: |
+          Memoisation turns 242,785 calls into 26. Caching only works for **pure** functions (same arguments
+          always give the same result) with **hashable** arguments. Solving overlapping sub-problems once is
+          the core idea of [dynamic programming](concept:cs.dynamic-programming).
+      - type: item
+        ref: predict-fib-calls
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **What a frame holds.** For each call CPython stores the function's code, its local variables, a
+          reference to the calling frame and the position where execution will resume. Since Python 3.11
+          these are compact internal structures; full frame *objects* are only created when something asks
+          for them, such as a debugger or a traceback
+          ([What's New in 3.11](https://docs.python.org/3/whatsnew/3.11.html#cheaper-lazy-python-frames)).
+
+          **Python calls and the C stack.** Before 3.11, every Python-to-Python call also used the C stack,
+          which is why the recursion limit was kept low. In 3.11+ most Python calls "jump" into the new frame
+          without a C-level call, so with a raised limit recursion can go deeper than before
+          ([inlined calls](https://docs.python.org/3/whatsnew/3.11.html#inlined-python-function-calls)).
+          The default limit is still 1000, and the `sys` documentation still warns that setting it too high
+          can crash the interpreter, because the safe maximum depends on the platform.
+
+          **Calls cost more than loop iterations.** Creating a frame, binding parameters and returning costs
+          more than one pass of a `for` loop. That is a constant factor, not a change of complexity class,
+          but in hot code a loop is usually faster than equivalent recursion.
+
+          **Divide and conquer keeps depth small.** Recursion that halves its input — binary search, merge
+          sort — has depth about log₂ n, only 20 for a million items, so the limit is no concern. Recursion
+          that peels off one item per call has depth n, which is where the limit bites.
+      - type: code
+        runnable: true
+        code: |
+          def max_depth_used(items, depth=1):
+              """Find the largest item by splitting the list in half, tracking the depth."""
+              if len(items) == 1:
+                  return items[0], depth
+              mid = len(items) // 2
+              left, d1 = max_depth_used(items[:mid], depth + 1)
+              right, d2 = max_depth_used(items[mid:], depth + 1)
+              return max(left, right), max(d1, d2)
+
+          print(max_depth_used(list(range(100_000))))
+        expectedOutput: |
+          (99999, 18)
+        caption: Halving the list at every level keeps the stack only 18 frames deep for 100,000 items.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `RecursionError: maximum recursion depth exceeded` on small input | No base case, or the input skips over it (`n - 2` from an odd n; a negative n) | Make every path reach a base case; prefer `if n <= 0:` to `if n == 0:` when steps can overshoot |
+          | `RecursionError` on large but valid input | Depth grows with n (one item per call) | Use a loop or an explicit stack |
+          | `TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'` | The recursive case computes a value but does not `return` it, so a caller receives None | `return` the combined result on every path |
+          | Correct answer for the deepest call, wrong at the top | A result is computed but not passed back up through each level | Return the recursive call's result |
+          | Painfully slow for moderate n (e.g. fib(35)) | Overlapping sub-problems recomputed | Memoise with `functools.lru_cache`, or use a loop |
+          | Values pile up between separate calls | A mutable default argument (`acc=[]`) used as an accumulator | Return new values, or pass the accumulator explicitly with a `None` default |
+
+          The missing `return` is the most common recursive bug, and its error message points at the wrong
+          place — the *caller* fails when it tries to use None:
+      - type: code
+        runnable: true
+        code: |
+          def sum_to(n):
+              if n == 0:
+                  return 0
+              n + sum_to(n - 1)       # computed... and thrown away
+
+          print(sum_to(3))
+        expectError: TypeError
+        caption: "sum_to(1) returns None, so sum_to(2) fails computing 2 + None. Fix line 4: return n + sum_to(n - 1)."
+      - type: code
+        runnable: true
+        code: |
+          def countdown_by_two(n):
+              if n == 0:
+                  return "liftoff"
+              return countdown_by_two(n - 2)
+
+          print(countdown_by_two(4))
+          print(countdown_by_two(5))
+        expectedOutput: |
+          liftoff
+        expectError: RecursionError
+        caption: "From 5 the calls go 5, 3, 1, -1, -3… and never equal 0. `if n <= 0:` stops for both even and odd starts."
+      - type: item
+        ref: debug-count-vowels
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          Use the recipe: base case first, then a recursive case that trusts the smaller call. The checks
+          confirm that your function really calls itself.
+      - type: item
+        ref: power
+      - type: item
+        ref: find-values
+      - type: item
+        ref: explain-stack
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A recursive function calls itself on a **smaller** input. It needs a **base case** that answers
+            directly and a **recursive case** that moves toward it.
+          - Every call gets its own **frame** with its own local variables; frames pile up on the call stack
+            and finish in reverse order. Code after the recursive call runs on the way back.
+          - **Trust the recursion**: if the base case is right and the combination is right, the function is
+            right.
+          - Recursion fits nested and tree-shaped data (folders, JSON) and divide-and-conquer algorithms.
+          - CPython's recursion limit (default 1000, `sys.getrecursionlimit()`) raises **RecursionError**;
+            there is no tail-call optimisation. Fix base-case bugs; use loops or an explicit stack for deep
+            input.
+          - Naive Fibonacci is exponential because sub-problems **overlap**; memoisation
+            (`@functools.lru_cache`) makes it linear.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          Interviewers ask you to trace a recursive call, name the base case and state the cost — including
+          **O(depth) stack space**. Say what happens on empty or minimal input, mention the recursion limit
+          for deep input, and offer the iterative or memoised version when sub-problems repeat.
+
+items:
+  - id: identify-base
+    type: mcq
+    skill: recognition
+    prompt: |
+      Which part of this function is the base case?
+
+      ```python
+      def sum_to(n):
+          if n == 1:
+              return 1
+          return n + sum_to(n - 1)
+      ```
+    explanation: >-
+      The base case is the branch that returns without calling the function again: when n is 1 the answer
+      is simply 1. The last line is the recursive case — it calls sum_to on a smaller n.
+    options:
+      - id: a
+        text: "`if n == 1: return 1`"
+        correct: true
+        feedback: Right. It answers directly, with no recursive call, so it is where the recursion stops.
+      - id: b
+        text: "`return n + sum_to(n - 1)`"
+        feedback: This line calls sum_to again on a smaller input. That makes it the recursive case.
+      - id: c
+        text: "The parameter `n`"
+        feedback: The parameter is the input. The base case is the branch of code that handles the smallest input without recursing.
+      - id: d
+        text: There is no base case; recursion stops on its own.
+        feedback: Recursion never stops on its own. Without the `if n == 1` branch, this would recurse until RecursionError.
+
+  - id: predict-unwind
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: Predict the output before you step through it in the next visualization.
+    code: |
+      def show(n):
+          if n == 0:
+              return
+          print("going down", n)
+          show(n - 1)
+          print("coming back", n)
+
+      show(3)
+    answer: |
+      going down 3
+      going down 2
+      going down 1
+      coming back 1
+      coming back 2
+      coming back 3
+    explanation: >-
+      Each call prints "going down" and then pauses at `show(n - 1)`. Only when show(0) returns does show(1)
+      resume and print "coming back 1"; then show(2) resumes, then show(3). Code after a recursive call runs
+      in reverse order of the calls.
+    wrongAnswers:
+      - answer: |
+          going down 3
+          coming back 3
+          going down 2
+          coming back 2
+          going down 1
+          coming back 1
+        feedback: >-
+          show(3) cannot print "coming back 3" until its call `show(2)` has completely finished — including
+          everything show(2) prints. The calling frame is paused, not skipped.
+      - answer: |
+          going down 3
+          going down 2
+          going down 1
+          coming back 3
+          coming back 2
+          coming back 1
+        feedback: >-
+          The first frame to resume is the deepest one, show(1), because it was the last to pause. Frames
+          finish in reverse order, like plates taken off a pile.
+      - answer: |
+          going down 3
+          going down 2
+          going down 1
+        feedback: >-
+          The base case returns from show(0) only. Each earlier call then continues with the line after its
+          recursive call and prints "coming back".
+
+  - id: parsons-count
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines into a recursive function that counts how many times `target` appears in a list.
+      The program should print `3`. Two lines are distractors.
+    solution: |
+      def count(items, target):
+          if not items:
+              return 0
+          rest = count(items[1:], target)
+          if items[0] == target:
+              return rest + 1
+          return rest
+      print(count([3, 1, 3, 3, 2], 3))
+    distractors:
+      - "    rest = count(items, target)"
+      - "    rest = count(items[0], target)"
+    expectedOutput: |
+      3
+    explanation: >-
+      The empty list is the base case (zero occurrences). The recursive case counts the rest of the list
+      (`items[1:]`, one shorter) and adds 1 if the first item matches. `count(items, target)` would never
+      make progress, and `items[0]` is a single value, not a smaller list.
+
+  - id: predict-depth
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      def depth(value):
+          if not isinstance(value, list):
+              return 0
+          deepest = 0
+          for item in value:
+              deepest = max(deepest, depth(item))
+          return 1 + deepest
+
+      print(depth(7), depth([7]), depth([1, [2, [3]], 4]))
+    answer: "0 1 3"
+    explanation: >-
+      A non-list has depth 0 (the base case). Each list adds 1 to the deepest item inside it: [7] is 1 + 0;
+      [3] is 1, [2, [3]] is 2, and the outer list is 3.
+    wrongAnswers:
+      - answer: "0 1 4"
+        feedback: "Depth counts nested levels, not items. The deepest path is outer list → [2, [3]] → [3], which is 3 lists."
+      - answer: "1 1 3"
+        feedback: "7 is not a list, so the base case returns 0 for it."
+      - answer: "0 1 2"
+        feedback: "Count the brackets on the deepest path: [1, [2, [3]], 4] contains [2, [3]], which contains [3] — three levels."
+
+  - id: limit-mcq
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `steps(n)` counts how many jumps of 2 it takes to get from n down to 1 or below. `steps(7)` correctly
+      returns 3, but `steps(8)` raises `RecursionError: maximum recursion depth exceeded`. A teammate
+      suggests adding `sys.setrecursionlimit(100_000)`. What is the right fix?
+
+      ```python
+      def steps(n):
+          if n == 1:
+              return 0
+          return 1 + steps(n - 2)
+      ```
+    explanation: >-
+      From 7 the calls go 7, 5, 3, 1 and stop. From 8 they go 8, 6, 4, 2, 0, -2, … and jump straight over the
+      base case, so the recursion is infinite. Changing the base case to `if n <= 1:` stops every chain, odd
+      or even. Raising the limit cannot fix infinite recursion; it only delays the error.
+    options:
+      - id: a
+        text: Raise the limit with sys.setrecursionlimit(100_000).
+        feedback: >-
+          If the base case is never reached, recursion is infinite — any limit is eventually exceeded (and a
+          huge limit can crash Python instead of raising a clean error).
+      - id: b
+        text: Change the base case to `if n <= 1:` so that steps that jump over 1 still stop.
+        correct: true
+        feedback: Right. A base case written with <= catches inputs that skip past the exact stopping value.
+      - id: c
+        text: Replace `n - 2` with `n + 2`.
+        feedback: That moves away from the base case, so the recursion would never stop for any n.
+      - id: d
+        text: Wrap the call in try/except RecursionError and return 0.
+        feedback: That hides the bug and returns a wrong answer after a thousand wasted calls.
+
+  - id: loop-or-recursion
+    type: mcq
+    skill: transfer
+    prompt: Which task is the most natural fit for a recursive function in Python?
+    explanation: >-
+      A nested folder structure has unknown depth and branches at every level, which is exactly what
+      recursion expresses well, and real folder trees are rarely more than a few dozen levels deep. The other
+      tasks are linear and better as loops.
+    options:
+      - id: a
+        text: Summing a list of one million numbers.
+        feedback: One call per item would need a million frames and hit the recursion limit. A loop (or sum()) is right.
+      - id: b
+        text: Listing every file inside a folder that contains sub-folders of unknown depth.
+        correct: true
+        feedback: Right. The data is tree-shaped, so "handle files, recurse into folders" mirrors it directly.
+      - id: c
+        text: Reading a log file line by line.
+        feedback: That is a linear sequence; a for loop over the file is simpler and has no depth limit.
+      - id: d
+        text: Printing the numbers from 1 to 10.
+        feedback: Recursion can do it, but `for n in range(1, 11)` is clearer. Recursion pays off when the problem branches.
+
+  - id: predict-fib-calls
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: How many calls does naive Fibonacci make for fib(5)? Predict the output.
+    code: |
+      calls = 0
+
+      def fib(n):
+          global calls
+          calls += 1
+          if n < 2:
+              return n
+          return fib(n - 1) + fib(n - 2)
+
+      print(fib(5), calls)
+    answer: "5 15"
+    explanation: >-
+      fib(5) calls fib(4) and fib(3); fib(4) calls fib(3) and fib(2); and so on. Counting every node of the
+      recursion tree gives 15 calls (1 + 9 for fib(4) + 5 for fib(3)), with fib(3) computed twice and fib(1)
+      five times.
+    wrongAnswers:
+      - answer: "5 6"
+        feedback: >-
+          Six calls (n = 5, 4, 3, 2, 1, 0) is what the memoised version makes. Without a cache, fib(3), fib(2)
+          and fib(1) are recomputed every time they are needed.
+      - answer: "5 5"
+        feedback: Each call for n ≥ 2 makes two more calls, so the count grows much faster than n.
+      - answer: "8 15"
+        feedback: "fib(5) is 5 (0, 1, 1, 2, 3, 5); 8 is fib(6). The call count of 15 is right."
+
+  - id: debug-count-vowels
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `count_vowels` should count the lowercase vowels in a string recursively, so `count_vowels("recursion")`
+      is 4. It prints `0`. Find and fix the bug, keeping the function recursive (no loops).
+    starterCode: |
+      def count_vowels(text):
+          if text == "":
+              return 0
+          rest = count_vowels(text[1:])
+          if text[0] in "aeiou":
+              rest + 1
+          return rest
+
+      print(count_vowels("recursion"))
+    solution: |
+      def count_vowels(text):
+          if text == "":
+              return 0
+          rest = count_vowels(text[1:])
+          if text[0] in "aeiou":
+              return rest + 1
+          return rest
+
+      print(count_vowels("recursion"))
+    expectedOutput: |
+      4
+    tests:
+      - name: counts vowels correctly
+        code: |
+          for text, expected in [("recursion", 4), ("", 0), ("sky", 0), ("aeiou", 5), ("banana", 3)]:
+              got = count_vowels(text)
+              assert got == expected, f"count_vowels({text!r}) should be {expected}, got {got!r}."
+      - name: stays recursive
+        code: |
+          import ast
+          tree = ast.parse(source)
+          func = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "count_vowels")
+          self_calls = [n for n in ast.walk(func) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "count_vowels"]
+          assert self_calls, "count_vowels should still call itself."
+          assert not any(isinstance(n, (ast.For, ast.While)) for n in ast.walk(func)), "Fix the recursion instead of replacing it with a loop."
+    hints:
+      - Trace count_vowels("a"). What does the line `rest + 1` do with its result?
+      - An expression on its own line is calculated and then thrown away. The value must be returned.
+    feedback:
+      - when: { outputEquals: "0\n" }
+        message: >-
+          Still 0: the vowel is never added to the count that is returned. Make the vowel branch return
+          rest + 1.
+    explanation: >-
+      `rest + 1` computed a value but did not store or return it, so every level returned the count from the
+      level below — ultimately the base case's 0. Returning `rest + 1` passes each vowel up the chain of
+      calls.
+
+  - id: power
+    type: code
+    skill: implementation
+    prompt: |
+      Write a **recursive** function `power(base, exponent)` that returns base raised to a whole-number
+      exponent ≥ 0, so `power(2, 10)` is 1024 and `power(5, 0)` is 1.
+
+      Do not use `**`, `pow()` or any loop — use the fact that baseⁿ = base × baseⁿ⁻¹.
+    starterCode: |
+      def power(base, exponent):
+          # Base case first: what is anything to the power 0?
+          pass
+
+      print(power(2, 10))
+    solution: |
+      def power(base, exponent):
+          if exponent == 0:
+              return 1
+          return base * power(base, exponent - 1)
+
+      print(power(2, 10))
+    expectedOutput: |
+      1024
+    tests:
+      - name: computes powers
+        code: |
+          for b, e in [(2, 10), (5, 0), (3, 4), (10, 3), (7, 1), (-2, 3)]:
+              got = power(b, e)
+              assert got == b ** e, f"power({b}, {e}) should be {b ** e}, got {got!r}."
+      - name: is recursive, with no loops or built-in powers
+        code: |
+          import ast
+          tree = ast.parse(source)
+          func = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "power"), None)
+          assert func is not None, "Define a function named power."
+          assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "power" for n in ast.walk(func)), "power should call itself with a smaller exponent."
+          assert not any(isinstance(n, (ast.For, ast.While)) for n in ast.walk(func)), "Solve it with recursion, not a loop."
+          assert not any(isinstance(n, ast.Pow) for n in ast.walk(func)) and not calls("pow"), "Do not use ** or pow(); multiply instead."
+    hints:
+      - "Base case: any number to the power 0 is 1."
+      - "Recursive case: base to the power exponent is base times base to the power (exponent - 1)."
+      - "`return base * power(base, exponent - 1)`"
+    feedback:
+      - when: { outputEquals: "None\n" }
+        message: Your function returns None. Make sure both the base case and the recursive case use return.
+      - when: { errorType: RecursionError }
+        message: The recursion never stops. Check that the exponent gets smaller on each call and that the base case tests for exponent == 0.
+    explanation: >-
+      Each call reduces the exponent by one until the base case returns 1, and the multiplications happen on
+      the way back: 2 × (2 × (… × 1)). It makes exponent + 1 calls, so it is O(exponent) time and stack depth.
+      A faster version squares the result of power(base, exponent // 2), giving O(log exponent).
+
+  - id: find-values
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      JSON documents nest dicts and lists to any depth. Write `find_values(data, key)` that returns a list
+      of **every** value stored under `key` anywhere inside `data`, in the order they are found (a dict's
+      own value first, then its contents in order).
+
+      ```python
+      doc = {"name": "root", "children": [
+          {"name": "a", "children": []},
+          {"name": "b", "children": [{"name": "c"}]},
+      ]}
+      find_values(doc, "name")   # ['root', 'a', 'b', 'c']
+      ```
+
+      `data` may be a dict, a list, or a plain value (string, number…).
+    starterCode: |
+      def find_values(data, key):
+          # dict: collect data[key] if present, then search every value
+          # list: search every item
+          # anything else: nothing to find
+          return []
+
+      doc = {"name": "root", "children": [
+          {"name": "a", "children": []},
+          {"name": "b", "children": [{"name": "c"}]},
+      ]}
+      print(find_values(doc, "name"))
+    solution: |
+      def find_values(data, key):
+          found = []
+          if isinstance(data, dict):
+              if key in data:
+                  found.append(data[key])
+              for value in data.values():
+                  found.extend(find_values(value, key))
+          elif isinstance(data, list):
+              for item in data:
+                  found.extend(find_values(item, key))
+          return found
+
+      doc = {"name": "root", "children": [
+          {"name": "a", "children": []},
+          {"name": "b", "children": [{"name": "c"}]},
+      ]}
+      print(find_values(doc, "name"))
+    expectedOutput: |
+      ['root', 'a', 'b', 'c']
+    tests:
+      - name: finds names in the example
+        code: |
+          doc = {"name": "root", "children": [{"name": "a", "children": []}, {"name": "b", "children": [{"name": "c"}]}]}
+          got = find_values(doc, "name")
+          assert got == ["root", "a", "b", "c"], f"Expected ['root', 'a', 'b', 'c'], got {got!r}."
+      - name: works on other documents
+        code: |
+          order = {"id": 1, "items": [{"id": 2, "tags": [{"id": 3}]}, [{"id": 4}]], "meta": {"owner": {"id": 5}}}
+          got = find_values(order, "id")
+          assert got == [1, 2, 3, 4, 5], f"find_values(order, 'id') should be [1, 2, 3, 4, 5], got {got!r}. Remember lists can contain lists."
+          assert find_values(order, "missing") == [], "A key that never appears should give []."
+          assert find_values("plain text", "id") == [] and find_values(42, "id") == [], "Plain values contain nothing: return []."
+      - name: handles deep nesting
+        code: |
+          deep = {"v": 0}
+          for i in range(1, 60):
+              deep = {"v": i, "next": [deep]}
+          got = find_values(deep, "v")
+          assert got == list(range(59, -1, -1)), "On a 60-level document, every 'v' should be found, outermost first."
+    hints:
+      - Write three branches with isinstance — dict, list, and everything else (the base case, which returns []).
+      - "For a dict: if the key is present, append its value; then for every value in the dict, extend the result with a recursive call."
+      - "`found.extend(find_values(value, key))` adds all the values found inside value."
+    feedback:
+      - when: { outputContains: "[[" }
+        message: >-
+          Your result contains nested lists. A recursive call returns a list, so add its items with extend()
+          (or +=), not append().
+      - when: { outputEquals: "['root']\n" }
+        message: >-
+          You found the top-level name only. Search inside every value of the dict too — including lists,
+          whose items may be dicts.
+    explanation: >-
+      The function mirrors the shape of JSON: a dict contributes its own value and then whatever its values
+      contain; a list contributes whatever its items contain; anything else is a base case that contributes
+      nothing. Each recursive call returns a list, which extend() merges into the current result.
+
+  - id: explain-stack
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain, step by step, how `factorial(3)` (from this lesson) arrives at 6. Mention what happens on the
+      call stack as the calls are made and as they return.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says each call (factorial(3), factorial(2), factorial(1), factorial(0)) gets its own frame with its own n.
+      - Explains that each call pauses at `n * factorial(n - 1)` while the smaller call runs.
+      - Identifies factorial(0) as the base case that returns 1 without recursing.
+      - Describes the results flowing back in reverse order — 1, 1, 2, 6 — as each frame multiplies by its own n.
+    modelAnswer: |
+      factorial(3) is not 0, so it must compute 3 * factorial(2). It pauses, and a new frame is created for
+      factorial(2) with its own n = 2, which in turn pauses on 2 * factorial(1), and so on down to
+      factorial(0). That call is the base case: it returns 1 immediately and its frame is removed. Now
+      factorial(1) resumes and returns 1 * 1 = 1, factorial(2) returns 2 * 1 = 2, and finally factorial(3)
+      returns 3 * 2 = 6. At the deepest point four frames were on the stack; they were removed in the reverse
+      of the order they were created.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-stars
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this program print?
+    code: |
+      def stars(n):
+          if n == 0:
+              return ""
+          return "*" + stars(n - 1) + str(n)
+
+      print(stars(3))
+    answer: "***123"
+    explanation: >-
+      stars(3) = "*" + stars(2) + "3"; stars(2) = "*" + stars(1) + "2"; stars(1) = "*" + "" + "1". Putting the
+      pieces together from the inside out: "*" + "*" + "*1" + "2" + "3" = "***123". The digits are added after
+      each inner call returns, so the smallest number ends up first.
+    wrongAnswers:
+      - answer: "***321"
+        feedback: >-
+          Each call puts its own digit **after** the result of the smaller call, so stars(1)'s "1" is
+          innermost and appears first.
+      - answer: "*3*2*1"
+        feedback: >-
+          The "*" and the digit of one call are not next to each other; the whole result of stars(n - 1) sits
+          between them.
+
+  - id: m-unreachable
+    type: mcq
+    skill: debugging
+    prompt: |
+      What happens when this program runs?
+
+      ```python
+      def halve_to_zero(n):
+          if n == 0:
+              return "done"
+          return halve_to_zero(n / 2)
+
+      print(halve_to_zero(8))
+      ```
+    explanation: >-
+      `/` is true division, so n goes 8, 4.0, 2.0, 1.0, 0.5, 0.25, … — closer and closer to 0 without
+      equalling it. Floating-point rounding would only produce 0.0 after more than a thousand halvings, which
+      is more nested calls than the recursion limit allows. Using `n // 2` reaches 0 after four halvings.
+    options:
+      - id: a
+        text: It prints done after 4 calls.
+        feedback: 8 / 2 / 2 / 2 is 1.0, and 1.0 / 2 is 0.5, not 0. True division never lands exactly on 0 here.
+      - id: b
+        text: "It raises RecursionError, because n / 2 approaches 0 but never equals it."
+        correct: true
+        feedback: Right. The base case exists but the recursive case can never reach it. `//` would fix it.
+      - id: c
+        text: It raises ZeroDivisionError.
+        feedback: Nothing is divided by zero; n is divided by 2 each time.
+      - id: d
+        text: It loops forever without an error.
+        feedback: Recursion is limited by the stack. Python stops it with RecursionError after about 1000 nested calls.
+
+  - id: m-memo-tf
+    type: true-false
+    skill: explanation
+    prompt: |
+      True or false: memoising naive recursive Fibonacci makes it faster mainly because each individual call
+      runs more quickly.
+    answer: false
+    explanation: >-
+      Each call does about the same work as before. The speed-up comes from making far fewer calls: every
+      fib(k) is computed once and then read from the cache, so fib(25) needs 26 real computations instead of
+      242,785.
+
+  - id: m-sum-digits
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write a **recursive** function `sum_digits(n)` that returns the sum of the decimal digits of a
+      whole number n ≥ 0, so `sum_digits(4096)` is 19 and `sum_digits(7)` is 7.
+
+      Use arithmetic, not strings: `n % 10` is the last digit and `n // 10` is the number without it. No
+      loops.
+    starterCode: |
+      def sum_digits(n):
+          pass
+
+      print(sum_digits(4096))
+    solution: |
+      def sum_digits(n):
+          if n < 10:
+              return n
+          return n % 10 + sum_digits(n // 10)
+
+      print(sum_digits(4096))
+    expectedOutput: |
+      19
+    tests:
+      - name: sums digits
+        code: |
+          for n, expected in [(4096, 19), (7, 7), (0, 0), (10, 1), (999999, 54), (123456789, 45)]:
+              got = sum_digits(n)
+              assert got == expected, f"sum_digits({n}) should be {expected}, got {got!r}."
+      - name: recursive, arithmetic only
+        code: |
+          import ast
+          tree = ast.parse(source)
+          func = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "sum_digits"), None)
+          assert func is not None, "Define a function named sum_digits."
+          assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "sum_digits" for n in ast.walk(func)), "sum_digits should call itself on a smaller number."
+          assert not any(isinstance(n, (ast.For, ast.While, ast.comprehension)) for n in ast.walk(func)), "Use recursion instead of a loop or comprehension."
+          assert not any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "str" for n in ast.walk(func)), "Use % and // instead of converting to a string."
+    hints:
+      - "Base case: a single-digit number (n < 10) is its own digit sum."
+      - "Recursive case: last digit plus the digit sum of the rest: n % 10 + sum_digits(n // 10)."
+    feedback:
+      - when: { errorType: RecursionError }
+        message: "Your recursion never stops. Use n // 10 (floor division) so n shrinks to a single digit, and stop when n < 10."
+    explanation: >-
+      Each call strips the last digit with // 10, so the number of calls equals the number of digits —
+      O(log₁₀ n). The base case handles single-digit numbers, including 0.
+
+  - id: m-debug-flatten
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `flatten` should turn any nested list into a flat list, so `flatten([1, [2, [3, 4]], 5])` is
+      `[1, 2, 3, 4, 5]`. It returns the nesting unchanged instead. Fix it, keeping it recursive.
+    starterCode: |
+      def flatten(items):
+          result = []
+          for item in items:
+              if isinstance(item, list):
+                  result.append(flatten(item))
+              else:
+                  result.append(item)
+          return result
+
+      print(flatten([1, [2, [3, 4]], 5]))
+    solution: |
+      def flatten(items):
+          result = []
+          for item in items:
+              if isinstance(item, list):
+                  result.extend(flatten(item))
+              else:
+                  result.append(item)
+          return result
+
+      print(flatten([1, [2, [3, 4]], 5]))
+    expectedOutput: |
+      [1, 2, 3, 4, 5]
+    tests:
+      - name: flattens nested lists
+        code: |
+          for data, expected in [([1, [2, [3, 4]], 5], [1, 2, 3, 4, 5]), ([], []), ([[[]]], []), ([[1], [2, [3]], [[[4]]]], [1, 2, 3, 4]), (["a", ["b"]], ["a", "b"])]:
+              got = flatten(data)
+              assert got == expected, f"flatten({data!r}) should be {expected!r}, got {got!r}."
+      - name: still recursive
+        code: |
+          import ast
+          tree = ast.parse(source)
+          func = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "flatten")
+          assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "flatten" for n in ast.walk(func)), "flatten should still call itself for inner lists."
+    hints:
+      - The recursive call already returns a flat list. What does append() do with a list?
+      - append() adds one item (the whole list); extend() adds each item of the list.
+    explanation: >-
+      `flatten(item)` correctly returns a flat list, but `append` inserted that list as a single element,
+      recreating the nesting. `extend` (or `result += flatten(item)`) adds its elements one by one.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-stars, m-unreachable, m-memo-tf, m-sum-digits, m-debug-flatten]
+
+cheatsheet: |
+  ```python
+  def solve(problem):
+      if is_smallest(problem):          # base case: answer directly
+          return direct_answer(problem)
+      smaller = shrink(problem)         # must move toward the base case
+      return combine(problem, solve(smaller))   # recursive case: RETURN it
+
+  import sys
+  sys.getrecursionlimit()               # 1000 by default; RecursionError beyond it
+
+  from functools import lru_cache
+  @lru_cache(maxsize=None)              # memoise overlapping sub-problems
+  def fib(n): return n if n < 2 else fib(n - 1) + fib(n - 2)
+  ```
+  - Each call has its own frame; frames finish in reverse order. Stack space is O(depth).
+  - Nested data: `isinstance(x, list/dict)` → recurse; otherwise handle the value.
+  - Deep linear recursion → loop or explicit stack. No tail-call optimisation in CPython.
+  - Bugs: missing/unreachable base case (use `<=`), forgetting `return`, append vs extend.

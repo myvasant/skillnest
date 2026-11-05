@@ -1,0 +1,1056 @@
+id: ml.train-val-test
+concept: ml.train-val-test
+title: Training, Validation and Test Sets
+subtitle: Honest estimates of how a model will do on data it has never seen
+estimatedMinutes: 45
+reviewedOn: 2026-10-22
+summary: >-
+  A model that memorises its training data can score 100% and still be useless. Learn why models must be
+  judged on held-out data, how to shuffle and split reproducibly with a seed, what the validation and test
+  sets are each for, and how stratified, time-based and grouped splits prevent misleading scores.
+objectives:
+  - Explain generalisation and why accuracy on the training data overestimates performance on new data.
+  - Implement a reproducible, seeded train/validation/test split in pure Python without mutating the input.
+  - Describe the distinct jobs of the training, validation and test sets, and why the test set is used once.
+  - Choose between random, stratified, time-ordered and grouped splits for a given dataset.
+  - Recognise early signs of data leakage, such as preprocessing fitted on all data or entities shared across splits.
+sources:
+  - title: "Cross-validation: evaluating estimator performance"
+    url: https://scikit-learn.org/stable/modules/cross_validation.html
+    publisher: scikit-learn
+  - title: train_test_split
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html
+    publisher: scikit-learn
+  - title: TimeSeriesSplit
+    url: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+    publisher: scikit-learn
+  - title: Common pitfalls and recommended practices
+    url: https://scikit-learn.org/stable/common_pitfalls.html
+    publisher: scikit-learn
+  - title: "random — Generate pseudo-random numbers"
+    url: https://docs.python.org/3/library/random.html
+    publisher: Python Software Foundation
+  - title: An Introduction to Statistical Learning (free book)
+    url: https://www.statlearning.com/
+    publisher: James, Witten, Hastie, Tibshirani and Taylor
+sections:
+  - id: why
+    title: A model that scores 100% and knows nothing
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          Here is a tempting way to "build" a model: **memorise** every training example and its answer.
+          Below, 60 students are generated with a fixed seed: the feature is hours studied, the label is
+          whether they passed, and the label is noisy (some students who studied little still passed). We
+          train on the first 40 and keep the last 20 aside.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          rng = random.Random(42)
+          rows = []
+          for _ in range(60):
+              hours = round(rng.uniform(0, 10), 2)               # feature: hours studied
+              passed = 1 if hours + rng.gauss(0, 2) > 5 else 0   # label: passed the exam (noisy)
+              rows.append((hours, passed))
+          train, test = rows[:40], rows[40:]
+
+          class Memoriser:
+              """Remembers every training answer; guesses 0 for anything new."""
+              def fit(self, rows):
+                  self.answers = {x: y for x, y in rows}
+                  return self
+              def predict(self, x):
+                  return self.answers.get(x, 0)
+
+          class Threshold:
+              """Predicts 'passed' for 5 or more hours of study."""
+              def fit(self, rows):
+                  return self
+              def predict(self, x):
+                  return 1 if x >= 5 else 0
+
+          def accuracy(model, rows):
+              return sum(model.predict(x) == y for x, y in rows) / len(rows)
+
+          for model in [Memoriser().fit(train), Threshold().fit(train)]:
+              name = type(model).__name__
+              print(f"{name:10} train {accuracy(model, train):.2f}   test {accuracy(model, test):.2f}")
+        expectedOutput: |
+          Memoriser  train 1.00   test 0.45
+          Threshold  train 0.85   test 0.80
+        caption: The memoriser is perfect on data it has seen and worse than a coin flip on data it has not.
+        annotations:
+          - line: 3
+            text: A fixed seed makes the "random" data identical on every run, so results can be reproduced.
+          - line: 17
+            text: A dictionary lookup. New hours values are almost never exact matches, so it falls back to 0.
+          - line: 31
+            text: The same accuracy function is applied to training rows and to held-out rows.
+      - type: markdown
+        body: |
+          Judged on its training data, the memoriser looks like the better model (1.00 vs 0.85). Judged on
+          the 20 held-out students, it is far worse (0.45 vs 0.80). **The training score lied.** A
+          model's score on the data it was fitted to mostly measures how well it can *remember*; what we
+          need is how well it does on *new* examples.
+
+  - id: generalisation
+    title: Generalisation is the goal
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **[Generalisation](glossary:generalisation)** is a model's ability to perform well on new data
+          drawn from the same source as its training data. Everything in this lesson exists to *measure*
+          generalisation honestly.
+
+          The rule that follows is simple and non-negotiable:
+
+          > Evaluate a model only on examples it did not see during training.
+
+          Training error is almost always lower than error on new data, because the parameters were chosen
+          *specifically* to fit those examples — including their noise and quirks. The gap between the two
+          is the classic symptom of [overfitting](concept:ml.overfitting), which the memoriser shows in its
+          most extreme form.
+      - type: callout
+        variant: analogy
+        title: Practice questions, mock exam, final exam
+        body: |
+          A student who memorises the answers to last year's practice questions can score 100% on those
+          questions and still fail the exam. Teachers therefore use three kinds of questions: **practice**
+          questions to learn from (training set), a **mock exam** to decide what to revise (validation
+          set), and the **final exam**, seen once, to measure what was really learned (test set).
+      - type: item
+        ref: explain-memoriser
+
+  - id: three-sets
+    title: Three sets, three jobs
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          | Set | Job | Used how often |
+          |---|---|---|
+          | **[Training set](glossary:training-set)** | Fit the model's parameters | Every training run |
+          | **[Validation set](glossary:validation-set)** (dev set) | Choose between models, features and settings (hyperparameters), decide when to stop training | Many times during development |
+          | **[Test set](glossary:test-set)** (hold-out set) | Give one final, unbiased estimate of performance on new data | **Once**, at the very end |
+
+          Why not just two sets? Because *choosing* is also a form of fitting. If you try ten models and
+          keep the one with the best validation score, that score is slightly optimistic — you picked the
+          model partly because it got lucky on those particular examples. The test set, untouched by any
+          decision, corrects for that.
+
+          **How big?** Common splits are 60/20/20, 70/15/15 or 80/10/10. With millions of examples, a test
+          set of 1% may already be large enough; with only a few hundred, a single validation set is
+          noisy, and [cross-validation](concept:ml.cross-validation) reuses the data more efficiently.
+      - type: item
+        ref: mcq-roles
+
+  - id: splitting
+    title: "Walkthrough: seeded shuffling and splitting"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Data files are often **sorted** — by date, by customer, by label. Taking the first 75% as
+          training data would then give the model a biased view. Look what happens with a file sorted by
+          label:
+      - type: code
+        runnable: true
+        code: |
+          labels = [0] * 8 + [1] * 4          # a file sorted by label
+          train, test = labels[:9], labels[9:]
+          print("train labels:", train)
+          print("test labels: ", test)
+        expectedOutput: |
+          train labels: [0, 0, 0, 0, 0, 0, 0, 0, 1]
+          test labels:  [1, 1, 1]
+        caption: Slicing without shuffling. The model trains on almost no positives and is tested only on positives.
+      - type: markdown
+        body: |
+          So we **shuffle first**, then slice. And we shuffle with a **seeded** random number generator:
+          `random.Random(seed)` creates a private generator whose sequence of "random" numbers is
+          completely determined by the seed. Same seed → same shuffle → same split, on every run (with the
+          same Python version — see the deep dive below). That makes experiments reproducible and
+          comparable.
+
+          Step through the code below and watch the objects: `list(rows)` makes a **new** list, `shuffle`
+          reorders that copy **in place**, and each slice creates another new list. The original `rows` is
+          never touched.
+      - type: visualization
+        component: python-tracer
+        title: Copy, shuffle in place, then slice
+        caption: >-
+          Watch `shuffled` change order while `rows` stays the same. `cut` is 3 because int(5 * 0.6) is 3.
+        props:
+          code: |
+            import random
+            rows = ["a", "b", "c", "d", "e"]
+            shuffled = list(rows)
+            random.Random(0).shuffle(shuffled)
+            cut = int(len(shuffled) * 0.6)
+            train = shuffled[:cut]
+            test = shuffled[cut:]
+            print(rows, train, test)
+      - type: markdown
+        body: |
+          Wrapped in a function, this is a reusable train/test splitter:
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          def train_test_split(rows, seed, test_frac=0.25):
+              shuffled = list(rows)                    # copy: never reorder the caller's list
+              random.Random(seed).shuffle(shuffled)    # a private generator with a fixed seed
+              n_test = int(len(shuffled) * test_frac)
+              return shuffled[n_test:], shuffled[:n_test]
+
+          rows = list(range(12))
+          train, test = train_test_split(rows, seed=1)
+          print("train:", train)
+          print("test: ", test)
+          print("same seed, same split:", train_test_split(rows, seed=1) == (train, test))
+          print("seed 2 test:", train_test_split(rows, seed=2)[1])
+          print("original untouched:", rows)
+        expectedOutput: |
+          train: [8, 5, 6, 3, 10, 4, 1, 9, 2]
+          test:  [7, 11, 0]
+          same seed, same split: True
+          seed 2 test: [9, 11, 3]
+          original untouched: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        annotations:
+          - line: 5
+            text: "`random.Random(seed)` does not disturb the global generator used by `random.random()` elsewhere."
+          - line: 6
+            text: "`int()` rounds down, so 12 rows × 0.25 gives exactly 3 test rows."
+          - line: 7
+            text: The two slices are disjoint and together contain every row exactly once.
+      - type: callout
+        variant: note
+        title: Seeds make runs repeatable, not "better"
+        body: |
+          A different seed gives a different, equally valid split — and usually a slightly different score.
+          That variation is real uncertainty about your model, not noise to hide. Never try seeds until the
+          score looks good; report results across several seeds or use cross-validation instead.
+      - type: item
+        ref: predict-seed
+
+  - id: validation-vs-test
+    title: "The validation set: choosing without fooling yourself"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          The workflow with three sets looks like this:
+
+          1. Split once, at the start: training, validation, test.
+          2. Train each candidate (different features, models, hyperparameters) on the **training** set.
+          3. Compare candidates on the **validation** set and pick one.
+          4. Optionally retrain the chosen candidate on training + validation data.
+          5. Evaluate **once** on the **test** set and report that number.
+
+          Why must step 5 happen only once? Because every time you look at the test score and change
+          something, you are *choosing using the test set*, which turns it into another validation set.
+          This experiment makes the danger concrete: 100 "models" that are pure coin flips are scored on
+          a 20-example test set, and we keep the best one.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          rng = random.Random(2026)
+          test_labels = [rng.randint(0, 1) for _ in range(20)]
+          new_labels = [rng.randint(0, 1) for _ in range(2000)]
+
+          def coin_flip_predictions(seed, n):
+              r = random.Random(seed)
+              return [r.randint(0, 1) for _ in range(n)]
+
+          def accuracy(preds, labels):
+              return sum(p == y for p, y in zip(preds, labels)) / len(labels)
+
+          scores = {seed: accuracy(coin_flip_predictions(seed, 20), test_labels) for seed in range(100)}
+          best = max(scores, key=scores.get)
+          print("best of 100 coin-flip models on the test set:", scores[best])
+          print("the same model on 2000 new examples:", round(accuracy(coin_flip_predictions(best, 2000), new_labels), 2))
+        expectedOutput: |
+          best of 100 coin-flip models on the test set: 0.75
+          the same model on 2000 new examples: 0.48
+        caption: Selecting the best of many candidates on a small set produces an impressive-looking score by luck alone.
+        annotations:
+          - line: 14
+            text: Every "model" is random guessing; seeds only make the guesses reproducible.
+          - line: 15
+            text: "`max(scores, key=scores.get)` returns the seed whose score is highest."
+      - type: markdown
+        body: |
+          None of these models knows anything, yet the winner "scores" 75%. On fresh data it falls back to
+          about 50%. The same selection effect, in a milder form, inflates any score you have used to make
+          decisions. That is exactly why the validation set absorbs the choosing and the test set is kept
+          sealed until the end.
+      - type: callout
+        variant: misconception
+        title: '"I only peeked at the test set a few times"'
+        body: |
+          Each peek-and-adjust cycle leaks information about the test examples into your choices. After
+          enough cycles the test score is just another optimistic validation score. If you have already
+          looked too often, the honest fix is a fresh test set.
+
+  - id: stratification
+    title: Stratified splits for imbalanced classes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With rare classes, a purely random split can give a test set with far too many or too few
+          positives, so the score depends heavily on luck. A **[stratified split](glossary:stratified-split)**
+          splits each class separately, so every set keeps the original class proportions.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          labels = [1] * 10 + [0] * 90          # 10% positives
+          rows = list(enumerate(labels))        # (row id, label)
+
+          def random_split(rows, seed, test_frac=0.2):
+              shuffled = list(rows)
+              random.Random(seed).shuffle(shuffled)
+              n_test = int(len(shuffled) * test_frac)
+              return shuffled[n_test:], shuffled[:n_test]
+
+          def stratified_split(rows, seed, test_frac=0.2):
+              rng = random.Random(seed)
+              train, test = [], []
+              for label in sorted({y for _, y in rows}):
+                  group = [row for row in rows if row[1] == label]
+                  rng.shuffle(group)
+                  n_test = round(len(group) * test_frac)
+                  test += group[:n_test]
+                  train += group[n_test:]
+              return train, test
+
+          for seed in range(4):
+              _, plain = random_split(rows, seed)
+              _, strat = stratified_split(rows, seed)
+              print(f"seed {seed}: positives in a 20-row test set - random {sum(y for _, y in plain)}, stratified {sum(y for _, y in strat)}")
+        expectedOutput: |
+          seed 0: positives in a 20-row test set - random 4, stratified 2
+          seed 1: positives in a 20-row test set - random 2, stratified 2
+          seed 2: positives in a 20-row test set - random 6, stratified 2
+          seed 3: positives in a 20-row test set - random 4, stratified 2
+        caption: Random splits put 2 to 6 positives in the test set; stratified splits always put 10% (2 of 20).
+        annotations:
+          - line: 15
+            text: Loop over the distinct labels in sorted order so the result does not depend on set ordering.
+          - line: 16
+            text: Each class becomes its own group, shuffled and split with the same fraction.
+      - type: markdown
+        body: |
+          With 2 positives in one test set and 6 in another, recall on the positives could swing wildly
+          between runs for reasons that have nothing to do with the model. In scikit-learn, stratification
+          is one argument: `train_test_split(X, y, stratify=y)`.
+      - type: item
+        ref: mcq-stratify
+
+  - id: time-ordered
+    title: Time-ordered data
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          When you will use the model to predict the **future**, the split must imitate that: train on the
+          past, validate on a later period, test on the latest period. A random split lets the model peek at
+          days *after* the ones it is tested on. Below, a "model" predicts a day's sales as the sales of the
+          nearest day it was trained on:
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          rng = random.Random(7)
+          days = list(range(60))
+          sales = [100 + 2 * d + rng.gauss(0, 5) for d in days]   # upward trend plus noise
+
+          def nearest_day_model(train_days):
+              """Predict a day's sales as the sales of the closest day we trained on."""
+              def predict(day):
+                  nearest = min(train_days, key=lambda t: abs(t - day))
+                  return sales[nearest]
+              return predict
+
+          def mae(predict, test_days):
+              return sum(abs(predict(d) - sales[d]) for d in test_days) / len(test_days)
+
+          shuffled = days[:]
+          random.Random(0).shuffle(shuffled)
+          random_train, random_test = shuffled[:48], shuffled[48:]
+          time_train, time_test = days[:48], days[48:]
+
+          print("random split MAE:", round(mae(nearest_day_model(random_train), random_test), 1))
+          print("time split MAE:  ", round(mae(nearest_day_model(time_train), time_test), 1))
+        expectedOutput: |
+          random split MAE: 6.2
+          time split MAE:   15.1
+        caption: The random split looks more than twice as accurate, but only because the test days are surrounded by training days.
+        annotations:
+          - line: 10
+            text: With a random split, a test day almost always has a training day just before *and* just after it.
+          - line: 20
+            text: The time split trains on days 0-47 and tests on days 48-59, exactly like real forecasting.
+      - type: markdown
+        body: |
+          MAE (mean absolute error) is the average size of the miss; lower is better. The random split
+          reports 6.2, but in production you never have tomorrow's data, so the honest number is 15.1.
+          For forecasting, always split by time — and the same idea leads to walk-forward validation in
+          [time-series forecasting](concept:ml.time-series-forecasting).
+      - type: item
+        ref: mcq-time
+
+  - id: leakage-preview
+    title: "Preview: leakage across splits"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A split only protects you if **no information from the validation or test examples reaches
+          training**. [Data leakage](concept:ml.data-leakage) gets its own lesson; here are the two forms
+          that splitting decisions control.
+
+          **1. Related rows in different sets.** If one customer, patient or device contributes several
+          rows, a random split puts some in training and some in test. The model can recognise the
+          *entity* instead of learning the pattern. Split by **group**: choose test customers, then take all
+          of their rows.
+      - type: code
+        runnable: true
+        code: |
+          import random
+
+          visits = [("ana", 1), ("ana", 0), ("ben", 1), ("ben", 1), ("chen", 0),
+                    ("chen", 0), ("dev", 1), ("dev", 0), ("eli", 0), ("eli", 1)]
+
+          customers = sorted({name for name, _ in visits})
+          random.Random(3).shuffle(customers)
+          test_customers = set(customers[:2])
+
+          train = [v for v in visits if v[0] not in test_customers]
+          test = [v for v in visits if v[0] in test_customers]
+          print("test customers:", sorted(test_customers))
+          print("overlap:", sorted({n for n, _ in train} & {n for n, _ in test}))
+          print(len(train), "train rows,", len(test), "test rows")
+        expectedOutput: |
+          test customers: ['ana', 'chen']
+          overlap: []
+          6 train rows, 4 test rows
+        caption: A grouped split. Sorting before shuffling makes the result independent of set iteration order.
+      - type: markdown
+        body: |
+          **2. Preprocessing fitted on all the data.** Any step that *learns* from data — the mean used to
+          centre a feature, the vocabulary of a text model, the value used to fill gaps — is part of the
+          model. Split **first**, learn those values from the **training** set only, then apply them
+          unchanged to validation and test data:
+      - type: code
+        runnable: true
+        code: |
+          train_hours = [2.0, 4.0, 6.0, 8.0]
+          test_hours = [9.0, 11.0]
+
+          mean = sum(train_hours) / len(train_hours)       # learned from TRAINING data only
+          scaled_train = [h - mean for h in train_hours]
+          scaled_test = [h - mean for h in test_hours]     # reuse the training mean
+          print(mean, scaled_train, scaled_test)
+        expectedOutput: |
+          5.0 [-3.0, -1.0, 1.0, 3.0] [4.0, 6.0]
+        caption: Computing the mean over all six values would let the test rows influence training.
+
+  - id: mistakes
+    title: Common mistakes and how to fix them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `TypeError: 'NoneType' object is not subscriptable` right after shuffling | `rows = rng.shuffle(rows)` — `shuffle` works in place and returns `None` | Call `rng.shuffle(rows)` on its own line |
+          | A different split (and score) on every run | Unseeded `random.shuffle` | Use `random.Random(seed)` |
+          | The caller's data is reordered after splitting | Shuffling the argument instead of a copy | Shuffle `list(rows)` |
+          | Excellent offline score, poor in production | Random split of time-ordered or grouped data, or preprocessing fitted before splitting | Split by time or group; fit preprocessing on training data only |
+          | The test score keeps improving as you tweak | You are tuning on the test set | Tune on validation; keep the test set for one final check |
+          | Wildly different scores across seeds | Tiny validation/test sets, rare classes | Stratify, use more data or cross-validation, report the spread |
+      - type: code
+        runnable: true
+        code: |
+          import random
+          rows = list(range(10))
+          rows = random.Random(0).shuffle(rows)
+          train = rows[:8]
+        expectError: TypeError
+        caption: "shuffle() returns None, so `rows` becomes None and slicing fails: TypeError: 'NoneType' object is not subscriptable."
+        annotations:
+          - line: 3
+            text: The list was shuffled — and then the name was rebound to shuffle's return value, None.
+      - type: item
+        ref: debug-split
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: item
+        ref: code-three-way-split
+      - type: item
+        ref: parsons-split
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **How seeded generators work.** `random.Random` implements the Mersenne Twister algorithm. The
+          seed fixes its internal state, and every "random" number is then computed deterministically from
+          that state, so a seeded program repeats exactly from run to run. Across Python *versions*, the
+          documentation ("Notes on Reproducibility") only guarantees that `random()` keeps producing the
+          same sequence for the same seed; other methods such as `shuffle` may change, which is one reason
+          [reproducible ML](concept:ml.reproducibility) records the exact library and Python versions. For
+          cryptographic randomness use `secrets` instead, never `random`.
+
+          **A small test set is a noisy measurement.** If a model's true accuracy is `p`, the accuracy
+          measured on `n` independent test examples has a standard error of about `sqrt(p * (1 - p) / n)`.
+          At p = 0.8, that is 0.09 for n = 20 but 0.04 for n = 100 and 0.004 for n = 10,000. Two models
+          whose test scores differ by less than a couple of standard errors are not clearly different.
+
+          **The scikit-learn equivalents.** `train_test_split` shuffles with `random_state` and supports
+          `stratify=`. For a three-way split, call it twice. `GroupShuffleSplit` and `GroupKFold` keep each
+          group together, and `TimeSeriesSplit` always trains on earlier rows than it tests on.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          # Run locally: pip install scikit-learn
+          from sklearn.model_selection import GroupShuffleSplit, TimeSeriesSplit, train_test_split
+
+          X = [[i] for i in range(100)]
+          y = [1 if i % 10 == 0 else 0 for i in range(100)]     # 10% positives
+
+          # 60/20/20: carve off the test set first, then split the remainder.
+          X_rest, X_test, y_rest, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+          X_train, X_val, y_train, y_val = train_test_split(
+              X_rest, y_rest, test_size=0.25, random_state=42, stratify=y_rest)   # 25% of 80% = 20%
+          print(len(X_train), len(X_val), len(X_test))   # 60 20 20
+          print(sum(y_train), sum(y_val), sum(y_test))   # 6 2 2 - class ratio kept in every set
+
+          # Grouped split: all rows of a customer land on the same side.
+          groups = [i // 5 for i in range(100)]          # 20 customers, 5 rows each
+          gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
+          train_idx, test_idx = next(gss.split(X, y, groups=groups))
+
+          # Time-ordered folds: training indices always come before test indices.
+          for train_idx, test_idx in TimeSeriesSplit(n_splits=3).split(list(range(12))):
+              print(train_idx, test_idx)   # [0 1 2] [3 4 5], then [0 ... 5] [6 7 8], then [0 ... 8] [9 10 11]
+        caption: >-
+          Illustrative: scikit-learn needs NumPy and cannot run in this browser runtime. Install it with
+          pip and run the file locally; the comments show the expected output.
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Training scores are optimistic; **generalisation** can only be measured on data the model never
+            saw.
+          - **Training** fits parameters, **validation** chooses between candidates, **test** gives one final
+            estimate and is used **once**.
+          - Shuffle before splitting, with a **seeded** `random.Random(seed)`, on a **copy** of the data.
+          - **Stratify** classification splits so rare classes keep their proportion.
+          - Split **time-ordered** data by time and **grouped** data by group, to mirror deployment.
+          - Fit every data-dependent preprocessing step on the **training** set only.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Why do you need three sets?" — Training fits, validation chooses, test reports; choosing on the
+          test set makes its score optimistic. Follow-ups: how would you split clickstream data from the
+          same users (by user) or a sales forecast (by time), and what if you only have 300 rows
+          (cross-validation, then a small untouched test set if possible)?
+
+items:
+  - id: explain-memoriser
+    type: explain
+    skill: explanation
+    prompt: >-
+      A colleague proudly reports that their new model reaches 100% accuracy "on the data". Explain what
+      question you would ask first, and why a 100% training score tells you almost nothing about how the
+      model will perform.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Asks whether the score was measured on data the model was trained on, or on held-out data.
+      - Explains that parameters were chosen to fit the training examples, so training scores are optimistic.
+      - Mentions that a model can memorise training examples (including noise) without learning a general pattern.
+      - Says the honest measure is performance on held-out data that resembles the data the model will face.
+    modelAnswer: |
+      My first question is "100% on which data?" If it is the training data, the number says little: the
+      model's parameters were tuned to those exact examples, so it can score perfectly just by memorising
+      them, noise included, like a dictionary lookup. What matters is generalisation — performance on
+      examples it has never seen. I would ask for the score on a held-out validation or test set drawn
+      from the same kind of data the model will meet in use, and compare it with a simple baseline.
+
+  - id: mcq-roles
+    type: mcq
+    skill: recognition
+    prompt: You are comparing a decision tree with depth 3, 5 and 10. Which set should you use to choose the depth?
+    explanation: >-
+      Choosing between candidate settings is the job of the validation set. The training set is for
+      fitting each candidate's parameters, and the test set is reserved for one final estimate after all
+      choices are made.
+    options:
+      - id: a
+        text: The training set — pick the depth with the best training score.
+        feedback: >-
+          Deeper trees always fit the training data better, so this would always pick depth 10, even when
+          it overfits.
+      - id: b
+        text: The validation set — pick the depth with the best validation score.
+        correct: true
+        feedback: Correct. Validation data is held out from fitting and exists to support decisions like this one.
+      - id: c
+        text: The test set — it is the most honest estimate.
+        feedback: >-
+          It is honest only while unused for decisions. Choosing the depth with it makes its score
+          optimistic, and you lose your unbiased final estimate.
+      - id: d
+        text: All the data combined, so the estimate uses as many examples as possible.
+        feedback: That includes the training examples, so the scores are optimistic and favour the most complex tree.
+
+  - id: predict-seed
+    type: predict-output
+    skill: prediction
+    prompt: What does this program print?
+    code: |
+      import random
+      a = list(range(5))
+      b = list(range(5))
+      random.Random(4).shuffle(a)
+      random.Random(4).shuffle(b)
+      print(a == b, sorted(a) == [0, 1, 2, 3, 4])
+    answer: "True True"
+    explanation: >-
+      Two generators created with the same seed produce the same sequence of random numbers, so they shuffle
+      identical lists identically: `a == b` is True. Shuffling only reorders elements, so sorting `a` gives
+      back 0 to 4.
+    wrongAnswers:
+      - answer: "False True"
+        feedback: >-
+          A seeded generator is deterministic. Two `random.Random(4)` generators produce the same numbers
+          and therefore the same shuffle.
+      - answer: "True False"
+        feedback: Shuffling reorders the elements but never adds or removes any, so the sorted list is unchanged.
+
+  - id: mcq-stratify
+    type: mcq
+    skill: explanation
+    prompt: Why is stratification especially useful when splitting a dataset where only 2% of examples are fraud?
+    explanation: >-
+      With rare classes, a random split can put very few (or very many) fraud cases into the validation or
+      test set, so scores swing with luck. Stratifying splits each class separately and keeps the 2%
+      proportion in every set.
+    options:
+      - id: a
+        text: It keeps roughly 2% fraud in every set, so scores are not distorted by an unlucky split.
+        correct: true
+        feedback: Correct. Each set then represents the real class balance.
+      - id: b
+        text: It raises the fraud rate to 50% in the training set so the model learns it better.
+        feedback: That is resampling, a different technique (see imbalanced data). Stratification preserves the original ratio.
+      - id: c
+        text: It ensures the same customer never appears in two sets.
+        feedback: That is a grouped split. Stratification is about class proportions, not entities.
+      - id: d
+        text: It sorts the data by date so the model trains on the past.
+        feedback: That is a time-based split. Stratification does not use time at all.
+
+  - id: mcq-time
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      You are building a model that, each evening, predicts tomorrow's electricity demand. You have three
+      years of daily data. Which split gives an honest estimate?
+    explanation: >-
+      In use, the model always predicts a day after every day it has seen. Training on the earliest data,
+      validating on a later period and testing on the most recent period reproduces that situation.
+    options:
+      - id: a
+        text: Shuffle all days and split 70/15/15.
+        feedback: >-
+          Test days would be surrounded by training days from both sides, so the model effectively
+          interpolates instead of forecasting, and its score is inflated.
+      - id: b
+        text: Train on the first ~2 years, validate on the next few months, test on the most recent months.
+        correct: true
+        feedback: Correct. The split mirrors deployment — the model never sees the future it is evaluated on.
+      - id: c
+        text: Test on the first months and train on the rest, so the model has the most recent data.
+        feedback: That trains on the future to predict the past, which never happens in deployment.
+      - id: d
+        text: Stratify by month so each set has the same mix of seasons.
+        feedback: Mixing periods still lets future information into training. Time order matters more than balance here.
+
+  - id: debug-split
+    type: debug
+    skill: debugging
+    prompt: |
+      This function should split rows **reproducibly** (same seed → same split) **without** changing the
+      caller's list. It does neither. Fix it.
+    starterCode: |
+      import random
+
+      def train_test_split(rows, seed, test_frac=0.25):
+          random.shuffle(rows)
+          n_test = int(len(rows) * test_frac)
+          return rows[n_test:], rows[:n_test]
+
+      data = list(range(20))
+      train, test = train_test_split(data, seed=0)
+      print(len(train), len(test))
+    solution: |
+      import random
+
+      def train_test_split(rows, seed, test_frac=0.25):
+          shuffled = list(rows)
+          random.Random(seed).shuffle(shuffled)
+          n_test = int(len(shuffled) * test_frac)
+          return shuffled[n_test:], shuffled[:n_test]
+
+      data = list(range(20))
+      train, test = train_test_split(data, seed=0)
+      print(len(train), len(test))
+    expectedOutput: |
+      15 5
+    tests:
+      - name: Same seed gives the same split
+        code: |
+          rows = list(range(20))
+          first = train_test_split(rows, seed=3)
+          second = train_test_split(list(range(20)), seed=3)
+          assert first == second, "Calling the function twice with seed=3 gave different splits. Create a generator with random.Random(seed) and shuffle with it."
+      - name: Caller's list is not modified
+        code: |
+          rows = list(range(20))
+          train_test_split(rows, seed=1)
+          assert rows == list(range(20)), "The list passed in was reordered. Shuffle a copy, e.g. shuffled = list(rows)."
+      - name: Every row ends up in exactly one set
+        code: |
+          train, test = train_test_split(list(range(20)), seed=5)
+          assert len(test) == 5 and len(train) == 15, f"Expected 15 training and 5 test rows, got {len(train)} and {len(test)}."
+          assert sorted(train + test) == list(range(20)), "train + test should contain every row exactly once."
+      - name: Different seeds can give different splits
+        code: |
+          splits = {tuple(train_test_split(list(range(20)), seed=s)[1]) for s in range(5)}
+          assert len(splits) > 1, "Every seed gives the same split. Pass the seed to random.Random(seed) instead of ignoring it."
+    hints:
+      - "Two problems: the `seed` parameter is never used, and `random.shuffle(rows)` reorders the caller's list."
+      - "`random.Random(seed)` creates a generator you can call `.shuffle(...)` on."
+      - Make a copy first with `shuffled = list(rows)`, shuffle the copy, and slice the copy.
+    feedback:
+      - when: { codeMatches: "=\\s*random\\.Random\\([^)]*\\)\\.shuffle\\(" }
+        message: >-
+          shuffle() reorders the list in place and returns None. Call it on its own line, then slice the
+          list you shuffled.
+    explanation: >-
+      `random.shuffle` uses the global, unseeded generator, so every call gives a different order, and it
+      shuffles the very list the caller passed in. Copying with `list(rows)` protects the caller, and a
+      private `random.Random(seed)` generator makes the split a pure function of its inputs.
+
+  - id: code-three-way-split
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write `split_rows(rows, seed)` that returns **three** lists, `(train, val, test)`:
+
+      - shuffle a **copy** of `rows` with `random.Random(seed)`,
+      - `train` gets the first `int(len(rows) * 0.6)` rows of the shuffled copy,
+      - `val` gets the next `int(len(rows) * 0.2)` rows,
+      - `test` gets everything that is left.
+    starterCode: |
+      import random
+
+      def split_rows(rows, seed):
+          pass
+
+      train, val, test = split_rows(list(range(10)), seed=0)
+      print(len(train), len(val), len(test))
+    solution: |
+      import random
+
+      def split_rows(rows, seed):
+          shuffled = list(rows)
+          random.Random(seed).shuffle(shuffled)
+          n_train = int(len(shuffled) * 0.6)
+          n_val = int(len(shuffled) * 0.2)
+          train = shuffled[:n_train]
+          val = shuffled[n_train:n_train + n_val]
+          test = shuffled[n_train + n_val:]
+          return train, val, test
+
+      train, val, test = split_rows(list(range(10)), seed=0)
+      print(len(train), len(val), len(test))
+    expectedOutput: |
+      6 2 2
+    tests:
+      - name: Returns three lists of the right sizes
+        code: |
+          result = split_rows(list(range(10)), seed=0)
+          assert result is not None, "split_rows returned None. Return train, val, test."
+          train, val, test = result
+          assert (len(train), len(val), len(test)) == (6, 2, 2), f"For 10 rows expect sizes 6, 2, 2; got {len(train)}, {len(val)}, {len(test)}."
+      - name: Sizes follow the rule for other lengths
+        code: |
+          sizes = [len(part) for part in split_rows(list(range(25)), seed=0)]
+          assert sizes == [15, 5, 5], f"For 25 rows: int(15.0) = 15, int(5.0) = 5, rest 5. Got {sizes}."
+          sizes = [len(part) for part in split_rows(list(range(7)), seed=0)]
+          assert sizes == [4, 1, 2], f"For 7 rows: int(4.2) = 4, int(1.4) = 1, rest 2. Got {sizes}. The test set takes whatever is left."
+      - name: Sets are disjoint and complete
+        code: |
+          train, val, test = split_rows(list(range(30)), seed=4)
+          assert sorted(train + val + test) == list(range(30)), "Together the three sets must contain every row exactly once."
+      - name: Reproducible and actually shuffled
+        code: |
+          assert split_rows(list(range(20)), 1) == split_rows(list(range(20)), 1), "The same seed must give the same split. Use random.Random(seed)."
+          assert split_rows(list(range(20)), 1) != split_rows(list(range(20)), 2), "Different seeds should normally give different splits - is the seed being used?"
+          assert split_rows(list(range(20)), 1)[0] != list(range(12)), "The training set is just the first rows in order. Shuffle before slicing."
+      - name: Does not modify the input
+        code: |
+          rows = list(range(20))
+          split_rows(rows, 9)
+          assert rows == list(range(20)), "The caller's list was reordered. Shuffle a copy: shuffled = list(rows)."
+    hints:
+      - Start like the two-way splitter in the walkthrough — copy, then shuffle the copy with `random.Random(seed)`.
+      - "Compute `n_train` and `n_val` with `int(...)`; the validation slice is `shuffled[n_train:n_train + n_val]`."
+      - "`test` is `shuffled[n_train + n_val:]`, so leftover rows from rounding go to the test set."
+    feedback:
+      - when: { errorType: TypeError, errorMessageContains: "NoneType" }
+        message: >-
+          Something is None. Either the function has no return statement, or a name was assigned the
+          result of shuffle(), which is always None.
+    explanation: >-
+      Copy, shuffle with a seeded generator, then take consecutive slices. Because the slices are
+      consecutive and the last one runs to the end, the three sets are disjoint and cover every row, and
+      rounding leftovers land in the test set.
+
+  - id: parsons-split
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to shuffle ten rows reproducibly and split them 6/2/2, printing the three sizes.
+      One line is a distractor.
+    solution: |
+      import random
+      rows = list(range(10))
+      rng = random.Random(7)
+      rng.shuffle(rows)
+      train = rows[:6]
+      val = rows[6:8]
+      test = rows[8:]
+      print(len(train), len(val), len(test))
+    distractors:
+      - rows = rng.shuffle(rows)
+    expectedOutput: |
+      6 2 2
+    explanation: >-
+      The module must be imported and the generator created before shuffling, and the shuffle must happen
+      before slicing. `rows = rng.shuffle(rows)` would rebind rows to None, because shuffle works in place
+      and returns None.
+
+  # ----- Mastery check (new items) -----
+  - id: m-predict-sizes
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: A 70/15/15 split of 25 rows. What does this print?
+    code: |
+      rows = list(range(25))
+      n_train = int(len(rows) * 0.7)
+      n_val = int(len(rows) * 0.15)
+      train = rows[:n_train]
+      val = rows[n_train:n_train + n_val]
+      test = rows[n_train + n_val:]
+      print(len(train), len(val), len(test))
+    answer: "17 3 5"
+    explanation: >-
+      25 × 0.7 = 17.5 and int() truncates to 17; 25 × 0.15 = 3.75 truncates to 3; the test slice takes the
+      remaining 25 - 17 - 3 = 5 rows.
+    wrongAnswers:
+      - answer: "18 4 3"
+        feedback: "int() truncates towards zero; it does not round. int(17.5) is 17 and int(3.75) is 3."
+      - answer: "17 3 3"
+        feedback: >-
+          The test slice `rows[n_train + n_val:]` runs to the end of the list, so it collects every
+          leftover row: 25 - 20 = 5.
+
+  - id: m-mcq-peeking
+    type: mcq
+    skill: design
+    difficulty: 2
+    prompt: |
+      Over two months a team tried 40 feature ideas. After each one they checked the **test** score and kept
+      the change if it went up. The final test accuracy is 91%. What is the best assessment?
+    explanation: >-
+      Every keep-or-discard decision based on the test score used the test set for selection, so 91% is an
+      optimistic estimate, like the best of many coin-flip models. A fresh, untouched test set (or a
+      properly held-out one) is needed for an unbiased number, and future tuning should use a validation set.
+    options:
+      - id: a
+        text: 91% is an unbiased estimate, because the model never trained on the test examples.
+        feedback: >-
+          Not training on them is not enough. Choosing features by their test score fits the choices to
+          those examples, which biases the score upwards.
+      - id: b
+        text: >-
+          91% is probably optimistic because the test set guided 40 decisions; evaluate once on fresh
+          held-out data and tune on a validation set from now on.
+        correct: true
+        feedback: Correct. The test set has effectively become a validation set.
+      - id: c
+        text: 91% is too pessimistic, because each kept feature can only have helped.
+        feedback: >-
+          Changes were kept partly because they happened to help on these particular examples, so the
+          bias runs the other way.
+      - id: d
+        text: The score is fine as long as the random seed was fixed.
+        feedback: A fixed seed makes the split repeatable; it does nothing to undo selection on the test set.
+
+  - id: m-tf-preprocessing
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: it is fine to compute the mean and standard deviation for scaling a feature on the
+      whole dataset, then split it into training and test sets, because scaling does not use the labels.
+    answer: false
+    explanation: >-
+      Statistics computed on the whole dataset include the test rows, so information about the test set
+      leaks into the features the model is trained on. Split first, compute the statistics on the training
+      set only, and apply those same values to validation and test data. Leakage does not need the labels.
+
+  - id: m-code-chronological
+    type: code
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      Records are `(date, value)` tuples with ISO dates such as `"2026-03-02"`, in any order. Write
+      `chronological_split(records, test_frac)` that returns `(train, test)` where:
+
+      - both lists are in date order,
+      - `test` holds the **latest** `int(len(records) * test_frac)` records,
+      - `train` holds all earlier records,
+      - the caller's list is not modified.
+
+      ISO date strings sort correctly as plain strings.
+    starterCode: |
+      def chronological_split(records, test_frac):
+          pass
+
+      records = [("2026-03-02", 120), ("2026-01-15", 90), ("2026-02-10", 100),
+                 ("2026-03-20", 130), ("2026-01-02", 80)]
+      train, test = chronological_split(records, 0.4)
+      print(test)
+    solution: |
+      def chronological_split(records, test_frac):
+          ordered = sorted(records)
+          n_test = int(len(ordered) * test_frac)
+          cut = len(ordered) - n_test
+          return ordered[:cut], ordered[cut:]
+
+      records = [("2026-03-02", 120), ("2026-01-15", 90), ("2026-02-10", 100),
+                 ("2026-03-20", 130), ("2026-01-02", 80)]
+      train, test = chronological_split(records, 0.4)
+      print(test)
+    expectedOutput: |
+      [('2026-03-02', 120), ('2026-03-20', 130)]
+    tests:
+      - name: Test set holds the latest records
+        code: |
+          recs = [("2026-03-02", 120), ("2026-01-15", 90), ("2026-02-10", 100), ("2026-03-20", 130), ("2026-01-02", 80)]
+          result = chronological_split(recs, 0.4)
+          assert result is not None, "chronological_split returned None. Return train, test."
+          train, test = result
+          assert test == [("2026-03-02", 120), ("2026-03-20", 130)], f"The test set should be the two latest records in date order, got {test!r}."
+          assert train == [("2026-01-02", 80), ("2026-01-15", 90), ("2026-02-10", 100)], f"The training set should be the three earliest records in date order, got {train!r}."
+      - name: Every training date is before every test date
+        code: |
+          import random
+          dates = [f"2025-{m:02d}-{d:02d}" for m in range(1, 13) for d in (1, 15)]
+          recs = [(day, i) for i, day in enumerate(dates)]
+          random.Random(0).shuffle(recs)
+          train, test = chronological_split(recs, 0.25)
+          assert len(test) == 6 and len(train) == 18, f"24 records with test_frac 0.25 should give 18 train and 6 test, got {len(train)} and {len(test)}."
+          assert max(r[0] for r in train) < min(r[0] for r in test), "Some training record is later than a test record. Sort by date before cutting."
+      - name: Does not modify the input
+        code: |
+          recs = [("2026-02-01", 1), ("2026-01-01", 2), ("2026-03-01", 3)]
+          chronological_split(recs, 0.34)
+          assert recs == [("2026-02-01", 1), ("2026-01-01", 2), ("2026-03-01", 3)], "The caller's list was reordered. Use sorted(records), which returns a new list, instead of records.sort()."
+    hints:
+      - "`sorted(records)` returns a new list ordered by the first element of each tuple — the date."
+      - The number of test records is `int(len(records) * test_frac)`; they are the last ones in date order.
+      - "With `cut = len(ordered) - n_test`, return `ordered[:cut], ordered[cut:]`."
+    feedback:
+      - when: { codeContains: "shuffle" }
+        message: Do not shuffle time-ordered data. Sort it by date and cut, so the model never trains on the future.
+    explanation: >-
+      Sorting by date and cutting at a single point guarantees that every training record precedes every
+      test record — the same situation the model faces when forecasting. `sorted()` builds a new list, so
+      the caller's data stays untouched.
+
+  - id: m-mcq-group
+    type: mcq
+    skill: transfer
+    prompt: |
+      A dataset has 5,000 chest X-rays from 900 patients; many patients have several scans. You want to know
+      how well a model will work for **new patients**. How should you split?
+    explanation: >-
+      Scans of the same patient are strongly related. If they land in both training and test sets, the
+      model can recognise the patient rather than the disease, inflating the score. Assigning whole
+      patients to one set (a grouped split) mirrors the real question: performance on unseen patients.
+    options:
+      - id: a
+        text: Randomly split the 5,000 scans, stratified by diagnosis.
+        feedback: >-
+          Stratifying keeps the diagnosis ratio, but scans of one patient would still appear on both sides
+          of the split.
+      - id: b
+        text: Split by patient, so all scans of a patient go into the same set.
+        correct: true
+        feedback: Correct — this is a grouped split, and it answers "how well does it work for new patients?".
+      - id: c
+        text: Use the first 80% of the files as training data, in whatever order they are stored.
+        feedback: The file order may be by hospital, date or diagnosis, and it still mixes a patient's scans across sets.
+      - id: d
+        text: Put all scans in training and evaluate on the training set with a fixed seed.
+        feedback: Evaluating on training data measures memorisation, not performance on new patients.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-sizes, m-mcq-peeking, m-tf-preprocessing, m-code-chronological, m-mcq-group]
+
+cheatsheet: |
+  ```python
+  import random
+  shuffled = list(rows)                  # copy first
+  random.Random(seed).shuffle(shuffled)  # seeded, in place, returns None
+  n_train = int(len(shuffled) * 0.6)
+  n_val = int(len(shuffled) * 0.2)
+  train = shuffled[:n_train]
+  val = shuffled[n_train:n_train + n_val]
+  test = shuffled[n_train + n_val:]
+  ```
+  - train = fit parameters · validation = choose models/settings · test = one final estimate
+  - Stratify for rare classes · split by **time** for forecasting · split by **group** for repeated entities
+  - Fit scalers, vocabularies and imputers on the **training** set only
+  - scikit-learn: `train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)`, `GroupShuffleSplit`, `TimeSeriesSplit`

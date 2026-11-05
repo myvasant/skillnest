@@ -1,0 +1,254 @@
+id: caching-demo
+title: "Caching demo: cache-aside with TTL and invalidation"
+track: backend
+level: advanced
+estimatedHours: 10
+summary: >-
+  Put a cache-aside layer in front of a deliberately slow catalogue: an in-memory TTL + LRU cache
+  driven by an injectable clock, invalidation after writes, an `X-Cache: HIT|MISS` API, and an
+  optional Redis implementation behind the same interface.
+problem: |
+  An online shop's product pages read prices from an **upstream catalogue service** that takes about
+  **half a second per request**. The same handful of products is requested thousands of times a minute,
+  so the shop spends most of its time, and most of the upstream's capacity, fetching answers it already
+  had a moment ago. When the upstream slows down further, every product page slows down with it.
+
+  A cache stores recent answers close to the application. With **cache-aside** (also called *lazy
+  loading*) the application owns the logic:
+
+  1. **Read**: look in the cache; on a **hit** return the cached copy; on a **miss** read the source,
+     store the answer with a **time to live (TTL)**, and return it.
+  2. **Write**: update the source of truth first, then **delete** the cached copy so the next read
+     reloads it.
+
+  The hard parts are not the dictionary lookup. They are expiry exactly at the boundary, never caching
+  errors, staying correct when the cache itself is down, never serving a price that was just changed,
+  and keeping all of that testable without sleeping. You will build the cache, the cache-aside layer and
+  a small API, then swap in Redis without touching the cache-aside code.
+
+  **Inputs and outputs**
+
+  | Method and path | Success | Failures |
+  |---|---|---|
+  | `GET /products/{id}` | `200` product JSON and an `X-Cache: HIT` or `MISS` header | `404` unknown id, `422` id not a positive integer |
+  | `PUT /products/{id}/price` `{"price_cents": 7999}` | `200` updated product (and the cached copy is deleted) | `404`, `422` negative, non-integer or extra fields |
+  | `GET /cache/stats` | `200 {"hits", "misses", "hit_ratio", "size"}` | |
+
+  **Example session**
+
+  ```text
+  GET /products/1                                -> 200 X-Cache: MISS   (~500 ms: slow source)
+  {"id": 1, "name": "Mechanical keyboard", "price_cents": 8999}
+  GET /products/1                                -> 200 X-Cache: HIT    (~1 ms: from the cache)
+  PUT /products/1/price {"price_cents": 7999}    -> 200 {"id": 1, ..., "price_cents": 7999}
+  GET /products/1                                -> 200 X-Cache: MISS   (reloaded: 7999, never the stale 8999)
+  (30 seconds later, the TTL has passed)
+  GET /products/1                                -> 200 X-Cache: MISS
+  GET /cache/stats -> {"hits": 1, "misses": 3, "hit_ratio": 0.25, "size": 1}
+  ```
+
+  This project builds on the resource design from [the REST API project](project:rest-api); here the
+  focus is the layer between the API and a slow dependency.
+concepts:
+  - backend.caching-strategies
+  - backend.fastapi-basics
+  - backend.dependency-injection
+  - python.mocking
+  - databases.redis
+  - mlops.caching-queues
+acceptanceCriteria:
+  - "`InMemoryCache.get` returns a value while `clock() < written_at + ttl` and `None` from `written_at + ttl` on (tested exactly at the boundary with a fake clock); `set` rejects TTLs that are zero, negative, NaN, infinite or not numbers with `ValueError`, and non-string values with `TypeError`."
+  - "When `InMemoryCache` exceeds `max_entries` it first drops expired entries, then evicts the least recently *used* entry; `stats()` reports size, evictions and expirations."
+  - "`get_or_load` calls the loader only on a miss, stores the serialised result with the TTL, never caches loader exceptions, treats undecodable entries as misses, and still returns data from the source (logging a warning) when the cache raises."
+  - "Three reads of the same product through `CachedCatalogue` or `GET /products/{id}` reach the slow source once (counted, not timed); the responses report `X-Cache: MISS` then `HIT`; unknown products return 404 every time and are not cached."
+  - "`update_price` writes to the source first and then deletes `product:v1:{id}`: the next read is a miss with the new price; if the write fails the cache is untouched; if the delete fails the write still succeeds and a warning is logged."
+  - "`GET /cache/stats` reports hits, misses, `hit_ratio` (0.0 with no traffic) and size; every app created by `create_app` has its own cache (no module-level state)."
+  - "`RedisCache` implements the same `Cache` protocol with namespaced keys, `PX` milliseconds (at least 1), UTF-8 decoding, and a `clear()` that deletes only its own namespace; `import redis` happens only inside `from_url`, so the project runs without the package."
+architecture: |
+  ```text
+                    +-------------------- create_app(catalogue, cache, ttl) --------------------+
+  GET /products/1   |                                                                           |
+  ----------------> | read_product --> CachedCatalogue.lookup --> get_or_load(cache, key, ...)  |
+  <-- X-Cache: HIT  |                                              |  1. cache.get(key)  -------+--> Cache (protocol)
+                    |                                              |  2. miss: loader() ---+    |      +- InMemoryCache(clock)
+                    |                                              |  3. cache.set(ttl)    |    |      +- RedisCache(client)
+  PUT /.../price    |                                              v                       v    |
+  ----------------> | update_price --> CachedCatalogue.update_price:  1. source.update   SlowCatalogue
+                    |                                                  2. cache.delete(key)  (sleep per call)
+                    +---------------------------------------------------------------------------+
+  ```
+
+  * **`SlowCatalogue`** (provided): the source of truth. Every call sleeps `delay_seconds` through an
+    injected `sleep`, and counts `reads`/`writes`, so tests measure saved work by counting.
+  * **`Cache` protocol**: `get`, `set(key, value, ttl_seconds)`, `delete`, `clear`, string values only.
+    Serialisation belongs to the caller, which is what lets Redis slot in later.
+  * **`InMemoryCache(clock, max_entries)`** (milestone 1): an `OrderedDict` of `key -> (value,
+    expires_at)` guarded by a lock; expiry is checked lazily on access; LRU order is maintained with
+    `move_to_end`.
+  * **`get_or_load`** (milestone 2): the generic cache-aside read. Cache failures *fail open* (the
+    source answers); loader failures propagate and are never cached.
+  * **`CachedCatalogue`** (milestones 2–3): wraps any `Catalogue`, uses versioned keys
+    (`product:v1:{id}`, so a format change only needs a version bump), counts hits and misses, and
+    invalidates after writes.
+  * **HTTP layer** (milestone 4): FastAPI routes get the app's `CachedCatalogue` through a dependency on
+    `request.app.state`; nothing is global, so each test builds its own app with a fake clock.
+  * **`RedisCache`** (milestone 5): the same protocol over `SET key value PX ms`, `GET`, `DEL` and
+    `SCAN MATCH namespace*`. Redis expires keys itself, so it needs no clock.
+environment: local
+starterKit: projects/caching-demo
+setup: |
+  You need Python 3.11 or newer. From the repository root:
+
+  **Windows PowerShell**
+
+  ```powershell
+  cd projects\caching-demo
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/caching-demo
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  python -m pytest -k Milestone1
+  ```
+
+  Run the API and watch the header change from `MISS` to `HIT`:
+
+  ```powershell
+  python -m uvicorn --factory cache_aside:create_app --app-dir starter --reload
+  (Invoke-WebRequest http://127.0.0.1:8000/products/1).Headers["X-Cache"]
+  ```
+
+  ```bash
+  python -m uvicorn --factory cache_aside:create_app --app-dir starter --reload
+  curl -si http://127.0.0.1:8000/products/1 | grep -i x-cache
+  ```
+
+  **Optional: Redis.** Not needed for the default tests. To try milestone 5 against a real server,
+  install the client (`python -m pip install redis`) and start Redis on `localhost:6379`, for example
+  with `docker run --rm -p 6379:6379 redis:7` (or Memurai/WSL on Windows, `brew install redis` on macOS,
+  your package manager on Linux). Then run `python -m pytest -m network`; set `GW_REDIS_URL` to use
+  another address.
+milestones:
+  - id: m1-ttl-cache
+    title: An in-memory TTL cache with an injectable clock
+    description: |
+      Implement `validate_ttl` and `InMemoryCache`: `get` (lazy expiry, mark as recently used), `set`
+      (TTL from the injected clock, type check, capacity), `delete`, `clear`, `__len__` (live entries
+      only), `stats` and `_purge_expired`. Use `>=` for expiry and evict expired entries before live
+      ones when the cache is full.
+
+      **Tests (`TestMilestone1InMemoryCache`)** move a `FakeClock` to just before and exactly at the TTL,
+      check that overwriting restarts the TTL, reject bad TTLs (`0`, `-1`, `nan`, `inf`, `True`) and
+      non-string values, and check LRU order (a read makes an entry "recent"), eviction counts, and that
+      expired entries make room first.
+  - id: m2-cache-aside-reads
+    title: The cache-aside read path
+    description: |
+      Implement `_safe_get`, `_safe_set`, `_safe_delete`, `get_or_load`, `CachedCatalogue.lookup` and
+      `CachedCatalogue.stats`. A hit must not call the loader; a miss stores the serialised value; loader
+      errors (such as `ProductNotFoundError`) propagate and are not cached; an entry that fails to
+      deserialise is deleted and reloaded; a cache that raises is logged and bypassed.
+
+      **Tests (`TestMilestone2CacheAsideReads`)** count calls to the slow source and recorded sleeps (one
+      for three reads), check the `product:v1:{id}` key scheme and exact round-trips, use a `BrokenCache`
+      that raises on every call, and check hit/miss counters and the hit ratio.
+  - id: m3-invalidation-expiry
+    title: Invalidation on writes, and expiry
+    description: |
+      Implement `CachedCatalogue.update_price` and `invalidate`: write to the source of truth, *then*
+      delete the cached key. Think about why deleting is safer than writing the new value into the cache,
+      and why the TTL still matters when every write invalidates.
+
+      **Tests (`TestMilestone3InvalidationAndExpiry`)** record the order of operations (source update
+      before cache delete), check that a failed write leaves the cache alone, that invalidating one
+      product does not evict another, that entries reload after the TTL, that the TTL bounds staleness
+      after a change made directly at the source, and that a failed delete does not fail the write.
+  - id: m4-http-layer
+    title: An HTTP API with an X-Cache header
+    description: |
+      Implement the three routes in `_add_routes`: `GET /products/{id}` (sets `X-Cache: HIT|MISS`, 404
+      for unknown ids), `PUT /products/{id}/price` (validated `PriceUpdate` body, invalidates), and
+      `GET /cache/stats`. `create_app` already wires a fresh `CachedCatalogue` onto `app.state`.
+
+      **Tests (`TestMilestone4HttpLayer`)** use FastAPI's `TestClient` to check MISS then HIT, one source
+      read for five requests, 404s that are not cached, 422s for bad ids and bodies (negative, string,
+      float, missing, extra fields), invalidation through `PUT`, the stats endpoint, expiry through the
+      API with a fake clock, and that two apps never share a cache.
+  - id: m5-redis-adapter
+    title: Redis behind the same interface
+    description: |
+      Implement `RedisCache`: namespace validation, `from_url` (import `redis` lazily with a helpful error
+      if it is missing), `get` (decode UTF-8 bytes), `set` (`px=` milliseconds, at least 1), `delete`,
+      `clear` (only keys matching `namespace*`, found with `SCAN`) and `__len__`. `CachedCatalogue`
+      should work with it unchanged.
+
+      **Tests (`TestMilestone5RedisAdapter`)** run against an in-test `FakeRedisClient`, so no server is
+      needed: key prefixes, TTL conversion, decoding, namespace-only `clear`, unsafe namespaces, and the
+      install hint. `TestOptionalRealRedis` (marked `network`) runs only with `-m network`, the `redis`
+      package and a reachable server.
+testing: |
+  Run the tests from `projects/caching-demo` (they target `starter/` by default):
+
+  ```bash
+  python -m pytest                 # everything except the optional real-Redis tests
+  python -m pytest -k Milestone3   # one milestone
+  python -m pytest -x -q           # stop at the first failure
+  ```
+
+  Compare against the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  Nothing in the suite sleeps or reads the real clock. A `FakeClock` is injected into `InMemoryCache`
+  (`clock.advance(30)` expires entries instantly) and a `RecordingSleep` replaces `time.sleep` in
+  `SlowCatalogue`, so "the slow source was called once" is an exact count rather than a timing guess.
+  Other test doubles: `BrokenCache` (an unreachable cache), `RecordingCache`/`RecordingCatalogue` (to
+  assert the order of the write and the invalidation) and `FakeRedisClient`.
+
+  The real-Redis tests are marked `network` and are skipped by default. Run them with
+  `python -m pytest -m network` after installing `redis` and starting a server; set `GW_REDIS_URL` for a
+  non-default address. They only touch keys under `caching-demo-test:`.
+security:
+  - "Stale or wrong data is a correctness and security problem (a revoked permission or an old price served from cache). Invalidate after every write, keep TTLs short for data that changes, and never cache per-user or authorisation-dependent responses under a shared key."
+  - "Cache key collisions and poisoning: build keys from validated, typed parts (`product:v1:{int id}`), never from raw user input, and namespace keys per application so two services sharing a Redis cannot read or overwrite each other's entries."
+  - "Sensitive data at rest: anything cached is a copy outside the source's access controls. Do not cache secrets, tokens or personal data unless required; if you must, encrypt, use short TTLs, and restrict who can read the cache. Log keys, never values."
+  - "Exposed Redis: never bind Redis to a public interface without authentication. Require a password or ACL user (`redis://user:pass@host`) supplied via environment variables, use TLS (`rediss://`) across networks, and keep it on a private network."
+  - "Destructive operations: `clear()` deletes only this namespace via `SCAN` rather than `FLUSHDB`/`KEYS *`, which would wipe or block a shared server. Do not expose cache flushing over HTTP without authentication."
+  - "Fail-open trade-off: when the cache is down, all traffic falls through to the slow source, which can overload it (a thundering herd). Pair fail-open with timeouts, rate limits or circuit breakers in production."
+extensions:
+  - "Negative caching: cache 'not found' answers for a short TTL (for example 5 s) under a distinct marker so repeated lookups of missing ids stop hitting the source, and test that creating the product later is still visible."
+  - "Stampede protection (single-flight): when many requests miss the same key at once, let one load it while the others wait for its result; use a per-key lock and test it with threads and events, not sleeps."
+  - "Jittered TTLs and stale-while-revalidate: add ±10% random jitter (inject the random source) so entries do not all expire together, and serve a slightly stale value while one request refreshes it in the background."
+  - "Metrics: expose hits, misses, evictions and source latency in Prometheus format, as in [the logging and monitoring project](project:logging-monitoring), and alert when the hit ratio drops."
+  - "Put the cache in front of the SQLite repository from the `crud-database-app` project and measure the latency difference with a small benchmark."
+rubric:
+  - criterion: TTL and eviction correctness
+    needsWork: Entries never expire, expire one tick late (`>` instead of `>=`), or the cache grows without bound.
+    meets: Expiry is exact at the boundary, expired entries are removed lazily, and LRU eviction respects recent reads; all tested with a fake clock.
+    exceeds: Also explains the memory/latency trade-off of the chosen `max_entries` and TTL, and adds jitter or stats-based tuning.
+  - criterion: Cache-aside read and write paths
+    needsWork: Errors are cached, writes update the cache before the source, or a write leaves a stale entry behind.
+    meets: Misses load and store, hits skip the source, errors are never cached, and writes go to the source first and then delete the key.
+    exceeds: Handles corrupt entries and versioned keys, documents the remaining race windows, and adds negative caching or single-flight loading.
+  - criterion: Resilience
+    needsWork: An unavailable cache makes reads or writes fail.
+    meets: Cache failures are logged (keys only, never values) and requests are served from the source; failed invalidations are bounded by the TTL.
+    exceeds: Adds timeouts and a circuit breaker for the cache client, and reasons about protecting the source when the cache is down.
+  - criterion: Design and testability
+    needsWork: Tests sleep or depend on wall-clock time, or the cache is a module-level global.
+    meets: Clock and sleep are injected, each app owns its cache, and the same `Cache` protocol is implemented by the in-memory and Redis caches.
+    exceeds: Runs the same behavioural test suite against both implementations (a parametrised fixture) and verifies the Redis adapter against a real server.

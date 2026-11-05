@@ -1,0 +1,337 @@
+id: cs.trees
+concept: cs.trees
+title: Trees and Binary Search Trees
+subtitle: Represent hierarchical data and search it efficiently
+estimatedMinutes: 55
+reviewedOn: 2026-11-04
+summary: >-
+  Learn the vocabulary and structure of trees, distinguish a general binary tree from a binary search tree,
+  implement common depth-first traversals, and understand how tree height controls search cost. See why a
+  balanced tree can search quickly while a badly shaped tree can degrade to a linked chain.
+objectives:
+  - Define root, parent, child, leaf, subtree, depth and height.
+  - Distinguish a binary tree from a binary search tree and state the BST ordering invariant.
+  - Implement in-order, pre-order and post-order traversals.
+  - Search a binary search tree and explain why its cost is O(height).
+  - Explain why balancing matters and identify where trees appear in software systems.
+sources:
+  - title: MIT 6.006 Introduction to Algorithms
+    url: https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/
+    publisher: MIT OpenCourseWare
+  - title: Open Data Structures
+    url: https://opendatastructures.org/
+    publisher: Pat Morin
+  - title: Python — heapq
+    url: https://docs.python.org/3/library/heapq.html
+    publisher: Python Software Foundation
+sections:
+  - id: tree-vocabulary
+    title: What is a tree?
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          A **tree** is a hierarchical structure made of **nodes** connected by **edges**. One node is the
+          **root**. Every other node has exactly one parent. A node may have zero or more children. A node
+          with no children is a **leaf**. A **subtree** is a node together with all of its descendants.
+
+          The **depth** of a node is the number of edges from the root to that node. The **height** of a tree
+          is the number of edges on its longest path from the root to a leaf (some texts count nodes instead;
+          always state the convention you use).
+
+          Trees model folder structures, HTML documents, nested JSON, syntax trees, organisation charts and
+          many database indexes. Their parent-child relationships are more important than their visual shape.
+      - type: code
+        runnable: true
+        code: |
+          tree = {
+              "name": "root",
+              "children": [
+                  {"name": "left", "children": []},
+                  {"name": "right", "children": [
+                      {"name": "leaf", "children": []}
+                  ]},
+              ],
+          }
+
+          print(tree["name"])
+          print([child["name"] for child in tree["children"]])
+        expectedOutput: |
+          root
+          ['left', 'right']
+        caption: Nested dictionaries can represent a tree too. A node can contain child nodes, which can contain more child nodes.
+  - id: binary-tree-vs-bst
+    title: Binary trees and the search-tree rule
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **binary tree** is a tree in which each node has at most two children, usually called `left` and
+          `right`. A **binary search tree (BST)** is a binary tree with an additional ordering rule:
+
+          - Every key in the left subtree is smaller than the current node's key.
+          - Every key in the right subtree is larger than the current node's key.
+
+          This invariant lets a search discard one entire subtree after each comparison. The examples here
+          use unique integer keys to keep the rule simple. Real implementations must define what happens
+          with duplicate keys — for example, reject them, count them or store a collection at each key.
+      - type: code
+        runnable: true
+        code: |
+          class Node:
+              def __init__(self, key, left=None, right=None):
+                  self.key = key
+                  self.left = left
+                  self.right = right
+
+          root = Node(8, Node(3, Node(1), Node(6)), Node(10, None, Node(14)))
+          print(root.key)
+          print(root.left.key, root.right.key)
+          print(root.left.left.key, root.left.right.key)
+        expectedOutput: |
+          8
+          3 10
+          1 6
+        annotations:
+          - line: 1
+            text: A node stores one key and references to its optional left and right children.
+          - line: 7
+            text: The smaller keys are in the left subtree and the larger keys are in the right subtree.
+  - id: traversal
+    title: Visit every node in a defined order
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A **traversal** visits the nodes of a tree in a systematic order. Three common depth-first orders are:
+
+          - **Pre-order:** visit the current node, then the left subtree, then the right subtree.
+          - **In-order:** visit the left subtree, then the current node, then the right subtree.
+          - **Post-order:** visit the left subtree, then the right subtree, then the current node.
+
+          On a BST, in-order traversal visits keys in ascending order. Traversal is naturally recursive because
+          each child is itself the root of a smaller tree. The base case is an empty child (`None`).
+      - type: code
+        runnable: true
+        code: |
+          class Node:
+              def __init__(self, key, left=None, right=None):
+                  self.key, self.left, self.right = key, left, right
+
+          root = Node(8, Node(3, Node(1), Node(6)), Node(10, None, Node(14)))
+
+          def inorder(node):
+              if node is None:
+                  return []
+              return inorder(node.left) + [node.key] + inorder(node.right)
+
+          def preorder(node):
+              if node is None:
+                  return []
+              return [node.key] + preorder(node.left) + preorder(node.right)
+
+          print(inorder(root))
+          print(preorder(root))
+        expectedOutput: |
+          [1, 3, 6, 8, 10, 14]
+          [8, 3, 1, 6, 10, 14]
+        annotations:
+          - line: 9
+            text: The empty tree is the base case; it contributes no keys.
+          - line: 11
+            text: In-order places the left subtree before the current key and then the right subtree.
+          - line: 15
+            text: Pre-order visits the current key before either child subtree.
+  - id: bst-search
+    title: Search by following one branch
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          To search for a key, compare it with the current node:
+
+          1. If the node is empty, the key is not present.
+          2. If the key equals the current key, the search succeeds.
+          3. If the target is smaller, continue left; otherwise continue right.
+
+          Each comparison follows one child, so the number of steps is proportional to the tree's height.
+          If the tree is balanced, height is approximately `log₂(n)` and search is O(log n). If values arrive
+          in sorted order and the tree becomes a chain, height is n and search is O(n).
+      - type: code
+        runnable: true
+        code: |
+          class Node:
+              def __init__(self, key, left=None, right=None):
+                  self.key, self.left, self.right = key, left, right
+
+          def contains(root, target):
+              current = root
+              while current is not None:
+                  if target == current.key:
+                      return True
+                  if target < current.key:
+                      current = current.left
+                  else:
+                      current = current.right
+              return False
+
+          root = Node(8, Node(3, Node(1), Node(6)), Node(10, None, Node(14)))
+          print(contains(root, 6))
+          print(contains(root, 7))
+        expectedOutput: |
+          True
+          False
+        annotations:
+          - line: 7
+            text: A match ends the search immediately.
+          - line: 9
+            text: The BST invariant tells us the target cannot be in the right subtree when it is smaller.
+          - line: 12
+            text: If we reach None, the key is not in the tree.
+  - id: balanced-and-degenerate
+    title: Why balancing changes performance
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A tree's height determines how many comparisons a search may need. A balanced BST keeps left and
+          right subtrees at similar heights. A degenerate BST can look like a linked list.
+
+          For example, inserting `1, 2, 3, 4, 5` into a simple BST without balancing creates a right-only
+          chain. Searching for 5 then visits every node. Inserting the middle value first and recursively
+          building each half produces a much shorter tree.
+
+          Self-balancing structures such as AVL and red-black trees perform rotations after updates to keep
+          height logarithmic. B-trees and related structures are widely used for storage systems and database
+          indexes because they reduce expensive disk-page accesses. Python does not provide a built-in
+          balanced binary search tree; a sorted list plus `bisect` may be sufficient for some workloads.
+      - type: callout
+        variant: misconception
+        title: A binary tree is not automatically fast
+        body: |
+          The word binary only means at most two children per node. It says nothing about balance. A BST
+          with a poor insertion order can still have O(n) search, insertion and deletion.
+      - type: item
+        ref: tree-complexity-check
+  - id: applications-and-summary
+    title: Where trees are useful
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          Trees are a good fit when data has parent-child structure or when an ordering invariant helps
+          narrow a search. They are not always the right structure: a hash table is often better for exact
+          key lookup, while a graph is needed when nodes can have multiple parents or arbitrary cycles.
+
+          - File systems and nested documents use hierarchical relationships.
+          - Parsers represent expressions and source code with syntax trees.
+          - Search trees organise ordered keys.
+          - B-trees support database and file-system indexes.
+          - Heaps are specialised trees for efficiently retrieving the next highest- or lowest-priority item.
+      - type: item
+        ref: tree-traversal-predict
+      - type: item
+        ref: tree-search-code
+items:
+  - id: tree-complexity-check
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: A BST contains 1,000 keys inserted in ascending order, and it does not rebalance. What is the worst-case search time complexity?
+    options:
+      - id: a
+        text: O(1)
+        correct: false
+        feedback: A search still follows child pointers; it cannot jump directly to an arbitrary key.
+      - id: b
+        text: O(log n)
+        correct: false
+        feedback: O(log n) requires a tree whose height grows logarithmically. Sorted insertion can create a chain.
+      - id: c
+        text: O(n)
+        correct: true
+        feedback: The unbalanced tree can have height n, so a search may visit every node.
+    explanation: Search cost is O(height). An unbalanced BST can have height n, making its worst-case search linear.
+  - id: tree-traversal-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does an in-order traversal print for this BST?
+    code: |
+      class Node:
+          def __init__(self, key, left=None, right=None):
+              self.key, self.left, self.right = key, left, right
+
+      def inorder(node):
+          if node is None:
+              return []
+          return inorder(node.left) + [node.key] + inorder(node.right)
+
+      root = Node(5, Node(2), Node(8))
+      print(inorder(root))
+    answer: |
+      [2, 5, 8]
+    explanation: In-order traversal visits the left subtree, then the current node, then the right subtree. For a BST this produces ascending keys.
+  - id: tree-search-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Complete `tree_contains(root, target)` so it returns True if the target key exists in the BST and False otherwise.
+    starterCode: |
+      class Node:
+          def __init__(self, key, left=None, right=None):
+              self.key, self.left, self.right = key, left, right
+
+      def tree_contains(root, target):
+          # Follow the BST ordering rule until a match or an empty child.
+          pass
+
+      root = Node(8, Node(3, Node(1), Node(6)), Node(10, None, Node(14)))
+      print(tree_contains(root, 6))
+      print(tree_contains(root, 7))
+    solution: |
+      class Node:
+          def __init__(self, key, left=None, right=None):
+              self.key, self.left, self.right = key, left, right
+
+      def tree_contains(root, target):
+          current = root
+          while current is not None:
+              if target == current.key:
+                  return True
+              if target < current.key:
+                  current = current.left
+              else:
+                  current = current.right
+          return False
+
+      root = Node(8, Node(3, Node(1), Node(6)), Node(10, None, Node(14)))
+      print(tree_contains(root, 6))
+      print(tree_contains(root, 7))
+    tests:
+      - name: finds an existing key
+        code: assert tree_contains(root, 6) is True
+      - name: returns false for a missing key
+        code: assert tree_contains(root, 7) is False
+      - name: handles an empty tree
+        code: assert tree_contains(None, 4) is False
+    hints:
+      - Start at the root and keep moving to one child.
+      - Compare the target with the current key to choose left or right.
+      - If current becomes None, the target is not present.
+    explanation: The BST ordering invariant lets the search discard one subtree after each comparison. If the search reaches an empty child, the key is absent.
+    expectedOutput: |
+      True
+      False
+masteryCheck:
+  passThreshold: 0.8
+  items:
+    - tree-complexity-check
+    - tree-traversal-predict
+    - tree-search-code
+cheatsheet: |
+  Root: the top node. Leaf: a node with no children. Height: longest root-to-leaf path.
+  Binary tree: each node has at most two children. BST: left keys < node key < right keys.
+  In-order traversal of a BST returns keys in sorted order.
+  BST search is O(height): O(log n) when balanced, O(n) when degenerate.
+  A binary tree is not automatically balanced; Python has no built-in balanced BST.

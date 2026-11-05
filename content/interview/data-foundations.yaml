@@ -1,0 +1,600 @@
+category:
+  id: data
+  title: Databases, maths and data
+  summary: SQL, statistics, probability and data analysis.
+questions:
+  # ------------------------------------------------------------- databases.sql-basics
+  - id: databases.sql-basics.null-comparison
+    level: junior
+    kind: conceptual
+    concepts: [databases.sql-basics]
+    question: |
+      `SELECT * FROM users WHERE phone = NULL` returns no rows, even though many users have no phone number.
+      Why, and how do you fix it? What other conditions are affected by the same rule?
+    answer: |
+      NULL means "unknown", so SQL uses three-valued logic: any comparison with NULL — including `NULL = NULL` —
+      evaluates to UNKNOWN, not TRUE. WHERE keeps only rows whose condition is TRUE, so `phone = NULL` matches
+      nothing. Use `phone IS NULL` (or `IS NOT NULL`), which always returns TRUE or FALSE. The same rule
+      silently drops rows elsewhere: `phone <> '123'` excludes rows with NULL phone (add `OR phone IS NULL`, or
+      use `IS DISTINCT FROM`), `NOT IN (...)` returns nothing if the list contains a NULL, and `NOT (x > 5)` is
+      UNKNOWN when x is NULL. `COALESCE(phone, 'none')` substitutes a default when that is really what you mean.
+    keyPoints:
+      - Comparisons with NULL yield UNKNOWN (three-valued logic), even NULL = NULL.
+      - WHERE keeps only TRUE rows, so UNKNOWN rows are dropped like FALSE ones.
+      - Use IS NULL / IS NOT NULL (or IS DISTINCT FROM for null-safe comparison).
+      - "Mentions a related trap: <> or NOT IN silently excluding NULL rows."
+    followUps:
+      - How does COUNT(phone) differ from COUNT(*)?
+      - Where do NULLs sort in PostgreSQL versus SQLite?
+    pitfalls:
+      - Saying NULL equals zero or an empty string.
+      - Thinking `= NULL` works in some databases and therefore is fine.
+
+  - id: databases.sql-basics.logical-order
+    level: mid
+    kind: conceptual
+    concepts: [databases.sql-basics]
+    question: |
+      Explain the logical order in which the clauses of a SELECT statement are evaluated. Use it to explain why
+      `SELECT price * qty AS total FROM items WHERE total > 100` fails in PostgreSQL while
+      `... ORDER BY total` works.
+    answer: |
+      Logically a query is evaluated as FROM (and joins) → WHERE → GROUP BY → HAVING → SELECT → DISTINCT →
+      ORDER BY → LIMIT/OFFSET, each step consuming the rows produced by the previous one. WHERE runs before
+      SELECT, so an alias defined in SELECT does not exist yet when WHERE is evaluated — PostgreSQL reports
+      `column "total" does not exist`. ORDER BY runs after SELECT, so it can use the alias. Fixes: repeat the
+      expression in WHERE, or compute it in a subquery or CTE and filter outside. This is the logical model of
+      the result; the planner may execute it differently (using indexes, reordering joins) as long as the result
+      is the same. SQLite is lenient and accepts aliases in WHERE as an extension, which is a portability trap.
+    keyPoints:
+      - States the order FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT.
+      - Explains that WHERE cannot see SELECT aliases but ORDER BY can.
+      - Gives a fix (repeat the expression, or a subquery/CTE).
+      - Distinguishes logical evaluation order from the physical execution plan.
+    followUps:
+      - Why does LIMIT without ORDER BY give unpredictable results?
+      - Where would a window function fit into this order?
+    pitfalls:
+      - Claiming SQL executes top to bottom as written.
+      - Assuming behaviour seen in SQLite is standard SQL.
+
+  - id: databases.sql-basics.top-n-query
+    level: junior
+    kind: sql
+    concepts: [databases.sql-basics]
+    question: |
+      Table `products(id, name, category, price, stock)`. Write a query returning the name and price of the
+      5 most expensive **in-stock** products in the 'home' or 'garden' categories. The result must be the same
+      every time it runs.
+    answer: |
+      ```sql
+      SELECT name, price
+      FROM products
+      WHERE category IN ('home', 'garden')
+        AND stock > 0
+      ORDER BY price DESC, id
+      LIMIT 5;
+      ```
+      `IN` avoids an unparenthesised OR mixed with AND (`category = 'home' OR category = 'garden' AND stock > 0`
+      would let out-of-stock home products through). `stock > 0` also excludes rows with unknown (NULL) stock,
+      which is usually what "in stock" means — say so if the requirement is ambiguous. ORDER BY with a unique
+      tie-breaker (`id`) makes the top 5 deterministic when prices tie; LIMIT is applied after sorting.
+    keyPoints:
+      - Filters with IN (or parenthesised OR) combined with AND.
+      - Sorts DESC by price before LIMIT.
+      - Adds a unique tie-breaker for a deterministic result.
+      - Considers how NULL stock is handled.
+    followUps:
+      - How would you fetch the next page of 5 results?
+      - Which index would help this query?
+    pitfalls:
+      - Writing LIMIT without ORDER BY.
+      - Mixing AND and OR without parentheses.
+
+  # ------------------------------------------------------------- databases.sql-joins
+  - id: databases.sql-joins.join-types
+    level: junior
+    kind: conceptual
+    concepts: [databases.sql-joins]
+    question: |
+      Explain INNER, LEFT, RIGHT and FULL OUTER joins using `customers` and `orders`, where some customers have
+      no orders and some orders (guest checkouts) have a NULL `customer_id`.
+    answer: |
+      Joining `customers c` to `orders o` ON `o.customer_id = c.id`: an INNER JOIN returns only pairs where the
+      condition is TRUE — customers with their orders; customers without orders and guest orders disappear
+      (NULL keys never match). A LEFT JOIN keeps every customer; those without orders get NULLs in the order
+      columns. A RIGHT JOIN keeps every order; guest orders get NULL customer columns (equivalent to orders LEFT
+      JOIN customers). A FULL OUTER JOIN keeps unmatched rows from both sides. In every type, a customer with
+      three orders appears three times — joins repeat rows once per match. (SQLite supports RIGHT and FULL since
+      3.39; MySQL lacks FULL OUTER JOIN.)
+    keyPoints:
+      - INNER keeps only matching pairs; LEFT/RIGHT keep all rows of one side; FULL keeps both.
+      - Unmatched columns are filled with NULL, and NULL keys never match.
+      - Rows repeat once per matching row on the other side.
+      - RIGHT JOIN can be rewritten as LEFT JOIN by swapping tables.
+    followUps:
+      - How would you list customers who have never ordered?
+      - What happens if you forget the ON condition?
+    pitfalls:
+      - Saying a join "adds columns" without mentioning row multiplication.
+      - Forgetting that NULL keys do not match each other.
+
+  - id: databases.sql-joins.inflated-totals
+    level: mid
+    kind: debugging
+    concepts: [databases.sql-joins]
+    question: |
+      A report computed revenue per customer correctly. After someone added `JOIN support_tickets t ON
+      t.customer_id = c.id` to show ticket subjects, revenue roughly tripled for some customers. Explain and fix.
+    answer: |
+      Orders and tickets are both one-to-many from customers. Joining both to the same customer pairs every order
+      with every ticket, so a customer with 2 orders and 3 tickets produces 6 rows and each order total is counted
+      3 times — fan-out. The grain changed from "one row per order" to "one row per order–ticket pair". Fixes:
+      do not join tickets into the revenue query; or aggregate each child table to one row per customer first
+      (orders per customer, tickets per customer, e.g. in CTEs) and join those summaries; check row counts
+      against the expected grain. `SUM(DISTINCT total)` is not a fix — it drops genuinely equal order amounts.
+    keyPoints:
+      - Identifies fan-out from two one-to-many joins (orders × tickets).
+      - Explains that sums over repeated rows count orders multiple times.
+      - Fix by removing the join or pre-aggregating each child table to the customer grain.
+      - Rejects SUM(DISTINCT) as a fix.
+    followUps:
+      - How would you write the pre-aggregated version with CTEs?
+      - How would you test for this regression automatically?
+    pitfalls:
+      - Blaming duplicates in the source data.
+      - Using DISTINCT to hide the symptom.
+
+  - id: databases.sql-joins.left-join-where
+    level: mid
+    kind: sql
+    concepts: [databases.sql-joins]
+    question: |
+      This query should list every customer with their 2025 orders (customers without such orders included), but
+      customers without 2025 orders are missing:
+
+      ```sql
+      SELECT c.name, o.id
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id = c.id
+      WHERE o.created_at >= '2025-01-01';
+      ```
+
+      Why, and how do you fix it?
+    answer: |
+      WHERE is applied after the join. For customers with no matching order, `o.created_at` is NULL, so the
+      comparison is UNKNOWN and WHERE drops the row — the LEFT JOIN behaves like an inner join. Move the
+      right-table condition into the ON clause so it restricts which orders can match, while every customer
+      survives:
+
+      ```sql
+      SELECT c.name, o.id
+      FROM customers c
+      LEFT JOIN orders o
+        ON o.customer_id = c.id AND o.created_at >= '2025-01-01';
+      ```
+
+      Conditions that should restrict which customers appear still belong in WHERE. The deliberate exception is
+      an anti-join, `WHERE o.id IS NULL`, which is TRUE exactly for the unmatched rows.
+    keyPoints:
+      - WHERE runs after the join and drops rows where the right-table column is NULL.
+      - The LEFT JOIN effectively becomes an INNER JOIN.
+      - Move the right-table filter into ON.
+      - Left-table filters stay in WHERE.
+    followUps:
+      - What does a condition on the left table inside ON do?
+      - How would you also count the matching orders per customer?
+    pitfalls:
+      - "Patching WHERE with `OR o.created_at IS NULL`: it keeps customers with no orders at all but still drops customers whose orders are all from before 2025."
+      - Replacing LEFT JOIN with INNER JOIN, which makes the loss of customers explicit instead of fixing it.
+
+  - id: databases.sql-joins.customers-without-orders
+    level: junior
+    kind: sql
+    concepts: [databases.sql-joins]
+    question: |
+      Write a query that lists customers who have never placed an order. `orders.customer_id` can be NULL for
+      guest checkouts. What goes wrong with `WHERE id NOT IN (SELECT customer_id FROM orders)`?
+    answer: |
+      ```sql
+      SELECT c.id, c.name
+      FROM customers c
+      LEFT JOIN orders o ON o.customer_id = c.id
+      WHERE o.id IS NULL;
+      -- or
+      SELECT c.id, c.name FROM customers c
+      WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);
+      ```
+
+      The anti-join tests the right table's primary key, which is NULL only when nothing matched. `NOT IN` breaks
+      when the subquery returns a NULL: `5 NOT IN (1, 2, NULL)` means `5 <> 1 AND 5 <> 2 AND 5 <> NULL`, and the
+      last comparison is UNKNOWN, so the whole condition is never TRUE and the query returns no rows. Prefer NOT
+      EXISTS or the LEFT JOIN form (or filter `WHERE customer_id IS NOT NULL` inside the subquery).
+    keyPoints:
+      - Writes a LEFT JOIN ... WHERE right.pk IS NULL or NOT EXISTS anti-join.
+      - Tests a column that is never NULL for a real match.
+      - Explains that one NULL in a NOT IN list makes the result empty.
+    followUps:
+      - Which index makes this fast on large tables?
+      - How would you find customers who have ordered (a semi-join) without duplicates?
+    pitfalls:
+      - Testing a nullable column such as a coupon code for IS NULL.
+      - Using NOT IN on a nullable column.
+
+  # ------------------------------------------------------------- databases.sqlite-python
+  - id: databases.sqlite-python.sql-injection
+    level: junior
+    kind: conceptual
+    concepts: [databases.sqlite-python]
+    question: |
+      What is SQL injection? Show how it happens with Python's sqlite3 and how to prevent it.
+    answer: |
+      SQL injection happens when untrusted input is pasted into the text of a SQL statement, so part of the input
+      is parsed as SQL code. With
+      `con.execute(f"SELECT * FROM users WHERE name = '{name}'")`, the input `x' OR '1'='1` produces
+      `WHERE name = 'x' OR '1'='1'`, which is true for every row and leaks the whole table; `admin' --` comments
+      out a following password check. The fix is parameterised queries:
+      `con.execute("SELECT * FROM users WHERE name = ?", (name,))`. The SQL text is compiled first and the value
+      is bound afterwards as data, so it can never change the statement's structure — quotes and keywords inside
+      it are just characters. Escaping by hand is fragile; treat every value as untrusted (including values read
+      back from your own database). Add least-privilege accounts and validation as defence in depth.
+    keyPoints:
+      - Defines injection as input becoming part of the SQL code.
+      - Shows a concrete payload and the SQL it produces.
+      - Fixes it with placeholders and a separate parameters argument.
+      - Explains why parameters are safe (compiled first, bound as data) and why escaping is not enough.
+    followUps:
+      - Can placeholders be used for table names? What do you do instead?
+      - Does an ORM make injection impossible?
+    pitfalls:
+      - Suggesting quote-escaping or blacklisting keywords as the main defence.
+      - Writing `(name)` instead of `(name,)` for a single parameter.
+
+  - id: databases.sqlite-python.dynamic-sort-column
+    level: mid
+    kind: design
+    concepts: [databases.sqlite-python]
+    question: |
+      An API lets clients sort products with `?sort=price` or `?sort=name&dir=desc`. How do you build the SQL
+      safely in Python?
+    answer: |
+      Placeholders bind values only; they cannot stand for identifiers or keywords. `ORDER BY ?` would sort by a
+      constant string (no sorting at all) and `FROM ?` is a syntax error. So map the client's choice through an
+      allow-list defined in code, e.g. `SORT_COLUMNS = {"price": "price", "name": "name"}` and
+      `DIRECTIONS = {"asc": "ASC", "desc": "DESC"}`, reject anything else with a 400 error, and only then insert
+      the *allow-listed* identifier into the SQL text, adding a unique tie-breaker:
+      `f"SELECT id, name, price FROM products ORDER BY {SORT_COLUMNS[sort]} {DIRECTIONS[dir]}, id LIMIT ?"`, with
+      all values (the limit, filters) still passed as parameters.
+    keyPoints:
+      - Explains that placeholders cannot be identifiers or keywords.
+      - Uses an allow-list mapping user input to known column names and directions.
+      - Rejects unknown values instead of passing them through.
+      - Keeps all values parameterised and adds a deterministic tie-breaker.
+    followUps:
+      - How would you support multiple sort keys?
+      - Which index supports the most common sort?
+    pitfalls:
+      - Inserting the raw user string after "validating" it with a regex.
+      - Assuming `ORDER BY ?` works because it does not raise an error.
+
+  - id: databases.sqlite-python.transaction-lifecycle
+    level: mid
+    kind: coding
+    concepts: [databases.sqlite-python]
+    question: |
+      Write a function that transfers money between two accounts in SQLite so that either both updates happen or
+      neither does. What exactly does `with con:` do — and not do?
+    answer: |
+      ```python
+      def transfer(con, src, dst, amount):
+          with con:   # commit on success, roll back on exception
+              con.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?", (amount, src))
+              con.execute("UPDATE accounts SET balance = balance + ? WHERE id = ?", (amount, dst))
+      ```
+
+      With a `CHECK (balance >= 0)` constraint, an overdraft raises `sqlite3.IntegrityError`; the context manager
+      rolls back both updates and re-raises, so the caller can report the failure. `with con:` commits if the
+      block succeeds and rolls back if it raises, but it does **not** close the connection — use
+      `contextlib.closing()` or call `close()`. `close()` does not commit, so uncommitted changes are lost. With
+      the default (legacy) transaction control, sqlite3 opens a transaction implicitly before INSERT/UPDATE/
+      DELETE; Python 3.12+ offers `autocommit=False` for PEP 249 behaviour. Keep transactions short because
+      SQLite allows one writer at a time.
+    keyPoints:
+      - Both updates inside one transaction, with parameters.
+      - "`with con:` commits on success and rolls back on exception, re-raising it."
+      - "`with con:` does not close the connection; close() does not commit."
+      - Mentions constraints (or checks) that make the failure detectable, and short transactions.
+    followUps:
+      - How would you prevent two concurrent transfers from overdrawing an account in PostgreSQL?
+      - What does `con.in_transaction` tell you?
+    pitfalls:
+      - Committing after each statement.
+      - Catching the exception inside the transaction and continuing as if nothing happened.
+
+  # ------------------------------------------------------------- math.vectors
+  - id: math.vectors.dot-product-geometry
+    level: junior
+    kind: conceptual
+    concepts: [math.vectors]
+    question: |
+      What is the dot product of two vectors, algebraically and geometrically? What does its sign tell you?
+    answer: |
+      Algebraically, a·b = Σ aᵢbᵢ — multiply matching elements and add. Geometrically, a·b = ||a|| ||b|| cos θ,
+      where θ is the angle between the vectors. Lengths are non-negative, so the sign is the sign of cos θ:
+      positive when the angle is under 90° (broadly the same direction), zero when they are perpendicular
+      (orthogonal), negative when the angle is over 90°. If b is a unit vector, a·b is the length of a's
+      projection onto b's direction. a·a = ||a||², and the dot product grows with the vectors' lengths, which is
+      why similarity search often divides it out (cosine similarity).
+    keyPoints:
+      - States both formulas, Σ aᵢbᵢ and ||a|| ||b|| cos θ.
+      - Interprets positive, zero and negative values via the angle.
+      - Mentions projection onto a unit vector or a·a = ||a||².
+    followUps:
+      - How do you compute the angle between two vectors?
+      - Why might a large dot product not mean high similarity?
+    pitfalls:
+      - Returning the element-wise products instead of their sum.
+      - Saying a negative dot product means a vector has negative length.
+
+  - id: math.vectors.cosine-for-embeddings
+    level: mid
+    kind: conceptual
+    concepts: [math.vectors]
+    question: |
+      Why is cosine similarity the usual way to compare text embeddings? When do cosine similarity, dot product
+      and Euclidean distance give the same ranking?
+    answer: |
+      Cosine similarity, a·b / (||a|| ||b||), measures only the angle between vectors and ranges from −1 to 1.
+      Embedding models encode meaning mainly in direction; vector length can reflect other things, so ranking by
+      raw dot product lets long vectors win for the wrong reasons. If all vectors are normalised to unit length
+      (many models do this — check the model's documentation), cosine similarity equals the dot product, and
+      since ||a − b||² = 2 − 2 cos θ for unit vectors, ranking by smallest Euclidean distance gives the same order.
+      Scores are only comparable between vectors from the same model; thresholds must be calibrated per model,
+      because in high dimensions even unrelated vectors cluster around cosine 0 and typical score ranges differ.
+    keyPoints:
+      - Cosine ignores magnitude and measures direction, in [−1, 1].
+      - The dot product is inflated by length.
+      - For unit vectors, cosine = dot product and distance gives the same ranking (||a − b||² = 2 − 2cos θ).
+      - Only compare embeddings from the same model.
+    followUps:
+      - How would you search a million vectors quickly?
+      - What happens to cosine similarity for a zero vector?
+    pitfalls:
+      - Claiming cosine similarity is a distance metric that satisfies the triangle inequality.
+      - Mixing embeddings from different models or versions.
+
+  - id: math.vectors.implement-cosine
+    level: junior
+    kind: coding
+    concepts: [math.vectors]
+    question: |
+      Implement cosine similarity for two Python lists without NumPy. What edge cases do you handle?
+    answer: |
+      ```python
+      import math
+
+      def cosine_similarity(a, b):
+          dot = sum(x * y for x, y in zip(a, b, strict=True))   # ValueError if lengths differ
+          norm_a = math.sqrt(sum(x * x for x in a))
+          norm_b = math.sqrt(sum(y * y for y in b))
+          if norm_a == 0 or norm_b == 0:
+              raise ValueError("cosine similarity is undefined for a zero vector")
+          return dot / (norm_a * norm_b)
+      ```
+
+      Edge cases: unequal lengths (plain `zip` would silently truncate, so use `strict=True` or check lengths),
+      zero vectors (no direction — raise or return a documented value), and floating-point results slightly
+      outside [−1, 1] (clamp before `math.acos`). Python 3.12+ also offers `math.sumprod` and `math.hypot`; in
+      production you would vectorise with NumPy.
+    keyPoints:
+      - Correct formula with square roots in the norms.
+      - Guards against unequal lengths.
+      - Handles the zero vector explicitly.
+      - Mentions floating-point rounding (clamping) or vectorised alternatives.
+    followUps:
+      - How would you compute cosine similarity of one query against 10,000 documents efficiently?
+    pitfalls:
+      - Dividing by the squared norms.
+      - Letting zip silently drop elements.
+
+  # ------------------------------------------------------------- math.optimization
+  - id: math.optimization.gradient-descent-explained
+    level: junior
+    kind: conceptual
+    concepts: [math.optimization]
+    question: |
+      Explain gradient descent. Why do we subtract the gradient, and how do we decide when to stop?
+    answer: |
+      Gradient descent minimises a loss L(θ) by repeating θ ← θ − η ∇L(θ). The gradient points in the direction of
+      steepest increase, so stepping against it decreases the loss for a small enough step (from
+      L(θ + d) ≈ L(θ) + ∇L·d, choosing d = −η∇L gives a decrease of about η||∇L||²). The learning rate η sets the
+      step size; because the gradient shrinks near a minimum, steps shrink too. Stop after a fixed budget of
+      steps, when the gradient norm falls below a tolerance, or when the (validation) loss stops improving.
+      For convex losses this reaches the global minimum; for non-convex ones it finds a local minimum or flat
+      region that depends on the start.
+    keyPoints:
+      - States the update rule with the learning rate.
+      - Explains that the gradient points uphill, so we move against it.
+      - Gives at least one stopping criterion.
+      - Mentions convex versus non-convex behaviour.
+    followUps:
+      - What happens with a learning rate that is too large?
+      - How does gradient descent extend to millions of parameters?
+    pitfalls:
+      - Adding the gradient.
+      - Claiming it always finds the global minimum.
+
+  - id: math.optimization.learning-rate-diagnosis
+    level: mid
+    kind: debugging
+    concepts: [math.optimization]
+    question: |
+      Your training loss goes 2.3, 3.1, 9.8, 140, inf, nan. A colleague's run with the same code plateaus at a
+      high loss and barely moves. Diagnose both and say what you would try.
+    answer: |
+      The first run is diverging: the loss grows geometrically, overflows to inf and then becomes NaN
+      (inf − inf). The learning rate is too large for the curvature of the loss, so each step overshoots further
+      than the last. Try a learning rate 3–10× smaller, scale or normalise the input features, check for extreme
+      values or NaNs in the data, and in deep learning use warm-up and gradient clipping. The plateauing run
+      suggests a learning rate that is too small (or vanishing gradients/a bug that makes gradients near zero):
+      try a larger rate or a learning-rate range test, and gradient-check the implementation. For f(x) = (x − c)²
+      the analysis is exact: each step multiplies the error by (1 − 2η), so 0 < η < 1 converges, η = 1 bounces and
+      η > 1 diverges.
+    keyPoints:
+      - Recognises divergence from a geometrically growing loss ending in inf/NaN.
+      - Attributes it to a too-large learning rate relative to curvature; suggests lowering it and scaling features.
+      - Recognises a plateau as possibly too small a learning rate or a gradient bug.
+      - Mentions checks such as data validation, gradient checking or clipping.
+    followUps:
+      - How do adaptive optimisers such as Adam change this picture?
+      - Why does feature scaling allow larger learning rates?
+    pitfalls:
+      - Increasing the number of epochs to fix divergence.
+      - Treating NaN as a data-loading problem without checking the learning rate.
+
+  - id: math.optimization.batch-vs-sgd
+    level: mid
+    kind: conceptual
+    concepts: [math.optimization]
+    question: |
+      Compare batch gradient descent, stochastic gradient descent and mini-batch gradient descent.
+    answer: |
+      Batch gradient descent computes the exact gradient over the whole training set for every step: stable,
+      but each step costs a full pass over the data, which is impractical for large datasets. Stochastic gradient
+      descent uses one example per step: very cheap steps and noisy gradient estimates; the noise can help escape
+      poor regions but makes the path jittery, so learning rates are usually decayed. Mini-batch gradient
+      descent, the standard in deep learning, averages the gradient over a batch (e.g. 32–4096 examples): a
+      lower-variance estimate than single examples, efficient on vectorised hardware such as GPUs, and still far
+      cheaper per step than the full batch. With a constant learning rate, stochastic variants hover near the
+      minimum rather than settling exactly; schedules and optimisers like momentum, Adam and AdamW are layered on
+      top.
+    keyPoints:
+      - Batch uses all data per step (exact but expensive).
+      - SGD uses one example (cheap, noisy).
+      - Mini-batch balances variance and cost and suits GPUs.
+      - Mentions learning-rate decay or optimisers built on top.
+    followUps:
+      - How does batch size interact with the learning rate?
+      - What is an epoch?
+    pitfalls:
+      - Saying SGD always converges faster in wall-clock time.
+      - Confusing an epoch with a step.
+
+  - id: math.optimization.mse-gradient
+    level: senior
+    kind: coding
+    concepts: [math.optimization]
+    question: |
+      Derive the gradient of the mean squared error for linear regression ŷ = w·x + b, implement one gradient-
+      descent step in plain Python, and explain how you would verify your gradient.
+    answer: |
+      L(w, b) = (1/n) Σ (w xᵢ + b − yᵢ)². By the chain rule, with eᵢ = w xᵢ + b − yᵢ:
+      ∂L/∂w = (2/n) Σ eᵢ xᵢ and ∂L/∂b = (2/n) Σ eᵢ.
+
+      ```python
+      def step(w, b, xs, ys, lr):
+          n = len(xs)
+          errors = [w * x + b - y for x, y in zip(xs, ys)]
+          dw = 2 / n * sum(e * x for e, x in zip(errors, xs))
+          db = 2 / n * sum(errors)
+          return w - lr * dw, b - lr * db      # simultaneous update from the same (w, b)
+      ```
+
+      Verify with gradient checking: compare dw and db with central differences
+      (L(w + h, b) − L(w − h, b)) / 2h for h around 1e-5 at a few random points; they should agree to many
+      digits. Also check that the loss decreases with a small learning rate and that the result matches the
+      closed-form least-squares solution (for example `statistics.linear_regression` or `numpy.linalg.lstsq`).
+      The loss is convex in (w, b), so gradient descent converges to that global minimum for a suitable learning
+      rate.
+    keyPoints:
+      - Correct partial derivatives with the factor 2/n and the xᵢ term.
+      - Updates both parameters from the same old values.
+      - Uses central-difference gradient checking.
+      - Compares with the closed-form solution or notes convexity.
+    followUps:
+      - How does the gradient change for a batch matrix X with many features?
+      - Why might you prefer the closed form or gradient descent for very large datasets?
+    pitfalls:
+      - Forgetting the factor xᵢ in ∂L/∂w.
+      - Using the updated w when computing the gradient for b without realising it changes the algorithm.
+
+  # ------------------------------------------------------------- math.conditional-probability
+  - id: math.conditional-probability.medical-test
+    level: junior
+    kind: scenario
+    concepts: [math.conditional-probability]
+    question: |
+      A disease affects 1 in 1,000 people. A test detects 99% of cases and has a 1% false-positive rate. A random
+      person tests positive. What is the probability they have the disease?
+    answer: |
+      About 9%. Using natural frequencies: of 100,000 people, 100 are sick and 99,900 healthy. The test flags 99
+      of the sick and 1% of the healthy — 999 people. So 99 of the 1,098 positives are sick: 99/1098 = 11/122 ≈
+      0.090. With Bayes' theorem: P(sick | +) = P(+ | sick) P(sick) / [P(+ | sick) P(sick) + P(+ | healthy)
+      P(healthy)] = 0.99 · 0.001 / (0.99 · 0.001 + 0.01 · 0.999). The intuitive answer of 99% confuses
+      P(+ | sick) with P(sick | +) and ignores the base rate. A second, independent positive test would raise the
+      probability to about 91%, and testing a higher-risk group raises it too.
+    keyPoints:
+      - Arrives at about 9% (11/122).
+      - Uses Bayes' theorem or natural frequencies with the base rate.
+      - Identifies the confusion between P(+ | sick) and P(sick | +).
+      - Mentions how retesting or a higher prevalence changes the answer.
+    followUps:
+      - What if the test is used only on patients with symptoms, where prevalence is 20%?
+      - What is the negative predictive value of this test?
+    pitfalls:
+      - Answering 99%.
+      - Forgetting the false positives in the denominator.
+
+  - id: math.conditional-probability.alert-precision
+    level: senior
+    kind: scenario
+    concepts: [math.conditional-probability]
+    question: |
+      A fraud model has 95% recall and 99% specificity in an offline evaluation where fraud made up 5% of the
+      sample. In production fraud is 0.2% of transactions. What precision should the team expect, and what would
+      you do about it?
+    answer: |
+      Precision is P(fraud | flagged), which depends on the base rate. Offline: 0.95·0.05 = 0.0475 true positives
+      versus 0.01·0.95 = 0.0095 false positives per transaction → precision ≈ 83%. In production:
+      0.95·0.002 = 0.0019 versus 0.01·0.998 = 0.00998 → precision ≈ 16%: roughly five false alerts for every real
+      one, even though recall and specificity are unchanged. Actions: evaluate on data with the production base
+      rate (or reweight), choose the threshold from the precision–recall trade-off and the cost of each error,
+      add a second-stage review or model for flagged cases, and check calibration — if scores will be read as
+      probabilities, recalibrate them on production-like data, since a prior shift also moves calibrated
+      probabilities.
+    keyPoints:
+      - Computes precision with Bayes at both base rates (about 83% versus 16%).
+      - Explains that recall and specificity do not depend on prevalence but precision does.
+      - Proposes threshold tuning, evaluation at the production base rate, and staged review.
+      - Mentions calibration or prior shift.
+    followUps:
+      - How would you choose the threshold given the cost of a missed fraud versus a blocked customer?
+      - How would you monitor this after deployment?
+    pitfalls:
+      - Assuming offline precision transfers to production.
+      - Optimising accuracy on heavily imbalanced data.
+
+  - id: math.conditional-probability.independence-vs-exclusive
+    level: junior
+    kind: conceptual
+    concepts: [math.conditional-probability]
+    question: |
+      What does it mean for two events to be independent? Are mutually exclusive events independent? Give an
+      example of an independence assumption going wrong.
+    answer: |
+      A and B are independent when knowing one does not change the probability of the other: P(A | B) = P(A),
+      equivalently P(A and B) = P(A)·P(B). Mutually exclusive events cannot both happen, so P(A and B) = 0; if
+      both have non-zero probability this is not P(A)·P(B), so they are dependent — learning that A happened tells
+      you B did not. Example of a bad assumption: estimating the chance that two replicas both fail as the product
+      of their individual failure rates, when they share a power supply or a software bug, so failures are
+      correlated and "both fail" is far more likely. Naive Bayes deliberately assumes conditional independence of
+      features given the class; it often classifies well even though its probability estimates can be poorly
+      calibrated.
+    keyPoints:
+      - Defines independence via P(A | B) = P(A) or the product rule.
+      - Explains that mutually exclusive events with non-zero probabilities are dependent.
+      - Gives a realistic example of correlated events wrongly treated as independent.
+    followUps:
+      - Can two events be independent but conditionally dependent given a third?
+    pitfalls:
+      - Treating "independent" and "mutually exclusive" as synonyms.

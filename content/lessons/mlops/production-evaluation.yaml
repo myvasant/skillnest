@@ -1,0 +1,204 @@
+id: mlops.production-evaluation
+concept: mlops.production-evaluation
+title: Evaluation in production
+subtitle: Online metrics, user feedback, sampling traces for review, A/B tests and guardrail triggers close the
+  loop between offline evals and reality
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Online metrics, user feedback, sampling traces for review, A/B tests and guardrail triggers close the loop
+  between offline evals and reality.
+objectives:
+- Explain the core engineering decisions behind evaluation in production.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: LLM and Agent Evaluation
+  url: https://mlflow.org/docs/latest/genai/eval-monitor/
+  publisher: MLflow (Linux Foundation)
+  version: 3.x
+- title: Define success criteria and build evaluations
+  url: https://platform.claude.com/docs/en/test-and-evaluate/develop-tests
+  publisher: Anthropic
+- title: How Not To Run an A/B Test
+  url: https://www.evanmiller.org/how-not-to-run-an-ab-test.html
+  publisher: Evan Miller
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Online metrics, user feedback, sampling traces for review, A/B tests and guardrail triggers close the
+      loop between offline evals and reality. Offline evaluation sets never fully match real users; evaluating in
+      production shows whether the system actually helps people and catches failures offline tests missed.
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment, escalation
+      to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+
+      - Sample production traces for human review regularly, label the failures and add them to the offline eval
+      set, so each failure becomes a regression test.
+
+      - An A/B test compares variants on randomly assigned users; fix the primary metric and sample size in advance
+      and do not stop as soon as the result looks significant (peeking inflates false positives).
+
+      - Watch guardrail metrics (latency, cost, refusal rate, safety flags) next to the primary metric so a win
+      on one does not hide harm on another.
+
+      - Online LLM judges cost money and make mistakes; calibrate them against human labels.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+
+      - Statistical significance is not practical significance; a tiny lift may not justify extra cost or latency.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def compare_versions(baseline, candidate):\n    metrics=set(baseline)&set(candidate)\n    return {key:candidate[key]-baseline[key]\
+      \ for key in metrics}\n\nprint(compare_versions({\"accuracy\":0.9,\"latency\":500},{\"accuracy\":0.92,\"latency\"\
+      :450}))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: production-evaluation-code
+  - type: item
+    ref: production-evaluation-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment, escalation
+      to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+
+      - Sample production traces for human review regularly, label the failures and add them to the offline eval
+      set, so each failure becomes a regression test.
+
+      - An A/B test compares variants on randomly assigned users; fix the primary metric and sample size in advance
+      and do not stop as soon as the result looks significant (peeking inflates false positives).
+
+      - Watch guardrail metrics (latency, cost, refusal rate, safety flags) next to the primary metric so a win
+      on one does not hide harm on another.
+
+      - Online LLM judges cost money and make mistakes; calibrate them against human labels.
+
+
+      **Watch for**
+
+      - Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+
+      - Statistical significance is not practical significance; a tiny lift may not justify extra cost or latency.'
+  - type: item
+    ref: production-evaluation-mcq
+  - type: item
+    ref: production-evaluation-tf
+  - type: item
+    ref: production-evaluation-code
+items:
+- id: production-evaluation-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of evaluation in production?
+  explanation: Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment,
+    escalation to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+  options:
+  - id: a
+    text: Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment, escalation
+      to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: production-evaluation-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: production-evaluation-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply evaluation in production to a realistic engineering scenario. State your assumptions, explain your
+    decision, compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: production-evaluation-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for evaluation in production. The assertions cover the expected path and an important
+    boundary case.
+  starterCode: "def compare_versions(baseline, candidate):\n    raise NotImplementedError('Complete this function')"
+  solution: "def compare_versions(baseline, candidate):\n    metrics=set(baseline)&set(candidate)\n    return {key:candidate[key]-baseline[key]\
+    \ for key in metrics}"
+  tests:
+  - name: Core behaviour
+    code: diff=compare_versions({"quality":0.9,"latency":500},{"quality":0.92,"latency":450})
+  - name: Boundary behaviour
+    code: assert abs(diff["quality"]-0.02)<1e-12 and diff["latency"] == -50
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - production-evaluation-mcq
+  - production-evaluation-tf
+  - production-evaluation-code
+cheatsheet: '**Key principles**
+
+  - Combine signals - explicit feedback (ratings), implicit behaviour (retries, copying, abandonment, escalation
+  to a human), automated online checks (LLM judges, guardrail triggers) and business metrics.
+
+  - Sample production traces for human review regularly, label the failures and add them to the offline eval set,
+  so each failure becomes a regression test.
+
+  - An A/B test compares variants on randomly assigned users; fix the primary metric and sample size in advance
+  and do not stop as soon as the result looks significant (peeking inflates false positives).
+
+  - Watch guardrail metrics (latency, cost, refusal rate, safety flags) next to the primary metric so a win on one
+  does not hide harm on another.
+
+  - Online LLM judges cost money and make mistakes; calibrate them against human labels.
+
+
+  **Trade-offs**
+
+  - Thumbs-up rates are biased - few users give feedback, and those who do are not representative.
+
+  - Statistical significance is not practical significance; a tiny lift may not justify extra cost or latency.'

@@ -1,0 +1,215 @@
+id: genai.llm-apis
+concept: genai.llm-apis
+title: Calling LLM APIs
+subtitle: Chat-style message APIs over HTTP — system/user/assistant messages, streaming, errors, rate limits, retries
+  and keeping keys secret
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Chat-style message APIs over HTTP — system/user/assistant messages, streaming, errors, rate limits, retries
+  and keeping keys secret.
+objectives:
+- Explain the role of calling llm apis in a reliable LLM application.
+- Apply the concept to a small deterministic example.
+- Identify quality, security, cost or retrieval failure modes.
+sources:
+- title: Messages API reference
+  url: https://platform.claude.com/docs/en/api/messages
+  publisher: Anthropic
+- title: Using server-sent events
+  url: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events
+  publisher: MDN Web Docs
+- title: Ollama API introduction
+  url: https://docs.ollama.com/api/introduction
+  publisher: Ollama
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Chat-style message APIs over HTTP — system/user/assistant messages, streaming, errors, rate limits, retries
+      and keeping keys secret. Almost every LLM feature is an HTTP call; robust clients that stream, retry and protect
+      keys are what separate a demo from a product.
+- id: mental-model
+  title: Core model and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- A request sends a model name, a list of role-tagged messages (system or developer, user, assistant,
+      tool) and parameters; the response holds the content, a stop reason and token usage.
+
+      - The API is stateless unless you use a provider''s conversation-state features, so your code resends the
+      relevant history every turn.
+
+      - Streaming (usually server-sent events) delivers tokens as they are generated, which greatly improves perceived
+      latency.
+
+      - Retry 429 (rate limit) and 5xx or overloaded errors with exponential backoff and jitter, fix 4xx request
+      errors instead of retrying, and always set timeouts.
+
+      - Keep API keys on the server in environment variables or a secret manager, never in front-end code or Git;
+      SDKs, endpoints and parameters change, so check the provider''s current docs.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+
+      - Calling a provider directly from browser or mobile code exposes your API key to every user.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This pure-Python model makes one key decision or calculation executable. It does not call a paid model
+      API or transmit learner data. Framework or provider-specific integrations are discussed separately.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def request_options(model, prompt, max_tokens, timeout):\n    if not model or not prompt.strip(): raise\
+      \ ValueError(\"model and prompt are required\")\n    if max_tokens <= 0 or timeout <= 0: raise ValueError(\"\
+      limits must be positive\")\n    return {\"model\":model,\"input\":prompt,\"max_output_tokens\":max_tokens,\"\
+      timeout_seconds\":timeout}\n\nprint(request_options(\"example-model\", \"Hello\", 200, 20))"
+    caption: Runnable deterministic example; no external model call is made.
+- id: practice
+  title: Practice and failure analysis
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper and test a normal case and a failure case. Think about what the check can guarantee
+      and what still requires a broader evaluation.
+  - type: item
+    ref: llm-apis-code
+  - type: item
+    ref: llm-apis-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key ideas**
+
+      - A request sends a model name, a list of role-tagged messages (system or developer, user, assistant, tool)
+      and parameters; the response holds the content, a stop reason and token usage.
+
+      - The API is stateless unless you use a provider''s conversation-state features, so your code resends the
+      relevant history every turn.
+
+      - Streaming (usually server-sent events) delivers tokens as they are generated, which greatly improves perceived
+      latency.
+
+      - Retry 429 (rate limit) and 5xx or overloaded errors with exponential backoff and jitter, fix 4xx request
+      errors instead of retrying, and always set timeouts.
+
+      - Keep API keys on the server in environment variables or a secret manager, never in front-end code or Git;
+      SDKs, endpoints and parameters change, so check the provider''s current docs.
+
+
+      **Limitations**
+
+      - Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+
+      - Calling a provider directly from browser or mobile code exposes your API key to every user.'
+  - type: item
+    ref: llm-apis-mcq
+  - type: item
+    ref: llm-apis-tf
+  - type: item
+    ref: llm-apis-code
+items:
+- id: llm-apis-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best describes the central idea of calling llm apis?
+  explanation: A request sends a model name, a list of role-tagged messages (system or developer, user, assistant,
+    tool) and parameters; the response holds the content, a stop reason and token usage.
+  options:
+  - id: a
+    text: A request sends a model name, a list of role-tagged messages (system or developer, user, assistant, tool)
+      and parameters; the response holds the content, a stop reason and token usage.
+    correct: true
+    feedback: 'Correct: this captures the main mechanism or engineering requirement.'
+  - id: b
+    text: Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+    feedback: This is a misconception; outputs and system behaviour require verification.
+  - id: c
+    text: Security and evaluation can be added after the system is deployed.
+    feedback: Security and evaluation must shape the design and acceptance criteria.
+- id: llm-apis-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+  answer: false
+  explanation: The statement is a known misconception. Treat model output as a candidate result and verify it against
+    the contract, evidence and safety constraints.
+- id: llm-apis-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are adding calling llm apis to an application. Describe the design, one failure mode, and how you
+    would evaluate whether the feature is reliable and safe.
+  rubric:
+  - Explain the underlying mechanism and the responsibility of each component.
+  - Identify a realistic failure mode and a targeted test or evaluation.
+  - Discuss a security, privacy, cost or reliability trade-off.
+  modelAnswer: Define the input and output contract, identify trust boundaries, and make the relevant quality or
+    safety checks explicit. Test both expected and adversarial inputs, record failures with useful diagnostics,
+    and keep a deterministic fallback when the model or retrieval layer cannot be trusted.
+  explanation: A strong answer treats the feature as an engineered system, not merely a prompt or API call.
+- id: llm-apis-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the deterministic helper for calling llm apis. The assertions include the normal path and a meaningful
+    edge case.
+  starterCode: "def request_options(model, prompt, max_tokens, timeout):\n    raise NotImplementedError('Complete\
+    \ this function')"
+  solution: "def request_options(model, prompt, max_tokens, timeout):\n    if not model or not prompt.strip(): raise\
+    \ ValueError(\"model and prompt are required\")\n    if max_tokens <= 0 or timeout <= 0: raise ValueError(\"\
+    limits must be positive\")\n    return {\"model\":model,\"input\":prompt,\"max_output_tokens\":max_tokens,\"\
+    timeout_seconds\":timeout}"
+  tests:
+  - name: Core behaviour
+    code: assert request_options("m","hi",10,5)["max_output_tokens"] == 10
+  - name: Edge case
+    code: 'try: request_options("m"," ",10,5)
+
+      except ValueError: pass
+
+      else: raise AssertionError("empty prompt must fail")'
+  hints:
+  - Translate the requirement into explicit deterministic rules.
+  - Validate untrusted input and handle missing or empty data.
+  - Remember that this helper is only one check in the complete system.
+  explanation: This exercise tests the core rule and an important failure or boundary case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - llm-apis-mcq
+  - llm-apis-tf
+  - llm-apis-code
+cheatsheet: '**Key ideas**
+
+  - A request sends a model name, a list of role-tagged messages (system or developer, user, assistant, tool) and
+  parameters; the response holds the content, a stop reason and token usage.
+
+  - The API is stateless unless you use a provider''s conversation-state features, so your code resends the relevant
+  history every turn.
+
+  - Streaming (usually server-sent events) delivers tokens as they are generated, which greatly improves perceived
+  latency.
+
+  - Retry 429 (rate limit) and 5xx or overloaded errors with exponential backoff and jitter, fix 4xx request errors
+  instead of retrying, and always set timeouts.
+
+  - Keep API keys on the server in environment variables or a secret manager, never in front-end code or Git; SDKs,
+  endpoints and parameters change, so check the provider''s current docs.
+
+
+  **Failure modes**
+
+  - Retrying immediately in a tight loop after a 429 makes the rate limiting worse.
+
+  - Calling a provider directly from browser or mobile code exposes your API key to every user.'

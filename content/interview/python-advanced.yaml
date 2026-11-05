@@ -1,0 +1,513 @@
+category:
+  id: python
+  title: Python
+  summary: Core language questions, from fundamentals to internals.
+questions:
+  # ---------------------------------------------------------------- closures
+  - id: python.closures.late-binding-lambdas
+    level: junior
+    kind: debugging
+    concepts: [python.closures]
+    question: |
+      What does this print, why, and how would you fix it?
+
+      ```python
+      functions = [lambda: i for i in range(3)]
+      print([f() for f in functions])
+      ```
+    answer: |
+      It prints `[2, 2, 2]`. The three lambdas do not store the value of `i`; they refer to the
+      **variable** `i` of the comprehension's scope and look it up when they are **called** (late
+      binding). By the time they are called, the loop has finished and `i` is 2, so all of them return 2.
+
+      Fixes that give each function its own value:
+
+      - a default argument, evaluated at definition time: `[lambda i=i: i for i in range(3)]`;
+      - a factory function, so each closure has its own enclosing scope:
+        `def make(v): return lambda: v` then `[make(i) for i in range(3)]`;
+      - `functools.partial(func, i)`, which stores the argument value.
+
+      The default-argument trick changes the signature (a caller could pass a different `i`), so for
+      public APIs the factory or `partial` is cleaner.
+    keyPoints:
+      - States the output [2, 2, 2].
+      - Explains that closures capture variables, not values, and look them up at call time (late binding).
+      - Notes that all lambdas share the single loop variable.
+      - Gives at least one correct fix (default argument, factory function or functools.partial).
+    followUps:
+      - Does the same happen with a regular for loop and def? (Yes.)
+      - What is the downside of the default-argument fix?
+    pitfalls:
+      - Claiming the lambdas capture the value at creation time.
+      - Answering [0, 1, 2].
+
+  - id: python.closures.counter-nonlocal
+    level: mid
+    kind: coding
+    concepts: [python.closures, python.scope]
+    question: |
+      Write `make_counter()` that returns a function; each call of that function returns the next integer
+      (1, 2, 3, …). Two counters must be independent. Then explain what happens if you leave out
+      `nonlocal`.
+    answer: |
+      ```python
+      def make_counter():
+          count = 0
+          def counter():
+              nonlocal count
+              count += 1
+              return count
+          return counter
+
+      a, b = make_counter(), make_counter()
+      a(); a()
+      print(a(), b())   # 3 1
+      ```
+
+      Each call to `make_counter` creates a new `count` variable; the returned `counter` is a closure
+      that keeps a reference to that variable, so the state survives between calls and two counters
+      never share it.
+
+      Without `nonlocal`, `count += 1` is an assignment, and assignment anywhere in a function makes the
+      name **local** to that function. `counter` would then read its own, unassigned local `count` and
+      raise `UnboundLocalError: cannot access local variable 'count' where it is not associated with a
+      value`. `nonlocal count` tells the compiler to rebind the variable of the nearest enclosing function
+      instead. (Mutating an enclosed object, such as `items.append(x)`, needs no `nonlocal`, because it
+      does not rebind the name.)
+    keyPoints:
+      - Correct factory that creates the state inside the outer function and returns the inner function.
+      - Uses nonlocal to rebind the enclosed variable.
+      - Explains that each call to the factory creates independent state.
+      - Explains the UnboundLocalError caused by assignment making the name local.
+      - Distinguishes rebinding (needs nonlocal) from mutation (does not).
+    followUps:
+      - How would you write the same thing as a class? When is the class better?
+      - Can nonlocal refer to a module-level variable?
+    pitfalls:
+      - Using a global variable, which makes all counters share one count.
+      - Saying nonlocal works for globals (it raises SyntaxError if no enclosing function defines the name).
+
+  - id: python.closures.cells-internals
+    level: senior
+    kind: conceptual
+    concepts: [python.closures]
+    question: >-
+      How does CPython implement closures? Explain cells, `__closure__`, `co_freevars`/`co_cellvars`, and
+      how this explains both shared state and the late-binding behaviour.
+    answer: |
+      When CPython compiles a function, its symbol table analysis already knows which local variables are
+      used by nested functions. Those variables are stored in **cell objects** instead of ordinary local
+      slots; they are listed in the outer function's `__code__.co_cellvars`. A nested function lists the
+      names it uses from outside in `__code__.co_freevars`, and the function object created at runtime
+      gets `__closure__`: a tuple of references to the cells, in that order. Each cell has
+      `cell_contents`.
+
+      Reads and writes go through the cell (in CPython 3.14 the bytecode uses `MAKE_CELL`,
+      `COPY_FREE_VARS`, `LOAD_DEREF` and `STORE_DEREF`; instruction names are an implementation detail).
+      Consequences:
+
+      - **One cell per variable per call of the outer function.** Functions created in the same call share
+        the cell, so they see each other's updates (`nonlocal`). Functions created by separate calls have
+        separate cells — independent state.
+      - **Late binding** follows directly: the closure holds the *cell*, not the value, so it sees whatever
+        the variable holds when it is called. A loop that rebinds one variable and creates functions makes
+        them all share one cell.
+      - Globals are not captured at all; module-level functions look globals up in the module namespace at
+        call time and have `__closure__` set to `None`.
+      - A closure keeps everything its cells reference alive, which matters for memory.
+    keyPoints:
+      - Variables used by inner functions are stored in cell objects.
+      - co_cellvars on the outer code, co_freevars on the inner code, __closure__ is a tuple of cells with cell_contents.
+      - Each outer call creates new cells; closures from the same call share cells.
+      - Explains late binding as a consequence of holding the cell rather than the value.
+      - Distinguishes language behaviour from CPython bytecode details.
+    followUps:
+      - Why is __closure__ None for a module-level function that reads a global?
+      - What error do you get when a free variable is read before the enclosing function assigns it?
+    pitfalls:
+      - Saying closures copy values into the inner function.
+      - Presenting bytecode instruction names as a language guarantee.
+
+  # -------------------------------------------------------------- decorators
+  - id: python.decorators.timing-decorator
+    level: mid
+    kind: coding
+    concepts: [python.decorators]
+    question: >-
+      Write a decorator `timed` that reports how long each call of the decorated function takes. It must
+      work for any function and must not break the function's name, docstring or return value. How would
+      you test it?
+    answer: |
+      ```python
+      import functools
+      import logging
+      import time
+
+      logger = logging.getLogger(__name__)
+
+      def timed(func=None, *, clock=time.perf_counter):
+          def decorator(f):
+              @functools.wraps(f)
+              def wrapper(*args, **kwargs):
+                  start = clock()
+                  try:
+                      return f(*args, **kwargs)
+                  finally:
+                      logger.info("%s took %.3fs", f.__qualname__, clock() - start)
+              return wrapper
+          return decorator(func) if func is not None else decorator
+      ```
+
+      Key points: `*args, **kwargs` so it fits any signature; return the original result;
+      `functools.wraps` copies `__name__`, `__doc__`, `__qualname__` etc. and sets `__wrapped__`;
+      `time.perf_counter` is the right clock for durations (monotonic, high resolution); `try/finally` so
+      the time is recorded even when the function raises; log instead of print in real code.
+
+      To test it deterministically, inject a fake clock (`clock=iter([10.0, 12.5]).__next__`) and assert on
+      the logged message (pytest's `caplog` fixture) — never on real elapsed times, which vary.
+      This version supports both `@timed` and `@timed(clock=...)`; a simpler acceptable answer is a plain
+      decorator without the optional argument.
+    keyPoints:
+      - Wrapper accepts *args and **kwargs and returns the original result.
+      - Uses functools.wraps.
+      - Uses time.perf_counter (not time.time) for measuring durations.
+      - Records the time even if the function raises (try/finally), or discusses that choice.
+      - Makes it testable, e.g. by injecting the clock, and avoids asserting on real durations.
+    followUps:
+      - How would you make the decorator accept an optional threshold, e.g. only log calls slower than 1 s?
+      - What changes if the decorated function is a coroutine (async def)?
+    pitfalls:
+      - Forgetting to return the result.
+      - Using time.time(), which can jump when the system clock changes.
+      - Printing inside library code instead of logging.
+
+  - id: python.decorators.factory-expansion
+    level: mid
+    kind: conceptual
+    concepts: [python.decorators, python.closures]
+    question: |
+      Explain exactly what Python does with this code, and when each function runs:
+
+      ```python
+      @retry(3)
+      @log_calls
+      def fetch(url): ...
+      ```
+    answer: |
+      It is equivalent to `fetch = retry(3)(log_calls(fetch))`, done once when the `def` statement
+      executes (usually at import time):
+
+      1. The decorator expressions are evaluated (CPython does this top to bottom, before creating the
+         function): `retry(3)` is **called** and returns a decorator; `log_calls` is just looked up.
+      2. The function object `fetch` is created.
+      3. Decorators are applied bottom-up: `log_calls(fetch)` returns a logging wrapper; then the decorator
+         returned by `retry(3)` wraps that and returns the retry wrapper.
+      4. The name `fetch` is bound to the outermost wrapper.
+
+      At call time, `fetch(url)` runs the **retry** wrapper first, which calls the logging wrapper (so
+      every attempt is logged), which calls the original. `retry` is a decorator factory with three levels
+      — factory(config) → decorator(func) → wrapper(*args, **kwargs) — each level a closure over the one
+      above. Writing `@retry` without parentheses would pass the function in as the retry count and break
+      at call time.
+    keyPoints:
+      - Gives the expansion fetch = retry(3)(log_calls(fetch)).
+      - Says decoration happens once at definition time, not per call.
+      - Explains bottom-up application and top-down execution at call time.
+      - Describes the three levels of a decorator factory and that they rely on closures.
+    followUps:
+      - What would change if the two decorators were swapped?
+      - How does functools.wraps fit into each level?
+    pitfalls:
+      - Saying the decorator runs on every call.
+      - Getting the stacking order backwards.
+
+  - id: python.decorators.lru-cache-pitfalls
+    level: senior
+    kind: scenario
+    concepts: [python.decorators]
+    question: >-
+      A teammate added `@functools.lru_cache(maxsize=None)` to `get_permissions(user_id)`, which queries the
+      database, and also to a method `PriceService.quote(self, sku)`. The service is a long-running web app
+      with several worker processes. What problems do you expect, and what would you suggest?
+    answer: |
+      Problems:
+
+      - **Stale data.** `get_permissions` is not a pure function: after an admin changes a user's
+        permissions, the cache keeps returning the old answer until the process restarts — a security bug.
+      - **Unbounded memory.** `maxsize=None` never evicts; one entry per distinct user id grows forever.
+      - **Per-process, inconsistent caches.** Each worker process has its own cache, so different requests
+        can see different answers, and `cache_clear()` in one process does not affect others.
+      - **Method caching keeps instances alive.** The key includes `self`, so every `PriceService`
+        instance ever used stays referenced by the cache (a memory leak), and the cache is shared across
+        instances. `self` must also be hashable.
+      - **Shared mutable results.** If a cached call returns a list or dict and a caller mutates it, every
+        later caller gets the mutated object.
+      - Arguments must be hashable; keyword order can create duplicate entries.
+
+      Suggestions: cache only pure computations; for data that changes, use a cache with expiry (a TTL
+      cache or a shared cache such as Redis) and explicit invalidation when the data changes; bound the
+      size (`maxsize=1024`); for per-instance caching use `functools.cached_property` or a dict on the
+      instance; return immutable values (tuples, frozensets) or copies; measure the hit rate with
+      `cache_info()` before and after.
+    keyPoints:
+      - Identifies stale results because the function is not pure (and the security impact for permissions).
+      - Mentions unbounded growth with maxsize=None.
+      - Notes the cache is per process and not shared or invalidated across workers.
+      - Explains that caching a method holds references to self (memory leak).
+      - Proposes TTL/invalidation, bounded size, or a different caching strategy.
+    followUps:
+      - How would you test that the cache is invalidated correctly?
+      - When is lru_cache exactly the right tool?
+    pitfalls:
+      - Only mentioning performance and missing correctness and security.
+
+  # ------------------------------------------------------- raising exceptions
+  - id: python.raising-exceptions.value-vs-type-error
+    level: junior
+    kind: conceptual
+    concepts: [python.raising-exceptions]
+    question: >-
+      You are validating the arguments of `set_volume(level)`, where level must be an int from 0 to 10.
+      Which exceptions do you raise for `set_volume("loud")` and for `set_volume(42)`, and why shouldn't you
+      use `assert` for this?
+    answer: |
+      `set_volume("loud")` → **TypeError**: the argument has the wrong *type*. `set_volume(42)` →
+      **ValueError**: the type is right but the *value* is outside the allowed range. This follows the
+      built-in exception documentation. Messages should name the problem and include the bad value, e.g.
+      `raise ValueError(f"level must be between 0 and 10, got {level}")`.
+
+      Do the checks at the top of the function (guard clauses) so it fails fast, before doing any work.
+      Watch out for `bool`: `isinstance(True, int)` is `True`, so exclude it explicitly if needed.
+
+      `assert` is not suitable because running Python with `-O` removes assert statements, so the
+      validation would silently disappear; asserts are for tests and internal invariants. Also, an
+      `AssertionError` does not tell callers what kind of problem occurred.
+    keyPoints:
+      - TypeError for the wrong type, ValueError for a right-type wrong-value argument.
+      - Clear messages that include the offending value.
+      - Validate early with guard clauses.
+      - assert is removed under python -O and so must not be used for input validation.
+    followUps:
+      - Would you check the type at all, or rely on duck typing?
+      - What about bool being a subclass of int?
+    pitfalls:
+      - Returning None or printing a message instead of raising.
+      - Raising a bare Exception.
+
+  - id: python.raising-exceptions.library-error-design
+    level: mid
+    kind: design
+    concepts: [python.raising-exceptions, python.inheritance]
+    question: >-
+      You are writing a payments library. Design its exceptions: what classes would you define, what would
+      they contain, and how should library code raise them when a lower-level error (for example a
+      network timeout) occurs?
+    answer: |
+      - Define one **base class**, `PaymentError(Exception)`, so callers can catch everything from the
+        library with one clause without catching unrelated errors.
+      - Add **specific subclasses** for failures callers handle differently: `CardDeclinedError`,
+        `InsufficientFundsError`, `GatewayTimeoutError`, `InvalidAmountError`. Names end in `Error`
+        (PEP 8). Subclass `Exception`, never `BaseException`.
+      - Put **context in attributes**, not only in the message: e.g. `decline_code`, `transaction_id`,
+        `retry_after`. Call `super().__init__(message)` so `str(err)` stays useful.
+      - Where it helps existing code, also inherit from a built-in: `class InvalidAmountError(PaymentError,
+        ValueError)`.
+      - When translating a lower-level error, **chain it**: `except TimeoutError as err: raise
+        GatewayTimeoutError(...) from err`, so the original cause and traceback are preserved in
+        `__cause__`.
+      - Document which exceptions each public function raises; do not raise for normal outcomes; never
+        swallow errors silently; and keep secrets (card numbers) out of messages.
+    keyPoints:
+      - A single base exception class for the library, derived from Exception.
+      - Specific subclasses for distinct failure modes callers handle differently.
+      - Context stored as attributes with a clear message via super().__init__.
+      - raise ... from err when wrapping lower-level exceptions.
+      - Considers security (no sensitive data in messages) and documentation.
+    followUps:
+      - Should GatewayTimeoutError be retryable? How would callers know?
+      - How do you order except clauses for these classes?
+    pitfalls:
+      - One generic exception with error codes in the message string.
+      - Losing the original exception when wrapping it.
+
+  - id: python.raising-exceptions.cause-vs-context
+    level: senior
+    kind: conceptual
+    concepts: [python.raising-exceptions]
+    question: >-
+      Explain the difference between `__cause__` and `__context__`, what `raise X from err` and
+      `raise X from None` do, and how each case appears in a traceback.
+    answer: |
+      - **`__context__`** is set **automatically** when an exception is raised while another is being
+        handled (inside an `except` or `finally`). The traceback shows the earlier exception followed by
+        *"During handling of the above exception, another exception occurred:"* — which reads like an
+        accident in the handler.
+      - **`raise X from err`** sets `X.__cause__ = err` and `X.__suppress_context__ = True`. The traceback
+        shows the cause followed by *"The above exception was the direct cause of the following
+        exception:"*. Use it when you deliberately translate an exception into one that fits your
+        abstraction. (`__context__` is still set as well when you are inside a handler.)
+      - **`raise X from None`** sets `__cause__ = None` and `__suppress_context__ = True`, so only the new
+        exception is displayed. The context object is still stored; it is just hidden. Use it sparingly,
+        when the original is pure noise (an internal `KeyError` your message fully explains).
+
+      Handlers can inspect `err.__cause__` programmatically, for example to decide whether a wrapped
+      network error is retryable. Exception groups (`ExceptionGroup`, `except*`) are a separate mechanism
+      for several unrelated errors at once, and `add_note()` attaches extra context without chaining.
+    keyPoints:
+      - __context__ is implicit, set when raising during handling of another exception.
+      - from err sets __cause__ and suppresses the context display; different traceback wording.
+      - from None hides the context but does not delete it.
+      - Recommends from err for deliberate translation.
+    followUps:
+      - What does a bare raise do inside an except block?
+      - When would you use add_note instead of chaining?
+    pitfalls:
+      - Claiming from None deletes __context__.
+      - Confusing the two traceback messages.
+
+  # ----------------------------------------------------------------- testing
+  - id: python.testing.what-to-test
+    level: junior
+    kind: scenario
+    concepts: [python.testing]
+    question: >-
+      How would you test `split_bill(total, people)`, which returns each person's share and raises
+      ValueError when people is less than 1? Write a few tests.
+    answer: |
+      Choose cases by category, not at random: a **typical** case, **boundaries**, **edge cases** and
+      **error cases**:
+
+      ```python
+      import pytest
+      from billing import split_bill
+
+      def test_even_split():
+          assert split_bill(100, 4) == 25
+
+      def test_one_person_pays_everything():
+          assert split_bill(80, 1) == 80
+
+      def test_zero_total():
+          assert split_bill(0, 3) == 0
+
+      def test_uneven_split():
+          assert split_bill(10, 3) == pytest.approx(3.3333, rel=1e-3)
+
+      @pytest.mark.parametrize("people", [0, -2])
+      def test_rejects_fewer_than_one_person(people):
+          with pytest.raises(ValueError):
+              split_bill(100, people)
+      ```
+
+      Each test follows arrange-act-assert, tests one behaviour, has a descriptive name and is independent.
+      Floats are compared with `pytest.approx`. I would also ask what the uneven case *should* return
+      (rounded money? remainder handling?) — writing tests often exposes unclear requirements.
+    keyPoints:
+      - Covers typical, boundary (people = 1), edge (total = 0) and error (people < 1) cases.
+      - Uses pytest.raises (or try/except/else) for the error case.
+      - Uses approximate comparison for floats.
+      - Descriptive, independent tests following arrange-act-assert.
+    followUps:
+      - How would parametrize reduce duplication here?
+      - What would a regression test for a reported rounding bug look like?
+    pitfalls:
+      - Only testing several typical values.
+      - Comparing floats with ==.
+
+  - id: python.testing.fixtures-and-parametrize
+    level: mid
+    kind: conceptual
+    concepts: [python.testing]
+    question: >-
+      What are pytest fixtures and `@pytest.mark.parametrize`, how does pytest know which fixture to give
+      a test, and how do you do cleanup in a fixture?
+    answer: |
+      A **fixture** is a function decorated with `@pytest.fixture` that provides setup for tests. pytest
+      looks at each test function's **parameter names** and, for each name that matches a fixture, calls
+      the fixture and passes its return value in (dependency injection by name). Fixtures can depend on
+      other fixtures the same way. By default a fixture is **function-scoped**: every test gets a fresh
+      value, which keeps tests independent; `scope="module"` or `"session"` shares an expensive resource.
+      Built-in fixtures include `tmp_path` (a fresh temporary directory), `capsys`, `caplog` and
+      `monkeypatch`.
+
+      For **cleanup**, write the fixture as a generator: code before `yield` is setup, the yielded value is
+      given to the test, and code after `yield` runs afterwards even if the test failed — similar to a
+      context manager.
+
+      **`@pytest.mark.parametrize("a, b, expected", [(1, 2, 3), (2, 2, 4)])`** runs the same test once per
+      row, reporting each row as a separate test (e.g. `test_add[1-2-3]`), so a table of cases needs no
+      copy-pasted tests and one failing row does not hide the others.
+    keyPoints:
+      - Fixtures provide reusable setup and are matched to tests by parameter name.
+      - Default function scope gives fresh values per test; other scopes share resources.
+      - yield fixtures run teardown code after the test, even on failure.
+      - parametrize runs one test per row of inputs and reports each separately.
+    followUps:
+      - Where do you put fixtures shared by several test files? (conftest.py)
+      - What are the risks of session-scoped fixtures that hold mutable state?
+    pitfalls:
+      - Calling fixture functions directly from tests.
+      - Sharing mutable fixture state between tests and creating order dependence.
+
+  - id: python.testing.assert-rewriting
+    level: mid
+    kind: conceptual
+    concepts: [python.testing]
+    question: >-
+      With pytest you write plain `assert x == y`, yet a failure shows both values and even the function
+      call that produced them. How does that work, and does it work for asserts in your application code?
+    answer: |
+      pytest installs an **import hook** that, when it imports a test module it collected, **rewrites the
+      module's `assert` statements** (an AST transformation) before compiling them. The rewritten code
+      evaluates and remembers the sub-expressions, so on failure pytest can print, for example,
+      `assert 190 == 180` and `where 190 = apply_discount(200, 10)`.
+
+      Only test modules discovered by collection, `conftest.py` files and plugins are rewritten; asserts
+      in your application modules are left as ordinary asserts (and plain asserts are removed entirely if
+      Python runs with `-O`). Rewritten modules are cached as `.pyc` files, and rewriting can be disabled
+      with `--assert=plain`. This is why pytest tests rarely need assertion messages — though a message
+      that explains *why* a value is expected is still helpful.
+    keyPoints:
+      - pytest rewrites assert statements in collected test modules at import time.
+      - The rewrite records intermediate values to produce detailed failure output.
+      - Only test modules (and conftest/plugins) are rewritten, not application code.
+      - Mentions caching or the --assert=plain option, or the -O caveat.
+    followUps:
+      - Why might a helper module full of assert-based checks give poor failure messages?
+    pitfalls:
+      - Thinking pytest replaces Python's assert globally.
+
+  - id: python.testing.flaky-tests
+    level: senior
+    kind: debugging
+    concepts: [python.testing]
+    question: >-
+      A test passes on your machine but fails intermittently in CI. How do you investigate and fix it?
+    answer: |
+      First **reproduce**: run the single test many times, then the whole suite, then the suite in a
+      different order (plugins such as pytest-randomly shuffle the order). Compare CI and local
+      environments (Python and dependency versions, OS, time zone, locale, environment variables,
+      parallelism). Then look for the usual causes of non-determinism:
+
+      - **Shared state / order dependence**: module-level or session-scoped mutable data, files or database
+        rows left behind by another test. Fix with fresh, function-scoped fixtures and proper cleanup.
+      - **Time**: "today", time zones, timeouts, `sleep`-based waits. Inject a clock or freeze time.
+      - **Randomness**: unseeded `random`. Seed it or inject the random generator.
+      - **External systems**: network, real services, the file system. Replace them with fakes or mocks in
+        unit tests and keep a few separate integration tests.
+      - **Concurrency**: races in threaded or async code; await or join properly instead of sleeping.
+      - **Iteration order** of sets of strings, which changes between processes because string hashing is
+        randomised. Sort before comparing.
+
+      Do not just add retries or `@skip`; that hides a real bug in either the test or the code. Once the
+      cause is found, add a deterministic test that reproduces it.
+    keyPoints:
+      - Reproduces systematically (repeat, isolate, change order, compare environments).
+      - "Names common causes: shared state, time, randomness, external dependencies, concurrency, hash ordering."
+      - Fixes the root cause by making tests deterministic and independent (fixtures, injection, fakes).
+      - Rejects blind retries or skipping as the solution.
+    followUps:
+      - How would you design code so that time and randomness are easy to control in tests?
+    pitfalls:
+      - Re-running CI until it goes green.
+      - Blaming CI without checking for order dependence.

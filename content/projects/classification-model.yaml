@@ -1,0 +1,190 @@
+id: classification-model
+title: "Classification Model: Splits, Pipelines, Baselines and No Leakage"
+track: data-ml
+level: intermediate
+estimatedHours: 6
+environment: local
+starterKit: projects/classification-model
+summary: >-
+  Build a scikit-learn Pipeline for tumour classification with seeded train/validation/test splits,
+  a baseline, precision/recall/F1/ROC-AUC, model selection on validation only, and tests that prove
+  the scaler never saw the test set.
+concepts:
+  - ml.train-val-test
+  - ml.logistic-regression
+  - ml.ml-pipelines
+  - ml.evaluation-metrics
+  - ml.data-leakage
+  - ml.scikit-learn
+problem: |
+  A research group wants a quick, honest estimate of how well a simple model separates malignant from
+  benign tumours using 30 measurements of cell nuclei. "Honest" is the hard part: it is easy to report
+  a great score that will not survive contact with new patients because the test set influenced the
+  model — through preprocessing fitted on all rows, or by trying models until the test score looks
+  good. That is [data leakage](concept:ml.data-leakage).
+
+  **Input.** scikit-learn's bundled Breast Cancer Wisconsin (Diagnostic) dataset: 569 rows, 30 numeric
+  features. sklearn encodes malignant as 0; you will flip it so **1 = malignant**, because precision
+  and recall describe the positive class and missing a malignant tumour is the costly error.
+
+  **Output.** Functions that split the data, build a `Pipeline(StandardScaler → LogisticRegression)`,
+  compare it with a `DummyClassifier` baseline on the validation split, choose the regularisation
+  strength `C` on validation only, and produce one final test-set report.
+
+  **Example session** (after you finish):
+
+  ```text
+  $ python starter/classification_model.py
+  Validation comparison:
+            accuracy  precision  recall     f1  roc_auc
+  logreg       0.974      0.955   0.977  0.966    0.996
+  baseline     0.623      0.000   0.000  0.000    0.500
+
+  C search (validation):
+          accuracy  precision  recall     f1  roc_auc
+  C
+  0.01       0.965      1.000   0.907  0.951    0.991
+  0.10       0.982      1.000   0.953  0.976    0.995
+  ...
+  Chosen C = 0.1
+  Test report (computed once):
+            accuracy  precision  recall     f1  roc_auc
+  model        0.982        1.0   0.952  0.976    0.998
+  baseline     0.632        0.0   0.000  0.000    0.500
+  ```
+acceptanceCriteria:
+  - "`load_data` returns 569 × 30 features and a target named `malignant` with 212 positives."
+  - "`split_data` produces disjoint, stratified, seeded train/validation/test splits whose sizes are fractions of the whole dataset, and rejects impossible sizes."
+  - "`build_pipeline` returns a `Pipeline` with steps `scaler` and `model`; after fitting, `named_steps['scaler'].mean_` equals the training-split means exactly and differs from the all-data means."
+  - "`evaluate` returns accuracy, precision, recall, F1 and ROC-AUC; precision is 0 rather than an error when nothing is predicted positive; ROC-AUC does not change with the threshold."
+  - "`compare_models` fits clones (the caller's estimators stay unfitted) and ranks models on the validation split."
+  - "`select_c` gives the same answer when the test split is replaced by NaN — proof that it never reads it."
+  - "On the held-out test split the chosen model reaches ROC-AUC ≥ 0.97, F1 ≥ 0.92 and recall ≥ 0.90, and the baseline scores ROC-AUC 0.5."
+architecture: |
+  ```text
+              ┌──────────── split_data(seed, stratify=y) ────────────┐
+              ▼                       ▼                              ▼
+          train (60%)            validation (20%)               test (20%)
+              │                       │                              │
+   Pipeline.fit(train)       evaluate / compare_models        final_report
+   ├─ StandardScaler.fit     select_c(Cs)  ──► best C        (once, at the end)
+   └─ LogisticRegression.fit        │                              ▲
+              └──────── train_final(best C) ───────────────────────┘
+  ```
+
+  The scaler lives inside the [Pipeline](concept:ml.ml-pipelines), so it is fitted on exactly the rows
+  the pipeline is fitted on and reapplied — not refitted — at prediction time. Validation data chooses
+  between models; test data only measures the final choice. `Splits` is a frozen dataclass, so no step
+  can quietly swap rows between partitions.
+setup: |
+  You need Python 3.11+ and the folder `projects/classification-model`.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/classification-model
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/classification-model
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  ```
+
+  `requirements.txt` installs numpy, pandas, scikit-learn and pytest. The dataset ships inside
+  scikit-learn; nothing is downloaded.
+milestones:
+  - id: data-and-splits
+    title: Data and seeded, stratified splits
+    description: |
+      Implement `load_data` (flip the target so 1 = malignant) and `split_data(X, y, val_size,
+      test_size, seed)`: carve off the test set, then the validation set from the rest, stratifying
+      both times so each split keeps the 37% malignant rate.
+
+      **Tests check** the shape and positive count, split sizes (341/114/114), that no row appears in
+      two splits, stratification within 2 percentage points, reproducibility per seed, and errors for
+      impossible sizes.
+  - id: pipeline-and-baseline
+    title: A pipeline and a baseline
+    description: |
+      Implement `build_pipeline(C, seed)` with steps named `scaler` and `model`, and
+      `build_baseline()` with `DummyClassifier(strategy="prior")` — the score any real model must
+      beat.
+
+      **Tests check** the step names and types, that `C` is passed through and validated, and that
+      the baseline gives every row the same probabilities.
+  - id: metrics-and-comparison
+    title: Metrics and comparison on validation
+    description: |
+      Implement `evaluate(model, X, y, threshold)` and `compare_models(models, splits)`. Use the
+      positive-class probability for ROC-AUC and the thresholded predictions for the other
+      [metrics](concept:ml.evaluation-metrics); fit `sklearn.base.clone` copies so the caller's
+      estimators are untouched.
+
+      **Tests check** a perfectly separable toy problem, that lowering the threshold raises recall and
+      lowers precision while ROC-AUC stays the same, the baseline's 0.5 ROC-AUC and zero precision,
+      and the comparison table's order and columns.
+  - id: selection-and-quality-bar
+    title: Select without leakage, then the held-out quality bar
+    description: |
+      Implement `select_c` (fit on train, score on validation, ties to the smaller C),
+      `train_final` and `final_report` (test metrics for model and baseline).
+
+      **Tests check** that the fitted scaler's `mean_` equals the training means (and not the
+      all-data means), that replacing the test split with NaN does not change the chosen C, and the
+      quality bar on the test split: ROC-AUC ≥ 0.97, F1 ≥ 0.92, recall ≥ 0.90.
+testing: |
+  From `projects/classification-model` with your virtual environment active:
+
+  ```bash
+  python -m pytest                  # tests your code in starter/
+  python -m pytest -k Milestone4    # one milestone
+  ```
+
+  Compare with the reference solution:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  All randomness is seeded (`random_state=seed` in the splits and the model), so the tests are
+  deterministic. The leakage tests inspect the fitted scaler directly and "poison" the test split to
+  prove model selection never reads it.
+security:
+  - "Medical data is sensitive personal data. This bundled dataset is de-identified; with real records, keep them out of the repository and restrict who can read them."
+  - "Never use this model for clinical decisions: the dataset is small, old and from one source, and the scores overstate real-world performance."
+  - "A model's metrics are only as trustworthy as the split. Record the seed and split sizes with every reported score so others can reproduce and audit it."
+  - "If you save the fitted pipeline with pickle or joblib, only load files you created or trust: unpickling can execute arbitrary code."
+extensions:
+  - "Replace the single validation split with stratified 5-fold cross-validation on train+validation (`GridSearchCV` with the pipeline) and compare the chosen C."
+  - "Choose the decision threshold on validation to reach recall ≥ 0.98, then report the test precision you pay for it."
+  - "Add a second model (for example `RandomForestClassifier`) to `compare_models` and explain why scaling does not matter for it."
+  - "Write a deliberately leaky version (scale before splitting, or select C on test) and measure how much it inflates the test score across 20 seeds."
+  - "Plot the ROC and precision–recall curves for validation and test (optional matplotlib) and explain the gap."
+rubric:
+  - criterion: Leakage discipline
+    needsWork: Preprocessing or model choice uses validation or test rows.
+    meets: Scaler fitted on train only; C chosen on validation; test used once; the leakage tests pass.
+    exceeds: You can demonstrate, with numbers, how much a leaky workflow inflates the score.
+  - criterion: Metric understanding
+    needsWork: Only accuracy is reported, or the positive class is wrong.
+    meets: Precision, recall, F1 and ROC-AUC are reported for malignant = 1 and compared with the baseline.
+    exceeds: The threshold is chosen deliberately for the cost of missed malignant tumours, with the trade-off explained.
+  - criterion: Reproducibility
+    needsWork: Results change between runs.
+    meets: Seeds are threaded through splits and models; `run(seed)` is deterministic.
+    exceeds: Results are reported across several seeds with their spread.
+  - criterion: Code quality
+    needsWork: One script with globals; estimators mutated by helpers.
+    meets: Small typed functions, a frozen `Splits` dataclass, clones in comparisons, clear errors.
+    exceeds: The workflow can switch models or metrics without editing the functions.

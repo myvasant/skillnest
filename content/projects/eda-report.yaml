@@ -1,0 +1,205 @@
+id: eda-report
+title: "EDA Report: What Do These Retail Orders Say?"
+track: data-ml
+level: intermediate
+estimatedHours: 6
+environment: local
+starterKit: projects/eda-report
+summary: >-
+  Explore a seeded synthetic table of retail orders — summary statistics, missing values, outliers,
+  group comparisons and correlations — and turn the tested numbers into a written findings report.
+concepts:
+  - data.eda
+  - data.pandas-basics
+  - data.pandas-transform
+  - data.data-quality
+  - math.descriptive-statistics
+  - python.testing
+problem: |
+  A small online-and-in-store retailer has exported a year of orders and asks a simple question:
+  **"What should we know about this data before we build anything on it?"** Your job is a
+  systematic [exploratory data analysis](concept:data.eda) that ends in a short written report a
+  manager can read — where every number in the report comes from a function a test has checked.
+
+  **Input.** `make_retail_data(n_rows=1000, seed=42)` (provided) returns one row per order:
+  `order_id, order_date, region, category, channel, units, unit_price, discount, revenue,
+  delivery_days, customer_age, satisfaction`. It is synthetic and seeded, so everyone gets the same
+  table, and it hides real-world problems on purpose: gaps in `customer_age` and `satisfaction`, a few
+  bulk orders, a skewed revenue distribution, a region that behaves differently, and a relationship
+  between delivery time and satisfaction.
+
+  **Output.** Functions that return DataFrames or dicts (summaries, a missing-value report, outlier
+  fences, group comparisons, the strongest correlations) and `write_report()`, which writes a Markdown
+  report with a prose **Findings** section and a **Limitations** section.
+
+  **Example session** (after you finish):
+
+  ```text
+  >>> from eda_report import make_retail_data, missing_report, group_summary
+  >>> df = make_retail_data()
+  >>> missing_report(df).head(2)
+                n_missing  pct_missing
+  column
+  satisfaction        104         10.4
+  customer_age         46          4.6
+  >>> group_summary(df, "region", "revenue")[["count", "mean", "median"]].round(1)
+          count   mean  median
+  region
+  West      197  394.6   225.0
+  East      258  315.7   132.1
+  ...
+  $ python starter/eda_report.py --out report.md
+  Report written to report.md
+  ```
+
+  The numbers you see may differ slightly with other NumPy versions; the patterns will not.
+acceptanceCriteria:
+  - "`numeric_summary` returns one row per numeric column with count, missing, mean, sample std, min, quartiles and max; `categorical_summary` reports unique values, the most frequent value and its share."
+  - "`missing_report` lists every column's missing count and percentage, worst first; `missing_by_group` shows that `satisfaction` is missing far more often for online orders."
+  - "`iqr_bounds` reproduces hand-computed Tukey fences (Q1 − 1.5·IQR, Q3 + 1.5·IQR with linear quantiles); `iqr_outliers` never flags missing values."
+  - "`compare_groups` returns the difference in means, Welch's t statistic and Cohen's d, matching hand-computed values, and rejects groups with fewer than two values."
+  - "`top_correlations` lists each pair of distinct numeric columns once, ranked by |r| but reporting the signed r."
+  - "`write_report` creates a Markdown file whose Findings section is generated from the computed numbers (no hard-coded values) and names the top region and the satisfaction gap."
+  - "All tests pass with `python -m pytest`, and no function mutates the DataFrame it is given."
+architecture: |
+  One module, `eda_report.py`, made of small pure functions. Each returns data, not printouts, so it
+  can be tested and reused; only `write_report` and `main` touch the file system.
+
+  ```text
+  make_retail_data(seed) ──► DataFrame
+          │
+          ├─► numeric_summary / categorical_summary      (milestone 1)
+          ├─► missing_report / missing_by_group          (milestone 2)
+          ├─► iqr_bounds → iqr_outliers → outlier_report (milestone 2)
+          ├─► group_summary / compare_groups             (milestone 3)
+          ├─► correlation_matrix → top_correlations      (milestone 4)
+          │
+          └─► build_findings() ──► dict ──► render_report() ──► write_report(path)  (milestone 5)
+  ```
+
+  `build_findings` is the only place that knows which questions this report answers; the analysis
+  functions are generic and work on any DataFrame. `to_markdown_table` (provided) renders tables
+  without extra dependencies.
+setup: |
+  You need Python 3.11+ and the project folder `projects/eda-report` from the repository.
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  cd projects/eda-report
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  python -m pip install -r requirements.txt
+  ```
+
+  **macOS / Linux**
+
+  ```bash
+  cd projects/eda-report
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -r requirements.txt
+  ```
+
+  `requirements.txt` installs numpy, pandas and pytest. Plots are optional: if you want them, add
+  matplotlib to your own environment and save figures to files.
+milestones:
+  - id: summary-statistics
+    title: Summary statistics
+    description: |
+      Implement `numeric_summary(df, exclude=())` and `categorical_summary(df)`. The numeric summary
+      has one row per numeric column (skip identifiers such as `order_id` with `exclude`) and the
+      columns `count, missing, mean, std, min, q1, median, q3, max`; use the sample standard deviation.
+      The categorical summary reports `count, unique, top, top_share`.
+
+      **Tests check** hand-computed values on a five-row table, that missing values are counted and
+      ignored by the mean, and that text columns go to the categorical summary.
+  - id: missing-and-outliers
+    title: Missing values and outliers
+    description: |
+      Implement `missing_report` (count and percentage per column, worst first) and
+      `missing_by_group` (missing rate per group — is the data missing completely at random?). Then
+      `iqr_bounds`, `iqr_outliers`, `zscore_outliers` and `outlier_report`.
+
+      **Tests check** Tukey fences on `[1..9, 100]` (−3.5 and 14.5), that missing values are never
+      outliers, that the z-score rule *misses* the outlier at threshold 3 in a small sample (the
+      outlier inflates the standard deviation), and that online orders lack satisfaction scores more
+      often than store orders.
+  - id: group-comparisons
+    title: Group comparisons
+    description: |
+      Implement `group_summary(df, by, value)` (count, mean, median, std, total and share of the
+      total, sorted by mean) and `compare_groups(df, by, value, a, b)`, which returns the difference in
+      means, Welch's t statistic and Cohen's d (pooled standard deviation).
+
+      **Tests check** hand-computed values (groups `[1, 2, 3]` and `[4, 5, 6, 7]` give
+      t = −3.5/√0.75), the error for tiny groups, and that West orders have the highest mean revenue.
+  - id: correlation
+    title: Correlation
+    description: |
+      Implement `correlation_matrix` (pearson, spearman or kendall on numeric columns) and
+      `top_correlations`, which lists each unordered pair once, ranked by |r| with the signed value
+      kept.
+
+      **Tests check** exact values on a tiny table (r = 0.8), that −1.0 outranks 0.8, that Spearman
+      sees a monotonic but non-linear relationship as 1.0, and that delivery days and satisfaction are
+      strongly negatively correlated in the retail data.
+  - id: findings-report
+    title: The findings report
+    description: |
+      Implement `build_findings` (a dict of the headline numbers), `render_report` (Markdown with
+      Dataset, Data quality, Revenue by region, Strongest correlations, **Findings** and
+      **Limitations** sections) and `write_report`. Write the findings as numbered sentences generated
+      from the dict — what is true, how big it is, and what to be careful about (skew, missingness,
+      correlation versus causation).
+
+      **Tests check** the keys and values of the findings, that they agree with the milestone 1–4
+      functions, the required sections, and that the file is written to a temporary folder.
+testing: |
+  From `projects/eda-report` with your virtual environment active:
+
+  ```bash
+  python -m pytest                 # runs the tests against your code in starter/
+  python -m pytest -k Milestone3   # one milestone at a time
+  ```
+
+  To see the reference solution pass the same tests:
+
+  ```powershell
+  $env:GW_TARGET="solution"; python -m pytest; Remove-Item Env:GW_TARGET
+  ```
+
+  ```bash
+  GW_TARGET=solution python -m pytest
+  ```
+
+  The tests use tiny hand-made DataFrames with answers you can work out on paper, plus pattern checks
+  on the seeded retail data. They are deterministic and write files only to pytest's `tmp_path`.
+security:
+  - "Real exports often contain personal data (names, emails, addresses). Profile a de-identified copy, and never paste raw rows into the report — aggregate instead."
+  - "Small groups can re-identify people (a group of one customer *is* that customer). Report counts next to means and suppress or merge groups below a minimum size before sharing."
+  - "Reports are read as truth. Generate every number from code, state limitations, and avoid causal language for correlations so the report cannot be used to justify decisions it does not support."
+  - "When loading real files later, read them with explicit dtypes and never `eval` cell contents; spreadsheet cells starting with `=` can become formula injection if you export back to CSV for Excel."
+extensions:
+  - "Add `log_outliers(series)` that applies the IQR rule to log(revenue), and compare how many orders each rule flags."
+  - "Add per-category outlier fences (groupby + transform) so a large Electronics order is not judged against Grocery orders."
+  - "Save histograms and a correlation heatmap with matplotlib (optional dependency) and link them from the report."
+  - "Add a bootstrap confidence interval for the online-vs-store satisfaction difference, seeded for reproducibility."
+  - "Run the same analysis on a CSV of your own (loaded with explicit dtypes) and note which findings change."
+rubric:
+  - criterion: Correctness of the statistics
+    needsWork: Some summaries are wrong or computed with the wrong definition (population std, outliers including NaN).
+    meets: All tests pass; definitions match the docstrings and hand-computed examples.
+    exceeds: Edge cases (empty groups, constant columns, all-missing columns) are handled and tested with new tests you wrote.
+  - criterion: Quality of the written findings
+    needsWork: The report lists numbers without interpretation, or claims causation.
+    meets: Each finding states the result, its size and a caveat; numbers come from the findings dict.
+    exceeds: Findings lead to concrete next questions or data-collection fixes (for example, why online satisfaction is missing).
+  - criterion: Handling of data quality
+    needsWork: Missing values and outliers are dropped without comment.
+    meets: Missingness patterns and outliers are reported and their consequences explained.
+    exceeds: Alternative treatments (log scale, per-group fences, imputation) are compared with evidence.
+  - criterion: Code design
+    needsWork: Functions print instead of returning values, or mutate the input DataFrame.
+    meets: Small pure functions with type hints and docstrings; only write_report touches files.
+    exceeds: Functions are generic enough to reuse on another dataset without changes.

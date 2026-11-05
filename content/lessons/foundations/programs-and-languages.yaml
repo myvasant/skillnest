@@ -1,0 +1,1015 @@
+id: foundations.programs-and-languages
+concept: foundations.programs-and-languages
+title: Programs, Interpreters and Compilers
+subtitle: From the text you write to instructions a CPU can run
+estimatedMinutes: 40
+reviewedOn: 2026-10-22
+summary: >-
+  A program is a precise list of instructions written as text. The CPU cannot read that text, so another
+  program must translate or carry it out. Learn what compilers, interpreters and runtimes do, watch CPython
+  turn a line of Python into bytecode, and see why "interpreted versus compiled" describes an implementation,
+  not a language.
+objectives:
+  - Explain the difference between source code and machine code, and why a translator is needed.
+  - Describe what a compiler, an interpreter and a runtime each do, with one example of each.
+  - Describe how CPython runs a file - compile the whole file to bytecode first, then execute the bytecode.
+  - Predict which lines of a program run before a SyntaxError or a runtime error stops it.
+  - Explain why "Python is interpreted" is a statement about CPython, not about the Python language.
+sources:
+  - title: "The Python Tutorial: Using the Python Interpreter"
+    url: https://docs.python.org/3/tutorial/interpreter.html
+    publisher: Python Software Foundation
+  - title: "Python glossary: bytecode"
+    url: https://docs.python.org/3/glossary.html#term-bytecode
+    publisher: Python Software Foundation
+  - title: dis — Disassembler for Python bytecode
+    url: https://docs.python.org/3/library/dis.html
+    publisher: Python Software Foundation
+  - title: "Built-in Functions: compile()"
+    url: https://docs.python.org/3/library/functions.html#compile
+    publisher: Python Software Foundation
+  - title: "PEP 3147: PYC Repository Directories"
+    url: https://peps.python.org/pep-3147/
+    publisher: Python Software Foundation
+  - title: py_compile — Compile Python source files
+    url: https://docs.python.org/3/library/py_compile.html
+    publisher: Python Software Foundation
+  - title: "PEP 744: JIT Compilation"
+    url: https://peps.python.org/pep-0744/
+    publisher: Python Software Foundation
+  - title: "What's New In Python 3.14: binary releases for the experimental JIT compiler"
+    url: https://docs.python.org/3/whatsnew/3.14.html
+    publisher: Python Software Foundation
+    version: "3.14"
+sections:
+  - id: why
+    title: Why the computer needs a translator
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A computer's processor (the CPU) can only carry out very simple instructions such as "copy this
+          number", "add these two numbers" or "jump to that instruction". Each instruction is stored as a
+          pattern of bytes called [machine code](glossary:machine-code). Here are three real instructions for
+          the x86-64 processors found in most laptops, shown as bytes in hexadecimal with a human-readable
+          spelling (called *assembly language*) next to them:
+      - type: code
+        language: text
+        status: illustrative
+        code: |
+          B8 01 00 00 00    mov eax, 1     put the number 1 into a CPU register called eax
+          83 C0 02          add eax, 2     add 2 to it, so eax now holds 3
+          C3                ret            return to whoever called this code
+        caption: >-
+          Real x86-64 machine code. A different kind of CPU (for example the ARM chips in phones and recent
+          Macs) uses completely different bytes for the same work.
+      - type: markdown
+        body: |
+          Writing whole applications like this is slow, error-prone and tied to one kind of CPU. So people
+          write programs in a **programming language** — text that humans can read — and let another program
+          translate it. In Python, the same calculation is one readable line. Press **Run**:
+      - type: code
+        runnable: true
+        code: |
+          print(1 + 2)
+        expectedOutput: |
+          3
+        annotations:
+          - line: 1
+            text: "`print(...)` displays a value. Python works out `1 + 2` first, then displays the result."
+      - type: markdown
+        body: |
+          Your computer never runs the text `print(1 + 2)` directly. Something has to turn it into work the
+          CPU can do. This lesson is about that *something*: the compilers, interpreters and runtimes that
+          sit between the code you write and the processor.
+
+  - id: what-is-a-program
+    title: Programs and source code
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A [program](glossary:program) is a **precise, ordered list of instructions** for a computer, plus
+          the data those instructions need. "Precise" matters: the computer does exactly what is written,
+          not what you meant. A missing bracket or a misspelled word is not "close enough".
+
+          The text you write in a programming language is called [source code](glossary:source-code). It is
+          stored in an ordinary text file — Python files end in `.py` — and you can open it in any editor.
+
+          Here is a complete Python program. You do not need to know Python yet; each line is explained
+          below the code.
+      - type: code
+        runnable: true
+        code: |
+          print("Hello!")
+          print(2 + 3)
+          print("Goodbye!")
+        expectedOutput: |
+          Hello!
+          5
+          Goodbye!
+        annotations:
+          - line: 1
+            text: "`print` is a built-in instruction that displays something. Text inside quotes is shown exactly as written."
+          - line: 2
+            text: Without quotes, `2 + 3` is a calculation. Python computes 5 and displays it.
+          - line: 3
+            text: Each line is one instruction (a *statement*). They run in order, top to bottom.
+      - type: markdown
+        body: |
+          Three words you will meet constantly:
+
+          | Term | Meaning | Example |
+          |---|---|---|
+          | **Source code** | Text written by people in a programming language | `print(2 + 3)` in `hello.py` |
+          | **Machine code** | Bytes the CPU executes directly; differs between CPU families | `83 C0 02` (add 2) |
+          | **Executable** | A file the operating system can start as a program | `python.exe`, `git`, a compiled app |
+      - type: item
+        ref: source-vs-machine
+
+  - id: translators
+    title: Compilers, interpreters and runtimes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          There are two basic strategies for getting from source code to work the CPU does, plus a helper
+          that every running program needs.
+
+          **A [compiler](glossary:compiler) translates the whole program ahead of time** into another form —
+          often machine code — and saves the result. You run the translation later, as often as you like,
+          without the compiler. Mistakes in the text are reported *before* anything runs. C, C++, Rust and Go
+          are usually compiled to machine code this way.
+
+          **An [interpreter](glossary:interpreter) is a program that reads code and carries it out**
+          instruction by instruction, while you wait. There is no separate translated file to run; you run
+          the interpreter and give it your code.
+
+          **A [runtime](glossary:runtime) is the support system around a running program**: it manages
+          memory, provides built-in features such as `print`, and reports errors. Even compiled programs
+          usually come with a small runtime; interpreted languages ship a large one inside the interpreter.
+      - type: callout
+        variant: analogy
+        title: A book translator versus a live interpreter
+        body: |
+          A **compiler** is like a translator who translates a whole book into Hindi, prints it, and goes
+          home. Readers then use the translated book directly, and spelling mistakes were caught before
+          printing. An **interpreter** is like a live interpreter at a meeting: they translate each sentence
+          as it is spoken. Nothing is printed, and they must be present every time.
+      - type: markdown
+        body: |
+          Here is what the compiled route looks like for a C program. It runs on your own computer, not in
+          this browser (which has no C compiler), so it is shown rather than run:
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          $ cat hello.c
+          #include <stdio.h>
+
+          int main(void) {
+              printf("%d\n", 1 + 2);
+              return 0;
+          }
+          $ gcc hello.c -o hello     # compile: hello.c (source) -> hello (machine code)
+          $ ./hello                  # run the translation; gcc is no longer involved
+          3
+        caption: >-
+          Illustrative terminal session (requires a C compiler such as gcc). `$` is the shell prompt; you type
+          what follows it.
+      - type: markdown
+        body: |
+          | | Compiled ahead of time (typical C) | Interpreted (typical Python) |
+          |---|---|---|
+          | When translation happens | Once, before running | Every time you run it |
+          | What you distribute | The executable (one per CPU and OS) | The source code, plus an interpreter |
+          | Text mistakes found | Before running | Before running (CPython checks the whole file first — see below) |
+          | Start-up | Fast | Slower: translation happens at start |
+          | Typical speed | Fast | Slower for heavy calculation |
+
+          Real systems mix these strategies, as you are about to see with Python itself.
+
+  - id: how-python-runs
+    title: How CPython runs your program
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          When you install "Python" you get **CPython**, the reference implementation written in the C
+          language. (This browser runs CPython too, compiled to WebAssembly.) CPython does **both** of the
+          things described above:
+
+          1. **Compile.** It reads your whole file, checks that it is valid Python, and translates it into
+             [bytecode](glossary:bytecode) — compact instructions for an imaginary computer, not for your
+             real CPU.
+          2. **Interpret.** A loop inside CPython (often called the *Python virtual machine*) then carries out
+             the bytecode instructions one by one, calling into the runtime for things like memory and
+             `print`.
+
+          Step through the pipeline:
+      - type: visualization
+        component: step-diagram
+        title: From hello.py to output
+        caption: Click through the steps. Lit boxes and arrows are the ones involved in each step.
+        props:
+          width: 760
+          height: 300
+          nodes:
+            - { id: source, label: "hello.py (source)", x: 90, y: 70, shape: store }
+            - { id: parser, label: "Tokenizer + parser", x: 290, y: 70 }
+            - { id: compiler, label: "Bytecode compiler", x: 490, y: 70 }
+            - { id: code, label: "Code object", x: 670, y: 70, shape: pill }
+            - { id: pyc, label: "__pycache__ .pyc", x: 670, y: 230, shape: store }
+            - { id: vm, label: "Interpreter loop", x: 470, y: 230 }
+            - { id: output, label: "Output and effects", x: 250, y: 230, shape: actor }
+          edges:
+            - { id: e-read, from: source, to: parser, label: text }
+            - { id: e-tree, from: parser, to: compiler, label: syntax tree }
+            - { id: e-emit, from: compiler, to: code, label: bytecode }
+            - { id: e-cache, from: code, to: pyc, label: imports only }
+            - { id: e-run, from: code, to: vm, label: execute }
+            - { id: e-out, from: vm, to: output, label: print }
+          steps:
+            - title: You write source code
+              body: The program is plain text in a file. Nothing has happened yet.
+              active: [source]
+              payload: |
+                print("Hello")
+            - title: Read the text and check the grammar
+              body: >-
+                The tokenizer splits the text into pieces (the name `print`, a bracket, the text "Hello",
+                another bracket); the parser checks they form valid Python and builds a tree. A missing bracket
+                anywhere in the file is reported here as a **SyntaxError**, so no line runs at all.
+              active: [source, parser, e-read]
+              payload: "NAME 'print'   OP '('   STRING '\"Hello\"'   OP ')'"
+            - title: Compile to bytecode
+              body: >-
+                The compiler turns the tree into a **code object**: a list of bytecode instructions plus the
+                constants and names they use. This happens for the whole file before anything runs.
+              active: [parser, compiler, code, e-tree, e-emit]
+              payload: "LOAD_NAME print, PUSH_NULL, LOAD_CONST 'Hello', CALL, POP_TOP, ..."
+            - title: Cache it (for imported modules)
+              body: >-
+                When a file is *imported* by another file, CPython saves the bytecode in a `__pycache__` folder
+                so the next import can skip compiling. The main script you run directly is compiled again each
+                time.
+              active: [code, pyc, e-cache]
+              payload: __pycache__/greeting.cpython-314.pyc
+            - title: Execute the bytecode
+              body: >-
+                The interpreter loop fetches one instruction, does what it says, then fetches the next — the
+                same fetch-decode-execute idea as a real CPU, but in software.
+              active: [code, vm, e-run]
+            - title: Effects happen
+              body: >-
+                Some instructions call into the runtime, which talks to the operating system: here `print`
+                writes text to the screen. Runtime errors (dividing by zero, an unknown name) are raised during
+                this phase, at a specific line.
+              active: [vm, output, e-out]
+              payload: Hello
+      - type: markdown
+        body: |
+          You can ask CPython to do the compile step on its own with the built-in function `compile()`, and
+          run the result later with `exec()`. The code below is explained line by line; the only new idea is
+          that `source = ...` and `code = ...` give *names* to values so later lines can use them (you will
+          study this properly in [variables](concept:python.variables)).
+      - type: code
+        runnable: true
+        code: |
+          source = 'print("Hello from compiled code")'
+          code = compile(source, "hello.py", "exec")
+          print(type(code).__name__)
+          exec(code)
+        expectedOutput: |
+          code
+          Hello from compiled code
+        annotations:
+          - line: 1
+            text: "`source` names a piece of text that happens to contain a Python program."
+          - line: 2
+            text: "Compile it. `\"hello.py\"` is the file name to show in error messages; `\"exec\"` means \"a whole program\". Nothing is printed yet."
+          - line: 3
+            text: The result is a *code object* - compiled bytecode waiting to be run.
+          - line: 4
+            text: "`exec` hands the code object to the interpreter loop, and only now does Hello appear."
+      - type: item
+        ref: predict-compile-then-run
+      - type: markdown
+        body: |
+          The standard-library module `dis` (short for *disassembler*) lists the bytecode instructions inside
+          a code object. `import dis` loads that module; the `for` line repeats the indented line once per
+          instruction (loops come later in [for loops](concept:python.for-loops)).
+      - type: code
+        runnable: true
+        code: |
+          import dis
+
+          code = compile('print("Hello")', "hello.py", "exec")
+          for instruction in dis.get_instructions(code):
+              print(instruction.opname, instruction.argrepr)
+        expectedOutput: |
+          RESUME
+          LOAD_NAME print
+          PUSH_NULL
+          LOAD_CONST 'Hello'
+          CALL
+          POP_TOP
+          LOAD_CONST None
+          RETURN_VALUE
+        caption: Output from CPython 3.14 in this browser. Other Python versions print different instructions.
+        annotations:
+          - line: 4
+            text: Ask dis for the instructions one at a time.
+          - line: 5
+            text: "`opname` is the instruction's name; `argrepr` describes what it works on (blank if nothing)."
+      - type: markdown
+        body: |
+          One line of Python became eight small instructions:
+
+          | Instruction | What it does |
+          |---|---|
+          | `RESUME` | Bookkeeping at the start of a code object |
+          | `LOAD_NAME print` | Look up what the name `print` means (the built-in display function) |
+          | `PUSH_NULL` | An internal placeholder the call mechanism needs |
+          | `LOAD_CONST 'Hello'` | Fetch the text "Hello", which the compiler stored with the code |
+          | `CALL` | Call the function with the value(s) loaded above — this is when text appears |
+          | `POP_TOP` | Throw away `print`'s result, which nobody uses |
+          | `LOAD_CONST None` + `RETURN_VALUE` | The program is finished |
+      - type: callout
+        variant: warning
+        title: Bytecode is a CPython detail that changes between versions
+        body: |
+          The Python documentation states that bytecode is an implementation detail of CPython with no
+          guarantee it stays the same between releases. Python 3.13 and 3.15 print different instruction
+          names for the same program. Use `dis` to *understand* what happens; never write programs that
+          depend on particular instructions.
+
+  - id: execution-order
+    title: Execution order, and why errors stop programs where they do
+    kind: mental-model
+    blocks:
+      - type: markdown
+        body: |
+          Once the bytecode is running, CPython carries out [statements](glossary:statement) **one at a time,
+          from top to bottom**. Each statement finishes before the next begins. Step through this program and
+          watch the highlighted line move. Line 2 previews a *name* for a value — the tracer shows the name
+          on the left and the value it refers to.
+      - type: visualization
+        component: python-tracer
+        title: Top to bottom, one statement at a time
+        caption: Press Next to run one line. The output panel grows only when a print runs.
+        props:
+          code: |
+            print("Step 1")
+            total = 2 + 3
+            print("Step 2:", total)
+            print("Step 3")
+      - type: markdown
+        body: |
+          Programs do not *only* go straight down. **Control flow** statements change the order: a condition
+          can skip lines, a loop can repeat them, and a function call jumps away and comes back. You will
+          learn each of these later; for now, just watch line 3 run three times:
+      - type: visualization
+        component: python-tracer
+        title: A loop changes the order
+        caption: The loop (previewed here) sends execution back to line 2 until it has run three times.
+        props:
+          code: |
+            print("start")
+            for lap in range(3):
+                print("lap", lap)
+            print("end")
+      - type: markdown
+        body: |
+          The compile-then-run pipeline explains a puzzle every beginner meets: **two kinds of error stop a
+          program at different moments.**
+
+          - A [SyntaxError](glossary:syntax-error) is found while *compiling*. CPython cannot build bytecode
+            for a file it cannot read, so **no line runs**, not even the first.
+          - A runtime error (an [exception](glossary:exception)) happens while *executing*, at one specific
+            line. Every line before it has already run.
+      - type: code
+        runnable: true
+        code: |
+          print("A")
+          print("B"
+          print("C")
+        expectError: SyntaxError
+        caption: Run it. "A" is never printed - the file failed to compile, so nothing was executed.
+      - type: code
+        runnable: true
+        code: |
+          print("one")
+          print(10 / 0)
+          print("three")
+        expectError: ZeroDivisionError
+        expectedOutput: |
+          one
+        caption: >-
+          This file compiles fine. Line 1 runs, then line 2 raises ZeroDivisionError at runtime and the
+          program stops; line 3 never runs.
+      - type: item
+        ref: predict-runtime-stop
+      - type: item
+        ref: why-nothing-ran
+
+  - id: interpreted-vs-compiled
+    title: '"Interpreted" and "compiled" describe implementations'
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          You will often read "Python is an interpreted language" and "C is a compiled language". Those are
+          handy shorthand for the *usual* way each language is run, but strictly they describe
+          **implementations** — particular programs that run the language — not the language itself.
+
+          | Implementation | Language | What it actually does |
+          |---|---|---|
+          | **CPython** | Python | Compiles to bytecode, then interprets the bytecode |
+          | **PyPy** | Python | Interprets, and a [just-in-time (JIT) compiler](glossary:jit-compiler) turns frequently run code into machine code while the program runs |
+          | **CPython 3.13+ experimental JIT** | Python | Optional and off by default; the 3.14 Windows and macOS installers include it, enabled with the environment variable `PYTHON_JIT=1`, and it is not recommended for production |
+          | **javac + the JVM** | Java | Compiles to JVM bytecode ahead of time; the JVM interprets it and JIT-compiles hot code |
+          | **V8** (Chrome, Node.js) | JavaScript | Interprets and JIT-compiles |
+          | **gcc / clang** | C | Compiles to machine code ahead of time |
+
+          The same Python program can run on CPython or on PyPy with identical results but different
+          speed. So the precise statement is: *"CPython compiles Python to bytecode and interprets that
+          bytecode."*
+      - type: callout
+        variant: misconception
+        title: '"Python is never compiled"'
+        body: |
+          CPython compiles every file to bytecode before running any of it — that is exactly why a
+          SyntaxError on the last line stops the first line from running. What CPython does *not* normally do
+          is compile to machine code for your CPU.
+      - type: item
+        ref: interpreted-claim
+
+  - id: under-the-hood
+    title: Inside CPython
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **Each source line becomes several instructions.** `dis.get_instructions` also reports which
+          source line every instruction came from (`\n` inside the text below means "new line"):
+      - type: code
+        runnable: true
+        code: |
+          import dis
+
+          source = "price = 20\ntotal = price * 3\nprint(total)\n"
+          code = compile(source, "shop.py", "exec")
+          for instruction in dis.get_instructions(code):
+              print(instruction.line_number, instruction.opname)
+        expectedOutput: |
+          0 RESUME
+          1 LOAD_SMALL_INT
+          1 STORE_NAME
+          2 LOAD_NAME
+          2 LOAD_SMALL_INT
+          2 BINARY_OP
+          2 STORE_NAME
+          3 LOAD_NAME
+          3 PUSH_NULL
+          3 LOAD_NAME
+          3 CALL
+          3 POP_TOP
+          3 LOAD_CONST
+          3 RETURN_VALUE
+        caption: CPython 3.14. `STORE_NAME` attaches a name to a value; `BINARY_OP` does the multiplication.
+      - type: markdown
+        body: |
+          **The compiler does some work ahead of time.** If an expression uses only constants, CPython's
+          compiler may compute it during compilation (*constant folding*). There is no `BINARY_OP` below:
+          the addition was done before the program ran.
+      - type: code
+        runnable: true
+        code: |
+          import dis
+
+          code = compile("print(2 + 3)", "demo.py", "exec")
+          names = [instruction.opname for instruction in dis.get_instructions(code)]
+          print(names)
+          print("BINARY_OP" in names)
+        expectedOutput: |
+          ['RESUME', 'LOAD_NAME', 'PUSH_NULL', 'LOAD_SMALL_INT', 'CALL', 'POP_TOP', 'LOAD_CONST', 'RETURN_VALUE']
+          False
+      - type: markdown
+        body: |
+          **Bytecode caching (`.pyc` files).** When one file *imports* another, CPython compiles the imported
+          module and, by default, writes the bytecode to `__pycache__/<name>.cpython-314.pyc`
+          ([PEP 3147](https://peps.python.org/pep-3147/)). On the next import it checks the cached file's
+          header — a *magic number* identifying the bytecode version, plus the source file's modification
+          time and size — and skips compiling if nothing changed. The version tag in the file name
+          (`cpython-314`) is why Python 3.13 and 3.14 keep separate caches. The script you run directly is
+          not cached. You can compile a file explicitly with `py_compile`:
+      - type: code
+        runnable: true
+        code: |
+          import py_compile
+
+          with open("shop.py", "w", encoding="utf-8") as f:
+              f.write("print(20 * 3)\n")
+
+          cached = py_compile.compile("shop.py")
+          print(cached)
+        expectedOutput: |
+          __pycache__/shop.cpython-314.pyc
+        caption: >-
+          Lines 3-4 create a small source file (files are covered in a later lesson). This browser's Python
+          turns off automatic `.pyc` writing on import (`sys.dont_write_bytecode` is True), but desktop
+          CPython writes them for you.
+      - type: markdown
+        body: |
+          **The interpreter loop and specialisation.** The heart of CPython is a large loop in C that fetches
+          the next instruction and runs the C code for it. Since Python 3.11 it is a *specialising adaptive
+          interpreter* ([PEP 659](https://peps.python.org/pep-0659/)): after an instruction has run a few
+          times, CPython may replace it with a faster version specialised for the types it actually saw (for
+          example, adding two integers). `dis.dis(code, adaptive=True)` shows the specialised form.
+
+          **Deleting `__pycache__` is always safe**; CPython simply recompiles. Do not commit these folders
+          to version control — they are generated files.
+      - type: item
+        ref: pyc-purpose
+
+  - id: mistakes
+    title: Common mistakes and confusions
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `SyntaxError` and *nothing* printed, even from line 1 | The file could not be compiled (missing bracket or quote, typo in a keyword) | Fix the line the error points at, or the line just before it; then rerun |
+          | `SyntaxError: invalid syntax` on a line starting with `>>>` | You copied the interactive prompt `>>>` from a tutorial into your file | Delete the `>>>` (and `...`) prompts; type only the code |
+          | `NameError: name 'Print' is not defined` | Python is case-sensitive: `Print` is not `print` | Match the exact spelling and capitals |
+          | Some lines printed, then an error | A runtime error at the line in the traceback; earlier lines already ran | Read the last line of the error, then the line number |
+          | `'python' is not recognized ...` (Windows) or `python: command not found` | The shell cannot find the interpreter program | Install Python or fix PATH (see [installing tools](concept:foundations.installing-tools)) |
+      - type: code
+        runnable: true
+        code: |
+          >>> print("hi")
+        expectError: SyntaxError
+        caption: The `>>>` prompt belongs to the interactive interpreter, not to the program.
+      - type: code
+        runnable: true
+        code: |
+          Print("Hello")
+        expectError: NameError
+        caption: "This compiles fine (it is valid grammar), then fails at runtime: no name `Print` exists."
+      - type: callout
+        variant: tip
+        title: Compilation checks grammar, not meaning
+        body: |
+          The compiler only checks that the text is *valid Python*. It does not check that names exist or
+          that values make sense - `Print("Hello")` and `print(10 / 0)` both compile happily. Those problems
+          appear when the line executes.
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          These exercises only need `print`. Write the code yourself first, run it, and read any error
+          message before opening a hint.
+      - type: item
+        ref: print-pipeline
+      - type: item
+        ref: fix-pipeline
+      - type: item
+        ref: parsons-pipeline
+      - type: item
+        ref: explain-pipeline
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A **program** is a precise, ordered list of instructions; **source code** is its human-readable
+            text. The CPU only executes **machine code**.
+          - A **compiler** translates ahead of time; an **interpreter** carries out code while you wait; a
+            **runtime** supports the running program (memory, built-ins, errors).
+          - **CPython** compiles the whole file to **bytecode**, then its interpreter loop executes the
+            bytecode. Imported modules' bytecode is cached in `__pycache__/*.pyc`.
+          - Statements run top to bottom unless control flow (conditions, loops, calls) changes the order.
+          - **SyntaxError** → found while compiling → nothing runs. **Runtime errors** → found while
+            executing → earlier lines already ran.
+          - "Interpreted" and "compiled" describe **implementations** (CPython, PyPy, the JVM), not languages.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "Is Python compiled or interpreted?" — Say that CPython does both: it compiles source to bytecode
+          (cached in `.pyc` files for imported modules) and interprets the bytecode in a virtual machine; PyPy
+          adds a JIT compiler; and the distinction belongs to implementations, not languages. See
+          [the interview question](interview:foundations.programs-and-languages.compiled-or-interpreted).
+
+items:
+  - id: source-vs-machine
+    type: mcq
+    skill: recognition
+    prompt: Which statement about source code and machine code is correct?
+    explanation: >-
+      Source code is text written for people and tools; machine code is the byte-encoded instructions a
+      particular CPU family executes. Something (a compiler, an interpreter, or both) must bridge the two.
+    options:
+      - id: a
+        text: The CPU reads source code directly, one character at a time.
+        feedback: CPUs only execute machine code. Text such as `print(2 + 3)` must be translated or carried out by another program.
+      - id: b
+        text: Source code is human-readable text; machine code is bytes a specific kind of CPU executes.
+        correct: true
+        feedback: Right. That is why the same machine code does not run on both x86-64 and ARM processors.
+      - id: c
+        text: Machine code is the same on every computer, so programs run anywhere once compiled.
+        feedback: Each CPU family has its own instruction set. A program compiled for x86-64 will not run on an ARM CPU without being recompiled or emulated.
+      - id: d
+        text: Source code and machine code are two names for the same thing.
+        feedback: They are different. Source code is the text you write; machine code is what the processor runs.
+
+  - id: predict-compile-then-run
+    type: predict-output
+    skill: prediction
+    prompt: |
+      `compile()` turns text into a code object and `exec()` runs a code object. What does this program print?
+    code: |
+      code = compile('print("hi")', "demo.py", "exec")
+      print("compiled")
+      exec(code)
+      exec(code)
+    answer: |
+      compiled
+      hi
+      hi
+    explanation: >-
+      Compiling only translates; it never runs anything. "compiled" is printed by line 2. Each `exec` then
+      runs the same code object, so "hi" appears twice. A compiled program can be run as many times as you
+      like without compiling again.
+    wrongAnswers:
+      - answer: |
+          hi
+          compiled
+          hi
+          hi
+        feedback: >-
+          `compile()` does not run the code - it only produces bytecode. Nothing is printed until `exec()`
+          executes it.
+      - answer: |
+          compiled
+          hi
+        feedback: >-
+          A code object can be executed more than once. Each `exec(code)` runs the whole program again.
+
+  - id: predict-runtime-stop
+    type: predict-output
+    skill: prediction
+    prompt: What is printed before this program stops with an error?
+    code: |
+      print("one")
+      print("two")
+      print(10 / 0)
+      print("four")
+    answer: |
+      one
+      two
+    explanation: >-
+      The file is valid Python, so it compiles and starts running. Lines 1 and 2 run; line 3 raises
+      ZeroDivisionError during execution, which stops the program. Line 4 never runs.
+    wrongAnswers:
+      - answer: |
+          one
+          two
+          four
+        feedback: >-
+          An error does not skip a line and carry on. Unless the error is handled (you will learn how later),
+          the program stops at the failing line.
+      - answer: ""
+        feedback: >-
+          That would be true for a SyntaxError, which is found before anything runs. Dividing by zero is valid
+          grammar, so the problem only appears when line 3 executes - after lines 1 and 2 have run.
+
+  - id: why-nothing-ran
+    type: mcq
+    skill: explanation
+    prompt: |
+      A 200-line program has a missing closing bracket on line 200. When you run it, not even line 1's
+      `print` appears. Why?
+    explanation: >-
+      CPython compiles the whole file to bytecode before executing any of it. A SyntaxError anywhere means
+      there is no bytecode to run, so no statement executes.
+    options:
+      - id: a
+        text: CPython compiles the whole file before running it, and a file with a SyntaxError cannot be compiled.
+        correct: true
+        feedback: Exactly. Grammar is checked for the entire file first.
+      - id: b
+        text: CPython runs the file backwards, so line 200 runs first.
+        feedback: Execution goes top to bottom. The point is that compilation of the whole file happens before execution starts.
+      - id: c
+        text: The print on line 1 ran, but its output was deleted when the error happened.
+        feedback: Output that has been printed stays printed. Here line 1 never ran at all.
+      - id: d
+        text: Python only shows output after the whole program finishes successfully.
+        feedback: Try the ZeroDivisionError example above - lines before a runtime error do print.
+
+  - id: interpreted-claim
+    type: mcq
+    skill: explanation
+    difficulty: 2
+    prompt: |
+      A classmate says: "Python is an interpreted language, so Python code is never compiled." What is the
+      most accurate reply?
+    explanation: >-
+      CPython compiles source to bytecode and then interprets the bytecode. Other implementations make other
+      choices (PyPy adds a JIT compiler). "Interpreted" describes how an implementation runs code.
+    options:
+      - id: a
+        text: You are right - Python reads and runs each line of text directly.
+        feedback: If that were true, line 1 would run even when line 200 has a SyntaxError. CPython compiles the whole file to bytecode first.
+      - id: b
+        text: Wrong - Python is compiled to machine code just like C.
+        feedback: CPython does not normally produce machine code for your CPU. It compiles to bytecode, which its own virtual machine interprets.
+      - id: c
+        text: CPython compiles Python to bytecode and then interprets that bytecode; "interpreted" describes an implementation, not the language.
+        correct: true
+        feedback: Correct, and other implementations such as PyPy also JIT-compile hot code to machine code.
+      - id: d
+        text: It depends on whether the file ends in .py or .pyc.
+        feedback: The extension does not change the language. A .pyc file just stores bytecode that CPython already compiled from .py source.
+
+  - id: pyc-purpose
+    type: mcq
+    skill: recognition
+    prompt: What is stored in `__pycache__/notes.cpython-314.pyc`, and why does it exist?
+    explanation: >-
+      It is the compiled bytecode of the imported module notes.py, saved by CPython 3.14 so later imports can
+      skip compiling while the source is unchanged. It is safe to delete and should not be committed.
+    options:
+      - id: a
+        text: Machine code for your CPU, so the module runs without the interpreter.
+        feedback: A .pyc holds CPython bytecode, which still needs the interpreter loop to execute.
+      - id: b
+        text: Cached bytecode for notes.py, so later imports can skip compiling when the source has not changed.
+        correct: true
+        feedback: Right. The cpython-314 tag keeps caches for different Python versions apart.
+      - id: c
+        text: A backup copy of the source code in case you delete notes.py.
+        feedback: It contains bytecode, not your source text, and it is regenerated automatically.
+      - id: d
+        text: An encrypted version of the program that hides it from users.
+        feedback: Bytecode is not encryption; tools such as dis can read it.
+
+  - id: print-pipeline
+    type: code
+    skill: implementation
+    prompt: |
+      Write a program that prints these three lines, in this order, using **one `print` per line**:
+
+      ```text
+      1. Write source code
+      2. Compile to bytecode
+      3. Interpret the bytecode
+      ```
+    starterCode: |
+      # Print the three steps, one print per line.
+
+    solution: |
+      print("1. Write source code")
+      print("2. Compile to bytecode")
+      print("3. Interpret the bytecode")
+    expectedOutput: |
+      1. Write source code
+      2. Compile to bytecode
+      3. Interpret the bytecode
+    tests:
+      - name: prints the three lines in order
+        code: |
+          expected = ["1. Write source code", "2. Compile to bytecode", "3. Interpret the bytecode"]
+          assert output_lines() == expected, f"Expected exactly these lines: {expected}. Your program printed {output_lines()!r}."
+      - name: uses one print per line
+        code: |
+          import ast
+          prints = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "print"]
+          assert len(prints) == 3, f"Use exactly three print(...) calls, one for each line. You used {len(prints)}."
+    hints:
+      - "Each line of output needs its own `print(\"...\")` statement."
+      - "Text must be inside quotes, exactly as shown: `print(\"1. Write source code\")`."
+    feedback:
+      - when: { errorType: SyntaxError }
+        message: Python could not compile your program. Check that every opening quote and bracket has a matching closing one.
+      - when: { errorType: NameError }
+        message: Python treated some text as a name. Put the text of each line inside quotes, and spell print in lower case.
+    explanation: >-
+      Three statements run in order, top to bottom, so the output appears in the same order as the code.
+
+  - id: fix-pipeline
+    type: debug
+    skill: debugging
+    prompt: |
+      This program should print the three steps in order, but it does not even start. Run it, read the error,
+      fix it, then run it again - there is a second problem that only shows up once the program runs.
+
+      Expected output:
+
+      ```text
+      Write the source code
+      Compile it to bytecode
+      Run the bytecode
+      ```
+    starterCode: |
+      print("Write the source code")
+      print("Run the bytecode")
+      print("Compile it to bytecode)
+    solution: |
+      print("Write the source code")
+      print("Compile it to bytecode")
+      print("Run the bytecode")
+    expectedOutput: |
+      Write the source code
+      Compile it to bytecode
+      Run the bytecode
+    tests:
+      - name: prints the steps in the right order
+        code: |
+          expected = ["Write the source code", "Compile it to bytecode", "Run the bytecode"]
+          assert output_lines() == expected, f"Expected {expected}, but your program printed {output_lines()!r}."
+    hints:
+      - The first error is a SyntaxError about a string. Which text is missing its closing quote?
+      - Once it runs, compare the order of the printed lines with the expected output. Statements run top to bottom.
+    feedback:
+      - when: { errorType: SyntaxError }
+        message: The file still cannot be compiled, so nothing runs. Every string needs a closing quote before the closing bracket.
+      - when: { outputEquals: "Write the source code\nRun the bytecode\nCompile it to bytecode\n" }
+        message: The syntax error is fixed. Now the lines run in the order they are written - move the Compile line above the Run line.
+    explanation: >-
+      The missing quote is a SyntaxError, so CPython could not compile the file and nothing ran. After fixing
+      it, the program ran top to bottom - which revealed that two lines were in the wrong order.
+
+  - id: parsons-pipeline
+    type: parsons
+    skill: recognition
+    prompt: |
+      Arrange the lines so the program prints how CPython runs a file, in the correct order. One line is a
+      distractor that describes something CPython does not do.
+    solution: |
+      print("CPython reads the source text")
+      print("It checks the grammar of the whole file")
+      print("It compiles the file to bytecode")
+      print("The interpreter loop executes the bytecode")
+    distractors:
+      - print("The CPU executes the source text directly")
+    explanation: >-
+      CPython reads the text, parses the whole file (reporting any SyntaxError), compiles it to bytecode and
+      only then executes the bytecode. The CPU never runs source text directly.
+
+  - id: explain-pipeline
+    type: explain
+    skill: explanation
+    prompt: |
+      Explain to a friend why a missing bracket on the **last** line of a Python file stops the **first** line
+      from printing, while dividing by zero on the last line does not.
+    explanation: Compare your explanation with the model answer and tick each rubric point you covered.
+    rubric:
+      - Says that CPython compiles the whole file to bytecode before executing anything.
+      - Says that a missing bracket is a SyntaxError found during compilation, so no bytecode exists and nothing runs.
+      - Says that dividing by zero is valid grammar, so the file compiles and starts running.
+      - Says that the runtime error happens when that line executes, after earlier lines have already run.
+    modelAnswer: |
+      CPython works in two phases. First it reads and compiles the entire file into bytecode. A missing
+      bracket breaks the grammar, so compilation fails with a SyntaxError and there is no bytecode to run -
+      not even line 1 executes. `10 / 0` is perfectly valid grammar, so the file compiles and execution
+      begins at the top. Lines run one by one, and only when the last line executes does the division fail
+      with ZeroDivisionError. By then the earlier lines have already printed their output.
+
+  # ----- Mastery check (new items, not used in the sections) -----
+  - id: m-predict-nameerror
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What is printed before this program stops?
+    code: |
+      print("Loading")
+      print("Ready")
+      Print("Go")
+      print("Done")
+    answer: |
+      Loading
+      Ready
+    explanation: >-
+      `Print("Go")` is valid grammar, so the file compiles. The compiler does not check whether names exist.
+      Lines 1-2 run, then line 3 raises NameError at runtime because there is no name `Print`.
+    wrongAnswers:
+      - answer: ""
+        feedback: >-
+          A misspelled name is not a SyntaxError. The grammar is fine, so the program compiles and starts; the
+          NameError appears only when line 3 executes.
+      - answer: |
+          Loading
+          Ready
+          Go
+          Done
+        feedback: Python is case-sensitive. `Print` is not the built-in `print`, so line 3 fails.
+      - answer: |
+          Loading
+          Ready
+          Done
+        feedback: An unhandled error stops the program; it does not skip the line and continue.
+
+  - id: m-java-tf
+    type: true-false
+    skill: transfer
+    prompt: |
+      True or false: Java programs are compiled with `javac`, so a Java program is never interpreted.
+    answer: false
+    explanation: >-
+      `javac` compiles Java to JVM bytecode, not to machine code. The Java Virtual Machine then interprets that
+      bytecode and JIT-compiles frequently used parts. Like CPython, it mixes compilation and interpretation.
+
+  - id: m-pypy-mcq
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: |
+      The same `report.py` prints identical results on CPython and on PyPy, but runs five times faster on PyPy
+      because PyPy JIT-compiles the hot loops to machine code. What does this show?
+    explanation: >-
+      The language (Python) defines what the program means; each implementation decides how to run it.
+      Speed and the interpret/compile strategy are properties of the implementation.
+    options:
+      - id: a
+        text: PyPy runs a different language that only looks like Python.
+        feedback: PyPy implements the Python language; that is why the results are identical.
+      - id: b
+        text: "\"Interpreted\" or \"compiled\" is a property of an implementation, not of the Python language."
+        correct: true
+        feedback: Right. One language, several implementations with different strategies.
+      - id: c
+        text: CPython has a bug that makes it slow.
+        feedback: CPython is not wrong, it simply uses a different strategy (bytecode interpretation, with an optional experimental JIT).
+      - id: d
+        text: report.py must have been saved as machine code.
+        feedback: The source file is the same text for both; PyPy produces machine code itself while the program runs.
+
+  - id: m-debug-two-errors
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      Fix this program so that it prints exactly:
+
+      ```text
+      Compiling...
+      Running...
+      ```
+
+      Notice which error you see first, and which one only appears after you fix it.
+    starterCode: |
+      Print("Compiling...")
+      print("Running..."
+    solution: |
+      print("Compiling...")
+      print("Running...")
+    expectedOutput: |
+      Compiling...
+      Running...
+    tests:
+      - name: prints both lines
+        code: |
+          assert output_lines() == ["Compiling...", "Running..."], f"Expected two lines, Compiling... then Running... Your program printed {output_lines()!r}."
+    hints:
+      - The first error is a SyntaxError on line 2. Which bracket is never closed?
+      - After that, a NameError appears on line 1. Python is case-sensitive.
+    feedback:
+      - when: { errorType: SyntaxError }
+        message: The file still cannot be compiled. Close the bracket at the end of line 2.
+      - when: { errorType: NameError }
+        message: The file compiles now and runs until line 1 fails. `Print` must be written `print`.
+    explanation: >-
+      The SyntaxError on line 2 is reported first even though it comes later in the file, because compilation
+      of the whole file happens before execution. Once it compiles, execution reaches line 1 and the NameError
+      appears. Fixing both lets both lines run.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-nameerror, m-java-tf, m-pypy-mcq, m-debug-two-errors]
+
+cheatsheet: |
+  ```text
+  source code (.py text)
+      -> tokenizer + parser      SyntaxError here => nothing runs
+      -> bytecode compiler       produces a code object (cached as __pycache__/*.pyc for imports)
+      -> interpreter loop        runs bytecode top to bottom; runtime errors here
+  ```
+  ```python
+  code = compile(text, "file.py", "exec")   # compile only
+  exec(code)                                # run the code object
+  import dis
+  [i.opname for i in dis.get_instructions(code)]   # inspect bytecode (CPython-specific)
+  ```
+  - Compiler = translate ahead of time · Interpreter = carry out code now · Runtime = support while running
+  - CPython: compile to bytecode, then interpret. PyPy: + JIT. "Interpreted" describes implementations.

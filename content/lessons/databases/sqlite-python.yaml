@@ -1,0 +1,1568 @@
+id: databases.sqlite-python
+concept: databases.sqlite-python
+title: SQL from Python with sqlite3
+subtitle: Connections, parameters, transactions — and why string formatting is never safe
+estimatedMinutes: 55
+reviewedOn: 2026-10-22
+summary: >-
+  Use Python's built-in sqlite3 module the way production code uses any database driver: connect,
+  execute, fetch, commit; let `with con:` manage transactions (it does not close the connection); pass
+  every value as a parameter; and see SQL injection happen — safely, in an in-memory database — before
+  fixing it. Also covers rollback on errors, executemany and sqlite3.Row.
+objectives:
+  - Open a connection, execute statements and fetch results with fetchone, fetchall and iteration.
+  - Explain when changes become permanent, and use commit(), rollback() and `with con:` correctly — knowing that `with con:` does not close the connection.
+  - Pass values with ? and named placeholders, including one-element tuples, and explain why placeholders cannot stand in for table or column names.
+  - Demonstrate how string-formatted SQL enables SQL injection and fix it with parameterised queries.
+  - Group related changes in a transaction so that an error rolls all of them back.
+  - Insert many rows with executemany and read columns by name with sqlite3.Row.
+sources:
+  - title: sqlite3 — DB-API 2.0 interface for SQLite databases
+    url: https://docs.python.org/3/library/sqlite3.html
+    publisher: Python Software Foundation
+    version: "3.14"
+  - title: "contextlib.closing"
+    url: https://docs.python.org/3/library/contextlib.html#contextlib.closing
+    publisher: Python Software Foundation
+  - title: SQL Injection Prevention Cheat Sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+    publisher: OWASP
+  - title: "PEP 249: Python Database API Specification v2.0"
+    url: https://peps.python.org/pep-0249/
+    publisher: Python Software Foundation
+  - title: "SQLite: Transactions"
+    url: https://www.sqlite.org/lang_transaction.html
+    publisher: SQLite
+  - title: "Psycopg 3: Passing parameters to SQL queries"
+    url: https://www.psycopg.org/psycopg3/docs/basic/params.html
+    publisher: Psycopg
+sections:
+  - id: why
+    title: Why the way values reach the database matters
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          You already write SQL. To use it from an application, Python code has to send SQL to the database,
+          pass in values that come from users, and get rows back. The obvious way to pass a value is to paste
+          it into the SQL string. Here is a lookup function written that way:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, api_key TEXT);
+              INSERT INTO users (username, api_key) VALUES
+                  ('ada', 'key-ada-7f3a'), ('linus', 'key-linus-91c2'), ('grace', 'key-grace-04be');
+          """)
+
+          def find_user(username):
+              sql = f"SELECT username, api_key FROM users WHERE username = '{username}' ORDER BY id"
+              return con.execute(sql).fetchall()
+
+          print(find_user("ada"))
+          print(find_user("nobody' OR '1'='1"))
+        expectedOutput: |
+          [('ada', 'key-ada-7f3a')]
+          [('ada', 'key-ada-7f3a'), ('linus', 'key-linus-91c2'), ('grace', 'key-grace-04be')]
+        caption: "Before: one carefully chosen \"username\" returns every user's secret key."
+      - type: markdown
+        body: |
+          Now the same function with one change: the SQL contains a `?` placeholder, and the value travels
+          **separately**, as a parameter:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, api_key TEXT);
+              INSERT INTO users (username, api_key) VALUES
+                  ('ada', 'key-ada-7f3a'), ('linus', 'key-linus-91c2'), ('grace', 'key-grace-04be');
+          """)
+
+          def find_user(username):
+              sql = "SELECT username, api_key FROM users WHERE username = ? ORDER BY id"
+              return con.execute(sql, (username,)).fetchall()
+
+          print(find_user("ada"))
+          print(find_user("nobody' OR '1'='1"))
+        expectedOutput: |
+          [('ada', 'key-ada-7f3a')]
+          []
+        caption: "After: the strange input is just a username that does not exist."
+      - type: markdown
+        body: |
+          That difference is called [SQL injection](glossary:sql-injection), and it has been one of the most
+          damaging classes of web vulnerability for decades. This lesson teaches the `sqlite3` API from the
+          start — connections, cursors, commits, transactions — with the safe habits built in. The same
+          pattern (the [DB-API](glossary:db-api), PEP 249) is used by drivers for PostgreSQL, MySQL and
+          others, so everything here transfers.
+
+  - id: connect-execute
+    title: Connections, cursors and fetching rows
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          - **`sqlite3.connect(path)`** opens (or creates) a database file and returns a **connection**.
+            `":memory:"` gives a private, temporary database that vanishes when the connection closes. (In
+            the browser, files live in a virtual file system and disappear when you reload the page.)
+          - A [cursor](glossary:database-cursor) runs statements and walks through their results:
+            `cur = con.cursor()`, then `cur.execute(sql, parameters)`.
+          - **`con.execute(...)`** is a sqlite3 shortcut that creates a cursor, executes, and returns the
+            cursor — handy, but not part of the DB-API standard.
+          - Read results with **`fetchone()`** (the next row, or `None` when there are no more),
+            **`fetchmany(n)`**, **`fetchall()`** (a list of the remaining rows), or by looping over the cursor.
+          - After a change, **`cur.rowcount`** says how many rows it affected and **`cur.lastrowid`** gives
+            the id of the row just inserted.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          cur = con.cursor()
+          cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT)")
+          cur.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("ada@example.com", "Ada"))
+          print("new id:", cur.lastrowid)
+          cur.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("linus@example.com", "Linus"))
+          print("new id:", cur.lastrowid)
+
+          cur.execute("SELECT id, name FROM users ORDER BY id")
+          print(cur.fetchone())
+          print(cur.fetchone())
+          print(cur.fetchone())
+
+          cur.execute("UPDATE users SET name = upper(name)")
+          print("rows updated:", cur.rowcount)
+          print(con.execute("SELECT name FROM users ORDER BY id").fetchall())
+        expectedOutput: |
+          new id: 1
+          new id: 2
+          (1, 'Ada')
+          (2, 'Linus')
+          None
+          rows updated: 2
+          [('ADA',), ('LINUS',)]
+        annotations:
+          - line: 6
+            text: Two ? placeholders, two values in a tuple. More on parameters below.
+          - line: 7
+            text: The INTEGER PRIMARY KEY was generated by SQLite; lastrowid tells you which one.
+          - line: 14
+            text: No third row, so fetchone() returns None instead of raising an error.
+          - line: 17
+            text: rowcount is the number of rows the UPDATE changed. For SELECT it is -1.
+      - type: markdown
+        body: |
+          Values convert both ways automatically: `None` ↔ NULL, `int` ↔ INTEGER, `float` ↔ REAL,
+          `str` ↔ TEXT, `bytes` ↔ BLOB. (`True` is stored as the integer 1 — SQLite has no separate boolean
+          type.)
+      - type: item
+        ref: mcq-fetch
+
+  - id: commit
+    title: "commit(): when changes become permanent"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          With the default settings, `sqlite3` quietly opens a **transaction** before the first INSERT,
+          UPDATE, DELETE or REPLACE. Your changes are visible on *this* connection straight away, but they are
+          not permanent — and other connections cannot see them — until you call **`con.commit()`**. If the
+          connection closes first, SQLite **rolls the changes back**. No error, no warning: the data is
+          simply gone.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+          from pathlib import Path
+
+          path = Path("commit_demo.db")
+          path.unlink(missing_ok=True)          # start from an empty file on every run
+
+          con = sqlite3.connect(path)
+          con.execute("CREATE TABLE notes (text TEXT)")
+          con.execute("INSERT INTO notes VALUES ('I forgot to commit')")
+          print("in a transaction:", con.in_transaction)
+          print("rows visible here:", len(con.execute("SELECT * FROM notes").fetchall()))
+          con.close()                           # closed without commit()
+
+          con = sqlite3.connect(path)
+          print("rows after reopening:", len(con.execute("SELECT * FROM notes").fetchall()))
+          con.execute("INSERT INTO notes VALUES ('this one is committed')")
+          con.commit()
+          con.close()
+
+          con = sqlite3.connect(path)
+          print("after commit:", con.execute("SELECT text FROM notes").fetchall())
+          con.close()
+        expectedOutput: |
+          in a transaction: True
+          rows visible here: 1
+          rows after reopening: 0
+          after commit: [('this one is committed',)]
+        annotations:
+          - line: 8
+            text: CREATE TABLE is not preceded by an implicit BEGIN, so the table itself was saved straight away.
+          - line: 9
+            text: This INSERT silently opened a transaction.
+          - line: 12
+            text: Closing does not commit. SQLite discards the open transaction.
+          - line: 17
+            text: commit() makes the change durable and visible to other connections.
+      - type: callout
+        variant: note
+        title: "Version note: the autocommit attribute (Python 3.12+)"
+        body: |
+          Python 3.12 added `sqlite3.connect(..., autocommit=...)`. Its default is
+          `sqlite3.LEGACY_TRANSACTION_CONTROL`, the behaviour described above (an implicit BEGIN before
+          INSERT/UPDATE/DELETE/REPLACE, controlled by `isolation_level`). The Python documentation recommends
+          `autocommit=False` for PEP 249 behaviour — a transaction is always open and you commit or roll back
+          explicitly — and says the default will change to `False` in a future release. Either way, the
+          safe habit is the same: commit deliberately, or use `with con:`.
+      - type: item
+        ref: predict-commit
+
+  - id: context-managers
+    title: "with con: manages transactions, not closing"
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A connection is a [context manager](concept:python.context-managers), but **not** the kind you
+          might expect from files. `with open(...)` closes the file; `with con:` does something different:
+
+          - if the block finishes normally, it **commits**;
+          - if the block raises an exception, it **rolls back** and lets the exception continue;
+          - it **does not close** the connection.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE TABLE notes (text TEXT)")
+
+          with con:
+              con.execute("INSERT INTO notes VALUES ('saved')")
+          print(con.execute("SELECT text FROM notes").fetchall())
+
+          try:
+              with con:
+                  con.execute("INSERT INTO notes VALUES ('lost')")
+                  raise ValueError("something went wrong")
+          except ValueError as error:
+              print("caught:", error)
+          print(con.execute("SELECT text FROM notes").fetchall())
+
+          con.close()
+          try:
+              con.execute("SELECT 1")
+          except sqlite3.ProgrammingError as error:
+              print("after close():", error)
+        expectedOutput: |
+          [('saved',)]
+          caught: something went wrong
+          [('saved',)]
+          after close(): Cannot operate on a closed database.
+        annotations:
+          - line: 8
+            text: The block committed, and the connection is still open — we can keep querying it.
+          - line: 13
+            text: The exception makes `with con:` roll back the 'lost' insert, then the exception propagates.
+          - line: 18
+            text: Only close() closes the connection.
+      - type: markdown
+        body: |
+          To get both behaviours — a transaction **and** a connection that is closed at the end — combine
+          `with con:` with [`contextlib.closing`](https://docs.python.org/3/library/contextlib.html#contextlib.closing),
+          which calls `close()` when its block ends:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+          from contextlib import closing
+
+          with closing(sqlite3.connect(":memory:")) as con:
+              with con:                                  # transaction: commit or roll back
+                  con.execute("CREATE TABLE t (x INTEGER)")
+                  con.execute("INSERT INTO t VALUES (?)", (1,))
+              print(con.execute("SELECT x FROM t").fetchall())
+
+          try:
+              con.execute("SELECT 1")
+          except sqlite3.ProgrammingError as error:
+              print("outside:", error)
+        expectedOutput: |
+          [(1,)]
+          outside: Cannot operate on a closed database.
+        annotations:
+          - line: 4
+            text: closing() turns any object with a close() method into a context manager that closes it.
+      - type: item
+        ref: predict-with-closes
+
+  - id: parameters
+    title: "Parameters: ? and :name placeholders"
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          A [parameterised query](glossary:parameterized-query) contains placeholders where values go, and
+          the values are passed as a separate argument. `sqlite3` supports two styles:
+
+          | Style | SQL | Parameters |
+          |---|---|---|
+          | qmark | `WHERE email = ? AND active = ?` | a tuple or list, in order: `(email, 1)` |
+          | named | `WHERE email = :email AND active = :active` | a dict: `{"email": email, "active": 1}` |
+
+          Placeholders stand for **values only**, so they work anywhere a literal value could appear —
+          WHERE conditions, VALUES lists, SET clauses, LIMIT.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category TEXT, price INTEGER);
+              INSERT INTO products (name, category, price) VALUES
+                  ('Notebook', 'stationery', 4), ('Desk lamp', 'home', 24),
+                  ('Mug', 'home', 8), ('Headphones', 'electronics', 59);
+          """)
+
+          qmark = "SELECT name FROM products WHERE category = ? AND price < ? ORDER BY id"
+          print(con.execute(qmark, ("home", 20)).fetchall())
+
+          named = "SELECT name FROM products WHERE category = :cat AND price < :max ORDER BY id"
+          print(con.execute(named, {"cat": "home", "max": 30}).fetchall())
+
+          wanted = ["Mug", "Headphones", "Kettle"]
+          placeholders = ", ".join("?" for _ in wanted)          # "?, ?, ?"
+          sql = f"SELECT name, price FROM products WHERE name IN ({placeholders}) ORDER BY id"
+          print(con.execute(sql, wanted).fetchall())
+        expectedOutput: |
+          [('Mug',)]
+          [('Desk lamp',), ('Mug',)]
+          [('Mug', 8), ('Headphones', 59)]
+        annotations:
+          - line: 12
+            text: Values in a tuple, matched to the ? marks left to right.
+          - line: 15
+            text: Named placeholders take a dict. Extra keys are ignored; a missing key is an error.
+          - line: 18
+            text: "For IN lists, generate one ? per value. Only placeholders go into the SQL text — the values are still bound separately."
+      - type: callout
+        variant: warning
+        title: "One value? Still a tuple: (email,)"
+        body: |
+          Parentheses alone do not make a tuple — the comma does. `(email)` is just the string, and a string is
+          a sequence of characters, so sqlite3 sees one parameter **per character**:
+
+          ```text
+          sqlite3.ProgrammingError: Incorrect number of bindings supplied.
+          The current statement uses 1, and there are 15 supplied.
+          ```
+
+          Write `(email,)` or `[email]`.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE TABLE users (email TEXT)")
+          email = "ada@example.com"
+          con.execute("SELECT * FROM users WHERE email = ?", (email))
+        expectError: ProgrammingError
+        caption: Run it to see the error, then add the missing comma.
+      - type: markdown
+        body: |
+          **Named placeholders need a dict.** Since Python 3.14, passing a tuple to `:name` placeholders raises
+          `ProgrammingError: Binding 1 (':email') is a named parameter, but you supplied a sequence...`
+          (Python 3.12 and 3.13 only issued a DeprecationWarning; older versions accepted it.)
+
+          **Placeholders cannot be identifiers.** A table name, a column name, `ASC`/`DESC` or any other piece
+          of SQL syntax cannot be a parameter. `SELECT * FROM ?` is a syntax error. Worse, `ORDER BY ?`
+          *runs* — it sorts by the constant string `'price'`, which means not sorting at all:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price INTEGER);
+              INSERT INTO products (name, price) VALUES ('Lamp', 24), ('Pen', 2), ('Mug', 8);
+          """)
+
+          print(con.execute("SELECT name FROM products ORDER BY ?", ("price",)).fetchall())
+
+          SORTABLE = {"price": "price", "name": "name"}        # allow-list of real column names
+
+          def products_sorted_by(column):
+              if column not in SORTABLE:
+                  raise ValueError(f"cannot sort by {column!r}")
+              return con.execute(f"SELECT name FROM products ORDER BY {SORTABLE[column]}, id").fetchall()
+
+          print(products_sorted_by("price"))
+          try:
+              products_sorted_by("price; DROP TABLE products")
+          except ValueError as error:
+              print(error)
+        expectedOutput: |
+          [('Lamp',), ('Pen',), ('Mug',)]
+          [('Pen',), ('Mug',), ('Lamp',)]
+          cannot sort by 'price; DROP TABLE products'
+        annotations:
+          - line: 9
+            text: "No error, but no sorting either: every row has the same sort key, the text 'price'."
+          - line: 16
+            text: The f-string inserts only a value taken from our own dictionary — never the user's text.
+      - type: item
+        ref: tf-placeholder-table
+      - type: item
+        ref: mcq-single-tuple
+
+  - id: sql-injection
+    title: SQL injection — see it, then stop it
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          Look again at the "why" example. The f-string produced this SQL text:
+
+          ```sql
+          SELECT username, api_key FROM users WHERE username = 'nobody' OR '1'='1' ORDER BY id
+          ```
+
+          The attacker's quote **closed the string literal early**, and the rest of their input became SQL
+          *code*: `OR '1'='1'` is true for every row. The database did exactly what the text said. Step through
+          both paths:
+      - type: visualization
+        component: step-diagram
+        title: String formatting versus parameters
+        caption: The top path pastes input into SQL text; the bottom path compiles the SQL first and binds the input as data.
+        props:
+          width: 760
+          height: 280
+          nodes:
+            - { id: input, label: User input, x: 90, y: 140, shape: actor }
+            - { id: fstring, label: f-string SQL, x: 290, y: 60 }
+            - { id: parser, label: SQL parser, x: 480, y: 60 }
+            - { id: leak, label: All rows returned, x: 670, y: 60, shape: pill }
+            - { id: template, label: "SQL text with ?", x: 290, y: 220 }
+            - { id: prepared, label: Compiled statement, x: 480, y: 220 }
+            - { id: safe, label: "No match: []", x: 670, y: 220, shape: pill }
+          edges:
+            - { id: in-f, from: input, to: fstring, label: pasted in }
+            - { id: f-p, from: fstring, to: parser }
+            - { id: p-leak, from: parser, to: leak }
+            - { id: t-p, from: template, to: prepared, label: parsed first }
+            - { id: in-p, from: input, to: prepared, label: bound as data }
+            - { id: p-safe, from: prepared, to: safe }
+          steps:
+            - title: The input arrives
+              body: A login form, URL or API field delivers text the attacker controls.
+              active: [input]
+              payload: "nobody' OR '1'='1"
+            - title: "Unsafe: the input is pasted into the SQL text"
+              body: The f-string has no idea which characters are data and which are SQL.
+              active: [input, in-f, fstring]
+              payload: |
+                f"... WHERE username = '{username}' ORDER BY id"
+                → SELECT username, api_key FROM users WHERE username = 'nobody' OR '1'='1' ORDER BY id
+            - title: The parser reads the input as code
+              body: The quote after `nobody` ends the string literal. `OR` is now a keyword and `'1'='1'` a second condition.
+              active: [fstring, f-p, parser]
+              payload: |
+                username = 'nobody'   OR   '1' = '1'
+                └─ string literal ┘  keyword └ always TRUE ┘
+            - title: Every row matches
+              body: "`FALSE OR TRUE` is TRUE for every user, so the query returns every username and API key."
+              active: [parser, p-leak, leak]
+              payload: |
+                [('ada', 'key-ada-7f3a'), ('linus', 'key-linus-91c2'), ('grace', 'key-grace-04be')]
+            - title: "Safe: the SQL is compiled before any value is seen"
+              body: The statement text contains only a placeholder. SQLite parses and compiles it into a program in which the placeholder is a slot for one value.
+              active: [template, t-p, prepared]
+              payload: "SELECT username, api_key FROM users WHERE username = ? ORDER BY id"
+            - title: The value is bound as data
+              body: The input goes into the slot as a single text value. It is never parsed, so quotes and keywords inside it mean nothing.
+              active: [input, in-p, prepared]
+              payload: "parameters: (\"nobody' OR '1'='1\",)"
+            - title: Compared as one string
+              body: No user is literally called `nobody' OR '1'='1`, so the result is empty.
+              active: [prepared, p-safe, safe]
+              payload: "[]"
+      - type: markdown
+        body: |
+          The same trick defeats a login check. With a comment marker `--`, an attacker removes the password
+          condition entirely:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.executescript("""
+              CREATE TABLE logins (username TEXT PRIMARY KEY, password_hash TEXT);
+              INSERT INTO logins VALUES ('ada', 'e3b0c442');
+          """)
+
+          def login_unsafe(username, password_hash):
+              sql = (f"SELECT username FROM logins "
+                     f"WHERE username = '{username}' AND password_hash = '{password_hash}'")
+              return con.execute(sql).fetchone()
+
+          def login_safe(username, password_hash):
+              sql = "SELECT username FROM logins WHERE username = ? AND password_hash = ?"
+              return con.execute(sql, (username, password_hash)).fetchone()
+
+          print(login_unsafe("ada' --", "anything"))
+          print(login_safe("ada' --", "anything"))
+        expectedOutput: |
+          ('ada',)
+          None
+        caption: "`--` starts a SQL comment, so everything after the attacker's quote — including the password check — is ignored."
+      - type: markdown
+        body: |
+          **Why parameters are safe.** With a parameterised query, the SQL text is fixed by the programmer and
+          compiled first; values are attached to the compiled statement afterwards. A value can only ever be
+          a value — it can never close a string, add a condition or start a comment.
+
+          **What does not work:**
+
+          - **Escaping quotes yourself** (`name.replace("'", "''")`) — it is easy to miss a case (numbers,
+            identifiers, other dialects' escape rules), and every developer has to remember it every time.
+          - **"Trusted" values** — values from your own database or config can still contain quotes (`O'Brien`)
+            and may have been influenced by users earlier ("second-order" injection). Parameterise everything.
+          - **Relying on one statement per call.** `execute()` refuses to run two statements
+            (`You can only execute one statement at a time.`), so `'; DROP TABLE users; --` fails here — but the
+            `OR '1'='1` attack needs only one statement, `executescript()` runs many, and other drivers differ.
+
+          Parameters are the primary defence ([OWASP](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html));
+          add least-privilege database accounts and input validation as extra layers — see
+          [input handling](concept:security.input-handling).
+      - type: item
+        ref: predict-injection
+
+  - id: transactions
+    title: Transactions and rollback
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Some changes only make sense together. Transferring money is two UPDATEs — credit one account, debit
+          the other — and if the second fails, the first must be undone. A **transaction** groups statements
+          so they take effect **all together or not at all** (the "A" — atomicity — of ACID, covered fully in
+          [transactions and isolation](concept:databases.transactions)).
+
+          Here the `accounts` table has a `CHECK (balance >= 0)` constraint. Watch what happens when a transfer
+          would overdraw an account — first with each statement committed separately, then inside one
+          `with con:` block:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          SCHEMA = """
+              CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT,
+                                     balance INTEGER NOT NULL CHECK (balance >= 0));
+              INSERT INTO accounts VALUES (1, 'Ada', 100), (2, 'Linus', 50);
+          """
+          CREDIT = "UPDATE accounts SET balance = balance + ? WHERE id = ?"
+          DEBIT = "UPDATE accounts SET balance = balance - ? WHERE id = ?"
+
+          def transfer_unsafe(con, src, dst, amount):
+              con.execute(CREDIT, (amount, dst)); con.commit()
+              con.execute(DEBIT, (amount, src)); con.commit()
+
+          def transfer(con, src, dst, amount):
+              with con:                                   # one transaction for both updates
+                  con.execute(CREDIT, (amount, dst))
+                  con.execute(DEBIT, (amount, src))
+
+          for fn in (transfer_unsafe, transfer):
+              con = sqlite3.connect(":memory:")
+              con.executescript(SCHEMA)
+              try:
+                  fn(con, 2, 1, 500)                     # Linus only has 50
+              except sqlite3.IntegrityError as error:
+                  print(fn.__name__, "failed:", error)
+              print("  balances:", con.execute("SELECT owner, balance FROM accounts ORDER BY id").fetchall())
+        expectedOutput: |
+          transfer_unsafe failed: CHECK constraint failed: balance >= 0
+            balances: [('Ada', 600), ('Linus', 50)]
+          transfer failed: CHECK constraint failed: balance >= 0
+            balances: [('Ada', 100), ('Linus', 50)]
+        caption: The unsafe version credited Ada 500 that never left Linus's account. The transaction undid the credit.
+        annotations:
+          - line: 12
+            text: The credit is committed before the debit is even attempted.
+          - line: 16
+            text: Both updates share one transaction; the CHECK failure rolls back the credit too.
+      - type: markdown
+        body: |
+          Step through the safe version to see the order of events: the exception leaves the `with` block,
+          the context manager rolls back, and execution continues in the `except` clause.
+      - type: visualization
+        component: python-tracer
+        title: An exception inside with con
+        caption: Watch line 9 raise, then the jump to the except clause. The final balances are unchanged.
+        props:
+          code: |
+            import sqlite3
+            con = sqlite3.connect(":memory:")
+            con.execute("CREATE TABLE acct (id INTEGER PRIMARY KEY, balance INTEGER CHECK (balance >= 0))")
+            con.execute("INSERT INTO acct VALUES (1, 100), (2, 50)")
+            con.commit()
+            try:
+                with con:
+                    con.execute("UPDATE acct SET balance = balance + 500 WHERE id = 1")
+                    con.execute("UPDATE acct SET balance = balance - 500 WHERE id = 2")
+                    print("both updates done")
+            except sqlite3.IntegrityError as error:
+                print("rolled back:", error)
+            rows = con.execute("SELECT balance FROM acct ORDER BY id").fetchall()
+            print(rows)
+      - type: markdown
+        body: |
+          Without `with con:`, write the same thing by hand — and always roll back on failure, or the
+          half-finished transaction stays open on the connection:
+
+          ```python
+          try:
+              con.execute(CREDIT, (amount, dst))
+              con.execute(DEBIT, (amount, src))
+              con.commit()
+          except Exception:
+              con.rollback()
+              raise
+          ```
+
+          Keep transactions **short**: SQLite allows only one writer at a time, so a long-open write
+          transaction makes other connections wait (and eventually fail with `database is locked`).
+      - type: item
+        ref: predict-rollback
+
+  - id: batches-rows
+    title: executemany and sqlite3.Row
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **`executemany(sql, rows)`** runs one INSERT/UPDATE/DELETE for every parameter tuple (or dict) in
+          `rows` — a list, or any iterable such as a generator. Put the whole batch in **one transaction**:
+          on disk, each commit waits for the data to reach storage, so one commit for 10,000 rows is far
+          faster than 10,000 commits.
+
+          **`con.row_factory = sqlite3.Row`** makes every fetched row an `sqlite3.Row`, which you can index by
+          position *or* by column name (case-insensitively), and turn into a dict.
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          con = sqlite3.connect(":memory:")
+          con.execute("CREATE TABLE scores (player TEXT, points INTEGER)")
+          rows = [("ada", 42), ("linus", 37), ("grace", 51)]
+          with con:
+              con.executemany("INSERT INTO scores (player, points) VALUES (?, ?)", rows)
+              con.executemany("INSERT INTO scores VALUES (:player, :points)",
+                              [{"player": "kim", "points": 12}])
+
+          con.row_factory = sqlite3.Row
+          for row in con.execute("SELECT player, points FROM scores ORDER BY points DESC"):
+              print(row["player"], row["POINTS"], row[1])
+          best = con.execute("SELECT player, points FROM scores ORDER BY points DESC").fetchone()
+          print(best.keys(), dict(best))
+        expectedOutput: |
+          grace 51 51
+          ada 42 42
+          linus 37 37
+          kim 12 12
+          ['player', 'points'] {'player': 'grace', 'points': 51}
+        annotations:
+          - line: 6
+            text: One transaction for the whole batch — committed once when the block ends.
+          - line: 8
+            text: executemany works with named placeholders too, given a list of dicts.
+          - line: 13
+            text: By name (any case) or by position.
+      - type: callout
+        variant: tip
+        title: Your own row factory
+        depth: deep
+        body: |
+          `row_factory` can be any function `(cursor, row) -> object`. For plain dicts:
+
+          ```python
+          def dict_factory(cursor, row):
+              return {col[0]: value for col, value in zip(cursor.description, row)}
+          con.row_factory = dict_factory
+          ```
+
+          `sqlite3.Row` is usually the better choice: it is implemented in C, uses little memory, and still
+          behaves like a tuple when you need one.
+
+  - id: under-the-hood
+    title: Under the hood
+    kind: internals
+    depth: deep
+    blocks:
+      - type: markdown
+        body: |
+          **What a parameterised query does in SQLite.** `execute(sql, params)` asks SQLite to *prepare* the
+          SQL text — parse and compile it into a bytecode program with numbered parameter slots — then *binds*
+          each Python value into a slot with the matching type, then *steps* the program to produce rows.
+          Because parsing happens before binding, a bound value can never change the statement's structure.
+          The module also keeps a cache of recently prepared statements (`cached_statements`, 128 by
+          default), so running the same SQL text with different parameters skips the compile step — one more
+          reason to keep the SQL text constant and vary only the parameters.
+
+          **The DB-API (PEP 249).** `connect()`, `cursor()`, `execute()`, `fetch*()`, `commit()`,
+          `rollback()` and `close()` come from the standard every Python driver follows. What varies is the
+          placeholder style, published as the module's `paramstyle`:
+      - type: code
+        runnable: true
+        code: |
+          import sqlite3
+
+          print(sqlite3.apilevel, sqlite3.paramstyle)
+        expectedOutput: |
+          2.0 qmark
+        caption: sqlite3 advertises the qmark style (?) and also accepts named (:name) placeholders.
+      - type: code
+        language: python
+        status: illustrative
+        code: |
+          import psycopg   # third-party PostgreSQL driver: pip install "psycopg[binary]"
+
+          with psycopg.connect("postgresql://app:secret@localhost:5432/shop") as conn:
+              with conn.cursor() as cur:
+                  cur.execute("SELECT id, name FROM users WHERE email = %s", (email,))   # safe: a parameter
+                  row = cur.fetchone()
+                  # cur.execute("SELECT ... WHERE email = '%s'" % email)               # UNSAFE: Python formatting
+        caption: >-
+          Not run here (it needs a PostgreSQL server and a third-party package). psycopg uses %s placeholders,
+          which look like Python's % formatting but are parameters — pass the values as the second argument,
+          never with the % operator. Note that psycopg's connection context manager also closes the
+          connection, unlike sqlite3's.
+      - type: markdown
+        body: |
+          **Concurrency.** SQLite allows many readers but only **one writer at a time** per database file. A
+          connection that wants to write while another holds the write lock waits up to `timeout` seconds
+          (default 5.0, a `connect()` argument) and then raises `OperationalError: database is locked`. Write-
+          ahead logging (`PRAGMA journal_mode=WAL`) lets readers keep reading while a writer writes. Keep write
+          transactions short.
+
+          **Dates and other types.** Python 3.12 deprecated sqlite3's default adapters and converters (such as
+          the automatic `datetime` handling). Store timestamps explicitly, for example as ISO 8601 strings
+          (`dt.isoformat()`), or register your own adapters following the documentation's recipes.
+
+  - id: mistakes
+    title: Common mistakes and how to debug them
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          | Symptom | Likely cause | Fix |
+          |---|---|---|
+          | `ProgrammingError: Incorrect number of bindings supplied. The current statement uses 1, and there are 15 supplied.` | `(email)` is a string, so each character became a parameter | Use a one-element tuple: `(email,)`. |
+          | `ProgrammingError: Binding 1 (':email') is a named parameter, but you supplied a sequence ...` | `:name` placeholders with a tuple (an error since Python 3.14) | Pass a dict, or switch to `?`. |
+          | `OperationalError: near "?": syntax error` | A placeholder used for a table or column name | Choose identifiers from an allow-list. |
+          | `ORDER BY ?` does not sort | The placeholder became a constant value | Allow-list the column name. |
+          | Writes vanish after a restart | Never committed; `close()` does not commit | `con.commit()` or `with con:`. |
+          | `ProgrammingError: Cannot operate on a closed database.` | Used after `close()` (or after a `closing()` block) | Keep the connection open while you use it. |
+          | `ProgrammingError: You can only execute one statement at a time.` | Several statements passed to `execute()` | One `execute()` per statement; `executescript()` only for trusted scripts. |
+          | `IntegrityError: UNIQUE constraint failed: users.email` | Duplicate value in a UNIQUE column | Catch it and report "already registered", or use an upsert. |
+          | `OperationalError: database is locked` | Another connection holds a long write transaction | Commit sooner; keep transactions short; WAL mode; a `timeout`. |
+          | A query works for "Ada" but crashes for "O'Brien" | The value is pasted into the SQL text | Use parameters — this crash is also an injection hole. |
+      - type: item
+        ref: debug-login-injection
+
+  - id: practice
+    title: Practice
+    kind: practice
+    blocks:
+      - type: markdown
+        body: |
+          The checks call your functions with fresh databases and with hostile inputs, and they inspect your
+          code: building SQL with f-strings, `%` or `+` fails the exercise even when the output looks right.
+      - type: item
+        ref: code-user-repo
+      - type: item
+        ref: parsons-batch-insert
+
+  - id: summary
+    title: Summary
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - `con = sqlite3.connect(path)`; `con.execute(sql, params)` returns a cursor; read rows with
+            `fetchone()` (None at the end), `fetchall()` or a for loop. `lastrowid` and `rowcount` describe changes.
+          - Changes are not permanent until `commit()`; `close()` does **not** commit.
+          - `with con:` commits on success and rolls back on an exception — it does **not** close. Add
+            `contextlib.closing(...)` to close.
+          - Always pass values as parameters: `?` with a tuple (`(x,)` for one value) or `:name` with a dict.
+            Placeholders are for values only; allow-list identifiers.
+          - String-formatted SQL lets input become code (SQL injection). Parameters make it impossible.
+          - Group related changes in one transaction so an error undoes all of them.
+          - `executemany()` for batches (one transaction); `con.row_factory = sqlite3.Row` for access by name.
+          - The same DB-API pattern applies to other drivers; psycopg's `%s` is a placeholder, not `%` formatting.
+      - type: callout
+        variant: interview
+        title: Interview angle
+        body: |
+          "What is SQL injection and how do you prevent it?" — show a string-built query, an input such as
+          `' OR '1'='1`, the SQL it produces, and the parameterised fix; explain that values are bound after
+          the statement is compiled. Follow-ups: why escaping is not enough, why placeholders cannot be used
+          for table names, and the commit/rollback life cycle of a connection.
+
+items:
+  - id: mcq-fetch
+    type: mcq
+    skill: recognition
+    prompt: "`cur.execute(\"SELECT name FROM users WHERE id = ?\", (999,))` matches no rows. What does `cur.fetchone()` return?"
+    explanation: >-
+      fetchone() returns the next row as a tuple, or None when there are no more rows. It does not raise, so
+      code typically checks `if row is None:`.
+    options:
+      - id: a
+        text: "`None`"
+        correct: true
+        feedback: Right — "no row" is None, so always check before indexing into the result.
+      - id: b
+        text: "An empty tuple `()`"
+        feedback: An empty tuple would be a row with zero columns. No row at all is None.
+      - id: c
+        text: "An empty list `[]`"
+        feedback: That is what fetchall() returns when there are no rows. fetchone() returns None.
+      - id: d
+        text: It raises a LookupError.
+        feedback: Finding nothing is a normal outcome, not an error, for fetchone().
+
+  - id: predict-commit
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import sqlite3
+      from pathlib import Path
+
+      path = Path("predict_commit.db")
+      path.unlink(missing_ok=True)
+
+      con = sqlite3.connect(path)
+      con.execute("CREATE TABLE t (x INTEGER)")
+      con.execute("INSERT INTO t VALUES (1)")
+      con.execute("INSERT INTO t VALUES (2)")
+      con.commit()
+      con.execute("INSERT INTO t VALUES (3)")
+      con.close()
+
+      con = sqlite3.connect(path)
+      print(con.execute("SELECT x FROM t ORDER BY x").fetchall())
+      con.close()
+    answer: "[(1,), (2,)]"
+    explanation: >-
+      The first two inserts were committed. The third insert opened a new transaction that was never
+      committed, and close() discards it, so after reopening only 1 and 2 are there.
+    wrongAnswers:
+      - answer: "[(1,), (2,), (3,)]"
+        feedback: close() does not commit. The third insert was still in an open transaction and was rolled back.
+      - answer: "[]"
+        feedback: commit() after the second insert made rows 1 and 2 permanent; only row 3 was lost.
+
+  - id: predict-with-closes
+    type: predict-output
+    skill: prediction
+    prompt: What does this print?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      with con:
+          con.execute("CREATE TABLE t (x INTEGER)")
+          con.execute("INSERT INTO t VALUES (1)")
+      with con:
+          con.execute("INSERT INTO t VALUES (2)")
+      print(con.execute("SELECT x FROM t ORDER BY x").fetchall())
+    answer: "[(1,), (2,)]"
+    explanation: >-
+      Each `with con:` block commits when it ends but leaves the connection open, so the second block and the
+      final SELECT work normally on the same in-memory database.
+    wrongAnswers:
+      - answer: "sqlite3.ProgrammingError: Cannot operate on a closed database."
+        feedback: "`with con:` is not like `with open(...)`: it commits or rolls back, but it never closes the connection."
+      - answer: "[(1,)]"
+        feedback: The second block also commits when it ends, so row 2 is saved too.
+
+  - id: tf-placeholder-table
+    type: true-false
+    skill: recognition
+    prompt: >-
+      True or false: to let users choose which table to search, you can safely write
+      `con.execute("SELECT * FROM ?", (table_name,))`.
+    answer: false
+    explanation: >-
+      Placeholders bind values, not identifiers, so `FROM ?` is a syntax error (`near "?": syntax error`).
+      Map the user's choice to a known table name from an allow-list in your code, and insert only that
+      known name into the SQL.
+
+  - id: mcq-single-tuple
+    type: mcq
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      This line raises `ProgrammingError: Incorrect number of bindings supplied. The current statement uses
+      1, and there are 5 supplied.`
+
+      ```python
+      con.execute("SELECT * FROM users WHERE name = ?", ("Grace"))
+      ```
+
+      Why 5?
+    explanation: >-
+      `("Grace")` is just the string "Grace" — parentheses do not make a tuple, the comma does. A string is a
+      sequence of 5 characters, so sqlite3 treats it as 5 parameters. Write `("Grace",)`.
+    options:
+      - id: a
+        text: "`(\"Grace\")` is a string, not a tuple, so each of its 5 characters counts as a parameter."
+        correct: true
+        feedback: Exactly. Add a comma — `("Grace",)` — to make a one-element tuple.
+      - id: b
+        text: The users table has 5 columns.
+        feedback: The count refers to parameters supplied, not to columns in the table.
+      - id: c
+        text: SQLite counts the letters in the column name.
+        feedback: It is the parameter value being split into characters, not the column name.
+      - id: d
+        text: The query needs 5 question marks.
+        feedback: The query needs exactly one value; the problem is how that value is packaged.
+
+  - id: predict-injection
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: The table has 5 products (one has a NULL category). What does this print?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category TEXT);
+          INSERT INTO products (name, category) VALUES ('Pen', 'office'), ('Lamp', 'home'),
+              ('Mug', 'home'), ('Kite', 'toys'), ('Gift card', NULL);
+      """)
+
+      def products_in(category):
+          sql = f"SELECT name FROM products WHERE category = '{category}' ORDER BY id"
+          return con.execute(sql).fetchall()
+
+      print(len(products_in("garden")), len(products_in("x' OR 'a'='a")))
+    answer: "0 5"
+    explanation: >-
+      "garden" matches nothing. The second input closes the quote early, producing
+      `WHERE category = 'x' OR 'a'='a'`. `'a'='a'` is TRUE for every row — even the one with a NULL category,
+      because `UNKNOWN OR TRUE` is TRUE — so all 5 products are returned.
+    wrongAnswers:
+      - answer: "0 0"
+        feedback: That would be true with parameters. Here the input is pasted into the SQL, so `OR 'a'='a'` becomes part of the condition.
+      - answer: "0 4"
+        feedback: "For the NULL category row the condition is `UNKNOWN OR TRUE`, which is TRUE, so that row is returned too."
+      - answer: "0 1"
+        feedback: The injected `OR 'a'='a'` is true for every row, not just one.
+
+  - id: predict-rollback
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.execute("CREATE TABLE tags (name TEXT UNIQUE)")
+      con.execute("INSERT INTO tags VALUES ('python')")
+      con.commit()
+      try:
+          with con:
+              con.execute("INSERT INTO tags VALUES ('sql')")
+              con.execute("INSERT INTO tags VALUES ('python')")
+              con.execute("INSERT INTO tags VALUES ('git')")
+      except sqlite3.IntegrityError:
+          pass
+      print(con.execute("SELECT name FROM tags ORDER BY name").fetchall())
+    answer: "[('python',)]"
+    explanation: >-
+      The duplicate 'python' violates UNIQUE and raises IntegrityError. `with con:` then rolls back the whole
+      transaction — including the 'sql' insert that had already succeeded — and 'git' never runs. Only the
+      committed 'python' row remains.
+    wrongAnswers:
+      - answer: "[('python',), ('sql',)]"
+        feedback: The 'sql' insert was part of the same transaction, so the rollback undid it as well.
+      - answer: "[('git',), ('python',), ('sql',)]"
+        feedback: The exception stops the block at the duplicate insert, so 'git' is never executed — and the rest is rolled back.
+      - answer: "[]"
+        feedback: The first 'python' row was committed before the with block began, so the rollback does not touch it.
+
+  - id: code-user-repo
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: |
+      Write two functions for a `users` table:
+
+      - `add_user(con, email, name)` inserts a user, **commits**, and returns the new row's id;
+      - `find_user(con, email)` returns the tuple `(id, email, name)` for that email, or `None`.
+
+      Use parameters for every value. The checks use fresh databases, a name containing an apostrophe, and
+      injection attempts.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+
+      def add_user(con, email, name):
+          """Insert a user, commit, and return the new row's id."""
+          ...
+
+      def find_user(con, email):
+          """Return (id, email, name) for this email, or None."""
+          ...
+
+      new_id = add_user(con, "ada@example.com", "Ada")
+      add_user(con, "linus@example.com", "Linus")
+      print(new_id, find_user(con, "ada@example.com"))
+      print(find_user(con, "nobody@example.com"))
+      print(find_user(con, "x' OR '1'='1"))
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+
+      def add_user(con, email, name):
+          """Insert a user, commit, and return the new row's id."""
+          with con:
+              cur = con.execute("INSERT INTO users (email, name) VALUES (?, ?)", (email, name))
+          return cur.lastrowid
+
+      def find_user(con, email):
+          """Return (id, email, name) for this email, or None."""
+          return con.execute("SELECT id, email, name FROM users WHERE email = ?", (email,)).fetchone()
+
+      new_id = add_user(con, "ada@example.com", "Ada")
+      add_user(con, "linus@example.com", "Linus")
+      print(new_id, find_user(con, "ada@example.com"))
+      print(find_user(con, "nobody@example.com"))
+      print(find_user(con, "x' OR '1'='1"))
+    expectedOutput: |
+      1 (1, 'ada@example.com', 'Ada')
+      None
+      None
+    tests:
+      - name: add_user returns the id and find_user finds the row
+        code: |
+          import sqlite3
+          t = sqlite3.connect(":memory:")
+          t.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+          first = add_user(t, "grace@example.com", "Grace")
+          second = add_user(t, "alan@example.com", "Alan")
+          assert (first, second) == (1, 2), f"add_user should return the new ids 1 and 2, but returned {first!r} and {second!r}. Use cur.lastrowid."
+          got = find_user(t, "alan@example.com")
+          assert got == (2, "alan@example.com", "Alan"), f"find_user returned {got!r}; expected (2, 'alan@example.com', 'Alan')."
+      - name: find_user returns None for unknown emails
+        code: |
+          import sqlite3
+          t = sqlite3.connect(":memory:")
+          t.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+          got = find_user(t, "nobody@example.com")
+          assert got is None, f"find_user should return None when no user matches, but returned {got!r}. fetchone() gives None for no row."
+      - name: apostrophes and injection attempts are just data
+        code: |
+          import sqlite3
+          t = sqlite3.connect(":memory:")
+          t.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+          add_user(t, "siobhan@example.com", "Siobhán O'Brien")
+          add_user(t, "linus@example.com", "Linus")
+          got = find_user(t, "siobhan@example.com")
+          assert got == (1, "siobhan@example.com", "Siobhán O'Brien"), f"A name with an apostrophe must be stored unchanged; got {got!r}."
+          for attack in ["x' OR '1'='1", "' OR 1=1 --", "linus@example.com' --"]:
+              leaked = find_user(t, attack)
+              assert leaked is None, f"find_user({attack!r}) returned {leaked!r}. Pass the email as a parameter so it cannot change the SQL."
+      - name: add_user commits
+        code: |
+          import sqlite3
+          from pathlib import Path
+          path = Path("test_user_repo.db")
+          path.unlink(missing_ok=True)
+          t = sqlite3.connect(path)
+          t.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL)")
+          add_user(t, "kim@example.com", "Kim")
+          t.close()
+          t = sqlite3.connect(path)
+          rows = t.execute("SELECT email FROM users").fetchall()
+          t.close()
+          assert rows == [("kim@example.com",)], "After add_user, closing and reopening the database lost the user. Commit inside add_user (for example with `with con:`)."
+      - name: no SQL built with string formatting
+        code: |
+          import ast, re
+          SQL = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|WHERE|VALUES)\b", re.IGNORECASE)
+          def text_of(node):
+              return " ".join(c.value for c in ast.walk(node) if isinstance(c, ast.Constant) and isinstance(c.value, str))
+          for node in ast.walk(ast.parse(source)):
+              if isinstance(node, ast.JoinedStr) and SQL.search(text_of(node)):
+                  raise AssertionError("An f-string is building SQL. Use ? placeholders and pass the values as a tuple.")
+              if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)) and SQL.search(text_of(node)):
+                  raise AssertionError("SQL is built with % or + on strings. Use ? placeholders and pass the values separately.")
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format" and SQL.search(text_of(node.func.value)):
+                  raise AssertionError("str.format() is building SQL. Use ? placeholders and pass the values separately.")
+    hints:
+      - "Insert with placeholders: `con.execute(\"INSERT INTO users (email, name) VALUES (?, ?)\", (email, name))`."
+      - "`execute` returns a cursor; its `lastrowid` is the new id. Wrap the insert in `with con:` so it is committed."
+      - "For the lookup, remember the comma in a one-element tuple: `(email,)`, and return `.fetchone()`."
+    feedback:
+      - when: { errorMessageContains: "Incorrect number of bindings" }
+        message: "The number of values doesn't match the ? marks. For a single value, write a one-element tuple with a comma: (email,)."
+      - when: { outputContains: "None\n(1, 'ada@example.com', 'Ada')" }
+        message: The injection input on the last line returned a real user. Pass the email as a parameter instead of putting it into the SQL text.
+      - when: { codeContains: "f\"SELECT" }
+        message: Building SQL with an f-string is exactly what this exercise forbids. Use ? placeholders.
+    explanation: >-
+      Both functions keep the SQL text constant and pass the values separately, so names like O'Brien and
+      inputs like `x' OR '1'='1` are just data. `with con:` commits the insert (and would roll it back on an
+      error), and `cur.lastrowid` gives the generated id. `fetchone()` returns None when nothing matches.
+
+  - id: debug-login-injection
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      `check_token` should return True only when the username **and** token match. An attacker logs in as
+      Ada with the username `ada' --` and any token, and a user called `o'brien` crashes the function. Fix
+      it without changing what it returns for legitimate input.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE api_tokens (username TEXT PRIMARY KEY, token TEXT NOT NULL);
+          INSERT INTO api_tokens VALUES ('ada', 'tok-3f9a'), ('linus', 'tok-77c1');
+      """)
+
+      def check_token(con, username, token):
+          sql = f"SELECT 1 FROM api_tokens WHERE username = '{username}' AND token = '{token}'"
+          return con.execute(sql).fetchone() is not None
+
+      print(check_token(con, "ada", "tok-3f9a"))
+      print(check_token(con, "ada", "wrong"))
+      print(check_token(con, "ada' --", "anything"))
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE api_tokens (username TEXT PRIMARY KEY, token TEXT NOT NULL);
+          INSERT INTO api_tokens VALUES ('ada', 'tok-3f9a'), ('linus', 'tok-77c1');
+      """)
+
+      def check_token(con, username, token):
+          sql = "SELECT 1 FROM api_tokens WHERE username = ? AND token = ?"
+          return con.execute(sql, (username, token)).fetchone() is not None
+
+      print(check_token(con, "ada", "tok-3f9a"))
+      print(check_token(con, "ada", "wrong"))
+      print(check_token(con, "ada' --", "anything"))
+    expectedOutput: |
+      True
+      False
+      False
+    tests:
+      - name: legitimate logins still work
+        code: |
+          assert check_token(con, "ada", "tok-3f9a") is True, "The correct token for ada must still return True."
+          assert check_token(con, "linus", "tok-77c1") is True, "The correct token for linus must still return True."
+          assert check_token(con, "ada", "tok-77c1") is False, "Linus's token must not work for ada."
+      - name: injection attempts are rejected
+        code: |
+          for username, token in [("ada' --", "anything"), ("x' OR '1'='1", "x' OR '1'='1"), ("' OR 1=1 --", "")]:
+              result = check_token(con, username, token)
+              assert result is False, f"check_token({username!r}, {token!r}) returned {result!r}. Pass both values as parameters."
+      - name: apostrophes do not crash
+        code: |
+          try:
+              result = check_token(con, "o'brien", "t'oken")
+          except Exception as exc:
+              raise AssertionError(f"An apostrophe in the input raised {type(exc).__name__}: {exc}. With parameters, quotes are just characters.")
+          assert result is False, "An unknown user must return False."
+      - name: no SQL built with string formatting
+        code: |
+          import ast, re
+          SQL = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|WHERE|VALUES)\b", re.IGNORECASE)
+          def text_of(node):
+              return " ".join(c.value for c in ast.walk(node) if isinstance(c, ast.Constant) and isinstance(c.value, str))
+          for node in ast.walk(ast.parse(source)):
+              if isinstance(node, ast.JoinedStr) and SQL.search(text_of(node)):
+                  raise AssertionError("An f-string still builds the SQL. Use ? placeholders and pass (username, token).")
+              if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)) and SQL.search(text_of(node)):
+                  raise AssertionError("SQL is built with % or + on strings. Use ? placeholders instead.")
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "format" and SQL.search(text_of(node.func.value)):
+                  raise AssertionError("str.format() builds the SQL. Use ? placeholders instead.")
+    hints:
+      - "Print the SQL the f-string builds for `ada' --`. What does `--` do in SQL?"
+      - Escaping quotes by hand is fragile. Let the driver bind the values.
+      - "Use `\"... WHERE username = ? AND token = ?\"` and pass `(username, token)` as the second argument of execute."
+    feedback:
+      - when: { codeContains: "replace(" }
+        message: Escaping quotes by hand is fragile and still fails the check. Use ? placeholders and pass the values separately.
+      - when: { outputEquals: "True\nFalse\nTrue\n" }
+        message: "The attack still works: the username is still pasted into the SQL. Replace the f-string with ? placeholders."
+    explanation: >-
+      With `ada' --` the f-string produced `WHERE username = 'ada' --' AND token = '...'`: the quote ended the
+      string and `--` commented out the token check. With placeholders the SQL is compiled first and both
+      values are bound as data, so the username is compared literally and quotes cannot break the statement.
+      (Real systems also store only hashes of tokens and compare them in constant time; see the security stage.)
+
+  - id: parsons-batch-insert
+    type: parsons
+    skill: implementation
+    prompt: |
+      Arrange the lines to insert three cities in **one** transaction and print them, largest population
+      first. Two lines are distractors.
+    solution: |
+      import sqlite3
+      con = sqlite3.connect(":memory:")
+      con.execute("CREATE TABLE cities (name TEXT, population INTEGER)")
+      rows = [("Lagos", 15), ("Pune", 7), ("Lima", 11)]
+      with con:
+          con.executemany("INSERT INTO cities VALUES (?, ?)", rows)
+      for name, population in con.execute("SELECT name, population FROM cities ORDER BY population DESC"):
+          print(name, population)
+    distractors:
+      - "    con.close()"
+      - "    con.execute(f\"INSERT INTO cities VALUES {rows}\")"
+    expectedOutput: |
+      Lagos 15
+      Lima 11
+      Pune 7
+    explanation: >-
+      The table must exist before the insert; `with con:` commits the whole executemany batch at once; the
+      SELECT runs after the block on the still-open connection. Closing inside the block would make the
+      commit fail, and the f-string line pastes Python data into SQL text.
+
+  # ----- Mastery check (unseen items) -----
+  - id: m-predict-row-factory
+    type: predict-output
+    skill: prediction
+    difficulty: 2
+    prompt: What does this print?
+    code: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.row_factory = sqlite3.Row
+      row = con.execute("SELECT 'Ada' AS name, 36 AS age").fetchone()
+      print(row["NAME"], row[1], len(row), row.keys())
+    answer: "Ada 36 2 ['name', 'age']"
+    explanation: >-
+      sqlite3.Row supports access by position and by column name, and name lookup is case-insensitive, so
+      row["NAME"] works. len(row) is the number of columns, and keys() returns the column names as written in
+      the query.
+    wrongAnswers:
+      - answer: "KeyError: 'NAME'"
+        feedback: sqlite3.Row looks names up case-insensitively, so "NAME" finds the column called name.
+      - answer: "Ada 36 2 ['NAME', 'AGE']"
+        feedback: keys() returns the column names as the query defined them (name, age), not the spelling you used to look them up.
+      - answer: "Ada age 2 ['name', 'age']"
+        feedback: row[1] is the value of the second column (36), not its name.
+
+  - id: m-mcq-psycopg
+    type: mcq
+    skill: transfer
+    difficulty: 2
+    prompt: Your team uses **psycopg** for PostgreSQL, whose placeholder is `%s`. Which call is safe from SQL injection?
+    explanation: >-
+      With psycopg, `%s` inside the SQL is a parameter placeholder only when the values are passed as the
+      second argument to execute. Applying Python's `%` operator (or an f-string) pastes the value into the SQL
+      text — the same injection hole as before, just with different syntax.
+    options:
+      - id: a
+        text: "`cur.execute(\"SELECT * FROM users WHERE email = %s\", (email,))`"
+        correct: true
+        feedback: Correct — the value is passed separately and the driver binds it safely.
+      - id: b
+        text: "`cur.execute(\"SELECT * FROM users WHERE email = '%s'\" % email)`"
+        feedback: This uses Python's % operator, so the email is pasted into the SQL text before psycopg ever sees it.
+      - id: c
+        text: "`cur.execute(f\"SELECT * FROM users WHERE email = '{email}'\")`"
+        feedback: An f-string builds the SQL text from the input — classic injection.
+      - id: d
+        text: "`cur.execute(\"SELECT * FROM users WHERE email = '%s'\" % email.replace(\"'\", \"''\"))`"
+        feedback: Hand-escaping is fragile and easy to get wrong; it is still string formatting. Pass parameters instead.
+
+  - id: m-code-transfer
+    type: code
+    skill: transfer
+    difficulty: 3
+    prompt: |
+      A `stock` table records how many of each item each warehouse holds; a CHECK constraint keeps every
+      quantity **between 0 and 100**. Write `move_stock(con, item, src, dst, qty)` that moves `qty` of `item`
+      from warehouse `src` to warehouse `dst` **all or nothing**:
+
+      - on success both rows change and the change is committed;
+      - if either update violates the constraint (not enough stock, or the destination would exceed 100),
+        **neither** row changes and the `sqlite3.IntegrityError` propagates to the caller.
+
+      Use parameters for all values.
+    starterCode: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE stock (
+              warehouse TEXT, item TEXT,
+              qty INTEGER NOT NULL CHECK (qty BETWEEN 0 AND 100),
+              PRIMARY KEY (warehouse, item)
+          );
+          INSERT INTO stock VALUES ('north', 'bolts', 60), ('south', 'bolts', 30);
+      """)
+
+      def move_stock(con, item, src, dst, qty):
+          """Move qty of item from warehouse src to warehouse dst: all or nothing."""
+          ...
+
+      def levels():
+          return con.execute("SELECT warehouse, qty FROM stock ORDER BY warehouse").fetchall()
+
+      move_stock(con, "bolts", "north", "south", 20)
+      print(levels())
+      try:
+          move_stock(con, "bolts", "north", "south", 70)   # north only has 40 left
+      except sqlite3.IntegrityError as error:
+          print("refused:", error)
+      print(levels())
+    solution: |
+      import sqlite3
+
+      con = sqlite3.connect(":memory:")
+      con.executescript("""
+          CREATE TABLE stock (
+              warehouse TEXT, item TEXT,
+              qty INTEGER NOT NULL CHECK (qty BETWEEN 0 AND 100),
+              PRIMARY KEY (warehouse, item)
+          );
+          INSERT INTO stock VALUES ('north', 'bolts', 60), ('south', 'bolts', 30);
+      """)
+
+      def move_stock(con, item, src, dst, qty):
+          """Move qty of item from warehouse src to warehouse dst: all or nothing."""
+          with con:
+              con.execute("UPDATE stock SET qty = qty - ? WHERE warehouse = ? AND item = ?", (qty, src, item))
+              con.execute("UPDATE stock SET qty = qty + ? WHERE warehouse = ? AND item = ?", (qty, dst, item))
+
+      def levels():
+          return con.execute("SELECT warehouse, qty FROM stock ORDER BY warehouse").fetchall()
+
+      move_stock(con, "bolts", "north", "south", 20)
+      print(levels())
+      try:
+          move_stock(con, "bolts", "north", "south", 70)   # north only has 40 left
+      except sqlite3.IntegrityError as error:
+          print("refused:", error)
+      print(levels())
+    expectedOutput: |
+      [('north', 40), ('south', 50)]
+      refused: CHECK constraint failed: qty BETWEEN 0 AND 100
+      [('north', 40), ('south', 50)]
+    tests:
+      - name: a valid move changes both rows and commits
+        code: |
+          import sqlite3
+          def fresh(north, south):
+              c = sqlite3.connect(":memory:")
+              c.execute("CREATE TABLE stock (warehouse TEXT, item TEXT, qty INTEGER NOT NULL CHECK (qty BETWEEN 0 AND 100), PRIMARY KEY (warehouse, item))")
+              c.executemany("INSERT INTO stock VALUES (?, 'nuts', ?)", [("north", north), ("south", south)])
+              c.commit()
+              return c
+          c = fresh(60, 30)
+          move_stock(c, "nuts", "north", "south", 25)
+          got = c.execute("SELECT warehouse, qty FROM stock ORDER BY warehouse").fetchall()
+          assert got == [("north", 35), ("south", 55)], f"After moving 25 nuts north → south the levels are {got}; expected [('north', 35), ('south', 55)]."
+          assert not c.in_transaction, "The move is still in an open transaction. Commit it (for example with `with con:`)."
+      - name: not enough stock changes nothing and raises
+        code: |
+          import sqlite3
+          def fresh(north, south):
+              c = sqlite3.connect(":memory:")
+              c.execute("CREATE TABLE stock (warehouse TEXT, item TEXT, qty INTEGER NOT NULL CHECK (qty BETWEEN 0 AND 100), PRIMARY KEY (warehouse, item))")
+              c.executemany("INSERT INTO stock VALUES (?, 'nuts', ?)", [("north", north), ("south", south)])
+              c.commit()
+              return c
+          c = fresh(10, 20)
+          try:
+              move_stock(c, "nuts", "north", "south", 30)
+          except sqlite3.IntegrityError:
+              pass
+          else:
+              raise AssertionError("Moving 30 from a warehouse holding 10 must raise sqlite3.IntegrityError. Don't catch it inside move_stock.")
+          got = c.execute("SELECT warehouse, qty FROM stock ORDER BY warehouse").fetchall()
+          assert got == [("north", 10), ("south", 20)], f"A failed move changed the stock to {got}. Put both updates in one transaction so the failure rolls back both."
+      - name: an over-full destination changes nothing and raises
+        code: |
+          import sqlite3
+          def fresh(north, south):
+              c = sqlite3.connect(":memory:")
+              c.execute("CREATE TABLE stock (warehouse TEXT, item TEXT, qty INTEGER NOT NULL CHECK (qty BETWEEN 0 AND 100), PRIMARY KEY (warehouse, item))")
+              c.executemany("INSERT INTO stock VALUES (?, 'nuts', ?)", [("north", north), ("south", south)])
+              c.commit()
+              return c
+          c = fresh(60, 90)
+          try:
+              move_stock(c, "nuts", "north", "south", 20)
+          except sqlite3.IntegrityError:
+              pass
+          else:
+              raise AssertionError("Moving 20 into a warehouse holding 90 exceeds 100 and must raise sqlite3.IntegrityError.")
+          got = c.execute("SELECT warehouse, qty FROM stock ORDER BY warehouse").fetchall()
+          assert got == [("north", 60), ("south", 90)], f"A failed move changed the stock to {got}. Use one transaction (with con:) so the first update is rolled back too."
+      - name: no SQL built with string formatting
+        code: |
+          import ast, re
+          SQL = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE|WHERE|VALUES)\b", re.IGNORECASE)
+          def text_of(node):
+              return " ".join(c.value for c in ast.walk(node) if isinstance(c, ast.Constant) and isinstance(c.value, str))
+          for node in ast.walk(ast.parse(source)):
+              if isinstance(node, ast.JoinedStr) and SQL.search(text_of(node)):
+                  raise AssertionError("An f-string builds SQL. Use ? placeholders for qty, warehouse and item.")
+              if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)) and SQL.search(text_of(node)):
+                  raise AssertionError("SQL is built with % or + on strings. Use ? placeholders instead.")
+    hints:
+      - "You need two UPDATE statements: subtract qty at src, add qty at dst (each `WHERE warehouse = ? AND item = ?`)."
+      - Put both inside a single `with con:` block, so they commit together or roll back together.
+      - "Don't catch the IntegrityError inside move_stock — `with con:` rolls back and then re-raises it, which is what the caller needs."
+    feedback:
+      - when: { outputContains: "('north', 40), ('south', 50)]\nrefused" }
+        message: The demo output looks right, but the checks also test a failure in the second update. Make sure both updates are in one transaction.
+    explanation: >-
+      Whichever update runs first, the other might be the one that fails — not enough stock at the source, or
+      too much at the destination. Inside one `with con:` block, a failure in either rolls back both and the
+      IntegrityError continues to the caller; on success the block commits both changes at once.
+
+  - id: m-debug-commit
+    type: debug
+    skill: debugging
+    difficulty: 2
+    prompt: |
+      A notes app saves notes to a database file, but `load_notes()` always returns an empty list. Find the
+      bug and fix `save_note` so saved notes survive the connection being closed.
+    starterCode: |
+      import sqlite3
+      from pathlib import Path
+
+      DB = Path("notes_app.db")
+      DB.unlink(missing_ok=True)
+
+      def setup():
+          con = sqlite3.connect(DB)
+          con.execute("CREATE TABLE IF NOT EXISTS notes (text TEXT NOT NULL)")
+          con.close()
+
+      def save_note(text):
+          con = sqlite3.connect(DB)
+          con.execute("INSERT INTO notes (text) VALUES (?)", (text,))
+          con.close()
+
+      def load_notes():
+          con = sqlite3.connect(DB)
+          rows = con.execute("SELECT text FROM notes ORDER BY rowid").fetchall()
+          con.close()
+          return [text for (text,) in rows]
+
+      setup()
+      save_note("buy milk")
+      save_note("call Ada")
+      print(load_notes())
+    solution: |
+      import sqlite3
+      from pathlib import Path
+
+      DB = Path("notes_app.db")
+      DB.unlink(missing_ok=True)
+
+      def setup():
+          con = sqlite3.connect(DB)
+          con.execute("CREATE TABLE IF NOT EXISTS notes (text TEXT NOT NULL)")
+          con.close()
+
+      def save_note(text):
+          con = sqlite3.connect(DB)
+          with con:
+              con.execute("INSERT INTO notes (text) VALUES (?)", (text,))
+          con.close()
+
+      def load_notes():
+          con = sqlite3.connect(DB)
+          rows = con.execute("SELECT text FROM notes ORDER BY rowid").fetchall()
+          con.close()
+          return [text for (text,) in rows]
+
+      setup()
+      save_note("buy milk")
+      save_note("call Ada")
+      print(load_notes())
+    expectedOutput: |
+      ['buy milk', 'call Ada']
+    tests:
+      - name: saved notes are loaded
+        code: |
+          assert output().strip() == "['buy milk', 'call Ada']", f"Expected ['buy milk', 'call Ada'] but the program printed {output()!r}."
+      - name: save_note persists new notes
+        code: |
+          save_note("water plants")
+          notes = load_notes()
+          assert notes[-1:] == ["water plants"], f"After save_note('water plants'), load_notes() returned {notes}. Commit before closing."
+    hints:
+      - The INSERT works — you could read it back on the same connection. What happens to an open transaction when a connection closes?
+      - close() does not commit.
+      - "Add `con.commit()` before `con.close()`, or wrap the insert in `with con:`."
+    feedback:
+      - when: { outputEquals: "[]\n" }
+        message: Still empty. The insert opens a transaction that close() throws away — commit it first.
+    explanation: >-
+      With sqlite3's default settings the INSERT opens a transaction, and closing the connection without
+      committing rolls it back. `with con:` (or `con.commit()`) makes each note permanent before the
+      connection is closed.
+
+masteryCheck:
+  passThreshold: 0.8
+  items: [m-predict-row-factory, m-mcq-psycopg, m-code-transfer, m-debug-commit]
+
+cheatsheet: |
+  ```python
+  import sqlite3
+  from contextlib import closing
+
+  with closing(sqlite3.connect("app.db")) as con:       # closes at the end
+      con.execute("PRAGMA foreign_keys = ON")
+      con.row_factory = sqlite3.Row                      # row["name"]
+      with con:                                          # commit on success, rollback on error
+          cur = con.execute("INSERT INTO users (email, name) VALUES (?, ?)", (email, name))
+          new_id = cur.lastrowid
+          con.executemany("INSERT INTO tags VALUES (?)", [("a",), ("b",)])
+      row = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()   # or None
+      rows = con.execute("SELECT * FROM users WHERE id = :id", {"id": 7}).fetchall()
+  ```
+  - Values → parameters (`?` + tuple, `:name` + dict). One value: `(x,)`. Identifiers → allow-list.
+  - Never f-strings, `%` or `+` to put values into SQL. psycopg's `%s` is a placeholder, passed as the 2nd argument.
+  - `close()` does not commit · `with con:` does not close · keep write transactions short (one writer at a time)

@@ -1,0 +1,849 @@
+id: quiz-app
+title: Multiple-choice Quiz
+track: python-beginner
+level: beginner
+estimatedHours: 3
+environment: browser
+summary: >-
+  Build a multiple-choice quiz driven by a list of dictionaries: lettered options, answer
+  validation, instant feedback with explanations, a percentage score, a rating and a results
+  summary.
+concepts:
+  - python.strings
+  - python.input-output
+  - python.for-loops
+  - python.lists
+  - python.dictionaries
+  - python.functions
+  - python.exceptions
+problem: |
+  A study group wants a quick way to check what they have learned. You will build a quiz program
+  where the questions are **data**, not code: each question is a
+  [dictionary](concept:python.dictionaries) in a [list](concept:python.lists), so adding a
+  question never means writing a new `if`.
+
+  ```python
+  QUESTIONS = [
+      {
+          "question": "What does print(2 + 3 * 4) show?",
+          "options": ["20", "14", "24", "2 + 3 * 4"],
+          "answer": 1,  # index of the correct option: 0 is A, 1 is B, ...
+          "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+      },
+      # ... at least three more
+  ]
+  ```
+
+  The program shows each question with lettered options, accepts an answer such as `b` or `B`,
+  re-asks on anything that is not one of the letters, gives feedback with the explanation, and
+  ends with a summary: score, percentage, a rating and which questions to review.
+
+  Example session (what the player types is shown after each prompt):
+
+  ```text
+  === Python basics quiz ===
+  5 questions. Answer with the letter of your choice.
+  Q1. What does print(2 + 3 * 4) show?
+    A) 20
+    B) 14
+    C) 24
+    D) 2 + 3 * 4
+  Your answer: b
+  Correct! Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.
+  Q2. What type of value does input() always return?
+    A) int
+    B) float
+    C) str
+    D) It depends on what the user types
+  Your answer: e
+  Please answer with a letter from A to D.
+  Your answer: D
+  Not quite. The answer is C) str. input() always returns a string. Convert it with int() or float() before doing arithmetic.
+  ...
+  === Results ===
+  Score: 4/5 (80.0%)
+  Rating: Good
+  Review: 2
+  ```
+acceptanceCriteria:
+  - "`QUESTIONS` is a list of at least 4 dictionaries, each with `question`, `options` (2 to 8 strings), `answer` (the index of the correct option) and `explanation`."
+  - "`format_question(number, question)` returns the question line `Q<number>. <text>` followed by one line per option, `  A) <option>`, `  B) <option>` and so on."
+  - "`letter_to_index(text, option_count)` accepts one valid letter in either case (spaces ignored) and returns its index, or `None` for anything else, including an empty answer."
+  - "`score_answers`, `percentage` (rounded to 1 decimal, `0.0` when there is nothing to score), `rating` and `feedback` are pure functions that return values and pass the tests."
+  - "`build_summary(questions, answers)` reports `Score: s/t (p%)`, the rating and the question numbers to review, or `No questions answered.`"
+  - "The interactive quiz re-asks after invalid answers, shows feedback after each question, ends with the summary, and stops politely if the input runs out."
+architecture: |
+  The quiz separates **data**, **pure logic** and **interaction**. Only the last layer uses
+  `input()` and `print()`, so everything else can be tested by calling functions.
+
+  ```text
+   QUESTIONS (list of dicts)
+        │
+        ▼
+   run_quiz(questions) ── for each question ──► ask_question ──► read_line / letter_to_index
+        │                                            │ (re-asks until valid)
+        │   answers: [1, 3, 2, ...]  ◄───────────────┘
+        │   print(feedback(question, index))
+        ▼
+   build_summary(questions, answers) ──► score_answers ─► is_correct
+                                     ──► percentage ─► rating
+  ```
+
+  * **Data**: `QUESTIONS` and `LETTERS = "ABCDEFGH"`. The correct answer is stored as an
+    **index**, so `question["options"][question["answer"]]` is the correct option's text and
+    `LETTERS[question["answer"]]` its letter.
+  * **Pure logic**: each function takes values and returns a value. `answers` is a list of the
+    option indexes the player chose, in question order.
+  * **Interaction**: `read_line` turns `EOFError` (no more input) into `None`; `ask_question`
+    loops until the answer is valid; `run_quiz` uses a [for loop](concept:python.for-loops) over
+    the questions and stops early if the input runs out.
+setup: |
+  Nothing to install. This project runs in the editor on this page with Python 3.14 in your
+  browser (Pyodide). All milestones share **one code file**: keep your earlier functions as you
+  add new ones, and click **Run milestone tests** to check the milestone you are working on.
+
+  To take the quiz on your own computer, save the code as `quiz.py` and run it from a terminal in
+  the same folder (only built-in Python is used; no packages or virtual environment needed):
+
+  **Windows (PowerShell)**
+
+  ```powershell
+  python quiz.py
+  ```
+
+  (If `python` is not found, try `py quiz.py`.)
+
+  **macOS / Linux**
+
+  ```bash
+  python3 quiz.py
+  ```
+milestones:
+  - id: questions
+    title: Questions as data
+    description: |
+      Complete the `QUESTIONS` list so it has **at least 4** questions. Each one is a dictionary
+      with exactly these keys:
+
+      * `"question"`: the question text;
+      * `"options"`: a list of 2 to 8 possible answers (strings);
+      * `"answer"`: the **index** of the correct option (`0` for A, `1` for B, ...);
+      * `"explanation"`: one sentence saying why the answer is right.
+
+      Then write `format_question(number, question)`. It **returns** (not prints) the text for one
+      question: the line `Q<number>. <question>`, then one line per option made of two spaces,
+      the letter, `) ` and the option. Join the lines with `"\n"`. For example
+      `format_question(3, {"question": "Pick a colour", "options": ["red", "blue"], ...})` returns
+      `"Q3. Pick a colour\n  A) red\n  B) blue"`.
+
+      The tests check the shape of every question in your list and the exact layout that
+      `format_question` produces.
+    starterCode: |
+      # Multiple-choice quiz
+      # One file for the whole project: keep your earlier functions as you add new ones.
+
+      LETTERS = "ABCDEFGH"
+
+      QUESTIONS = [
+          {
+              "question": "What does print(2 + 3 * 4) show?",
+              "options": ["20", "14", "24", "2 + 3 * 4"],
+              "answer": 1,  # the index of the correct option: 0 is A, 1 is B, ...
+              "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+          },
+          # TODO (milestone 1): add at least three more questions in the same shape.
+      ]
+
+
+      # --- Milestone 1: format_question(number, question) ----------------------
+
+      def format_question(number, question):
+          """Return the question line and its lettered options, one per line."""
+          # TODO
+          pass
+
+
+      # --- Milestone 2: letter_to_index, is_correct, score_answers -------------
+      # --- Milestone 3: feedback, percentage, rating, build_summary -----------
+      # --- Milestone 4: read_line, ask_question, run_quiz, main ---------------
+
+
+      def main():
+          """Run the quiz and print the results."""
+          print("=== Python basics quiz ===")
+          # TODO (milestone 4)
+
+
+      if __name__ == "__main__":
+          main()
+    hints:
+      - "Start a list of lines with the question line: `lines = [f\"Q{number}. {question['question']}\"]`. Inside the f-string use single quotes for the key, because the f-string itself uses double quotes."
+      - "Loop over the option positions with `for i in range(len(question[\"options\"])):` so that `LETTERS[i]` is the matching letter."
+      - "`\"\\n\".join(lines)` glues the lines together with a newline between each pair (and none at the end)."
+    tests:
+      - name: QUESTIONS holds at least 4 well-formed questions
+        code: |
+          assert defined("QUESTIONS"), "Create a list called QUESTIONS."
+          assert isinstance(QUESTIONS, list) and len(QUESTIONS) >= 4, "QUESTIONS should be a list of at least 4 question dictionaries."
+          for number, q in enumerate(QUESTIONS, start=1):
+              assert isinstance(q, dict), f"Question {number} should be a dictionary."
+              for key in ["question", "options", "answer", "explanation"]:
+                  assert key in q, f"Question {number} is missing the key {key!r}."
+              assert isinstance(q["question"], str) and q["question"].strip(), f"Question {number}: 'question' should be non-empty text."
+              assert isinstance(q["options"], list) and 2 <= len(q["options"]) <= 8, f"Question {number}: 'options' should be a list of 2 to 8 answers."
+              for option in q["options"]:
+                  assert isinstance(option, str), f"Question {number}: every option should be a string, but {option!r} is not."
+              assert isinstance(q["answer"], int) and 0 <= q["answer"] < len(q["options"]), (
+                  f"Question {number}: 'answer' should be the index of the correct option (0 for A, 1 for B, ...), "
+                  f"between 0 and {len(q['options']) - 1}, but it is {q['answer']!r}."
+              )
+              assert isinstance(q["explanation"], str) and q["explanation"].strip(), f"Question {number}: add an explanation."
+      - name: format_question lays out a question with lettered options
+        code: |
+          assert defined("format_question"), "Define a function called format_question(number, question)."
+          q = {"question": "Pick a colour", "options": ["red", "green", "blue"], "answer": 2, "explanation": "Blue is calm."}
+          got = format_question(3, q)
+          assert got is not None, "format_question returned None. Build the text and return it instead of printing it."
+          expected = "Q3. Pick a colour\n  A) red\n  B) green\n  C) blue"
+          assert [line.rstrip() for line in got.split("\n")] == expected.split("\n"), (
+              f"format_question(3, ...) should return:\n{expected}\nbut it returned:\n{got}"
+          )
+          first = QUESTIONS[0]
+          text = format_question(1, first)
+          assert text.split("\n")[0].rstrip() == f"Q1. {first['question']}", "The first line should be 'Q1. ' followed by the question."
+          assert len(text.split("\n")) == len(first["options"]) + 1, "There should be one line per option after the question line."
+    solution: |
+      # Multiple-choice quiz: milestone 1
+
+      LETTERS = "ABCDEFGH"
+
+      QUESTIONS = [
+          {
+              "question": "What does print(2 + 3 * 4) show?",
+              "options": ["20", "14", "24", "2 + 3 * 4"],
+              "answer": 1,
+              "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+          },
+          {
+              "question": "What type of value does input() always return?",
+              "options": ["int", "float", "str", "It depends on what the user types"],
+              "answer": 2,
+              "explanation": "input() always returns a string. Convert it with int() or float() before doing arithmetic.",
+          },
+          {
+              "question": "Which expression gives the last item of the list items?",
+              "options": ["items[0]", "items[-1]", "items[len(items)]"],
+              "answer": 1,
+              "explanation": "Negative indexes count from the end, so items[-1] is the last item; items[len(items)] raises IndexError.",
+          },
+          {
+              "question": "What does {'a': 1}.get('b', 0) return?",
+              "options": ["None", "0", "1", "It raises KeyError"],
+              "answer": 1,
+              "explanation": "get() returns the default value (0 here) when the key is missing. Only d['b'] raises KeyError.",
+          },
+          {
+              "question": "How many times does the body of the loop for i in range(3) run?",
+              "options": ["2", "3", "4"],
+              "answer": 1,
+              "explanation": "range(3) produces 0, 1 and 2: three values, so the body runs three times.",
+          },
+      ]
+
+
+      def format_question(number, question):
+          """Return the question line and its lettered options, one per line."""
+          lines = [f"Q{number}. {question['question']}"]
+          options = question["options"]
+          for i in range(len(options)):
+              lines.append(f"  {LETTERS[i]}) {options[i]}")
+          return "\n".join(lines)
+  - id: answers
+    title: Check and score answers
+    description: |
+      Add three small functions:
+
+      * `letter_to_index(text, option_count)`: turn what the player typed into an option index.
+        Ignore spaces and case (`" b "` → `1`). Return `None` unless the result is exactly one of
+        the first `option_count` letters, so `"E"` is invalid for a 4-option question, and so
+        are `""`, `"AB"` and `"1"`.
+      * `is_correct(question, index)`: `True` if `index` is the question's `"answer"`.
+      * `score_answers(questions, answers)`: `answers` is a list of chosen indexes in question
+        order (it may be shorter than `questions` if the quiz stopped early). Return how many are
+        correct.
+
+      The tests try upper and lower case letters, letters beyond the options, empty and long
+      answers, and score several answer lists against questions of their own.
+    hints:
+      - "Clean the text first: `letter = text.strip().upper()`. The valid letters are `LETTERS[:option_count]`."
+      - "Careful: `\"\" in \"ABCD\"` is `True` (the empty string is inside every string), so also check `len(letter) == 1`."
+      - "In `score_answers`, loop `for i in range(len(answers)):` and compare `answers[i]` with `questions[i]` using `is_correct`."
+    tests:
+      - name: letter_to_index accepts valid letters in any case
+        code: |
+          assert defined("letter_to_index"), "Define a function called letter_to_index(text, option_count)."
+          for text, count, expected in [("a", 4, 0), ("B", 4, 1), (" c ", 4, 2), ("D", 4, 3), ("b", 2, 1), ("H", 8, 7)]:
+              got = letter_to_index(text, count)
+              assert got == expected, f"letter_to_index({text!r}, {count}) should be {expected!r}, but it returned {got!r}."
+      - name: letter_to_index rejects everything else
+        code: |
+          for text, count in [("E", 4), ("D", 3), ("", 4), ("   ", 4), ("AB", 4), ("1", 4), ("b)", 4), ("cat", 4)]:
+              got = letter_to_index(text, count)
+              assert got is None, f"letter_to_index({text!r}, {count}) should return None, but it returned {got!r}."
+      - name: is_correct and score_answers count correct answers
+        code: |
+          assert defined("is_correct") and defined("score_answers"), "Define is_correct(question, index) and score_answers(questions, answers)."
+          qs = [
+              {"question": "One", "options": ["x", "y"], "answer": 0, "explanation": "."},
+              {"question": "Two", "options": ["x", "y", "z"], "answer": 2, "explanation": "."},
+              {"question": "Three", "options": ["x", "y", "z"], "answer": 1, "explanation": "."},
+          ]
+          assert is_correct(qs[1], 2) is True, "is_correct(question, 2) should be True when the question's answer is 2."
+          assert is_correct(qs[1], 0) is False, "is_correct(question, 0) should be False when the question's answer is 2."
+          for answers, expected in [([0, 2, 1], 3), ([1, 2, 1], 2), ([1, 0, 0], 0), ([0, 2], 2), ([], 0)]:
+              got = score_answers(qs, answers)
+              assert got == expected, f"score_answers(questions, {answers!r}) should be {expected}, but it returned {got!r}."
+    solution: |
+      # Multiple-choice quiz: milestones 1-2
+
+      LETTERS = "ABCDEFGH"
+
+      QUESTIONS = [
+          {
+              "question": "What does print(2 + 3 * 4) show?",
+              "options": ["20", "14", "24", "2 + 3 * 4"],
+              "answer": 1,
+              "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+          },
+          {
+              "question": "What type of value does input() always return?",
+              "options": ["int", "float", "str", "It depends on what the user types"],
+              "answer": 2,
+              "explanation": "input() always returns a string. Convert it with int() or float() before doing arithmetic.",
+          },
+          {
+              "question": "Which expression gives the last item of the list items?",
+              "options": ["items[0]", "items[-1]", "items[len(items)]"],
+              "answer": 1,
+              "explanation": "Negative indexes count from the end, so items[-1] is the last item; items[len(items)] raises IndexError.",
+          },
+          {
+              "question": "What does {'a': 1}.get('b', 0) return?",
+              "options": ["None", "0", "1", "It raises KeyError"],
+              "answer": 1,
+              "explanation": "get() returns the default value (0 here) when the key is missing. Only d['b'] raises KeyError.",
+          },
+          {
+              "question": "How many times does the body of the loop for i in range(3) run?",
+              "options": ["2", "3", "4"],
+              "answer": 1,
+              "explanation": "range(3) produces 0, 1 and 2: three values, so the body runs three times.",
+          },
+      ]
+
+
+      def format_question(number, question):
+          """Return the question line and its lettered options, one per line."""
+          lines = [f"Q{number}. {question['question']}"]
+          options = question["options"]
+          for i in range(len(options)):
+              lines.append(f"  {LETTERS[i]}) {options[i]}")
+          return "\n".join(lines)
+
+
+      def letter_to_index(text, option_count):
+          """Turn an answer such as "b" into an option index (1), or None if it is not valid."""
+          letter = text.strip().upper()
+          valid = LETTERS[:option_count]
+          if len(letter) != 1 or letter not in valid:
+              return None
+          return valid.index(letter)
+
+
+      def is_correct(question, index):
+          """Return True if index is the question's correct answer."""
+          return index == question["answer"]
+
+
+      def score_answers(questions, answers):
+          """Count the correct answers. answers[i] is the option index chosen for questions[i]."""
+          score = 0
+          for i in range(len(answers)):
+              if is_correct(questions[i], answers[i]):
+                  score = score + 1
+          return score
+  - id: results
+    title: Feedback, percentage and summary
+    description: |
+      Add the functions that turn answers into words. All of them **return** text or numbers:
+
+      * `feedback(question, index)`: `"Correct! <explanation>"` for a right answer, otherwise
+        `"Not quite. The answer is <letter>) <option>. <explanation>"`, for example
+        `Not quite. The answer is C) str. input() always returns a string. ...`;
+      * `percentage(score, total)`: `score / total * 100` rounded to 1 decimal place with
+        `round(..., 1)`, and `0.0` when `total` is `0` (no `ZeroDivisionError`);
+      * `rating(percent)`: `"Excellent"` from 90, `"Good"` from 70, `"Pass"` from 50, otherwise
+        `"Keep practising"`;
+      * `build_summary(questions, answers)`: if `answers` is empty, return
+        `"No questions answered."`. Otherwise return these lines joined with `"\n"`:
+
+        ```text
+        === Results ===
+        Score: 3/4 (75.0%)
+        Rating: Good
+        Review: 2
+        ```
+
+        where `Review:` lists the numbers of the wrongly answered questions separated by `, `, or
+        the line is `Perfect score - nothing to review!` when every answer is right. The
+        percentage is shown with one decimal (`{percent:.1f}`).
+
+      The tests check exact texts for right and wrong feedback, rounding, every rating boundary
+      (90 is Excellent, 89.9 is Good) and summaries with no, some and all answers right.
+    hints:
+      - "The correct option's letter is `LETTERS[question[\"answer\"]]` and its text is `question[\"options\"][question[\"answer\"]]`."
+      - "Check the highest rating first: `if percent >= 90:` → `return \"Excellent\"`, then `if percent >= 70:` and so on."
+      - "For the review list, collect question numbers as text (`str(i + 1)`) in a list, then `\", \".join(missed)`."
+    tests:
+      - name: feedback explains right and wrong answers
+        code: |
+          assert defined("feedback"), "Define a function called feedback(question, index)."
+          q = {"question": "Type of input()?", "options": ["int", "float", "str"], "answer": 2, "explanation": "input() returns text."}
+          got = feedback(q, 2)
+          assert got == "Correct! input() returns text.", f"For a right answer feedback should return 'Correct! input() returns text.', not {got!r}."
+          got = feedback(q, 0)
+          expected = "Not quite. The answer is C) str. input() returns text."
+          assert got == expected, f"For a wrong answer feedback should return {expected!r}, not {got!r}."
+      - name: percentage and rating
+        code: |
+          assert defined("percentage") and defined("rating"), "Define percentage(score, total) and rating(percent)."
+          for score, total, expected in [(3, 4, 75.0), (2, 3, 66.7), (1, 3, 33.3), (5, 5, 100.0), (0, 5, 0.0)]:
+              got = percentage(score, total)
+              assert got == expected, f"percentage({score}, {total}) should be {expected}, but it returned {got!r}."
+          try:
+              got = percentage(0, 0)
+          except ZeroDivisionError:
+              raise AssertionError("percentage(0, 0) crashed with ZeroDivisionError. Return 0.0 when total is 0.")
+          assert got == 0.0, f"percentage(0, 0) should be 0.0, but it returned {got!r}."
+          for percent, expected in [(100, "Excellent"), (90, "Excellent"), (89.9, "Good"), (70, "Good"), (69.9, "Pass"),
+                                    (50, "Pass"), (49.9, "Keep practising"), (0, "Keep practising")]:
+              got = rating(percent)
+              assert got == expected, f"rating({percent}) should be {expected!r}, but it returned {got!r}."
+      - name: build_summary reports the score and what to review
+        code: |
+          assert defined("build_summary"), "Define a function called build_summary(questions, answers)."
+          qs = [
+              {"question": "One", "options": ["x", "y"], "answer": 0, "explanation": "."},
+              {"question": "Two", "options": ["x", "y", "z"], "answer": 2, "explanation": "."},
+              {"question": "Three", "options": ["x", "y", "z"], "answer": 1, "explanation": "."},
+          ]
+          expected = "=== Results ===\nScore: 2/3 (66.7%)\nRating: Pass\nReview: 2"
+          got = build_summary(qs, [0, 1, 1])
+          assert got == expected, f"build_summary for answers [0, 1, 1] should return:\n{expected}\nbut it returned:\n{got}"
+          expected = "=== Results ===\nScore: 1/3 (33.3%)\nRating: Keep practising\nReview: 1, 3"
+          got = build_summary(qs, [1, 2, 0])
+          assert got == expected, f"build_summary for answers [1, 2, 0] should return:\n{expected}\nbut it returned:\n{got}"
+          expected = "=== Results ===\nScore: 3/3 (100.0%)\nRating: Excellent\nPerfect score - nothing to review!"
+          got = build_summary(qs, [0, 2, 1])
+          assert got == expected, f"build_summary for all right answers should return:\n{expected}\nbut it returned:\n{got}"
+          got = build_summary(qs, [])
+          assert got == "No questions answered.", f"With no answers build_summary should return 'No questions answered.', not {got!r}."
+    solution: |
+      # Multiple-choice quiz: milestones 1-3
+
+      LETTERS = "ABCDEFGH"
+
+      QUESTIONS = [
+          {
+              "question": "What does print(2 + 3 * 4) show?",
+              "options": ["20", "14", "24", "2 + 3 * 4"],
+              "answer": 1,
+              "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+          },
+          {
+              "question": "What type of value does input() always return?",
+              "options": ["int", "float", "str", "It depends on what the user types"],
+              "answer": 2,
+              "explanation": "input() always returns a string. Convert it with int() or float() before doing arithmetic.",
+          },
+          {
+              "question": "Which expression gives the last item of the list items?",
+              "options": ["items[0]", "items[-1]", "items[len(items)]"],
+              "answer": 1,
+              "explanation": "Negative indexes count from the end, so items[-1] is the last item; items[len(items)] raises IndexError.",
+          },
+          {
+              "question": "What does {'a': 1}.get('b', 0) return?",
+              "options": ["None", "0", "1", "It raises KeyError"],
+              "answer": 1,
+              "explanation": "get() returns the default value (0 here) when the key is missing. Only d['b'] raises KeyError.",
+          },
+          {
+              "question": "How many times does the body of the loop for i in range(3) run?",
+              "options": ["2", "3", "4"],
+              "answer": 1,
+              "explanation": "range(3) produces 0, 1 and 2: three values, so the body runs three times.",
+          },
+      ]
+
+
+      def format_question(number, question):
+          """Return the question line and its lettered options, one per line."""
+          lines = [f"Q{number}. {question['question']}"]
+          options = question["options"]
+          for i in range(len(options)):
+              lines.append(f"  {LETTERS[i]}) {options[i]}")
+          return "\n".join(lines)
+
+
+      def letter_to_index(text, option_count):
+          """Turn an answer such as "b" into an option index (1), or None if it is not valid."""
+          letter = text.strip().upper()
+          valid = LETTERS[:option_count]
+          if len(letter) != 1 or letter not in valid:
+              return None
+          return valid.index(letter)
+
+
+      def is_correct(question, index):
+          """Return True if index is the question's correct answer."""
+          return index == question["answer"]
+
+
+      def score_answers(questions, answers):
+          """Count the correct answers. answers[i] is the option index chosen for questions[i]."""
+          score = 0
+          for i in range(len(answers)):
+              if is_correct(questions[i], answers[i]):
+                  score = score + 1
+          return score
+
+
+      def feedback(question, index):
+          """Return the message shown after an answer, including the explanation."""
+          if is_correct(question, index):
+              return f"Correct! {question['explanation']}"
+          answer = question["answer"]
+          correct_text = f"{LETTERS[answer]}) {question['options'][answer]}"
+          return f"Not quite. The answer is {correct_text}. {question['explanation']}"
+
+
+      def percentage(score, total):
+          """Return score as a percentage of total, rounded to 1 decimal (0.0 if total is 0)."""
+          if total == 0:
+              return 0.0
+          return round(score / total * 100, 1)
+
+
+      def rating(percent):
+          """Return a one-word rating for a percentage."""
+          if percent >= 90:
+              return "Excellent"
+          if percent >= 70:
+              return "Good"
+          if percent >= 50:
+              return "Pass"
+          return "Keep practising"
+
+
+      def build_summary(questions, answers):
+          """Return the results report for the answers given (one option index per answered question)."""
+          total = len(answers)
+          if total == 0:
+              return "No questions answered."
+          score = score_answers(questions, answers)
+          percent = percentage(score, total)
+          lines = [
+              "=== Results ===",
+              f"Score: {score}/{total} ({percent:.1f}%)",
+              f"Rating: {rating(percent)}",
+          ]
+          missed = []
+          for i in range(total):
+              if not is_correct(questions[i], answers[i]):
+                  missed.append(str(i + 1))
+          if len(missed) > 0:
+              lines.append("Review: " + ", ".join(missed))
+          else:
+              lines.append("Perfect score - nothing to review!")
+          return "\n".join(lines)
+  - id: interactive
+    title: The interactive quiz
+    description: |
+      Connect the quiz to the player:
+
+      * `read_line(prompt)`: returns `input(prompt).strip()`, or `None` when `input()` raises
+        `EOFError` (no more input);
+      * `ask_question(number, question)`: print `format_question(number, question)`, then ask
+        `Your answer: ` until `letter_to_index` accepts the answer, printing
+        `Please answer with a letter from A to <last letter>.` after each invalid one. Return the
+        index, or `None` if the input runs out;
+      * `run_quiz(questions)`: ask every question in order, print `feedback(...)` after each
+        answer, and return the list of chosen indexes. If `ask_question` returns `None`, print
+        `Quiz stopped early.` and return the answers so far;
+      * `main()`: print a title and the number of questions, run the quiz on `QUESTIONS`, then
+        print `build_summary(QUESTIONS, answers)`.
+
+      The tests run your program with scripted answers built from **your** `QUESTIONS`: all right
+      (in lower case too), the first one wrong, invalid letters, and input that runs out early.
+    hints:
+      - "`ask_question` is a `while True:` loop that only ends with `return`: either the valid index or `None`."
+      - "The last valid letter is `LETTERS[len(question[\"options\"]) - 1]`."
+      - "In `run_quiz`, use `break` to leave the for loop when the input runs out, then `return answers` after the loop."
+    tests:
+      - name: a perfect run scores 100%
+        code: |
+          n = len(QUESTIONS)
+          script = "".join(LETTERS[q["answer"]] + "\n" for q in QUESTIONS)
+          out = run_program(script)
+          assert f"Score: {n}/{n} (100.0%)" in out, f"Answering every question correctly should give 'Score: {n}/{n} (100.0%)'. The program printed:\n{out}"
+          assert out.count("Correct!") == n, f"Each of the {n} right answers should print feedback starting with 'Correct!'."
+          assert "Perfect score - nothing to review!" in out, "A perfect run should end with 'Perfect score - nothing to review!'."
+          assert format_question(1, QUESTIONS[0]) in out, "Each question should be printed with format_question before asking for the answer."
+          lower = run_program(script.lower())
+          assert f"Score: {n}/{n} (100.0%)" in lower, "Lower-case letters should be accepted as answers too."
+      - name: a wrong answer gets feedback and is listed for review
+        code: |
+          n = len(QUESTIONS)
+          first = QUESTIONS[0]
+          wrong = (first["answer"] + 1) % len(first["options"])
+          script = LETTERS[wrong] + "\n" + "".join(LETTERS[q["answer"]] + "\n" for q in QUESTIONS[1:])
+          out = run_program(script)
+          assert feedback(first, wrong) in out, f"After a wrong answer the program should print the feedback:\n{feedback(first, wrong)}"
+          percent = round((n - 1) / n * 100, 1)
+          assert f"Score: {n - 1}/{n} ({percent:.1f}%)" in out, f"With one wrong answer the score should be {n - 1}/{n} ({percent:.1f}%)."
+          assert "Review: 1" in out, "Question 1 was answered wrongly, so the summary should say 'Review: 1'."
+      - name: invalid answers are asked again
+        code: |
+          n = len(QUESTIONS)
+          last = LETTERS[len(QUESTIONS[0]["options"]) - 1]
+          script = "z\n\n7\nAB\n" + "".join(LETTERS[q["answer"]] + "\n" for q in QUESTIONS)
+          out = run_program(script)
+          assert out.count(f"Please answer with a letter from A to {last}.") == 4, (
+              f"Each invalid answer (z, an empty line, 7 and AB) should print 'Please answer with a letter from A to {last}.'"
+          )
+          assert f"Score: {n}/{n} (100.0%)" in out, "Invalid answers must not count; the quiz should continue and score 100%."
+      - name: the quiz stops politely when the input runs out
+        code: |
+          for script, expected in [("", "No questions answered."), (LETTERS[QUESTIONS[0]["answer"]] + "\n", "Score: 1/1 (100.0%)")]:
+              try:
+                  out = run_program(script)
+              except RuntimeError as err:
+                  raise AssertionError(f"When the input runs out the quiz should stop politely. {err}")
+              assert "Quiz stopped early." in out, f"With the input {script!r} the program should print 'Quiz stopped early.'"
+              assert expected in out, f"With the input {script!r} the summary should include {expected!r}. The program printed:\n{out}"
+    solution: |
+      # Multiple-choice quiz: complete program (milestones 1-4)
+
+      LETTERS = "ABCDEFGH"
+
+      QUESTIONS = [
+          {
+              "question": "What does print(2 + 3 * 4) show?",
+              "options": ["20", "14", "24", "2 + 3 * 4"],
+              "answer": 1,
+              "explanation": "Multiplication happens before addition: 3 * 4 is 12, and 2 + 12 is 14.",
+          },
+          {
+              "question": "What type of value does input() always return?",
+              "options": ["int", "float", "str", "It depends on what the user types"],
+              "answer": 2,
+              "explanation": "input() always returns a string. Convert it with int() or float() before doing arithmetic.",
+          },
+          {
+              "question": "Which expression gives the last item of the list items?",
+              "options": ["items[0]", "items[-1]", "items[len(items)]"],
+              "answer": 1,
+              "explanation": "Negative indexes count from the end, so items[-1] is the last item; items[len(items)] raises IndexError.",
+          },
+          {
+              "question": "What does {'a': 1}.get('b', 0) return?",
+              "options": ["None", "0", "1", "It raises KeyError"],
+              "answer": 1,
+              "explanation": "get() returns the default value (0 here) when the key is missing. Only d['b'] raises KeyError.",
+          },
+          {
+              "question": "How many times does the body of the loop for i in range(3) run?",
+              "options": ["2", "3", "4"],
+              "answer": 1,
+              "explanation": "range(3) produces 0, 1 and 2: three values, so the body runs three times.",
+          },
+      ]
+
+
+      def format_question(number, question):
+          """Return the question line and its lettered options, one per line."""
+          lines = [f"Q{number}. {question['question']}"]
+          options = question["options"]
+          for i in range(len(options)):
+              lines.append(f"  {LETTERS[i]}) {options[i]}")
+          return "\n".join(lines)
+
+
+      def letter_to_index(text, option_count):
+          """Turn an answer such as "b" into an option index (1), or None if it is not valid."""
+          letter = text.strip().upper()
+          valid = LETTERS[:option_count]
+          if len(letter) != 1 or letter not in valid:
+              return None
+          return valid.index(letter)
+
+
+      def is_correct(question, index):
+          """Return True if index is the question's correct answer."""
+          return index == question["answer"]
+
+
+      def score_answers(questions, answers):
+          """Count the correct answers. answers[i] is the option index chosen for questions[i]."""
+          score = 0
+          for i in range(len(answers)):
+              if is_correct(questions[i], answers[i]):
+                  score = score + 1
+          return score
+
+
+      def feedback(question, index):
+          """Return the message shown after an answer, including the explanation."""
+          if is_correct(question, index):
+              return f"Correct! {question['explanation']}"
+          answer = question["answer"]
+          correct_text = f"{LETTERS[answer]}) {question['options'][answer]}"
+          return f"Not quite. The answer is {correct_text}. {question['explanation']}"
+
+
+      def percentage(score, total):
+          """Return score as a percentage of total, rounded to 1 decimal (0.0 if total is 0)."""
+          if total == 0:
+              return 0.0
+          return round(score / total * 100, 1)
+
+
+      def rating(percent):
+          """Return a one-word rating for a percentage."""
+          if percent >= 90:
+              return "Excellent"
+          if percent >= 70:
+              return "Good"
+          if percent >= 50:
+              return "Pass"
+          return "Keep practising"
+
+
+      def build_summary(questions, answers):
+          """Return the results report for the answers given (one option index per answered question)."""
+          total = len(answers)
+          if total == 0:
+              return "No questions answered."
+          score = score_answers(questions, answers)
+          percent = percentage(score, total)
+          lines = [
+              "=== Results ===",
+              f"Score: {score}/{total} ({percent:.1f}%)",
+              f"Rating: {rating(percent)}",
+          ]
+          missed = []
+          for i in range(total):
+              if not is_correct(questions[i], answers[i]):
+                  missed.append(str(i + 1))
+          if len(missed) > 0:
+              lines.append("Review: " + ", ".join(missed))
+          else:
+              lines.append("Perfect score - nothing to review!")
+          return "\n".join(lines)
+
+
+      def read_line(prompt):
+          """Show prompt and return what the player typed, or None if there is no more input."""
+          try:
+              return input(prompt).strip()
+          except EOFError:
+              return None
+
+
+      def ask_question(number, question):
+          """Print a question and ask until the answer is valid.
+
+          Returns the chosen option index, or None if the input runs out.
+          """
+          print(format_question(number, question))
+          count = len(question["options"])
+          while True:
+              text = read_line("Your answer: ")
+              if text is None:
+                  return None
+              index = letter_to_index(text, count)
+              if index is not None:
+                  return index
+              print(f"Please answer with a letter from A to {LETTERS[count - 1]}.")
+
+
+      def run_quiz(questions):
+          """Ask every question with feedback. Returns the chosen option indexes."""
+          answers = []
+          for i in range(len(questions)):
+              question = questions[i]
+              index = ask_question(i + 1, question)
+              if index is None:
+                  print("Quiz stopped early.")
+                  break
+              answers.append(index)
+              print(feedback(question, index))
+          return answers
+
+
+      def main():
+          """Run the quiz on QUESTIONS and print the results."""
+          print("=== Python basics quiz ===")
+          print(f"{len(QUESTIONS)} questions. Answer with the letter of your choice.")
+          answers = run_quiz(QUESTIONS)
+          print(build_summary(QUESTIONS, answers))
+
+
+      if __name__ == "__main__":
+          main()
+testing: |
+  Click **Run milestone tests** under a milestone. The tests run against your **whole program**
+  (all milestones share one file), so earlier functions must keep working as you add new ones.
+
+  * **Function checks** call your functions with questions defined inside the test, for example
+    `assert letter_to_index(" b ", 4) == 1` or an exact comparison of `build_summary(...)`. Exact
+    texts matter: compare the expected and actual text in the failure message character by
+    character.
+  * **Program checks** re-run your whole program with `run_program("...")`, one line per
+    `input()` call. The answers are built from **your own** `QUESTIONS` (for example the letter of
+    each correct answer), so you can change the questions freely.
+
+  Every failed check says what it tried and what it expected. After your first test run you can
+  open the **reference solution** for the milestone to compare approaches.
+
+  On your own computer, run `python quiz.py` and try right answers, wrong answers, `e`, an empty
+  answer, and pressing Ctrl+D (macOS/Linux) or Ctrl+Z then Enter (Windows) to end the input early.
+security:
+  - In a quiz that runs on the player's device the answers ship with the program, so anyone can read them. That is fine for practice; a graded exam must check answers on a server the player cannot see.
+  - Validate answers strictly. letter_to_index accepts only one of the expected letters, so nothing else can reach the scoring code.
+  - Never use eval() to interpret answers or question data. Questions are plain data in dictionaries; if you later load them from a file, use the json module, which reads data without running code.
+  - If questions come from other people (a shared file or a website), treat their text as untrusted. Limit its length and print it as text rather than using it to build code or file paths.
+extensions:
+  - Shuffle the question order with random.shuffle on a copy of QUESTIONS. The program checks expect the original order, so add a setting such as SHUFFLE = False at the top and only shuffle when it is True.
+  - Add a "second chance" mode in which a wrong answer can be retried once for half a point.
+  - Load the questions from a JSON file and validate each one (keys, option count, answer index) before the quiz starts, reporting the number of any broken question.
+  - Group questions by topic and show a percentage per topic in the summary.
+  - Save each attempt's score with its date in a file and show the player's best and latest scores.
+rubric:
+  - criterion: Data design
+    needsWork: Questions are hard-coded in if statements, or the dictionaries use inconsistent keys.
+    meets: QUESTIONS is a list of dictionaries with the four required keys and valid answer indexes; adding a question needs no code change.
+    exceeds: You wrote clear explanations for every question and options that target real misconceptions.
+  - criterion: Correctness
+    needsWork: Scores, percentages or ratings are wrong at the boundaries, or percentage crashes when nothing was answered.
+    meets: All pure functions pass the tests, including rating boundaries, rounding and the empty case.
+    exceeds: You tested further cases yourself, such as questions with 2 or 8 options.
+  - criterion: Robust interaction
+    needsWork: An invalid or empty answer crashes the quiz or is scored, or ending the input causes an error.
+    meets: Invalid answers are asked again with a helpful message; ending the input stops the quiz politely with a summary.
+    exceeds: Feedback and messages are friendly and consistent, and the program's flow is easy to follow in main().
+  - criterion: Function design
+    needsWork: Functions print instead of returning values, or one big loop does everything.
+    meets: Pure functions return values; only read_line, ask_question, run_quiz and main use input() or print().
+    exceeds: Every function has a docstring and a single job, and none repeats another's logic.

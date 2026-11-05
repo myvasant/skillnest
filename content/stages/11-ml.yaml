@@ -1,0 +1,690 @@
+id: ml
+order: 11
+title: Machine Learning
+shortTitle: Machine Learning
+summary: >-
+  How machines learn from data: problem framing, train/validation/test splits, linear and logistic
+  regression, trees and ensembles, clustering, evaluation, leakage, tuning and reproducible pipelines.
+why: >-
+  Even in the age of LLMs, most deployed predictive systems are classical ML, and the evaluation discipline
+  learned here is exactly what LLM and RAG evaluation need.
+modules:
+  - id: foundations
+    title: Foundations
+    summary: What ML is, learning types, generalisation and data splits.
+  - id: supervised
+    title: Supervised learning
+    summary: Regression, classification, trees, ensembles and neighbours.
+  - id: unsupervised
+    title: Unsupervised learning
+    summary: Clustering and dimensionality reduction.
+  - id: practice
+    title: Evaluation and practice
+    summary: Metrics, overfitting, cross-validation, leakage, tuning, pipelines, interpretability and fairness.
+concepts:
+  # ------------------------------------------------------------- foundations
+  - id: ml.what-is-ml
+    title: What machine learning is (and isn't)
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: AI is the goal, ML learns patterns from data, deep learning uses neural networks, and generative AI produces new content; ML fits when rules are hard to write but examples are plentiful.
+    why: Knowing when ML is the right tool — and when a rule, a SQL query or a lookup table is better — prevents expensive projects that never ship.
+    requires: [foundations.algorithmic-thinking]
+    keyIdeas:
+      - Traditional programming turns rules plus data into answers; ML turns data plus example answers into learned rules (a model).
+      - A model is a function with parameters fitted to minimise error on training examples, then used to predict for new inputs.
+      - AI contains ML, which contains deep learning; generative AI uses (mostly deep) models to produce new text, images or audio.
+      - ML fits when patterns are too complex to hand-code, examples are plentiful and representative, and occasional errors are acceptable.
+      - Always start with a simple baseline (a rule, the mean, the majority class) so you can tell whether ML adds value.
+    misconceptions:
+      - Models learn correlations in their training data, not causes; they can fail when the world changes.
+      - A more complex model is not automatically better; a well-framed simple model often wins in production.
+    interview: Explain when you would not use ML, and how you would frame a business problem as a prediction task with a measurable target.
+    sources:
+      - title: Machine Learning Crash Course
+        url: https://developers.google.com/machine-learning/crash-course
+        publisher: Google for Developers
+      - title: Rules of Machine Learning
+        url: https://developers.google.com/machine-learning/guides/rules-of-ml
+        publisher: Google for Developers
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.learning-types
+    title: Supervised, unsupervised, self-supervised and reinforcement learning
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: Learning from labelled examples, from structure in unlabelled data, from labels derived from the data itself, or from rewards for actions.
+    why: The type of learning decides what data you must collect (labels, rewards or neither) and which algorithms and evaluations apply.
+    requires: [ml.what-is-ml]
+    keyIdeas:
+      - Supervised learning uses labelled pairs `(x, y)`; regression predicts numbers and classification predicts categories.
+      - Unsupervised learning has no labels and finds structure such as clusters, low-dimensional representations or anomalies.
+      - Self-supervised learning creates targets from the data itself — predict the next token, a masked word or a hidden image patch — which is how LLMs are pretrained on unlabelled text.
+      - Reinforcement learning has an agent act in an environment, receive rewards and learn a policy that maximises long-term reward.
+      - Semi-supervised and weakly supervised learning combine a few trusted labels with many unlabelled or noisily labelled examples.
+    misconceptions:
+      - Self-supervised does not mean "no target"; it trains on a supervised-style objective whose targets are generated automatically.
+      - Clusters found without labels are not hidden "true classes"; they depend on the features, distance and algorithm you chose.
+    interview: Classify a few example problems by learning type and explain why LLM pretraining counts as self-supervised.
+    sources:
+      - title: "Dive into Deep Learning: Introduction (kinds of machine learning problems)"
+        url: https://d2l.ai/chapter_introduction/index.html
+        publisher: Zhang, Lipton, Li and Smola
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.train-val-test
+    title: Training, validation and test sets
+    module: foundations
+    level: beginner
+    priority: essential
+    summary: Models are judged on data they never trained on; the validation set guides choices and the test set is touched once, at the end.
+    why: A model's score on its own training data says almost nothing about how it will perform on new data; held-out data is the only honest estimate.
+    requires: [ml.learning-types]
+    keyIdeas:
+      - The training set fits parameters, the validation set chooses models, features and hyperparameters, and the test set gives one final unbiased estimate.
+      - Common splits put 60–80% in training and divide the rest between validation and test; with little data, use cross-validation instead of a fixed validation set.
+      - Split first, then fit any data-dependent preprocessing (scaling, imputation, vocabularies) on the training set only.
+      - The split must mirror deployment — random for independent rows, by time for forecasting, by group (user, patient) when rows from one entity are correlated.
+      - Stratify classification splits so each set keeps the same class proportions (`train_test_split(..., stratify=y)`).
+    misconceptions:
+      - Checking the test score repeatedly and adjusting the model turns the test set into a validation set; its score is no longer unbiased.
+      - A random split is wrong for time-ordered data; training on the future to predict the past inflates scores.
+    tools: [scikit-learn]
+    interview: Explain why three sets are needed and how you would split time-series or per-customer data.
+    sources:
+      - title: "Cross-validation: evaluating estimator performance"
+        url: https://scikit-learn.org/stable/modules/cross_validation.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  # -------------------------------------------------------------- supervised
+  - id: ml.linear-regression
+    title: Linear regression
+    module: supervised
+    level: intermediate
+    priority: essential
+    summary: Predict a number as a weighted sum of features, fitted by minimising mean squared error with gradient descent or a closed-form solution.
+    why: It is the simplest useful model and a strong baseline, and its ideas — loss, gradient descent, regularisation, coefficients — reappear in every model up to neural networks.
+    requires: [ml.train-val-test, math.optimization, math.matrices]
+    keyIdeas:
+      - The model is `y_hat = X @ w + b`; ordinary least squares picks `w` and `b` that minimise the mean squared error.
+      - The normal equation `w = inv(X.T @ X) @ X.T @ y` solves it directly for modest feature counts (libraries use more stable solvers); gradient descent scales to very large data.
+      - A coefficient is the change in prediction per unit of that feature with the others held fixed — comparable only when features share a scale and are not strongly correlated.
+      - Engineered features (polynomials, interactions, logs) model curved relationships while the model stays linear in its parameters.
+      - Plot residuals; visible patterns reveal missed structure, outliers or non-constant variance.
+    misconceptions:
+      - '"Linear" means linear in the parameters, not that the fitted curve must be a straight line in the raw input.'
+      - A large coefficient does not mean an important feature when features have different units, and no coefficient proves causation.
+    tools: [scikit-learn, statsmodels]
+    interview: Explain the MSE loss and its gradient, the closed-form solution, and the assumptions and limits of linear regression.
+    sources:
+      - title: Linear models
+        url: https://scikit-learn.org/stable/modules/linear_model.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.logistic-regression
+    title: Logistic regression and classification
+    module: supervised
+    level: intermediate
+    priority: essential
+    summary: Pass a linear score through a sigmoid to get a probability, train with cross-entropy, and choose a decision threshold.
+    why: Many business problems are yes/no decisions (fraud, churn, spam); logistic regression gives fast, interpretable probabilities and is the building block of neural-network classifiers.
+    requires: [ml.linear-regression, math.probability-basics]
+    keyIdeas:
+      - Compute a linear score `z = X @ w + b`, then `p = 1 / (1 + exp(-z))`, the probability of the positive class.
+      - Train by minimising log loss (binary cross-entropy) `-(y*log(p) + (1-y)*log(1-p))`; there is no closed form, so iterative solvers are used.
+      - The decision boundary `z = 0` is linear in the features; each coefficient is the change in log-odds per unit of its feature.
+      - The 0.5 threshold is only a default; choose the threshold from the relative cost of false positives and false negatives.
+      - Multi-class problems use softmax (multinomial) regression or one-vs-rest.
+    misconceptions:
+      - Despite its name, logistic regression is a classification model; it regresses the log-odds.
+      - scikit-learn's `LogisticRegression` applies L2 regularisation by default (strength set by `C`, default 1.0), so unscaled features change both results and coefficients.
+    tools: [scikit-learn]
+    interview: Explain why log loss is used instead of MSE, what the coefficients mean in log-odds, and how you would pick a threshold.
+    sources:
+      - title: Linear models — logistic regression
+        url: https://scikit-learn.org/stable/modules/linear_model.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.knn
+    title: k-nearest neighbours
+    module: supervised
+    level: intermediate
+    priority: supporting
+    summary: Predict from the most similar training examples; distance metrics and feature scaling decide what "similar" means.
+    why: The simplest non-parametric method builds intuition for distance, scaling and the curse of dimensionality — the same ideas behind vector search in RAG.
+    requires: [ml.train-val-test, math.vectors]
+    keyIdeas:
+      - To predict, find the `k` closest training points under a distance (Euclidean, Manhattan, cosine) and take a majority vote (classification) or average (regression).
+      - Training only stores the data, so prediction cost grows with dataset size; large systems use tree indexes or approximate nearest-neighbour search.
+      - Small `k` gives flexible, noisy boundaries (high variance); large `k` smooths them (high bias); choose `k` by cross-validation.
+      - Scale features first (for example `StandardScaler`), or features measured in large units dominate the distance.
+      - In high dimensions distances between points become similar (curse of dimensionality), so "nearest" becomes less meaningful.
+    misconceptions:
+      - '"No training" does not mean no cost: kNN moves the work and memory to prediction time.'
+    tools: [scikit-learn]
+    interview: Explain the effect of `k`, why scaling matters, and the time cost of a prediction.
+    sources:
+      - title: Nearest neighbors
+        url: https://scikit-learn.org/stable/modules/neighbors.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.decision-trees
+    title: Decision trees
+    module: supervised
+    level: intermediate
+    priority: essential
+    summary: Trees split data with if/else questions chosen to reduce impurity; they are interpretable but overfit easily.
+    why: Trees handle mixed feature types and non-linear interactions with no scaling, can be read as rules, and are the building block of the strongest tabular models.
+    requires: [ml.train-val-test, math.information-theory]
+    keyIdeas:
+      - At each node the tree greedily picks the feature and threshold that most reduce impurity — Gini or entropy (information gain) for classification, squared error for regression.
+      - Leaves predict the majority class (or class proportions) or the mean target of the training rows that reach them.
+      - An unconstrained tree grows until leaves are pure and memorises the training set; limit it with `max_depth`, `min_samples_leaf` or cost-complexity pruning (`ccp_alpha`).
+      - Small changes in the data can produce a very different tree (high variance), which is what ensembles fix.
+    misconceptions:
+      - Near-100% training accuracy from a deep tree is a warning sign of overfitting, not a success.
+      - Impurity-based feature importances are biased towards high-cardinality features; do not treat them as ground truth.
+    tools: [scikit-learn]
+    interview: Explain how a split is chosen (Gini vs entropy) and why trees overfit and how to stop it.
+    sources:
+      - title: Decision trees
+        url: https://scikit-learn.org/stable/modules/tree.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.ensembles
+    title: Random forests and gradient boosting
+    module: supervised
+    level: intermediate
+    priority: essential
+    summary: Combining many trees — by averaging (bagging) or by correcting errors sequentially (boosting) — gives the strongest models for most tabular data.
+    why: For tabular business data, gradient-boosted trees and random forests are usually the most accurate practical models and remain the standard choice alongside deep learning.
+    requires: [ml.decision-trees, ml.overfitting]
+    keyIdeas:
+      - Bagging trains many trees on bootstrap samples and averages them, which reduces variance; random forests also sample features at each split to decorrelate the trees.
+      - Boosting adds shallow trees one at a time, each fitted to the errors (loss gradients) of the current ensemble; learning rate and number of trees trade off against each other.
+      - Libraries such as XGBoost, LightGBM, CatBoost and scikit-learn's `HistGradientBoostingClassifier` are fast on large data and handle missing values natively.
+      - Random forests work well with little tuning; boosting usually wins after tuning, with early stopping on validation data.
+      - Out-of-bag samples (rows left out of each bootstrap) give a random forest a built-in validation estimate.
+    misconceptions:
+      - Adding trees does not make a random forest overfit, but adding boosting rounds can — use early stopping.
+      - Tree ensembles cannot extrapolate; they never predict outside the range of targets seen in training.
+    tools: [scikit-learn, XGBoost, LightGBM]
+    interview: Compare bagging and boosting in terms of bias and variance and name the key hyperparameters of each.
+    sources:
+      - title: "Ensembles: gradient boosting, random forests, bagging, voting, stacking"
+        url: https://scikit-learn.org/stable/modules/ensemble.html
+        publisher: scikit-learn
+      - title: XGBoost documentation
+        url: https://xgboost.readthedocs.io/en/stable/
+        publisher: XGBoost contributors
+      - title: LightGBM documentation
+        url: https://lightgbm.readthedocs.io/en/stable/
+        publisher: Microsoft
+  - id: ml.svm
+    title: Support vector machines
+    module: supervised
+    level: advanced
+    priority: optional
+    summary: Find the maximum-margin boundary between classes; kernels allow non-linear boundaries.
+    why: SVMs remain strong on small, high-dimensional datasets (for example text features), and the margin and kernel ideas appear throughout ML theory.
+    requires: [ml.logistic-regression, math.vectors, ml.overfitting]
+    keyIdeas:
+      - A linear SVM finds the hyperplane with the largest margin to the nearest training points, which are called support vectors.
+      - The soft-margin parameter `C` trades margin width against training errors (hinge loss); smaller `C` means a wider margin and stronger regularisation.
+      - The kernel trick computes similarities in a high-dimensional feature space without building it; with the RBF kernel, `gamma` controls how wiggly the boundary is.
+      - Kernel SVM training scales roughly quadratically or worse in the number of samples, so it suits small-to-medium datasets; `LinearSVC` scales much better.
+      - SVMs need scaled features and do not output probabilities natively.
+    misconceptions:
+      - SVM decision scores are not probabilities; calibrate them separately if you need probabilities.
+    tools: [scikit-learn]
+    interview: Explain the margin, support vectors, the role of `C` and what the kernel trick avoids computing.
+    sources:
+      - title: Support vector machines
+        url: https://scikit-learn.org/stable/modules/svm.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.time-series-forecasting
+    title: Time-series forecasting
+    module: supervised
+    level: intermediate
+    priority: supporting
+    summary: Predict future values from past observations with baselines, lag features and seasonal models, evaluated strictly forward in time.
+    why: Demand, capacity, traffic and finance planning all depend on forecasts, and time-ordered data breaks the assumptions behind random train/test splits.
+    requires: [data.time-series, ml.linear-regression, ml.cross-validation]
+    keyIdeas:
+      - "Always beat simple baselines first: the last value (naive), the same period last season (seasonal naive) and a moving average."
+      - Turn a series into a supervised problem with lag features, rolling statistics and calendar features — computed only from data available at prediction time.
+      - Evaluate with rolling-origin (walk-forward) validation, e.g. `TimeSeriesSplit`, never with shuffled k-fold.
+      - Trend, seasonality and holidays are explicit components in classical models (exponential smoothing, ARIMA); gradient-boosted trees on lag features are a strong modern default.
+      - Report forecast uncertainty (prediction intervals), not just a single line.
+    misconceptions:
+      - A low error on a randomly shuffled split says nothing about forecasting ability; it usually means future information leaked into training.
+      - More complex models do not reliably beat seasonal-naive baselines; many published comparisons find simple methods competitive.
+    interview: How would you validate a demand-forecasting model, and which leakage traps are specific to time series?
+    production: Forecast accuracy degrades as patterns shift; track error by horizon over time and retrain on a schedule.
+    sources:
+      - title: "Forecasting: Principles and Practice (3rd ed., free online)"
+        url: https://otexts.com/fpp3/
+        publisher: Hyndman and Athanasopoulos
+      - title: TimeSeriesSplit
+        url: https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html
+        publisher: scikit-learn
+  # ------------------------------------------------------------ unsupervised
+  - id: ml.clustering
+    title: Clustering
+    module: unsupervised
+    level: intermediate
+    priority: essential
+    summary: Group similar items without labels using k-means, hierarchical clustering or DBSCAN, and judge results with care.
+    why: Clustering lets you segment customers, group documents or spot unusual behaviour when nobody has labelled the data.
+    requires: [ml.learning-types, math.vectors]
+    keyIdeas:
+      - k-means alternates between assigning points to the nearest of `k` centroids and moving each centroid to its points' mean; it assumes compact, similar-sized clusters and needs `k` up front.
+      - Use k-means++ initialisation with several restarts, and scale features first, because results depend on the starting points and on units.
+      - Agglomerative (hierarchical) clustering repeatedly merges the closest clusters; the linkage (Ward, average, complete) changes the result, and a dendrogram shows structure at every level.
+      - DBSCAN grows clusters from dense regions using `eps` and `min_samples`, finds arbitrary shapes, labels outliers as noise and does not need `k`.
+      - Judge clusters with internal scores (silhouette, Davies–Bouldin), stability across runs and, above all, whether they are useful for the task.
+    misconceptions:
+      - Most real data has no single "correct" number of clusters; the elbow method and silhouette score are heuristics.
+      - k-means always returns `k` clusters, even when the data has no cluster structure at all.
+    tools: [scikit-learn]
+    interview: Explain how k-means works, its assumptions, and how you would choose `k` and validate the clusters.
+    sources:
+      - title: Clustering
+        url: https://scikit-learn.org/stable/modules/clustering.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.dimensionality-reduction
+    title: Dimensionality reduction
+    module: unsupervised
+    level: advanced
+    priority: supporting
+    summary: PCA projects data onto directions of greatest variance; t-SNE and UMAP produce 2-D maps for visualisation, not measurement.
+    why: High-dimensional data such as embeddings is hard to visualise, slow to process and prone to overfitting; reducing dimensions helps with all three.
+    requires: [ml.learning-types, math.eigen-svd]
+    keyIdeas:
+      - PCA finds orthogonal directions of maximum variance (eigenvectors of the covariance matrix, computed via SVD) and projects the data onto the top `k`.
+      - The explained variance ratio shows how much variance each component keeps; pick `k` to retain, say, 95%.
+      - Centre the data (PCA does this) and usually standardise features, otherwise features with large units dominate the components.
+      - t-SNE and UMAP are non-linear methods that preserve local neighbourhoods for 2-D or 3-D plots; cluster sizes and distances between clusters in these plots are not meaningful.
+      - PCA is a linear map that can transform new data and approximately invert it; t-SNE cannot embed new points without re-running.
+    misconceptions:
+      - Well-separated blobs in a t-SNE plot do not prove real clusters; the picture changes with perplexity and random seed.
+      - PCA components maximise variance, not predictive power, and are not guaranteed to be interpretable.
+    tools: [scikit-learn, umap-learn]
+    interview: Explain PCA in terms of variance and SVD, and the caveats of reading t-SNE or UMAP plots.
+    sources:
+      - title: Decomposing signals in components (PCA and others)
+        url: https://scikit-learn.org/stable/modules/decomposition.html
+        publisher: scikit-learn
+      - title: How to Use t-SNE Effectively
+        url: https://distill.pub/2016/misread-tsne/
+        publisher: Distill
+  - id: ml.anomaly-detection
+    title: Anomaly and outlier detection
+    module: unsupervised
+    level: intermediate
+    priority: optional
+    summary: Flag rare, unusual observations — fraud, faults, intrusions — often without labels, using statistical rules, isolation forests or density-based methods.
+    why: Many valuable problems have almost no labelled positives; anomaly detection finds the cases worth a human look.
+    requires: [ml.clustering, math.descriptive-statistics]
+    keyIdeas:
+      - "Simple baselines first: z-scores or the interquartile-range rule on a single feature catch many anomalies and are easy to explain."
+      - Isolation forests isolate points with random splits; anomalies need fewer splits, so they get higher anomaly scores.
+      - Density- and distance-based methods (local outlier factor, DBSCAN noise points) flag points in sparse regions relative to their neighbours.
+      - Outlier detection assumes training data is mostly normal but may contain outliers; novelty detection trains only on clean normal data.
+      - Evaluate with whatever labels exist (precision at the top-k alerts) because the cost of each alert drives usefulness.
+    misconceptions:
+      - Not every outlier is an error or fraud; some are the most important legitimate cases in the data.
+      - An anomaly score threshold is a business decision about alert volume, not a property of the model.
+    tools: [scikit-learn]
+    interview: How would you detect fraudulent transactions with very few labelled examples, and how would you evaluate it?
+    production: Anomaly baselines drift with seasonality and growth; monitor alert rates and retrain or re-baseline regularly.
+    sources:
+      - title: Novelty and outlier detection
+        url: https://scikit-learn.org/stable/modules/outlier_detection.html
+        publisher: scikit-learn
+  # ---------------------------------------------------------------- practice
+  - id: ml.evaluation-metrics
+    title: Evaluation metrics
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Confusion matrices, precision, recall, F1, ROC-AUC and calibration for classifiers; MAE, RMSE and R² for regression — chosen by the cost of each error.
+    why: The metric defines what "good" means; optimising the wrong one ships a model that looks fine on paper and fails the real goal.
+    requires: [ml.logistic-regression]
+    keyIdeas:
+      - "From the confusion matrix: precision = TP / (TP + FP), recall = TP / (TP + FN), and F1 is their harmonic mean."
+      - ROC-AUC measures how well scores rank positives above negatives across all thresholds; precision–recall AUC (average precision) is more informative when positives are rare.
+      - A calibrated model's 0.8 predictions are correct about 80% of the time; check with reliability diagrams and the Brier score.
+      - For regression, MAE is robust and in target units, RMSE penalises large errors more, and R² compares against always predicting the mean (it can be negative).
+      - Compare every metric against a baseline and report its uncertainty (cross-validation spread or confidence intervals).
+    misconceptions:
+      - Accuracy misleads on imbalanced data; always predicting "not fraud" scores 99% when fraud is 1% of cases.
+      - A high AUC does not mean good probabilities or good decisions at the threshold you actually use.
+    tools: [scikit-learn]
+    interview: Compute precision and recall from a confusion matrix and argue which metric matters for a given scenario.
+    sources:
+      - title: "Metrics and scoring: quantifying the quality of predictions"
+        url: https://scikit-learn.org/stable/modules/model_evaluation.html
+        publisher: scikit-learn
+      - title: Probability calibration
+        url: https://scikit-learn.org/stable/modules/calibration.html
+        publisher: scikit-learn
+  - id: ml.overfitting
+    title: Overfitting, underfitting and regularisation
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: The bias–variance trade-off; overfit models memorise noise, and regularisation (L1/L2, simpler models, more data) restores generalisation.
+    why: Diagnosing whether a model is too simple or too flexible tells you what to do next — more features, more data, or more regularisation.
+    requires: [ml.linear-regression]
+    keyIdeas:
+      - Underfitting means high error on both training and validation data (high bias); overfitting means low training error but much higher validation error (high variance).
+      - For squared error, expected test error = bias² + variance + irreducible noise; model flexibility trades bias against variance.
+      - Learning curves (error vs training-set size) and validation curves (error vs a complexity setting) show which problem you have.
+      - L2 (ridge) shrinks all weights; L1 (lasso) drives some to exactly zero, performing feature selection; the strength is a hyperparameter chosen by validation.
+      - Other remedies are more or cleaner data, fewer features, simpler models and early stopping.
+    misconceptions:
+      - More data helps an overfitting model but does little for an underfitting one, which needs more capacity or better features.
+      - In scikit-learn, `alpha` is regularisation strength but `C` is its inverse, so a larger `C` means less regularisation.
+    tools: [scikit-learn]
+    interview: Explain the bias–variance trade-off with a learning curve and contrast L1 with L2 regularisation.
+    sources:
+      - title: "Validation curves: plotting scores to evaluate models"
+        url: https://scikit-learn.org/stable/modules/learning_curve.html
+        publisher: scikit-learn
+      - title: An Introduction to Statistical Learning (free book)
+        url: https://www.statlearning.com/
+        publisher: James, Witten, Hastie, Tibshirani and Taylor
+  - id: ml.cross-validation
+    title: Cross-validation
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: k-fold, stratified and time-series splits give more reliable performance estimates than a single split.
+    why: A single validation split is noisy, especially on small datasets; cross-validation uses all the data for both training and validation and shows how much scores vary.
+    requires: [ml.overfitting]
+    keyIdeas:
+      - k-fold splits data into `k` folds (commonly 5 or 10), trains on `k-1`, validates on the remaining fold, rotates, and averages the `k` scores.
+      - Report the mean and standard deviation of fold scores; the spread shows how stable the estimate is.
+      - "`StratifiedKFold` keeps class ratios, `GroupKFold` keeps all rows of an entity in one fold, and `TimeSeriesSplit` always trains on the past and validates on the future."
+      - Nested cross-validation (an inner loop for tuning, an outer loop for evaluation) gives an unbiased estimate when hyperparameters are also tuned.
+      - All preprocessing must be fitted inside each fold — wrap it in a `Pipeline` — to avoid leakage.
+    misconceptions:
+      - The models trained during cross-validation are not your final model; refit on all training data with the chosen settings.
+      - Cross-validation does not replace a final test set when many decisions were made by looking at CV scores.
+    tools: [scikit-learn]
+    interview: Explain when to use stratified, grouped or time-series splits and what nested cross-validation protects against.
+    sources:
+      - title: "Cross-validation: evaluating estimator performance"
+        url: https://scikit-learn.org/stable/modules/cross_validation.html
+        publisher: scikit-learn
+  - id: ml.data-leakage
+    title: Data leakage
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Information from the future or from the test set leaking into training produces models that look great and fail in production.
+    why: Leakage is the most common reason a model with excellent offline scores collapses after deployment, and it is invisible unless you look for it.
+    requires: [ml.train-val-test, data.feature-engineering]
+    keyIdeas:
+      - Target leakage — a feature that is only known after the outcome (such as "refund issued" when predicting fraud) or is derived from the label.
+      - Train–test contamination — fitting scalers, imputers, encoders or feature selection on the full dataset before splitting.
+      - Temporal leakage — random splits of time-ordered data, or features such as rolling averages that include future values.
+      - Group leakage — the same customer, patient or near-duplicate record appearing in both training and test sets.
+      - Red flags are suspiciously high scores or one feature dominating; for every feature ask "would I know this value at prediction time?"
+    misconceptions:
+      - Leakage is not only about the test set; duplicates and near-duplicates across splits leak just as badly.
+    interview: Give concrete examples of leakage and explain how you would detect and prevent each.
+    production: Compute features with the same point-in-time logic in training and serving; point-in-time joins in a feature store help.
+    sources:
+      - title: Common pitfalls and recommended practices
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+        publisher: scikit-learn
+      - title: Rules of Machine Learning
+        url: https://developers.google.com/machine-learning/guides/rules-of-ml
+        publisher: Google for Developers
+  - id: ml.scikit-learn
+    title: scikit-learn
+    module: practice
+    level: intermediate
+    priority: technology-specific
+    summary: The estimator API (fit, predict, transform), pipelines and model selection utilities of Python's standard ML library.
+    why: scikit-learn's consistent API covers most classical ML work, and its conventions are copied by many other libraries.
+    requires: [ml.linear-regression, data.numpy]
+    keyIdeas:
+      - "Every estimator follows one API: `fit(X, y)` learns, `predict(X)` or `predict_proba(X)` predicts, and transformers provide `transform(X)` and `fit_transform(X)`."
+      - Hyperparameters are constructor arguments (`get_params`, `set_params`); learned attributes end with an underscore, such as `coef_` and `classes_`.
+      - "`Pipeline` and `ColumnTransformer` chain preprocessing and a model into one object that can be fitted, cross-validated and saved as a unit."
+      - "`sklearn.model_selection` provides `train_test_split`, `cross_val_score`, `GridSearchCV` and `RandomizedSearchCV`."
+      - Inputs are NumPy arrays or pandas DataFrames; `set_output(transform="pandas")` keeps column names through transformers.
+    misconceptions:
+      - Calling `fit` again does not continue training; it starts from scratch (unless the estimator supports `warm_start` or `partial_fit`).
+      - Pickled models are tied to the library version that saved them, and loading a pickle from an untrusted source can execute arbitrary code.
+    tools: [scikit-learn]
+    production: Pin the scikit-learn version used for training, save models with `joblib` or `skops`, and never load untrusted pickles.
+    sources:
+      - title: scikit-learn user guide
+        url: https://scikit-learn.org/stable/user_guide.html
+        publisher: scikit-learn
+      - title: Getting started
+        url: https://scikit-learn.org/stable/getting_started.html
+        publisher: scikit-learn
+      - title: Model persistence
+        url: https://scikit-learn.org/stable/model_persistence.html
+        publisher: scikit-learn
+  - id: ml.hyperparameter-tuning
+    title: Hyperparameter tuning
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Search model settings with grid, random or Bayesian search inside cross-validation — never on the test set.
+    why: Default settings are rarely best for your data, but careless tuning overfits the validation data and gives falsely optimistic scores.
+    requires: [ml.cross-validation]
+    keyIdeas:
+      - Parameters (weights) are learned from data; hyperparameters (tree depth, learning rate, regularisation strength) are set before training.
+      - Grid search tries every combination, so cost multiplies with each added hyperparameter; random search usually finds good settings faster when only a few hyperparameters matter.
+      - Bayesian optimisation and TPE (for example in Optuna) use past trials to pick promising settings; successive halving and Hyperband stop poor trials early.
+      - Search scale-like hyperparameters (learning rate, `C`, `alpha`) on a log scale.
+      - Tune with cross-validation on training data only, then evaluate the chosen configuration once on the test set.
+    misconceptions:
+      - Tuning rarely rescues weak features or leakage; fix the data and problem framing first.
+      - The best score from a large search is optimistically biased, because you selected it out of many noisy estimates.
+    tools: [scikit-learn, Optuna]
+    interview: Compare grid, random and Bayesian search and explain why tuning on the test set invalidates the result.
+    sources:
+      - title: Tuning the hyper-parameters of an estimator
+        url: https://scikit-learn.org/stable/modules/grid_search.html
+        publisher: scikit-learn
+      - title: Random Search for Hyper-Parameter Optimization
+        url: https://www.jmlr.org/papers/v13/bergstra12a.html
+        publisher: Journal of Machine Learning Research (Bergstra and Bengio, 2012)
+      - title: Optuna documentation
+        url: https://optuna.readthedocs.io/en/stable/
+        publisher: Optuna contributors
+  - id: ml.imbalanced-data
+    title: Imbalanced data
+    module: practice
+    level: intermediate
+    priority: supporting
+    summary: When one class is rare, accuracy misleads; use appropriate metrics, class weights, resampling and threshold tuning.
+    why: Fraud, failures and rare diseases are exactly the cases where the minority class matters most, and naive models simply ignore it.
+    requires: [ml.evaluation-metrics]
+    keyIdeas:
+      - Evaluate with precision, recall, F1, precision–recall AUC or an explicit cost function, and always inspect the confusion matrix.
+      - "`class_weight=\"balanced\"` makes mistakes on the rare class cost more during training."
+      - Resampling (random under- or oversampling, SMOTE) must be applied only to training folds, never before the split.
+      - Tune the decision threshold on validation data to match business costs (scikit-learn provides `TunedThresholdClassifierCV`).
+      - Class weights and resampling distort predicted probabilities; recalibrate if downstream code needs real probabilities.
+    misconceptions:
+      - Rebalancing to 50/50 is often unnecessary; a good probabilistic model plus a tuned threshold frequently does as well.
+      - Oversampling before splitting copies test examples into training and inflates scores.
+    tools: [scikit-learn, imbalanced-learn]
+    interview: Walk through how you would handle a problem with 1% positives, from metric choice to threshold.
+    sources:
+      - title: Tuning the decision threshold for class prediction
+        url: https://scikit-learn.org/stable/modules/classification_threshold.html
+        publisher: scikit-learn
+      - title: imbalanced-learn documentation
+        url: https://imbalanced-learn.org/stable/
+        publisher: imbalanced-learn contributors
+  - id: ml.ml-pipelines
+    title: ML pipelines
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Bundle preprocessing and the model into one pipeline so the same transformations are fitted only on training data and applied consistently.
+    why: Hand-written preprocessing drifts between notebook, training job and serving code; a single pipeline object prevents both leakage and train–serve skew.
+    requires: [ml.scikit-learn, ml.data-leakage]
+    keyIdeas:
+      - A `Pipeline` is a sequence of transformers ending in an estimator; `fit` fits each step in order on training data, and `predict` applies the fitted steps and then the model.
+      - "`ColumnTransformer` applies different preprocessing to different columns, for example impute and scale numerics but one-hot encode categoricals."
+      - Cross-validating or grid-searching the whole pipeline refits preprocessing inside every fold; step parameters are addressed as `step__param`.
+      - The fitted pipeline is the deployable artefact — serving calls one `predict` on raw input with the same columns used in training.
+      - Handle unseen categories explicitly, for example `OneHotEncoder(handle_unknown="ignore")`.
+    misconceptions:
+      - Preprocessing the whole dataset in pandas and putting only the model in a pipeline still leaks information across folds.
+    tools: [scikit-learn]
+    interview: Explain how pipelines prevent leakage and train–serve skew, and how to tune a parameter of an inner step.
+    production: Validate the input schema at serving time and version the pipeline together with its training data and code.
+    sources:
+      - title: Pipelines and composite estimators
+        url: https://scikit-learn.org/stable/modules/compose.html
+        publisher: scikit-learn
+      - title: Common pitfalls and recommended practices
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+        publisher: scikit-learn
+  - id: ml.reproducibility
+    title: Reproducible ML
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Fix seeds, pin versions, record data versions and parameters, and log every experiment so results can be repeated and compared.
+    why: A result nobody can reproduce cannot be trusted, debugged, audited or improved — and "it worked on my laptop" is common in ML.
+    requires: [ml.ml-pipelines]
+    keyIdeas:
+      - Set seeds for every source of randomness — `random_state` in scikit-learn, `numpy.random.default_rng(seed)`, and framework seeds for deep learning.
+      - Pin exact package versions with a lock file and record the Python version, OS and hardware.
+      - Version the data by snapshot ID, table version or content hash (for example with DVC or lakehouse time travel).
+      - Log each run's code commit, parameters, metrics and artefacts in an experiment tracker so runs can be compared.
+      - Some GPU operations are non-deterministic; exact repeatability may require deterministic modes that run slower.
+    misconceptions:
+      - A fixed seed is not enough if the data, library versions or hardware change.
+      - Reporting only the best seed is cherry-picking; report the variation across several seeds.
+    tools: [MLflow, DVC]
+    interview: Explain what you would record so that an experiment can be reproduced exactly six months later.
+    sources:
+      - title: Common pitfalls — controlling randomness
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+        publisher: scikit-learn
+      - title: MLflow documentation
+        url: https://mlflow.org/docs/latest/
+        publisher: MLflow (Linux Foundation)
+      - title: DVC documentation
+        url: https://doc.dvc.org/
+        publisher: DVC
+  - id: ml.interpretability
+    title: Interpretability
+    module: practice
+    level: advanced
+    priority: supporting
+    summary: Feature importance, permutation importance, partial dependence and SHAP explain models — with important caveats about causation.
+    why: Stakeholders, regulators and debuggers need to know why a model predicts what it does, and explanations often reveal leakage or bias.
+    requires: [ml.ensembles]
+    keyIdeas:
+      - Global explanations describe overall model behaviour; local explanations describe one prediction.
+      - Permutation importance shuffles one feature on held-out data and measures the drop in score; it is model-agnostic, but correlated features share or hide importance.
+      - Partial dependence and ICE plots show how predictions change as one feature varies, averaged over rows or per row.
+      - SHAP values split a prediction's difference from the average prediction among features using Shapley values; TreeSHAP computes them quickly for tree ensembles.
+      - Inherently interpretable models (linear models, small trees, GAMs) may be preferable when explanations are legally required.
+    misconceptions:
+      - Feature importance explains the model, not the world; it does not show that changing a feature would change the outcome.
+      - Impurity-based (MDI) importances from trees are biased towards high-cardinality features; prefer permutation importance on held-out data.
+    tools: [scikit-learn, SHAP]
+    interview: Compare permutation importance and SHAP, including their caveats with correlated features.
+    sources:
+      - title: Inspection (permutation importance, partial dependence)
+        url: https://scikit-learn.org/stable/inspection.html
+        publisher: scikit-learn
+      - title: Interpretable Machine Learning (free book)
+        url: https://christophm.github.io/interpretable-ml-book/
+        publisher: Christoph Molnar
+      - title: SHAP documentation
+        url: https://shap.readthedocs.io/en/latest/
+        publisher: SHAP contributors
+  - id: ml.fairness
+    title: Fairness and bias in ML
+    module: practice
+    level: intermediate
+    priority: essential
+    summary: Biased data and objectives produce unfair outcomes; measure performance across groups and understand the trade-offs between fairness definitions.
+    why: Models used for hiring, lending, healthcare or policing can harm people at scale, and organisations face legal and reputational consequences when they do.
+    requires: [ml.evaluation-metrics]
+    keyIdeas:
+      - Bias enters through data (historical discrimination, under-representation, noisy labels), proxy features (postcode standing in for ethnicity) and the objective itself.
+      - Disaggregate evaluation — compute selection rates, false positive and false negative rates and calibration separately for each group.
+      - Demographic parity asks for equal selection rates, equalised odds for equal true and false positive rates, calibration for equally reliable scores; when base rates differ these generally cannot all hold at once.
+      - Mitigations include better data, reweighting, fairness constraints during training and group-specific thresholds, each needing legal and domain review.
+    misconceptions:
+      - Dropping the protected attribute ("fairness through unawareness") does not remove bias, because correlated proxies remain.
+      - There is no single technical definition of fairness; choosing one is a value and policy decision, not only an engineering one.
+    tools: [Fairlearn]
+    interview: Explain two fairness metrics, why they can conflict, and how you would audit a model across groups.
+    production: Monitor group-level metrics after deployment, document models with model cards, and check which regulations (for example the EU AI Act) apply to your use case.
+    sources:
+      - title: Fairness and Machine Learning (free book)
+        url: https://fairmlbook.org/
+        publisher: Barocas, Hardt and Narayanan
+      - title: Fairlearn user guide
+        url: https://fairlearn.org/main/user_guide/index.html
+        publisher: Fairlearn contributors
+      - title: AI Risk Management Framework
+        url: https://www.nist.gov/itl/ai-risk-management-framework
+        publisher: NIST
+  - id: ml.reinforcement-learning
+    title: Reinforcement learning basics
+    module: foundations
+    level: advanced
+    priority: optional
+    summary: An agent learns a policy that maximises cumulative reward by acting in an environment; the idea behind RLHF for language models.
+    why: RL is the framework for sequential decision-making (games, robotics, recommendations) and underlies how LLMs are tuned with human feedback and verifiable rewards.
+    requires: [ml.learning-types, math.random-variables]
+    keyIdeas:
+      - RL problems are modelled as Markov decision processes — states, actions, transition probabilities, rewards and a discount factor `gamma` between 0 and 1.
+      - A policy maps states to actions; value functions estimate the expected discounted return, and Q-learning learns action values from experience.
+      - The agent must balance exploration (trying new actions, for example epsilon-greedy) with exploitation (using the best known action).
+      - Policy-gradient methods such as PPO adjust the policy directly to increase expected reward.
+      - RLHF trains a reward model on human preference comparisons, then optimises the language model against it with a penalty for drifting far from the original model.
+    misconceptions:
+      - RL is not needed for most prediction problems; if you have labelled examples, supervised learning is simpler and more data-efficient.
+      - Agents optimise the reward you wrote, not the goal you meant, and will exploit loopholes (reward hacking).
+    tools: [Gymnasium]
+    sources:
+      - title: "Reinforcement Learning: An Introduction (2nd edition, free)"
+        url: http://incompleteideas.net/book/the-book-2nd.html
+        publisher: Sutton and Barto
+      - title: Spinning Up in Deep RL
+        url: https://spinningup.openai.com/en/latest/
+        publisher: OpenAI
+      - title: Gymnasium documentation
+        url: https://gymnasium.farama.org/
+        publisher: Farama Foundation

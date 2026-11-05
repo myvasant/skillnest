@@ -1,0 +1,206 @@
+id: mlops.performance-scaling
+concept: mlops.performance-scaling
+title: Performance, load testing and scaling
+subtitle: Measure latency percentiles and throughput under load, find the bottleneck, then scale vertically, horizontally
+  or with autoscaling
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Measure latency percentiles and throughput under load, find the bottleneck, then scale vertically, horizontally
+  or with autoscaling.
+objectives:
+- Explain the core engineering decisions behind performance, load testing and scaling.
+- Apply the principle to a small realistic scenario.
+- Identify operational, security or communication failure modes.
+sources:
+- title: The Tail at Scale
+  url: https://research.google/pubs/the-tail-at-scale/
+  publisher: Google Research (Dean and Barroso, CACM 2013)
+- title: Grafana k6 documentation
+  url: https://grafana.com/docs/k6/latest/
+  publisher: Grafana Labs
+- title: Horizontal Pod Autoscaling
+  url: https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/
+  publisher: The Kubernetes Authors
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Measure latency percentiles and throughput under load, find the bottleneck, then scale vertically, horizontally
+      or with autoscaling. Systems that work for ten users often collapse at a thousand; measuring under realistic
+      load shows where they break before users find out.
+- id: mental-model
+  title: Core principles and trade-offs
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because
+      one user request often fans out to many backend calls.
+
+      - Load test with realistic traffic (k6, Locust) - ramp up gradually, find the throughput at which latency
+      or error rate breaks the target, and watch resource saturation.
+
+      - Find the bottleneck before optimising (CPU, memory, I/O, database, locks, an external API); Little''s law
+      (requests in flight = throughput x latency) helps size worker pools and connection pools.
+
+      - Vertical scaling (a bigger machine) is simple but capped; horizontal scaling (more instances behind a load
+      balancer) needs stateless services; autoscaling adds instances based on metrics such as CPU or queue length.
+
+      - Scaling one tier usually moves the bottleneck to the next one, often the database or a downstream dependency.'
+  - type: callout
+    variant: misconception
+    title: Common mistakes
+    body: '- Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+
+      - Autoscaling is not instant; new instances take time to start, so keep headroom for sudden spikes.'
+- id: worked-example
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This deterministic Python helper models one part of the engineering decision. Production use requires
+      environment-specific measurement, review and operational controls.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def required_instances(request_rate, capacity_per_instance, utilisation_target=0.7):\n    if capacity_per_instance<=0\
+      \ or not 0<utilisation_target<=1: raise ValueError(\"invalid capacity assumptions\")\n    import math\n  \
+      \  return math.ceil(request_rate/(capacity_per_instance*utilisation_target))\n\nprint(required_instances(700,\
+      \ 200, 0.7))"
+    caption: Runnable model for the lesson principle.
+- id: practice
+  title: Apply and verify
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Complete the function, run its assertions and explain the limitations of the simplified model.
+  - type: item
+    ref: performance-scaling-code
+  - type: item
+    ref: performance-scaling-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Key principles**
+
+      - Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because one user
+      request often fans out to many backend calls.
+
+      - Load test with realistic traffic (k6, Locust) - ramp up gradually, find the throughput at which latency
+      or error rate breaks the target, and watch resource saturation.
+
+      - Find the bottleneck before optimising (CPU, memory, I/O, database, locks, an external API); Little''s law
+      (requests in flight = throughput x latency) helps size worker pools and connection pools.
+
+      - Vertical scaling (a bigger machine) is simple but capped; horizontal scaling (more instances behind a load
+      balancer) needs stateless services; autoscaling adds instances based on metrics such as CPU or queue length.
+
+      - Scaling one tier usually moves the bottleneck to the next one, often the database or a downstream dependency.
+
+
+      **Watch for**
+
+      - Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+
+      - Autoscaling is not instant; new instances take time to start, so keep headroom for sudden spikes.'
+  - type: item
+    ref: performance-scaling-mcq
+  - type: item
+    ref: performance-scaling-tf
+  - type: item
+    ref: performance-scaling-code
+items:
+- id: performance-scaling-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central principle of performance, load testing and scaling?
+  explanation: Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because
+    one user request often fans out to many backend calls.
+  options:
+  - id: a
+    text: Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because one
+      user request often fans out to many backend calls.
+    correct: true
+    feedback: 'Correct: this is the key principle described in the lesson.'
+  - id: b
+    text: Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+    feedback: This is a misconception; validate assumptions and failure modes.
+  - id: c
+    text: Operational concerns can be ignored if a local example works.
+    feedback: Local correctness does not establish production reliability.
+- id: performance-scaling-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+  answer: false
+  explanation: The statement is a known misconception. Engineering choices must be evaluated against requirements,
+    constraints and failure behaviour.
+- id: performance-scaling-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: Apply performance, load testing and scaling to a realistic engineering scenario. State your assumptions,
+    explain your decision, compare an alternative and describe how you would verify the result.
+  rubric:
+  - State the relevant requirement and assumptions.
+  - Explain the chosen approach and at least one trade-off.
+  - Describe a concrete validation or measurement step.
+  modelAnswer: Clarify the requirement and constraints first. Choose a proportionate approach, explain why it is
+    preferable to at least one alternative, then verify it with tests and measurements that reflect the real workload
+    or user scenario. Document remaining risks.
+  explanation: A strong response makes assumptions explicit and connects the design to measurable evidence.
+- id: performance-scaling-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the helper for performance, load testing and scaling. The assertions cover the expected path
+    and an important boundary case.
+  starterCode: "import math\n\ndef required_instances(request_rate, capacity_per_instance, utilisation_target=0.7):\n\
+    \    raise NotImplementedError('Complete this function')"
+  solution: "import math\ndef required_instances(request_rate, capacity_per_instance, utilisation_target=0.7):\n\
+    \    if capacity_per_instance<=0 or not 0<utilisation_target<=1: raise ValueError(\"invalid capacity assumptions\"\
+    )\n    return math.ceil(request_rate/(capacity_per_instance*utilisation_target))"
+  tests:
+  - name: Core behaviour
+    code: assert required_instances(700,200,0.7) == 5
+  - name: Boundary behaviour
+    code: assert required_instances(0,200,0.7) == 0
+  hints:
+  - Turn the requirement into an explicit contract.
+  - Reject invalid assumptions rather than silently guessing.
+  - Test the result and explain its production limitations.
+  explanation: This exercise tests the key principle and an important edge case.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - performance-scaling-mcq
+  - performance-scaling-tf
+  - performance-scaling-code
+cheatsheet: '**Key principles**
+
+  - Report latency as percentiles (p50, p95, p99) at a stated throughput; tail latency matters because one user
+  request often fans out to many backend calls.
+
+  - Load test with realistic traffic (k6, Locust) - ramp up gradually, find the throughput at which latency or error
+  rate breaks the target, and watch resource saturation.
+
+  - Find the bottleneck before optimising (CPU, memory, I/O, database, locks, an external API); Little''s law (requests
+  in flight = throughput x latency) helps size worker pools and connection pools.
+
+  - Vertical scaling (a bigger machine) is simple but capped; horizontal scaling (more instances behind a load balancer)
+  needs stateless services; autoscaling adds instances based on metrics such as CPU or queue length.
+
+  - Scaling one tier usually moves the bottleneck to the next one, often the database or a downstream dependency.
+
+
+  **Trade-offs**
+
+  - Average latency is a poor indicator; a 50 ms average can hide a 3 s p99.
+
+  - Autoscaling is not instant; new instances take time to start, so keep headroom for sudden spikes.'

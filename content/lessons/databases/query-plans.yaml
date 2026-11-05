@@ -1,0 +1,209 @@
+id: databases.query-plans
+concept: databases.query-plans
+title: Query plans and optimisation
+subtitle: EXPLAIN shows how the database will execute a query; reading plans reveals missing indexes, bad estimates
+  and expensive joins
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: EXPLAIN shows how the database will execute a query; reading plans reveals missing indexes, bad estimates
+  and expensive joins.
+objectives:
+- Explain the core model behind query plans and optimisation.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL: Using EXPLAIN'
+  url: https://www.postgresql.org/docs/current/using-explain.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: pg_stat_statements'
+  url: https://www.postgresql.org/docs/current/pgstatstatements.html
+  publisher: PostgreSQL Global Development Group
+- title: 'SQLite: EXPLAIN QUERY PLAN'
+  url: https://www.sqlite.org/eqp.html
+  publisher: SQLite
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: EXPLAIN shows how the database will execute a query; reading plans reveals missing indexes, bad estimates
+      and expensive joins. When a query is slow, guessing wastes time; the plan shows exactly what the database
+      is doing and where the time goes.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- `EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)` actually
+      runs the query and adds real timings, row counts and pages read.
+
+      - Read a plan from the most indented nodes outwards - scans (Seq Scan, Index Scan, Index Only Scan, Bitmap
+      Heap Scan) feed joins (Nested Loop, Hash Join, Merge Join), which feed sorts and aggregates.
+
+      - A large gap between estimated and actual rows points to stale or insufficient statistics; run `ANALYZE`
+      or raise the column''s statistics target.
+
+      - Work in order: find the queries that cost the most in total (`pg_stat_statements`), check for missing or
+      unusable indexes, then rewrite the query or change the schema.
+
+      - In SQLite, `EXPLAIN QUERY PLAN` shows whether a query uses an index (SEARCH) or reads the whole table (SCAN).'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- `EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in
+      a transaction and roll it back.
+
+      - A sequential scan is not automatically bad; for small tables or large result sets it is the right choice.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def estimated_scan_cost(row_count, selectivity=1.0):\n    return {\"rows_scanned\": row_count, \"rows_returned\"\
+      : int(row_count * selectivity)}\n\nprint(estimated_scan_cost(10000, 0.02))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: query-plans-code
+  - type: item
+    ref: query-plans-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - `EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)` actually
+      runs the query and adds real timings, row counts and pages read.
+
+      - Read a plan from the most indented nodes outwards - scans (Seq Scan, Index Scan, Index Only Scan, Bitmap
+      Heap Scan) feed joins (Nested Loop, Hash Join, Merge Join), which feed sorts and aggregates.
+
+      - A large gap between estimated and actual rows points to stale or insufficient statistics; run `ANALYZE`
+      or raise the column''s statistics target.
+
+      - Work in order: find the queries that cost the most in total (`pg_stat_statements`), check for missing or
+      unusable indexes, then rewrite the query or change the schema.
+
+      - In SQLite, `EXPLAIN QUERY PLAN` shows whether a query uses an index (SEARCH) or reads the whole table (SCAN).
+
+
+      **Avoid**
+
+      - `EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in a transaction
+      and roll it back.
+
+      - A sequential scan is not automatically bad; for small tables or large result sets it is the right choice.'
+  - type: item
+    ref: query-plans-mcq
+  - type: item
+    ref: query-plans-tf
+  - type: item
+    ref: query-plans-code
+items:
+- id: query-plans-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of query plans and optimisation?
+  explanation: '`EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)`
+    actually runs the query and adds real timings, row counts and pages read.'
+  options:
+  - id: a
+    text: '`EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)` actually
+      runs the query and adds real timings, row counts and pages read.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: '`EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in a
+      transaction and roll it back.'
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: query-plans-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: '`EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in a
+    transaction and roll it back.'
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: query-plans-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing query plans and optimisation in a real application. What design decisions would you
+    make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: query-plans-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for query plans and optimisation. Implement the stated rule and make sure both ordinary
+    and edge-case tests pass.
+  starterCode: "def estimated_scan_cost(row_count, selectivity=1.0):\n    raise NotImplementedError('Complete this\
+    \ function')"
+  solution: "def estimated_scan_cost(row_count, selectivity=1.0):\n    return {\"rows_scanned\": row_count, \"rows_returned\"\
+    : int(row_count * selectivity)}"
+  tests:
+  - name: Core behaviour
+    code: assert estimated_scan_cost(10000, 0.02) == {"rows_scanned":10000,"rows_returned":200}
+  - name: Edge cases
+    code: assert estimated_scan_cost(0) == {"rows_scanned":0,"rows_returned":0}
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - query-plans-mcq
+  - query-plans-tf
+  - query-plans-code
+cheatsheet: '**Core model**
+
+  - `EXPLAIN` shows the chosen plan with estimated costs and row counts; `EXPLAIN (ANALYZE, BUFFERS)` actually runs
+  the query and adds real timings, row counts and pages read.
+
+  - Read a plan from the most indented nodes outwards - scans (Seq Scan, Index Scan, Index Only Scan, Bitmap Heap
+  Scan) feed joins (Nested Loop, Hash Join, Merge Join), which feed sorts and aggregates.
+
+  - A large gap between estimated and actual rows points to stale or insufficient statistics; run `ANALYZE` or raise
+  the column''s statistics target.
+
+  - Work in order: find the queries that cost the most in total (`pg_stat_statements`), check for missing or unusable
+  indexes, then rewrite the query or change the schema.
+
+  - In SQLite, `EXPLAIN QUERY PLAN` shows whether a query uses an index (SEARCH) or reads the whole table (SCAN).
+
+
+  **Common mistakes**
+
+  - `EXPLAIN ANALYZE` really executes the statement, including INSERT, UPDATE and DELETE; wrap those in a transaction
+  and roll it back.
+
+  - A sequential scan is not automatically bad; for small tables or large result sets it is the right choice.'

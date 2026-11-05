@@ -1,0 +1,368 @@
+id: foundations.terminal-basics
+concept: foundations.terminal-basics
+title: The Terminal and Command Line
+subtitle: Give your computer precise instructions with a shell
+estimatedMinutes: 45
+reviewedOn: 2026-11-04
+summary: >-
+  Learn the difference between a terminal and a shell, how commands are made from a program name, options
+  and arguments, and how the current directory affects commands. Practise safe navigation, understand
+  standard input/output, exit codes and pipes, and learn to inspect before changing or deleting files.
+objectives:
+  - Distinguish a terminal application from the shell running inside it.
+  - Read a command as a program name, options and arguments.
+  - Navigate folders and inspect files using common PowerShell and Unix-like commands.
+  - Explain standard input, standard output, standard error and exit status.
+  - Explain what a pipe does and why shell syntax differs between PowerShell and bash.
+  - Use a cautious workflow before running unfamiliar or destructive commands.
+sources:
+  - title: The Missing Semester of Your CS Education — The Shell
+    url: https://missing.csail.mit.edu/2020/course-shell/
+    publisher: MIT
+  - title: PowerShell Documentation — About the Shell
+    url: https://learn.microsoft.com/en-us/powershell/scripting/overview
+    publisher: Microsoft
+  - title: Bash Reference Manual — Shell Syntax
+    url: https://www.gnu.org/software/bash/manual/bash.html
+    publisher: GNU Project
+  - title: Python shlex — Simple lexical analysis
+    url: https://docs.python.org/3/library/shlex.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why learn the command line?
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          A graphical file manager is excellent for browsing. A terminal is useful when you need to repeat
+          a task, run a developer tool, inspect output, connect commands together or follow instructions
+          written for a project.
+
+          A **terminal** is the application that displays text input and output. A **shell** is the program
+          inside it that reads commands and decides how to run them. Windows Terminal is a terminal app;
+          PowerShell, Command Prompt, bash and zsh are shells. They have different syntax even when they
+          provide commands with similar purposes.
+      - type: callout
+        variant: note
+        title: A shell is not the operating system
+        body: |
+          PowerShell can run on Windows, macOS and Linux. bash is common on Linux and macOS. The shell is a
+          user-space program that asks the OS to start other programs; it is not the kernel and not the
+          terminal window itself.
+
+  - id: command-shape
+    title: Read the shape of a command
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A simple command has three parts:
+
+          ```text
+          program   options/flags   arguments
+          ```
+
+          For example, `python --version` asks the `python` program to display its version. In
+          `git log --oneline`, `git` is the program, `log` selects an operation and `--oneline` is an option.
+          Options often begin with `-` or `--`, but exact conventions depend on the program.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          pwd
+          ls -la
+          cd projects
+          python --version
+          git status
+        caption: Common bash/zsh commands. `pwd` prints the current directory; `ls` lists entries; `cd` changes the shell's directory.
+      - type: code
+        language: powershell
+        status: illustrative
+        code: |
+          Get-Location
+          Get-ChildItem -Force
+          Set-Location projects
+          python --version
+          git status
+        caption: PowerShell equivalents for the same basic tasks. PowerShell commands are often cmdlets with Verb-Noun names.
+      - type: callout
+        variant: warning
+        title: Do not paste commands you do not understand
+        body: |
+          A command can overwrite files, change permissions, install software or transmit data. Before
+          running an unfamiliar command, identify the program, read its help, understand every argument and
+          check the current directory. Be especially careful with commands that recursively delete or
+          download-and-execute scripts.
+      - type: item
+        ref: command-parts
+
+  - id: navigation
+    title: Navigate and inspect before changing
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          These are safe starting commands. Their spelling differs by shell, but the jobs are similar:
+
+          | Job | bash / zsh | PowerShell |
+          |---|---|---|
+          | Show current folder | `pwd` | `Get-Location` |
+          | List entries | `ls -la` | `Get-ChildItem -Force` |
+          | Change folder | `cd projects` | `Set-Location projects` |
+          | Make folder | `mkdir demo` | `New-Item -ItemType Directory demo` |
+          | Read text | `cat notes.txt` | `Get-Content notes.txt` |
+          | Show tool version | `python --version` | `python --version` |
+
+          The shell keeps a **current working directory**. A relative path such as `projects/app` is
+          interpreted from that location. This is why `cd` changes what a later command finds.
+      - type: markdown
+        body: |
+          Practise a cautious sequence:
+
+          1. Print the current directory.
+          2. List its contents.
+          3. Move into the intended project folder.
+          4. List again and confirm you are in the right place.
+          5. Only then run a project command such as `python app.py` or `git status`.
+      - type: item
+        ref: shell-prediction
+
+  - id: streams-and-pipes
+    title: Output, errors, exit codes and pipes
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A command-line program commonly uses three streams:
+
+          - **Standard input (stdin):** data the program reads.
+          - **Standard output (stdout):** normal results.
+          - **Standard error (stderr):** diagnostics and error messages.
+
+          When a command finishes, it returns an **exit status**. Conventionally, `0` means success and a
+          non-zero value means some kind of failure. The exact non-zero meaning is program-specific.
+
+          A **pipe** (`|`) connects the stdout of one command to the stdin of another. For example, in bash,
+          `cat app.log | grep ERROR` sends the file text into `grep`. PowerShell also uses `|`, but it passes
+          structured .NET objects between cmdlets rather than only raw text in many cases.
+      - type: code
+        language: bash
+        status: illustrative
+        code: |
+          grep ERROR app.log | sort | uniq -c
+        caption: "Illustrative Unix pipeline: filter lines, sort them, then count repeated lines. PowerShell pipelines have different object semantics."
+      - type: code
+        runnable: true
+        code: |
+          import shlex
+
+          command = 'python app.py --port 8000 --name "demo server"'
+          parts = shlex.split(command)
+          print(parts[0])
+          print(parts[1])
+          print(parts[2])
+          print(parts[3])
+          print(parts[4])
+        expectedOutput: |
+          python
+          app.py
+          --port
+          8000
+          --name
+        annotations:
+          - line: 4
+            text: "`shlex.split` illustrates how a POSIX-like command string can be divided into tokens."
+          - line: 8
+            text: The quoted phrase is one argument, not two; it appears as the final list element.
+      - type: callout
+        variant: note
+        title: Tokenisation is not command execution
+        body: |
+          The Python example only splits text into tokens. It does not execute a shell command. Shell parsing
+          is complex and differs across bash, PowerShell and other shells; do not use `shlex` as a complete
+          parser for arbitrary PowerShell commands.
+      - type: item
+        ref: explain-pipe
+
+  - id: mistakes
+    title: Common mistakes and a safe workflow
+    kind: mistakes
+    blocks:
+      - type: markdown
+        body: |
+          - **Wrong folder:** check `pwd` / `Get-Location` before assuming a file is missing.
+          - **Command not found:** verify installation and the `PATH` environment variable; open a new terminal after changing PATH.
+          - **Wrong shell syntax:** a bash command may not work in PowerShell. Identify the shell before copying instructions.
+          - **Permission denied:** understand which user is running the command and what access is required; do not immediately switch to administrator/root.
+          - **Unexpected output:** read stderr and inspect the exit status rather than treating every printed line as success.
+
+          A safe loop is: **inspect → understand → run one command → read the result → verify the change**.
+      - type: item
+        ref: safe-command-exercise
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - The terminal displays interaction; the shell interprets commands.
+          - Commands have a program, options and arguments.
+          - Relative paths depend on the current working directory.
+          - stdout carries normal output, stderr carries diagnostics, and exit status signals success or failure.
+          - Pipes connect one command's output to another command's input.
+          - Inspect unfamiliar commands and the current directory before making changes.
+      - type: item
+        ref: mastery-shell
+      - type: item
+        ref: mastery-command-code
+      - type: item
+        ref: mastery-shell-explain
+
+items:
+  - id: command-parts
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: In `python --version`, what is `--version`?
+    options:
+      - id: a
+        text: An option asking the program to display its version
+        correct: true
+        feedback: Correct. It changes what the `python` program is asked to do.
+      - id: b
+        text: The current working directory
+        correct: false
+        feedback: The working directory is the folder the shell is currently using.
+      - id: c
+        text: A second program
+        correct: false
+        feedback: The command contains one program name followed by an option.
+    explanation: Options modify the behaviour of a command; their exact names are defined by that program.
+  - id: shell-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does the Python tokenisation example print for the first four entries?
+    code: |
+      import shlex
+      parts = shlex.split('git log --oneline --all')
+      print(parts[0])
+      print(parts[1])
+      print(parts[2])
+      print(parts[3])
+    answer: |
+      git
+      log
+      --oneline
+      --all
+    explanation: The command is split into a program name and three arguments.
+  - id: explain-pipe
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: Explain what `producer | consumer` means in a Unix-like shell, and how a PowerShell pipeline can differ.
+    rubric:
+      - Explains that stdout from the first command is connected to stdin of the next command.
+      - Notes that PowerShell commonly passes structured objects rather than only raw text.
+    modelAnswer: In a Unix-like shell, the pipe connects the first program's standard output to the second program's standard input. PowerShell also uses a pipeline, but it commonly passes structured .NET objects between cmdlets, so it is not always just text flowing through.
+    explanation: The pipe connects commands, but the data model differs between shells.
+  - id: safe-command-exercise
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Write `describe_command(command)` that uses `shlex.split` and returns a dictionary with the first token as `program` and all remaining tokens as `arguments`. Return an empty program and empty arguments for blank input.
+    explanation: >-
+      shlex.split separates a POSIX-like command string into tokens while keeping quoted text together. The first token is the program name; the remaining tokens are its arguments. This parses text but does not execute the command.
+    starterCode: |
+      import shlex
+
+      def describe_command(command):
+          # Return {"program": ..., "arguments": [...]}
+          pass
+    solution: |
+      import shlex
+
+      def describe_command(command):
+          parts = shlex.split(command)
+          if not parts:
+              return {"program": "", "arguments": []}
+          return {"program": parts[0], "arguments": parts[1:]}
+    tests:
+      - name: separates program and arguments
+        code: |
+          assert describe_command("python app.py --port 8000") == {"program": "python", "arguments": ["app.py", "--port", "8000"]}
+      - name: blank input
+        code: |
+          assert describe_command("   ") == {"program": "", "arguments": []}
+      - name: keeps quoted argument together
+        code: |
+          assert describe_command('python app.py --name "demo server"') == {"program": "python", "arguments": ["app.py", "--name", "demo server"]}
+    hints:
+      - Split the command into tokens with `shlex.split`.
+      - Check whether the returned list is empty before indexing it.
+      - The first token is the program; slice the rest for arguments.
+  - id: mastery-shell
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: Which statement about a terminal and a shell is correct?
+    options:
+      - id: a
+        text: The terminal is the text interface; the shell reads and interprets commands.
+        correct: true
+        feedback: Correct. They are related but different programs.
+      - id: b
+        text: The shell is the CPU's operating system kernel.
+        correct: false
+        feedback: A shell is an ordinary user-space program, not the kernel.
+      - id: c
+        text: Every shell uses identical command syntax.
+        correct: false
+        feedback: bash, PowerShell, zsh and other shells differ.
+    explanation: The terminal provides the interface; the shell interprets commands.
+  - id: mastery-command-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `command_parts(text)` to return the program and arguments as a tuple. For blank input return `("", [])`.
+    explanation: >-
+      The function returns the first parsed token as the program and the remaining tokens as arguments. It also handles blank input before trying to access the first list element.
+    starterCode: |
+      import shlex
+
+      def command_parts(text):
+          pass
+    solution: |
+      import shlex
+
+      def command_parts(text):
+          parts = shlex.split(text)
+          return (parts[0], parts[1:]) if parts else ("", [])
+    tests:
+      - name: normal command
+        code: assert command_parts("git status --short") == ("git", ["status", "--short"])
+      - name: empty command
+        code: assert command_parts("") == ("", [])
+    hints:
+      - Use `shlex.split` to create a list of tokens.
+      - Use a conditional expression or an if statement to handle an empty list.
+  - id: mastery-shell-explain
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A command works in bash but fails in PowerShell. Give two things you should check before changing your system configuration.
+    rubric:
+      - Checks which shell is running and recognises that command syntax can differ.
+      - Checks the command's program/help and translates the intended operation rather than blindly copying syntax.
+    modelAnswer: First identify the active shell, because bash and PowerShell have different syntax and built-in commands. Then read the command's help and find the PowerShell equivalent for the same operation before changing PATH or installing anything.
+    explanation: A shell mismatch is often a syntax issue, not a broken installation.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-shell, mastery-command-code, mastery-shell-explain]
+cheatsheet: |
+  Terminal = text interface. Shell = command interpreter. Command = program + options + arguments.
+  `pwd` / `Get-Location`; `ls` / `Get-ChildItem`; `cd` / `Set-Location`.
+  stdin = input; stdout = normal output; stderr = diagnostics; exit code 0 conventionally means success.
+  `|` connects stdout to stdin in Unix-like shells; PowerShell commonly passes objects.

@@ -1,0 +1,331 @@
+id: cs.stacks-queues
+concept: cs.stacks-queues
+title: Stacks, Queues and Deques
+subtitle: Choose the right end to add and remove values efficiently
+estimatedMinutes: 40
+reviewedOn: 2026-11-04
+summary: >-
+  Learn the last-in-first-out stack and first-in-first-out queue models, implement them with Python lists and
+  collections.deque, understand why list.pop(0) is inefficient, and recognise when queue.Queue or asyncio.Queue
+  is appropriate for communication between concurrent tasks.
+objectives:
+  - Explain LIFO and FIFO behaviour with a sequence of operations.
+  - Implement a stack using list append and pop.
+  - Implement a queue using collections.deque append and popleft.
+  - Explain why removing from the front of a list costs O(n).
+  - Use a stack to solve a bracket-matching problem.
+  - Distinguish deque from thread-safe and asynchronous queue abstractions.
+sources:
+  - title: Python Tutorial — Using Lists as Stacks
+    url: https://docs.python.org/3/tutorial/datastructures.html#using-lists-as-stacks
+    publisher: Python Software Foundation
+  - title: collections.deque
+    url: https://docs.python.org/3/library/collections.html#collections.deque
+    publisher: Python Software Foundation
+  - title: queue — A synchronized queue class
+    url: https://docs.python.org/3/library/queue.html
+    publisher: Python Software Foundation
+  - title: asyncio.Queue
+    url: https://docs.python.org/3/library/asyncio-queue.html
+    publisher: Python Software Foundation
+sections:
+  - id: stack-and-queue-models
+    title: Two ways to process items
+    kind: intro
+    blocks:
+      - type: markdown
+        body: |
+          A **stack** removes the most recently added item first: last in, first out (LIFO). A stack is like a
+          pile of plates: you put a new plate on top and take the top plate away first. The two basic operations
+          are `push` (add) and `pop` (remove the newest item).
+
+          A **queue** removes the oldest item first: first in, first out (FIFO). A queue is like a line of people:
+          the first person to join is served first. The two basic operations are `enqueue` (add at the back) and
+          `dequeue` (remove from the front).
+      - type: code
+        runnable: true
+        code: |
+          stack = []
+          stack.append("first")
+          stack.append("second")
+          print(stack.pop())
+          print(stack.pop())
+
+          from collections import deque
+          queue = deque(["first", "second"])
+          print(queue.popleft())
+          print(queue.popleft())
+        expectedOutput: |
+          second
+          first
+          first
+          second
+        annotations:
+          - line: 4
+            text: A stack removes the newest item from the same end where items are added.
+          - line: 9
+            text: A queue removes the oldest item from the left while new items can be appended on the right.
+      - type: item
+        ref: stack-queue-predict
+
+  - id: implement-stack
+    title: Implement a stack with a list
+    kind: walkthrough
+    blocks:
+      - type: markdown
+        body: |
+          Python's list already supports an efficient stack at its right-hand end. Use `append(value)` to push
+          and `pop()` to remove the most recent value. Both operations are O(1) for the usual list model
+          (append is amortised O(1)). `pop()` on an empty list raises `IndexError`, so decide whether your stack
+          API should raise, return a sentinel or expose an explicit empty check.
+      - type: code
+        runnable: true
+        code: |
+          history = []
+          history.append("open file")
+          history.append("edit file")
+          history.append("save file")
+
+          last_action = history.pop()
+          print(last_action)
+          print(history)
+        expectedOutput: |
+          save file
+          ['open file', 'edit file']
+        annotations:
+          - line: 6
+            text: The most recent action is removed first, which is exactly LIFO behaviour.
+      - type: callout
+        variant: tip
+        title: Common stack applications
+        body: |
+          Function calls use a call stack; undo history often stores prior actions; bracket matching pushes
+          opening brackets and pops when the matching closing bracket arrives; depth-first search uses a stack
+          to explore a path before backtracking.
+
+  - id: implement-queue
+    title: Implement a queue with deque
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A queue needs fast insertion at one end and removal at the other. A list's `pop(0)` works logically,
+          but every remaining element shifts left, making each removal O(n). Python's `collections.deque` is a
+          double-ended queue designed for efficient operations at both ends. Use `append()` to enqueue and
+          `popleft()` to dequeue; both are O(1).
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          jobs = deque(["job-1", "job-2"])
+          jobs.append("job-3")
+          while jobs:
+              current = jobs.popleft()
+              print("processing", current)
+        expectedOutput: |
+          processing job-1
+          processing job-2
+          processing job-3
+        annotations:
+          - line: 3
+            text: deque holds jobs in arrival order.
+          - line: 4
+            text: append adds a new job to the back of the queue.
+          - line: 6
+            text: popleft removes the oldest job from the front.
+      - type: item
+        ref: deque-predict
+
+  - id: bracket-matching
+    title: Use a stack to match brackets
+    kind: application
+    blocks:
+      - type: markdown
+        body: |
+          Bracket matching is a classic stack problem. When you see an opening bracket, push it. When you see a
+          closing bracket, the most recent unmatched opening bracket must be its partner. If the stack is empty
+          or the types do not match, the expression is invalid. At the end, the stack must also be empty.
+
+          This works because nested brackets close in reverse order from the order in which they opened — a
+          LIFO relationship. The same idea appears in parsers and syntax checkers.
+      - type: code
+        runnable: true
+        code: |
+          def brackets_are_balanced(text):
+              pairs = {")": "(", "]": "[", "}": "{"}
+              stack = []
+              for character in text:
+                  if character in "([{":
+                      stack.append(character)
+                  elif character in pairs:
+                      if not stack or stack.pop() != pairs[character]:
+                          return False
+              return not stack
+
+          print(brackets_are_balanced("{[()]}"))
+          print(brackets_are_balanced("{[(])}"))
+        expectedOutput: |
+          True
+          False
+        annotations:
+          - line: 2
+            text: Each closing bracket maps to the opening bracket it requires.
+          - line: 7
+            text: The most recent opening bracket must match the current closing bracket.
+          - line: 9
+            text: Any opening bracket left over means the expression was not fully closed.
+      - type: item
+        ref: stack-brackets-code
+
+  - id: queue-variants
+    title: Deque, queue.Queue and asyncio.Queue are not identical
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          `collections.deque` is a general-purpose double-ended container. It does not provide the full
+          coordination protocol of a producer-consumer queue.
+
+          - `queue.Queue` provides locking and blocking operations for communication between OS threads.
+          - `asyncio.Queue` provides async `put()` and `get()` operations for coroutines on an event loop; it is
+            not thread-safe.
+          - `deque(maxlen=n)` automatically discards items from the opposite end when full, which is useful for
+            a bounded recent-history buffer but not for a lossless job queue.
+
+          Choose the abstraction that matches who produces and consumes the values. A plain deque is often
+          enough for a single-threaded algorithm; a concurrent application may need the queue's coordination
+          semantics.
+      - type: code
+        runnable: true
+        code: |
+          from collections import deque
+
+          recent = deque(maxlen=3)
+          for event in ["login", "search", "open", "save"]:
+              recent.append(event)
+          print(list(recent))
+        expectedOutput: |
+          ['search', 'open', 'save']
+        annotations:
+          - line: 3
+            text: maxlen bounds the deque length; appending a fourth event discards the oldest one.
+      - type: item
+        ref: stack-queue-transfer
+
+  - id: summary
+    title: Summary and checklist
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - Stack = LIFO; list append and pop at the end are efficient.
+          - Queue = FIFO; use deque append and popleft for efficient operations at both ends.
+          - list.pop(0) shifts the remaining elements and costs O(n).
+          - A stack solves nested bracket matching because the latest opening bracket closes first.
+          - queue.Queue coordinates OS threads; asyncio.Queue coordinates async tasks and is not thread-safe.
+          - deque(maxlen=n) intentionally discards old entries when full.
+      - type: item
+        ref: stack-queue-transfer
+items:
+  - id: stack-queue-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this program print?
+    code: |
+      values = []
+      values.append("A")
+      values.append("B")
+      print(values.pop())
+      print(values.pop())
+    answer: |
+      B
+      A
+    wrongAnswers:
+      - answer: |
+          A
+          B
+        feedback: A queue would remove the oldest item first; a stack removes the newest item first.
+      - answer: |
+          A
+          A
+        feedback: Each pop removes a different item from the end of the list.
+    explanation: list append and pop at the end implement LIFO stack behaviour.
+  - id: deque-predict
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does this program print?
+    code: |
+      from collections import deque
+      items = deque([1, 2])
+      items.append(3)
+      print(items.popleft())
+      print(list(items))
+    answer: |
+      1
+      [2, 3]
+    wrongAnswers:
+      - answer: |
+          3
+          [1, 2]
+        feedback: popleft removes from the left, where the oldest value 1 is stored.
+      - answer: |
+          1
+          [1, 2, 3]
+        feedback: The first item has been removed before the remaining deque is converted to a list.
+    explanation: append adds to the right; popleft removes the leftmost and oldest element.
+  - id: stack-brackets-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `brackets_are_balanced(text)` for `()`, `[]` and `{}`. Ignore non-bracket characters. Return False for mismatched or unclosed brackets.
+    explanation: Push opening brackets and require each closing bracket to match the most recently opened one.
+    starterCode: |
+      def brackets_are_balanced(text):
+          # Use a stack to match nested brackets.
+          pass
+    solution: |
+      def brackets_are_balanced(text):
+          pairs = {")": "(", "]": "[", "}": "{"}
+          stack = []
+          for character in text:
+              if character in "([{":
+                  stack.append(character)
+              elif character in pairs:
+                  if not stack or stack.pop() != pairs[character]:
+                      return False
+          return not stack
+    tests:
+      - name: accepts nested pairs
+        code: assert brackets_are_balanced("{[()]}") is True
+      - name: rejects wrong order
+        code: assert brackets_are_balanced("{[(])}") is False
+      - name: rejects unclosed opening bracket
+        code: assert brackets_are_balanced("((") is False
+      - name: ignores ordinary characters
+        code: assert brackets_are_balanced("a+(b*c)-[d]") is True
+    hints:
+      - Create a dictionary mapping each closing bracket to its opening bracket.
+      - Push every opening bracket onto a list.
+      - On a closing bracket, check the top item and reject a missing or mismatched opener.
+  - id: stack-queue-transfer
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A breadth-first search removes the next node with `list.pop(0)`. Explain why this is inefficient and name the appropriate Python structure and operation.
+    rubric:
+      - Explains that list.pop(0) shifts all remaining elements and costs O(n).
+      - Recommends collections.deque and popleft for O(1) removal from the front.
+    modelAnswer: list.pop(0) removes the first value by shifting every remaining reference left, so repeated removals can add quadratic work. Use collections.deque, append discovered nodes at the right and remove the next node with popleft() in O(1).
+    explanation: Breadth-first search relies on FIFO order, and deque implements that order efficiently.
+masteryCheck:
+  passThreshold: 0.75
+  items: [stack-queue-predict, stack-brackets-code, stack-queue-transfer]
+cheatsheet: |
+  - Stack: LIFO; `list.append()` + `list.pop()`.
+  - Queue: FIFO; `deque.append()` + `deque.popleft()`.
+  - Avoid `list.pop(0)` in a repeated queue loop; it shifts the remaining list.
+  - Use a stack for nested bracket matching and DFS.
+  - `queue.Queue` is for thread coordination; `asyncio.Queue` is for async tasks.

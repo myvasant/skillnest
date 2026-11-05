@@ -1,0 +1,12 @@
+-- 0003: indexes for the queries the repository runs.
+--
+-- TODO(milestone 3): add one CREATE INDEX statement.
+--
+-- "Tags of a note" is already fast: note_tags' primary key starts with note_id.
+-- "Notes with tag X" looks rows up by tag_id, the SECOND column of that key, so SQLite has to scan
+-- the whole table. Create an index named idx_note_tags_tag_id on note_tags (tag_id).
+-- tags.name needs no index of its own: UNIQUE already created one.
+--
+-- Before and after, compare the plan in a sqlite3 shell:
+--   EXPLAIN QUERY PLAN SELECT note_id FROM note_tags WHERE tag_id = 1;
+-- "SCAN note_tags" means every row is read; "SEARCH note_tags USING ... INDEX" means the index is used.

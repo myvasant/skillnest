@@ -1,0 +1,298 @@
+id: foundations.internet-basics
+concept: foundations.internet-basics
+title: The Internet and Client–Server Basics
+subtitle: How browsers and applications communicate with remote services
+estimatedMinutes: 45
+reviewedOn: 2026-11-04
+summary: >-
+  Learn the basic roles of clients and servers, how DNS helps find a server, what IP addresses and ports
+  identify, and how protocols such as HTTP define requests and responses. Understand latency and bandwidth,
+  inspect URL components in Python, and build a small URL-inspection function.
+objectives:
+  - Explain the client–server model and why client/server are roles rather than fixed hardware types.
+  - Distinguish a domain name, IP address and port.
+  - Explain at a high level what DNS does and why a browser needs it.
+  - Describe a protocol as an agreed message format and interaction rule.
+  - Identify the scheme, host, port, path and query components of a URL.
+  - Distinguish latency from bandwidth and recognise that network requests can fail at several layers.
+sources:
+  - title: MDN — How does the Internet work?
+    url: https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/How_does_the_Internet_work
+    publisher: Mozilla
+  - title: MDN — What is a URL?
+    url: https://developer.mozilla.org/en-US/docs/Learn/Common_questions/Web_mechanics/What_is_a_URL
+    publisher: Mozilla
+  - title: RFC 9110 — HTTP Semantics
+    url: https://www.rfc-editor.org/rfc/rfc9110
+    publisher: Internet Engineering Task Force
+  - title: Python urllib.parse — Parse URLs
+    url: https://docs.python.org/3/library/urllib.parse.html
+    publisher: Python Software Foundation
+sections:
+  - id: why
+    title: Why computers need network rules
+    kind: why
+    blocks:
+      - type: markdown
+        body: |
+          When you open a website, the browser needs to communicate with another computer. When a Python
+          application calls an AI API, it also sends a message to a remote service and waits for a response.
+          A network is a way for devices and programs to exchange data, but the sender and receiver need
+          agreed rules so they can understand one another.
+
+          The **client–server model** describes two roles: a client requests a service, and a server provides
+          it. A browser is often a client and a web server is often a server. The roles are not permanent
+          hardware identities: one program can act as a client in one interaction and a server in another.
+      - type: callout
+        variant: analogy
+        title: A request and response conversation
+        body: |
+          Think of a customer asking a service desk for a document. The customer makes a request with enough
+          detail for the desk to find it; the desk returns a result or explains why it cannot. A network
+          protocol defines the structure and rules of the actual messages.
+
+  - id: addresses
+    title: Domain names, IP addresses and ports
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          An **IP address** identifies a network interface for routing packets. A **domain name** is a
+          human-readable name that DNS can resolve to one or more IP addresses. DNS is a distributed naming
+          system; it is not a permanent one-name-to-one-machine phone book. Results can change because of
+          load balancing, content delivery networks, failover and configuration.
+
+          A **port** identifies a transport-layer endpoint on a host. A server can use different ports for
+          different services. For example, HTTPS commonly uses TCP port 443, while HTTP commonly uses TCP
+          port 80. These are defaults, not a rule that every web server must use those ports.
+      - type: visualization
+        component: step-diagram
+        title: From a domain name to a web response
+        caption: DNS helps locate an address; a client then exchanges protocol messages with a server endpoint.
+        props:
+          nodes:
+            - { id: browser, label: Client, x: 10, y: 35, detail: Browser or application initiating a request. }
+            - { id: dns, label: DNS, x: 38, y: 35, detail: Resolves a domain name to address records. }
+            - { id: server, label: Server IP, x: 66, y: 35, detail: Address of a destination network interface. }
+            - { id: service, label: Port, x: 92, y: 35, detail: Identifies the service endpoint on the host. }
+          edges:
+            - { id: e1, from: browser, to: dns, label: lookup name }
+            - { id: e2, from: dns, to: server, label: address result }
+            - { id: e3, from: server, to: service, label: connect }
+          steps:
+            - title: The client starts with a name
+              body: The browser has a domain name from the URL, such as api.example.com.
+              active: [browser]
+            - title: DNS resolves the name
+              body: The client uses DNS resolution to discover an address it can attempt to contact.
+              active: [browser, dns, e1]
+            - title: The client reaches an endpoint
+              body: The address and port identify where the network connection should go.
+              active: [dns, server, service, e2, e3]
+      - type: item
+        ref: address-check
+
+  - id: protocols
+    title: Protocols, HTTP and URLs
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          A **protocol** is an agreed set of rules for exchanging messages. HTTP is an application-layer
+          protocol used by browsers and APIs. An HTTP request includes a method, target, headers and
+          sometimes a body. A response includes a status code, headers and sometimes a body.
+
+          A **URL** identifies a resource and includes components such as a scheme (`https`), host
+          (`api.example.com`), optional port (`8443`), path (`/v1/items`) and query (`?limit=10`). HTTPS
+          means HTTP is carried over a connection protected by TLS; the cryptographic details are covered
+          later in the networking and security stages.
+      - type: code
+        runnable: true
+        code: |
+          from urllib.parse import urlsplit
+
+          address = urlsplit("https://api.example.com:8443/v1/items?limit=10")
+          print(address.scheme)
+          print(address.hostname)
+          print(address.port)
+          print(address.path)
+          print(address.query)
+        expectedOutput: |
+          https
+          api.example.com
+          8443
+          /v1/items
+          limit=10
+        annotations:
+          - line: 3
+            text: "`urlsplit` separates a URL into structured components."
+          - line: 4
+            text: The scheme tells the client which protocol family to use.
+          - line: 5
+            text: The hostname is the domain name, not the resolved IP address.
+          - line: 6
+            text: The explicit port is 8443; without one, `.port` returns None.
+      - type: item
+        ref: url-prediction
+
+  - id: latency-bandwidth
+    title: Latency and bandwidth are different
+    kind: concept
+    blocks:
+      - type: markdown
+        body: |
+          **Latency** is the time taken for data or a request to travel through a system. **Bandwidth** is
+          the amount of data that can be transferred per unit of time. A high-bandwidth connection can
+          still feel slow when latency is high, because each request waits a long time before a response
+          begins.
+
+          A request can fail because DNS lookup failed, the destination is unreachable, a connection was
+          refused, TLS negotiation failed, the server returned an error, or the response took too long.
+          Later networking lessons examine these layers separately. For now, avoid assuming every timeout
+          is a Python bug or that increasing bandwidth will fix server latency.
+      - type: callout
+        variant: production
+        title: Measure the stage that is slow
+        body: |
+          Record request duration and distinguish connection setup, time to first byte and total response
+          time when the HTTP client exposes them. A slow API call can be caused by the network, DNS, TLS,
+          the remote service, or the amount of data transferred.
+      - type: item
+        ref: explain-network-delay
+
+  - id: summary
+    title: Summary and mastery check
+    kind: summary
+    blocks:
+      - type: markdown
+        body: |
+          - A client requests a service; a server provides it.
+          - DNS resolves domain names to address records; IP addresses support routing.
+          - A port identifies a service endpoint on a host.
+          - HTTP defines request and response messages; URLs identify resources.
+          - Latency is delay; bandwidth is transfer capacity.
+          - Network failures can happen at multiple layers and should be measured systematically.
+      - type: item
+        ref: mastery-network
+      - type: item
+        ref: mastery-url-code
+      - type: item
+        ref: mastery-network-explain
+
+items:
+  - id: address-check
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: What is the main role of DNS in a typical web request?
+    options:
+      - id: a
+        text: It helps resolve a domain name to address records.
+        correct: true
+        feedback: Correct. The client uses DNS information to discover an address for the named service.
+      - id: b
+        text: It encrypts the HTTP response body.
+        correct: false
+        feedback: Encryption for HTTPS is provided by TLS, not DNS.
+      - id: c
+        text: It stores every web page so the browser can display it offline.
+        correct: false
+        feedback: DNS resolves names; it is not a general web-page cache.
+    explanation: DNS is the naming system that maps domain names to resource records, commonly including IP addresses.
+  - id: url-prediction
+    type: predict-output
+    skill: prediction
+    difficulty: 1
+    prompt: What does `urlsplit` report as the path and query?
+    code: |
+      from urllib.parse import urlsplit
+      parts = urlsplit("https://example.org/search?q=python")
+      print(parts.path)
+      print(parts.query)
+    answer: |
+      /search
+      q=python
+    explanation: The path identifies the resource route; the query carries the `q=python` parameter text.
+  - id: explain-network-delay
+    type: explain
+    skill: transfer
+    difficulty: 2
+    prompt: A program waits 1.5 seconds for a small API response, while its CPU usage stays low. Explain why high bandwidth alone may not solve this delay.
+    rubric:
+      - Distinguishes latency from bandwidth.
+      - Identifies network setup or server response time as possible sources and suggests measuring request timing.
+    modelAnswer: The program may be waiting on latency or remote server processing rather than transferring a large amount of data. Increasing bandwidth may not reduce the time before the response begins. I would measure connection and request timing, including time to first byte if available.
+    explanation: Bandwidth measures transfer capacity; latency and server processing determine how long a request waits.
+  - id: mastery-network
+    type: mcq
+    skill: recognition
+    difficulty: 1
+    prompt: In a URL such as `https://api.example.com:8443/v1/items`, what does `8443` identify?
+    options:
+      - id: a
+        text: The port for the service endpoint
+        correct: true
+        feedback: Correct. The port identifies a transport endpoint on the host.
+      - id: b
+        text: The IP address of the server
+        correct: false
+        feedback: The host component is the domain name; DNS resolution is a separate step.
+      - id: c
+        text: The HTTP response status code
+        correct: false
+        feedback: Status codes are part of HTTP responses, not URL authority components.
+    explanation: A URL may specify a port after the hostname, separated by a colon.
+  - id: mastery-url-code
+    type: code
+    skill: implementation
+    difficulty: 2
+    prompt: Implement `url_parts(value)` using `urllib.parse.urlsplit`. Return a dictionary with `scheme`, `host`, `port`, `path` and `query` keys.
+    explanation: >-
+      urlsplit parses a URL into named components. Reading the parsed result properties avoids fragile manual string slicing and keeps an absent port as None.
+    starterCode: |
+      from urllib.parse import urlsplit
+
+      def url_parts(value):
+          pass
+    solution: |
+      from urllib.parse import urlsplit
+
+      def url_parts(value):
+          parts = urlsplit(value)
+          return {
+              "scheme": parts.scheme,
+              "host": parts.hostname,
+              "port": parts.port,
+              "path": parts.path,
+              "query": parts.query,
+          }
+    tests:
+      - name: parses explicit port
+        code: |
+          result = url_parts("https://api.example.com:8443/v1/items?limit=10")
+          assert result == {"scheme": "https", "host": "api.example.com", "port": 8443, "path": "/v1/items", "query": "limit=10"}
+      - name: missing port remains None
+        code: |
+          result = url_parts("https://example.org/health")
+          assert result["port"] is None
+          assert result["path"] == "/health"
+    hints:
+      - Use `urlsplit(value)` to parse the URL.
+      - Read the named properties from the returned SplitResult.
+  - id: mastery-network-explain
+    type: explain
+    skill: explanation
+    difficulty: 2
+    prompt: Why can a browser contact the same domain name and receive responses from different physical servers at different times?
+    rubric:
+      - Explains that DNS records and routing can return multiple addresses or change over time.
+      - Names a reason such as load balancing, failover or a content delivery network.
+    modelAnswer: A domain name can resolve to multiple IP addresses, and the records or routing can change. Load balancing, failover and content delivery networks can direct clients to different servers while keeping the same domain name.
+    explanation: A domain name is a stable logical name, not a promise that one physical machine always serves it.
+masteryCheck:
+  passThreshold: 0.8
+  items: [mastery-network, mastery-url-code, mastery-network-explain]
+cheatsheet: |
+  Client requests; server responds. DNS resolves names; IP addresses route packets; ports identify service endpoints.
+  HTTP defines request/response messages. A URL contains scheme, host, optional port, path and query.
+  Latency = delay. Bandwidth = transfer capacity. Measure before assuming which part is slow.

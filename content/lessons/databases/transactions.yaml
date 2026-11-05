@@ -1,0 +1,227 @@
+id: databases.transactions
+concept: databases.transactions
+title: Transactions and isolation
+subtitle: ACID transactions group changes atomically; isolation levels trade concurrency for protection against
+  anomalies such as lost updates
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: ACID transactions group changes atomically; isolation levels trade concurrency for protection against anomalies
+  such as lost updates.
+objectives:
+- Explain the core model behind transactions and isolation.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL: Transaction Isolation'
+  url: https://www.postgresql.org/docs/current/transaction-iso.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL Tutorial: Transactions'
+  url: https://www.postgresql.org/docs/current/tutorial-transactions.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: Concurrency Control (MVCC)'
+  url: https://www.postgresql.org/docs/current/mvcc.html
+  publisher: PostgreSQL Global Development Group
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: ACID transactions group changes atomically; isolation levels trade concurrency for protection against
+      anomalies such as lost updates. Transferring money, reserving stock or updating several related rows must
+      happen all or nothing, and concurrent users must not silently overwrite each other's changes.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions
+      do not see each other''s partial work) and Durability (committed data survives crashes).
+
+      - `BEGIN; ... COMMIT;` groups statements and `ROLLBACK` undoes them; in PostgreSQL an error inside a transaction
+      aborts it until you roll back.
+
+      - READ COMMITTED (PostgreSQL''s default) gives each statement a fresh snapshot; REPEATABLE READ uses one snapshot
+      for the whole transaction; SERIALIZABLE behaves as if transactions ran one at a time.
+
+      - A lost update happens when two transactions read a value and both write value + 1. Prevent it with an atomic
+      `UPDATE ... SET n = n + 1`, a `SELECT ... FOR UPDATE` row lock, or optimistic locking with a version column.
+
+      - PostgreSQL uses MVCC, so readers do not block writers and writers do not block readers; under REPEATABLE
+      READ and SERIALIZABLE, conflicting transactions fail with serialization errors that the application must retry.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED
+      level.
+
+      - The C in ACID is about rules you define, such as constraints; it is not the C (consistency) of the CAP theorem
+      for distributed systems.
+
+      - Long-running transactions are not harmless; they hold locks and stop VACUUM from cleaning up old row versions.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def transfer(accounts, source, destination, amount):\n    if amount <= 0 or accounts.get(source, 0) <\
+      \ amount: raise ValueError(\"Invalid transfer\")\n    result = dict(accounts)\n    result[source] -= amount;\
+      \ result[destination] = result.get(destination, 0) + amount\n    return result\n\nprint(transfer({\"A\":100,\"\
+      B\":20}, \"A\", \"B\", 30))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: transactions-code
+  - type: item
+    ref: transactions-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions
+      do not see each other''s partial work) and Durability (committed data survives crashes).
+
+      - `BEGIN; ... COMMIT;` groups statements and `ROLLBACK` undoes them; in PostgreSQL an error inside a transaction
+      aborts it until you roll back.
+
+      - READ COMMITTED (PostgreSQL''s default) gives each statement a fresh snapshot; REPEATABLE READ uses one snapshot
+      for the whole transaction; SERIALIZABLE behaves as if transactions ran one at a time.
+
+      - A lost update happens when two transactions read a value and both write value + 1. Prevent it with an atomic
+      `UPDATE ... SET n = n + 1`, a `SELECT ... FOR UPDATE` row lock, or optimistic locking with a version column.
+
+      - PostgreSQL uses MVCC, so readers do not block writers and writers do not block readers; under REPEATABLE
+      READ and SERIALIZABLE, conflicting transactions fail with serialization errors that the application must retry.
+
+
+      **Avoid**
+
+      - Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED
+      level.
+
+      - The C in ACID is about rules you define, such as constraints; it is not the C (consistency) of the CAP theorem
+      for distributed systems.
+
+      - Long-running transactions are not harmless; they hold locks and stop VACUUM from cleaning up old row versions.'
+  - type: item
+    ref: transactions-mcq
+  - type: item
+    ref: transactions-tf
+  - type: item
+    ref: transactions-code
+items:
+- id: transactions-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of transactions and isolation?
+  explanation: ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions
+    do not see each other's partial work) and Durability (committed data survives crashes).
+  options:
+  - id: a
+    text: ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions
+      do not see each other's partial work) and Durability (committed data survives crashes).
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED
+      level.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: transactions-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED
+    level.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: transactions-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing transactions and isolation in a real application. What design decisions would you
+    make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: transactions-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for transactions and isolation. Implement the stated rule and make sure both ordinary
+    and edge-case tests pass.
+  starterCode: "def transfer(accounts, source, destination, amount):\n    raise NotImplementedError('Complete this\
+    \ function')"
+  solution: "def transfer(accounts, source, destination, amount):\n    if amount <= 0 or accounts.get(source, 0)\
+    \ < amount: raise ValueError(\"Invalid transfer\")\n    result = dict(accounts)\n    result[source] -= amount;\
+    \ result[destination] = result.get(destination, 0) + amount\n    return result"
+  tests:
+  - name: Core behaviour
+    code: assert transfer({"A":100,"B":20}, "A", "B", 30) == {"A":70,"B":50}
+  - name: Edge cases
+    code: 'try: transfer({"A":10}, "A", "B", 20)
+
+      except ValueError: pass
+
+      else: raise AssertionError("insufficient funds should fail")'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - transactions-mcq
+  - transactions-tf
+  - transactions-code
+cheatsheet: '**Core model**
+
+  - ACID means Atomicity (all or nothing), Consistency (constraints hold), Isolation (concurrent transactions do
+  not see each other''s partial work) and Durability (committed data survives crashes).
+
+  - `BEGIN; ... COMMIT;` groups statements and `ROLLBACK` undoes them; in PostgreSQL an error inside a transaction
+  aborts it until you roll back.
+
+  - READ COMMITTED (PostgreSQL''s default) gives each statement a fresh snapshot; REPEATABLE READ uses one snapshot
+  for the whole transaction; SERIALIZABLE behaves as if transactions ran one at a time.
+
+  - A lost update happens when two transactions read a value and both write value + 1. Prevent it with an atomic
+  `UPDATE ... SET n = n + 1`, a `SELECT ... FOR UPDATE` row lock, or optimistic locking with a version column.
+
+  - PostgreSQL uses MVCC, so readers do not block writers and writers do not block readers; under REPEATABLE READ
+  and SERIALIZABLE, conflicting transactions fail with serialization errors that the application must retry.
+
+
+  **Common mistakes**
+
+  - Wrapping code in a transaction does not by itself prevent race conditions at the default READ COMMITTED level.
+
+  - The C in ACID is about rules you define, such as constraints; it is not the C (consistency) of the CAP theorem
+  for distributed systems.
+
+  - Long-running transactions are not harmless; they hold locks and stop VACUUM from cleaning up old row versions.'

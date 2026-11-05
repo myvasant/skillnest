@@ -1,0 +1,202 @@
+id: databases.sql-modification
+concept: databases.sql-modification
+title: Inserting, updating and deleting rows
+subtitle: INSERT, UPDATE, DELETE and upserts change data; always check WHERE clauses before running them
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: INSERT, UPDATE, DELETE and upserts change data; always check WHERE clauses before running them.
+objectives:
+- Explain the core model behind inserting, updating and deleting rows.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: 'PostgreSQL: Data Manipulation'
+  url: https://www.postgresql.org/docs/current/dml.html
+  publisher: PostgreSQL Global Development Group
+- title: 'PostgreSQL: INSERT (including ON CONFLICT)'
+  url: https://www.postgresql.org/docs/current/sql-insert.html
+  publisher: PostgreSQL Global Development Group
+- title: 'SQLite: UPSERT'
+  url: https://www.sqlite.org/lang_upsert.html
+  publisher: SQLite
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: INSERT, UPDATE, DELETE and upserts change data; always check WHERE clauses before running them. Applications
+      constantly create and change records, and a single UPDATE or DELETE with the wrong WHERE clause can destroy
+      a whole table in one statement.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- `INSERT INTO users (email, name) VALUES (''a@example.com'', ''Ana'');` names the columns explicitly;
+      one statement can insert several rows of VALUES.
+
+      - `UPDATE ... SET ... WHERE ...` and `DELETE FROM ... WHERE ...` affect every matching row; without a WHERE
+      clause they affect all rows.
+
+      - Upsert with `INSERT ... ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name` (PostgreSQL and SQLite)
+      to insert or update atomically.
+
+      - `RETURNING id` (PostgreSQL, and SQLite 3.35+) returns generated values without a second query.
+
+      - Run a SELECT with the same WHERE first, and wrap risky changes in a transaction so you can ROLLBACK.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+
+      - A "check, then insert" in two statements is not safe under concurrency; use a UNIQUE constraint with ON
+      CONFLICT instead.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def apply_update(rows, row_id, changes):\n    updated = []\n    for row in rows:\n        updated.append({**row,\
+      \ **changes} if row[\"id\"] == row_id else dict(row))\n    return updated\n\nprint(apply_update([{\"id\":1,\"\
+      name\":\"Ada\"}], 1, {\"name\":\"Augusta\"}))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: sql-modification-code
+  - type: item
+    ref: sql-modification-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - `INSERT INTO users (email, name) VALUES (''a@example.com'', ''Ana'');` names the columns explicitly; one
+      statement can insert several rows of VALUES.
+
+      - `UPDATE ... SET ... WHERE ...` and `DELETE FROM ... WHERE ...` affect every matching row; without a WHERE
+      clause they affect all rows.
+
+      - Upsert with `INSERT ... ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name` (PostgreSQL and SQLite)
+      to insert or update atomically.
+
+      - `RETURNING id` (PostgreSQL, and SQLite 3.35+) returns generated values without a second query.
+
+      - Run a SELECT with the same WHERE first, and wrap risky changes in a transaction so you can ROLLBACK.
+
+
+      **Avoid**
+
+      - DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+
+      - A "check, then insert" in two statements is not safe under concurrency; use a UNIQUE constraint with ON
+      CONFLICT instead.'
+  - type: item
+    ref: sql-modification-mcq
+  - type: item
+    ref: sql-modification-tf
+  - type: item
+    ref: sql-modification-code
+items:
+- id: sql-modification-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of inserting, updating and deleting rows?
+  explanation: '`INSERT INTO users (email, name) VALUES (''a@example.com'', ''Ana'');` names the columns explicitly;
+    one statement can insert several rows of VALUES.'
+  options:
+  - id: a
+    text: '`INSERT INTO users (email, name) VALUES (''a@example.com'', ''Ana'');` names the columns explicitly;
+      one statement can insert several rows of VALUES.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: sql-modification-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: sql-modification-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing inserting, updating and deleting rows in a real application. What design decisions
+    would you make, what failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: sql-modification-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for inserting, updating and deleting rows. Implement the stated rule and make sure
+    both ordinary and edge-case tests pass.
+  starterCode: "def apply_update(rows, row_id, changes):\n    raise NotImplementedError('Complete this function')"
+  solution: "def apply_update(rows, row_id, changes):\n    updated = []\n    for row in rows:\n        updated.append({**row,\
+    \ **changes} if row[\"id\"] == row_id else dict(row))\n    return updated"
+  tests:
+  - name: Core behaviour
+    code: assert apply_update([{"id":1,"x":2}], 1, {"x":3}) == [{"id":1,"x":3}]
+  - name: Edge cases
+    code: assert apply_update([{"id":1,"x":2}], 9, {"x":3}) == [{"id":1,"x":2}]
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - sql-modification-mcq
+  - sql-modification-tf
+  - sql-modification-code
+cheatsheet: '**Core model**
+
+  - `INSERT INTO users (email, name) VALUES (''a@example.com'', ''Ana'');` names the columns explicitly; one statement
+  can insert several rows of VALUES.
+
+  - `UPDATE ... SET ... WHERE ...` and `DELETE FROM ... WHERE ...` affect every matching row; without a WHERE clause
+  they affect all rows.
+
+  - Upsert with `INSERT ... ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name` (PostgreSQL and SQLite) to insert
+  or update atomically.
+
+  - `RETURNING id` (PostgreSQL, and SQLite 3.35+) returns generated values without a second query.
+
+  - Run a SELECT with the same WHERE first, and wrap risky changes in a transaction so you can ROLLBACK.
+
+
+  **Common mistakes**
+
+  - DELETE removes rows, not the table; TRUNCATE quickly empties a table and DROP TABLE removes it entirely.
+
+  - A "check, then insert" in two statements is not safe under concurrency; use a UNIQUE constraint with ON CONFLICT
+  instead.'

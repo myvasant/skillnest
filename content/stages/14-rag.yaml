@@ -1,0 +1,580 @@
+id: rag
+order: 14
+title: Retrieval-Augmented Generation
+shortTitle: RAG
+summary: >-
+  Grounding LLM answers in your own documents: ingestion, chunking, keyword and vector search, hybrid
+  retrieval, reranking, context assembly, citations, access control, evaluation and failure analysis.
+why: >-
+  RAG is the most common way to make LLMs useful on private or fresh information. Most RAG failures are
+  retrieval failures — which is why this stage starts with plain search before any framework.
+modules:
+  - id: retrieval
+    title: Retrieval
+    summary: Ingestion, chunking, keyword search, embeddings, vector search and hybrid retrieval.
+  - id: generation
+    title: From retrieval to answers
+    summary: Reranking, context assembly, grounding and citations.
+  - id: production
+    title: Quality and production
+    summary: Evaluation, failure analysis, access control, performance and observability.
+concepts:
+  # --------------------------------------------------------------- retrieval
+  - id: rag.why-rag
+    title: Why RAG exists
+    module: retrieval
+    level: beginner
+    priority: essential
+    summary: Models don't know your private or recent data and can't cite sources; retrieving relevant passages into the prompt addresses both — when retrieval works.
+    requires: [genai.hallucinations, genai.tokens-context]
+    why: >-
+      An LLM only knows what was in its training data up to a cutoff, cannot see your private documents and
+      cannot point to where a claim came from. RAG fetches relevant passages at question time so answers can
+      use, and cite, current and private information without retraining the model.
+    keyIdeas:
+      - "The pipeline has two halves: offline indexing (parse, chunk, embed or index documents) and online answering (retrieve the top-k passages, put them in the prompt, generate)."
+      - RAG changes what the model sees, not what it knows; updating knowledge means re-indexing documents, not retraining weights.
+      - "Answer quality is capped by retrieval: if the right passage is not in the top k, the model cannot use it and may guess instead."
+      - "Rough rule: RAG for large, changing, private or must-cite knowledge; fine-tuning for style, format and behaviour; plain long-context prompting when the whole corpus fits cheaply in the context window."
+      - The name comes from Lewis et al. (2020), who paired a neural retriever with a generator; today it names the general pattern with any model.
+    misconceptions:
+      - RAG does not eliminate hallucinations; the model can still ignore, misread or go beyond the retrieved text.
+      - Long context windows do not make retrieval obsolete; cost, latency and weaker use of mid-context information still favour sending fewer, better passages.
+    interview: Expect to explain the RAG pipeline end to end and when you would choose RAG over fine-tuning or long-context prompting.
+    sources:
+      - title: Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (Lewis et al., 2020)
+        url: https://arxiv.org/abs/2005.11401
+        publisher: arXiv
+      - title: "Retrieval-Augmented Generation for Large Language Models: A Survey (Gao et al.)"
+        url: https://arxiv.org/abs/2312.10997
+        publisher: arXiv
+  - id: rag.document-ingestion
+    title: Document ingestion and parsing
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Extract clean text and metadata from PDFs, HTML, Markdown and office files; parsing quality caps everything downstream.
+    requires: [rag.why-rag, python.files]
+    why: >-
+      Real documents are PDFs with columns, tables, headers and scanned pages. If extraction scrambles reading
+      order or drops a table, no retriever or model downstream can recover the lost information.
+    keyIdeas:
+      - "Ingestion = load, extract text and structure, clean, attach metadata (source, title, section, page, date, permissions), then hand off to chunking."
+      - PDFs store positioned glyphs, not paragraphs; layout-aware parsers (such as Docling or Unstructured) recover reading order, headings and tables, while simple extractors like pypdf only pull out the text streams.
+      - Scanned pages need OCR; tables are usually best converted to Markdown or HTML so row and column relationships survive chunking.
+      - Give every document a stable ID and a content hash so re-ingestion can detect changes and skip unchanged files.
+      - Inspect parsed output for a sample of every document type before building anything on top of it.
+    misconceptions:
+      - "'The PDF opens fine, so the text is fine' is false: extracted text often has broken words, merged columns, repeated headers and footers, or missing tables."
+      - Metadata is not decoration; it is what later makes filtering, citations and access control possible.
+    tools: [Docling, Unstructured, pypdf]
+    interview: Interviewers ask how you would handle messy PDFs and tables, and how you would know parsing is the cause of bad answers.
+    production: Make ingestion idempotent and incremental (hash-based change detection, versioned parser settings) and log per-document parse failures instead of silently skipping files.
+    sources:
+      - title: Docling documentation
+        url: https://docling-project.github.io/docling/
+        publisher: Docling Project
+      - title: Unstructured open source overview
+        url: https://docs.unstructured.io/open-source/introduction/overview
+        publisher: Unstructured
+      - title: pypdf documentation
+        url: https://pypdf.readthedocs.io/en/stable/
+        publisher: pypdf
+  - id: rag.chunking
+    title: Chunking strategies
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Split documents into retrievable pieces — fixed-size, structure-aware or semantic, with overlap — balancing precision against lost context.
+    requires: [rag.document-ingestion]
+    why: >-
+      Embedding models and prompts work on limited amounts of text, and one vector for a whole document blurs
+      many topics together. Chunking decides the unit that can be retrieved, ranked and cited.
+    keyIdeas:
+      - Fixed-size chunking splits by tokens or characters (often a few hundred tokens) with some overlap (commonly 10-20%) so a sentence cut at a boundary appears in both chunks.
+      - Recursive or structure-aware splitting tries separators in order (headings, paragraphs, sentences, words) so chunks follow the document's own structure.
+      - Semantic chunking places boundaries where the embedding similarity between neighbouring sentences drops; it costs more and is not always better.
+      - Small chunks match precisely but lose context; large chunks keep context but dilute the embedding and use more prompt tokens. Parent-document retrieval searches small chunks and returns their larger parent.
+      - Copy metadata (document ID, section heading, page) into every chunk; prepending the title or heading to the chunk text often improves retrieval.
+    misconceptions:
+      - There is no universally best chunk size; choose it by measuring retrieval quality on your own questions.
+      - Size limits are in the embedding model's tokens, not characters; text beyond the model's maximum input is truncated (often silently) or rejected.
+    tools: [LangChain text splitters, LlamaIndex node parsers]
+    interview: Interviewers ask how chunk size and overlap affect recall and precision, and how you would choose them empirically.
+    sources:
+      - title: Text splitters
+        url: https://docs.langchain.com/oss/python/integrations/splitters
+        publisher: LangChain
+      - title: Node parsers / text splitters
+        url: https://developers.llamaindex.ai/python/framework/module_guides/loading/node_parsers/
+        publisher: LlamaIndex
+  - id: rag.keyword-search
+    title: Keyword search — inverted indexes, TF-IDF and BM25
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Classic search scores documents by term frequency and rarity; it is fast, explainable and excellent for exact names, codes and jargon.
+    requires: [rag.why-rag, python.dictionaries, math.summation-notation]
+    why: >-
+      Users often search for exact identifiers — error codes, product names, people, clause numbers — that
+      embeddings blur. Keyword search finds them precisely, cheaply and explainably, and it is the baseline
+      every RAG system should beat.
+    keyIdeas:
+      - An inverted index maps each term to a postings list of the documents (and positions) that contain it, so a query only touches documents sharing its terms.
+      - "TF-IDF weights a term by how often it occurs in a document (tf) times how rare it is in the collection (idf, roughly log(N / df))."
+      - "BM25 adds term-frequency saturation (parameter k1, commonly 1.2) and document-length normalisation (parameter b, commonly 0.75); it is the default ranking in Lucene-based engines such as Elasticsearch and OpenSearch."
+      - Text analysis — tokenisation, lowercasing, stemming, stop words — decides what counts as a match; queries and documents must be analysed the same way.
+      - Keyword search fails on vocabulary mismatch (synonyms, paraphrases), which is exactly where embeddings help.
+    misconceptions:
+      - Keyword search is not obsolete; BM25 is still a strong baseline on retrieval benchmarks such as BEIR and often beats dense retrieval on exact-match and out-of-domain queries.
+    tools: [SQLite FTS5, OpenSearch, Elasticsearch]
+    interview: Be ready to explain the BM25 intuition (rarity, saturation, length normalisation) and when keyword search beats vector search.
+    sources:
+      - title: "The Probabilistic Relevance Framework: BM25 and Beyond (Robertson and Zaragoza, 2009)"
+        url: https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf
+        publisher: Foundations and Trends in Information Retrieval (author copy)
+      - title: Similarity settings (BM25 parameters)
+        url: https://www.elastic.co/docs/reference/elasticsearch/index-settings/similarity
+        publisher: Elastic
+      - title: SQLite FTS5 extension (includes the bm25() ranking function)
+        url: https://www.sqlite.org/fts5.html
+        publisher: SQLite
+  - id: rag.embeddings
+    title: Text embeddings and embedding models
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Embedding models map text to vectors so that similar meanings are close; model choice, dimensions, normalisation and language support matter.
+    requires: [math.vectors, genai.what-are-llms]
+    why: >-
+      To find passages that mean the same as a question even when they share no words, you need a numeric
+      representation of meaning. Embedding models provide it, and their choice largely sets the ceiling of
+      dense retrieval quality.
+    keyIdeas:
+      - An embedding model (usually a bi-encoder trained with contrastive learning) maps text to a fixed-length vector, typically hundreds to a few thousand dimensions; similar meanings point in similar directions.
+      - Queries and documents must be embedded with the same model, version and settings; some models expect different prefixes or instructions for queries and passages.
+      - Every model has a maximum input length in tokens; match your chunk size to it.
+      - Normalising vectors to unit length makes dot product equal to cosine similarity; Matryoshka-trained models let you truncate dimensions to save space with modest quality loss.
+      - Benchmark candidate models on your own queries; public leaderboards such as MTEB are only a starting point, and language and domain coverage matter.
+    misconceptions:
+      - Vectors from different models (or model versions) are not comparable; switching models means re-embedding the whole corpus.
+      - A larger or top-of-leaderboard model is not automatically better for your domain, and it costs more to store and search.
+    tools: [Sentence Transformers]
+    interview: Expect questions on how embedding models are trained, why queries and documents need the same model, and how you would choose one.
+    production: Store the embedding model name and version with every vector so a model change becomes a planned re-index rather than a silent quality drop.
+    sources:
+      - title: Sentence Transformers documentation
+        url: https://sbert.net/
+        publisher: Sentence Transformers (Hugging Face)
+      - title: "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks"
+        url: https://arxiv.org/abs/1908.10084
+        publisher: arXiv
+      - title: "MTEB: Massive Text Embedding Benchmark"
+        url: https://arxiv.org/abs/2210.07316
+        publisher: arXiv
+  - id: rag.vector-similarity
+    title: Vector similarity search
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Rank chunks by cosine similarity, dot product or Euclidean distance to the query embedding; exact search is a simple loop.
+    requires: [rag.embeddings]
+    why: >-
+      Once text is embedded, retrieval becomes geometry — find the stored vectors closest to the query
+      vector. You need to know which measure your model expects and what exact search costs before reaching
+      for an index.
+    keyIdeas:
+      - "Cosine similarity = dot(a, b) / (norm(a) * norm(b)), from -1 to 1, compares direction only; dot product also rewards magnitude; Euclidean (L2) distance is straight-line distance."
+      - "For unit-length vectors all three give the same ranking: dot product equals cosine, and squared L2 distance = 2 - 2 * cosine."
+      - "Exact (brute-force) k-nearest-neighbour search compares the query with every vector — O(N * d) per query — which is fast enough for tens of thousands of chunks with NumPy."
+      - Use the metric the embedding model was trained for (its model card says which).
+      - Similarity scores are relative, not calibrated probabilities; a fixed threshold such as 0.8 means different things for different models.
+    misconceptions:
+      - Similar is not the same as relevant or correct; the nearest chunk may share the topic without answering the question.
+      - Distances and similarities run in opposite directions; with APIs that return distances, smaller is better, and sorting the wrong way returns the worst matches.
+    tools: [NumPy, FAISS]
+    interview: A common exercise is to implement top-k cosine search in NumPy and explain why normalisation makes dot product equivalent.
+    sources:
+      - title: MetricType and distances
+        url: https://github.com/facebookresearch/faiss/wiki/MetricType-and-distances
+        publisher: Meta (FAISS wiki)
+      - title: pgvector README (distance operators)
+        url: https://github.com/pgvector/pgvector
+        publisher: pgvector
+  - id: rag.vector-databases
+    title: Vector indexes and databases
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Approximate nearest-neighbour indexes (HNSW, IVF) trade a little recall for big speed-ups; pgvector, Chroma, FAISS and Qdrant are common local-capable options.
+    requires: [rag.vector-similarity, databases.indexes]
+    tools: [pgvector, Chroma, FAISS, Qdrant]
+    why: >-
+      Brute-force search gets slow and expensive at millions of vectors. Approximate nearest-neighbour (ANN)
+      indexes and the databases built around them keep retrieval fast while adding persistence, filtering and
+      updates.
+    keyIdeas:
+      - HNSW builds a multi-layer proximity graph and searches greedily from sparse upper layers down to the dense bottom layer; key knobs are M (links per node), ef_construction (build quality) and ef_search (query-time recall versus speed).
+      - IVF clusters vectors around centroids and searches only the nearest few lists (nprobe, or probes in pgvector); product quantization (PQ) compresses vectors to save memory at some accuracy cost.
+      - ANN trades recall for speed; measure recall@k against exact search whenever you tune parameters.
+      - "pgvector adds a `vector` type, distance operators (`<->` L2, `<=>` cosine, `<#>` negative inner product) and HNSW or IVFFlat indexes to PostgreSQL; FAISS is an in-process library; Chroma and Qdrant are vector databases that run embedded or in Docker."
+      - A database adds what a bare index lacks — persistence, metadata filtering, updates and deletes, replication; choose by data size, filtering needs and what you already operate.
+    misconceptions:
+      - FAISS is a library, not a database; you handle persistence, metadata and updates yourself.
+      - You often do not need a dedicated vector database; PostgreSQL with pgvector, or even exact search, is enough for many applications.
+    interview: Interviewers often ask how HNSW works at a high level and how you would trade recall, latency and memory when tuning an ANN index.
+    production: Index builds are memory- and CPU-hungry and defaults vary by version; benchmark recall and p95 latency at realistic data volumes before fixing settings.
+    sources:
+      - title: Efficient and robust approximate nearest neighbor search using Hierarchical Navigable Small World graphs
+        url: https://arxiv.org/abs/1603.09320
+        publisher: arXiv
+      - title: pgvector README
+        url: https://github.com/pgvector/pgvector
+        publisher: pgvector
+        version: "0.8"
+      - title: Faiss documentation
+        url: https://faiss.ai/
+        publisher: Meta
+  - id: rag.hybrid-search
+    title: Hybrid search
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Combine keyword and vector results (for example with reciprocal rank fusion) to get the strengths of both.
+    requires: [rag.keyword-search, rag.vector-similarity]
+    why: >-
+      Keyword search catches exact terms and rare identifiers; vector search catches paraphrases. Each misses
+      what the other finds, so combining them is one of the most reliable quality improvements in RAG.
+    keyIdeas:
+      - Run a keyword (BM25) query and a vector query, then fuse the two ranked lists into one.
+      - "Reciprocal rank fusion (RRF) scores each document as the sum over lists of 1 / (k + rank); it uses ranks only, so incompatible score scales do not matter. The original paper used k = 60 (also Elasticsearch's default); other engines choose different defaults."
+      - Score-based fusion (normalise each list, then weight, e.g. 0.7 vector + 0.3 keyword) can beat RRF when tuned, but normalisation is fragile across queries.
+      - Learned sparse models such as SPLADE sit in between — sparse, term-based vectors with learned term expansion.
+      - Retrieve generously from each side (e.g. 20-50 candidates each), fuse, then rerank the top of the fused list.
+    misconceptions:
+      - Raw BM25 scores and cosine similarities are on different scales; adding them directly is meaningless.
+      - Hybrid is not automatically better; confirm on your evaluation set, because on some corpora one retriever dominates.
+    tools: [Qdrant, OpenSearch, SQLite FTS5]
+    interview: Be ready to write the RRF formula and explain why rank-based fusion is robust.
+    sources:
+      - title: Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods (Cormack, Clarke and Buettcher, 2009)
+        url: https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf
+        publisher: University of Waterloo (SIGIR 2009)
+      - title: Hybrid and multi-stage queries
+        url: https://qdrant.tech/documentation/search/hybrid-queries/
+        publisher: Qdrant
+      - title: Reciprocal rank fusion
+        url: https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion
+        publisher: Elastic
+  - id: rag.metadata-filtering
+    title: Metadata filtering
+    module: retrieval
+    level: intermediate
+    priority: essential
+    summary: Restrict retrieval by source, date, language, tenant or permissions before or during similarity search.
+    requires: [rag.vector-databases]
+    why: >-
+      Many questions are implicitly scoped — "in the 2025 policy", "for my team", "in German" — and
+      permissions must limit what anyone can retrieve. Filters on structured metadata enforce these
+      constraints exactly, which similarity alone never can.
+    keyIdeas:
+      - Store structured fields with each chunk (source, doc_id, date, language, tenant_id, ACL groups) and apply exact conditions alongside the vector query.
+      - Pre-filtering applies the condition before or during the ANN search; post-filtering searches first and drops non-matches, which can leave fewer than k results when the filter is selective.
+      - "Engines differ: Qdrant and Chroma take filter conditions in the query (Chroma's `where`), and pgvector uses SQL `WHERE`; since pgvector 0.8.0, iterative index scans help HNSW and IVFFlat return enough rows under filters."
+      - Index the fields you filter on (payload indexes in Qdrant; B-tree or partial indexes and partitions in PostgreSQL); very selective filters may be best served by exact search over the filtered subset.
+      - Filters can be extracted from the question (e.g. an LLM pulling out a date range), but validate extracted values before using them.
+    misconceptions:
+      - Telling the model "only use documents from 2025" is not filtering; enforce constraints in the retrieval query.
+    tools: [Qdrant, Chroma, pgvector]
+    interview: Interviewers ask about pre- versus post-filtering and what happens to recall when a filter is very selective.
+    production: Build tenant and permission filters server-side from the authenticated identity — never from model output or client-supplied parameters.
+    sources:
+      - title: Filtering
+        url: https://qdrant.tech/documentation/search/filtering/
+        publisher: Qdrant
+      - title: Metadata filtering
+        url: https://docs.trychroma.com/docs/querying-collections/metadata-filtering
+        publisher: Chroma
+      - title: pgvector README (filtering and iterative index scans)
+        url: https://github.com/pgvector/pgvector
+        publisher: pgvector
+  # -------------------------------------------------------------- generation
+  - id: rag.reranking
+    title: Reranking
+    module: generation
+    level: intermediate
+    priority: supporting
+    summary: A slower cross-encoder or LLM rescoring step reorders the top candidates for precision.
+    requires: [rag.hybrid-search]
+    why: >-
+      First-stage retrievers must be fast, so they score the query and each document independently. A
+      reranker reads the query and candidate together and is much better at judging which few passages
+      actually answer the question.
+    keyIdeas:
+      - "Two-stage retrieval: a fast retriever returns, say, the top 50-100 candidates; a slower reranker rescores them and you keep the top 3-10."
+      - A cross-encoder runs the query and passage through one transformer together and outputs a relevance score; bi-encoders (embeddings) encode them separately, which is faster but less precise.
+      - Reranking cost grows linearly with the number of candidates, so the candidate count is your latency/quality knob.
+      - Alternatives include late-interaction models (ColBERT), hosted rerank APIs and LLM-based reranking with pointwise or listwise prompts, each with different cost and latency.
+      - Reranking can only reorder what was retrieved; it cannot fix low first-stage recall.
+    misconceptions:
+      - Cross-encoder scores are for ranking, not calibrated probabilities that a passage is correct.
+    tools: [Sentence Transformers]
+    interview: Expect to contrast bi-encoders with cross-encoders and explain why rerankers only see a short candidate list.
+    production: Budget reranker latency explicitly (batch candidates, cap the candidate count, consider a smaller model or a GPU) and confirm the quality gain on your own evaluation set.
+    sources:
+      - title: Passage Re-ranking with BERT (Nogueira and Cho)
+        url: https://arxiv.org/abs/1901.04085
+        publisher: arXiv
+      - title: Cross-encoder usage
+        url: https://sbert.net/docs/cross_encoder/usage/usage.html
+        publisher: Sentence Transformers (Hugging Face)
+      - title: "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT"
+        url: https://arxiv.org/abs/2004.12832
+        publisher: arXiv
+  - id: rag.context-assembly
+    title: Context assembly and prompting
+    module: generation
+    level: intermediate
+    priority: essential
+    summary: Select, order, deduplicate and label retrieved chunks within a token budget, and instruct the model to answer only from them.
+    requires: [rag.chunking, rag.vector-similarity, genai.prompt-engineering]
+    why: >-
+      Retrieval returns a pile of chunks. How you select, order, label and frame them in the prompt decides
+      whether the model uses the right evidence, stays within budget and can cite its sources.
+    keyIdeas:
+      - Set a token budget for context (leaving room for instructions, history and the answer), then fill it with the best-ranked chunks after removing near-duplicates.
+      - Label each chunk with an ID and source metadata (title, section, date) so the model can cite it and you can trace it.
+      - Models use information at the start and end of a long context more reliably than the middle ("lost in the middle"), so lead with the strongest evidence and do not pad with marginal chunks.
+      - "Instruct the model to answer only from the provided context, cite chunk IDs, and say it does not know when the context is insufficient."
+      - Clearly delimit retrieved text (for example with XML-style tags) and treat it as data, not instructions — documents can contain prompt-injection text.
+    misconceptions:
+      - More context is not always better; extra marginal chunks add cost and latency and can distract the model.
+    interview: Interviewers probe how you would fit retrieved content into a limited context window and stop the model answering beyond it.
+    sources:
+      - title: "Lost in the Middle: How Language Models Use Long Contexts"
+        url: https://arxiv.org/abs/2307.03172
+        publisher: arXiv
+      - title: "LLM01:2025 Prompt Injection"
+        url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+        publisher: OWASP GenAI Security Project
+  - id: rag.grounding-citations
+    title: Grounding and citations
+    module: generation
+    level: intermediate
+    priority: essential
+    summary: Attach sources to claims, verify that answers are supported by the retrieved text, and say "I don't know" when they are not.
+    requires: [rag.context-assembly]
+    why: >-
+      Users and auditors need to check where an answer came from, and a fluent answer the sources do not
+      support is worse than no answer. Grounding and citations make RAG answers verifiable.
+    keyIdeas:
+      - Ask the model to cite chunk IDs inline for each claim and map them back to document links in the UI; some provider APIs offer native citation features (check your provider's current docs).
+      - Faithfulness (groundedness) asks whether every claim is supported by the retrieved context — a different question from whether the answer is correct or relevant.
+      - Verify after generation — check that cited IDs exist and quoted spans appear in the source; optionally use an NLI model or LLM judge to flag unsupported claims.
+      - "Define an abstention path: when retrieval scores are low or no support is found, answer \"I don't know\" or ask a clarifying question."
+      - Show quotes or highlighted passages, not just document titles, so users can verify quickly.
+    misconceptions:
+      - A citation is not proof; models can attach real citations to claims the cited text does not support.
+    interview: Expect questions on how you would detect and reduce unsupported claims in RAG answers.
+    sources:
+      - title: Enabling Large Language Models to Generate Text with Citations (ALCE)
+        url: https://arxiv.org/abs/2305.14627
+        publisher: arXiv
+      - title: Faithfulness metric
+        url: https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/
+        publisher: Ragas
+  - id: rag.advanced-patterns
+    title: Advanced RAG patterns
+    module: generation
+    level: advanced
+    priority: advanced
+    summary: Query rewriting, HyDE, multi-query, parent-document retrieval, multi-hop and agentic retrieval — each fixes a specific failure and adds cost.
+    requires: [rag.reranking, rag.evaluation]
+    why: >-
+      Once you have a measured baseline, specific failures — vague queries, multi-part questions, answers
+      spread across documents — need targeted fixes. Each pattern adds latency and cost, so adopt one only when
+      evaluation shows it helps.
+    keyIdeas:
+      - "Query rewriting and multi-query: an LLM rewrites or expands the question into several queries whose results are fused; helps with vague or conversational questions."
+      - "HyDE: generate a hypothetical answer and embed that instead of the question, so the query vector resembles a relevant document."
+      - "Parent-document (small-to-big) retrieval: match on small chunks, return their larger parent section for context."
+      - "Multi-hop and agentic retrieval: retrieve, read, then decide what to retrieve next (or let an agent call search as a tool); Self-RAG-style methods let the model decide when to retrieve and critique its evidence."
+      - Every extra LLM call adds latency, cost and a failure point; keep the baseline as a fallback and compare on the same evaluation set.
+    misconceptions:
+      - Advanced patterns do not compensate for poor parsing or chunking; fix the earlier layers first.
+    interview: Interviewers ask which failure each pattern addresses and how you would prove it helped.
+    sources:
+      - title: Precise Zero-Shot Dense Retrieval without Relevance Labels (HyDE)
+        url: https://arxiv.org/abs/2212.10496
+        publisher: arXiv
+      - title: "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+        url: https://arxiv.org/abs/2310.11511
+        publisher: arXiv
+      - title: "Retrieval-Augmented Generation for Large Language Models: A Survey (Gao et al.)"
+        url: https://arxiv.org/abs/2312.10997
+        publisher: arXiv
+  # -------------------------------------------------------------- production
+  - id: rag.evaluation
+    title: Evaluating RAG
+    module: production
+    level: intermediate
+    priority: essential
+    summary: Measure retrieval (recall@k, MRR, nDCG) separately from generation (faithfulness, relevance, correctness) on a labelled question set.
+    requires: [rag.grounding-citations, genai.evaluation]
+    why: >-
+      RAG systems have many tunable parts and fail quietly. Without a labelled question set and separate
+      retrieval and generation metrics you cannot tell whether a change helped or where a failure came from.
+    keyIdeas:
+      - Build an evaluation set of realistic questions labelled with the chunks or documents that answer them (and reference answers where possible); start with 50-200 and grow it from real failures.
+      - "Retrieval metrics: recall@k (was a relevant chunk in the top k?), MRR (mean of 1 / rank of the first relevant result), nDCG@k (rewards relevant results near the top and supports graded relevance)."
+      - "Generation metrics: faithfulness (supported by the context), answer relevance and correctness against a reference — judged by people or by an LLM judge you have checked against human labels."
+      - Evaluate components separately and end to end; a fixed set run on every change works like a regression test suite.
+      - Report cost and latency alongside quality.
+    misconceptions:
+      - LLM-as-judge scores are not ground truth; judges have biases (position, verbosity, self-preference) and must be spot-checked against human labels.
+      - Good results on a few hand-picked questions do not show the system works; use a representative, versioned set.
+    tools: [Ragas]
+    interview: Expect to define recall@k, MRR and nDCG and explain how you would evaluate retrieval separately from generation.
+    production: Version the evaluation set and run it in CI whenever prompts, models, chunking or index settings change.
+    sources:
+      - title: "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models"
+        url: https://arxiv.org/abs/2104.08663
+        publisher: arXiv
+      - title: "Ragas: Automated Evaluation of Retrieval Augmented Generation"
+        url: https://arxiv.org/abs/2309.15217
+        publisher: arXiv
+  - id: rag.failure-analysis
+    title: RAG failure analysis
+    module: production
+    level: advanced
+    priority: essential
+    summary: Diagnose whether a bad answer came from parsing, chunking, retrieval, ranking, context assembly or generation — then fix the right layer.
+    requires: [rag.evaluation]
+    why: >-
+      A wrong answer can come from any layer, and fixing the wrong one — swapping the LLM when the real problem
+      is a broken PDF parse — wastes time. Systematic failure analysis pins the cause down with evidence.
+    keyIdeas:
+      - "Trace one bad answer backwards: Is the information in the source? Did parsing extract it? Did chunking keep it intact? Was it retrieved in the top k? Did it survive reranking and context assembly? Did the model use it correctly?"
+      - "Typical failure points: missing content, the answer ranked below the cutoff, relevant chunks dropped during context assembly, the answer present but not extracted, wrong format, wrong level of detail, and incomplete answers."
+      - Label failures by category over a sample of real queries and fix the most frequent category first.
+      - Read the actual retrieved chunks and final prompts; aggregate metrics hide the specific failure.
+      - Turn every diagnosed failure into a new evaluation case so it stays fixed.
+    misconceptions:
+      - "\"The model is hallucinating\" is a symptom, not a diagnosis; most RAG failures trace back to ingestion or retrieval."
+    interview: A common question is "users say the answers are wrong — how do you debug it?"; walk through the pipeline layer by layer with evidence.
+    sources:
+      - title: Seven Failure Points When Engineering a Retrieval Augmented Generation System
+        url: https://arxiv.org/abs/2401.05856
+        publisher: arXiv
+  - id: rag.access-control
+    title: Access control in RAG
+    module: production
+    level: advanced
+    priority: essential
+    summary: Enforce document permissions at retrieval time so users can never get answers built from content they may not see.
+    requires: [rag.metadata-filtering, backend.authorization, rag.document-ingestion]
+    why: >-
+      A RAG system over company documents can leak salaries, HR cases or customer data to anyone who asks the
+      right question. Permissions must be enforced in retrieval, because the model cannot be trusted to keep
+      secrets that are in its context.
+    keyIdeas:
+      - Enforce permissions before generation by filtering retrieval on the authenticated user's identity and groups, so unauthorised chunks never enter the prompt.
+      - Copy access metadata (owner, groups, tenant, classification) from the source system onto every chunk at ingestion and keep it in sync when permissions change.
+      - Isolate tenants with separate collections or indexes, or a mandatory tenant filter; PostgreSQL row-level security can enforce this inside the database.
+      - Caches, logs, traces and evaluation datasets also contain retrieved content; apply the same access rules to them.
+      - Test it by running queries as low-privilege users and asserting that restricted documents never appear.
+    misconceptions:
+      - Telling the model "do not reveal confidential information" is not access control; prompt injection or simple rephrasing defeats it.
+      - Deleting a document in the source system does not delete it from the index; deletions and permission changes must propagate.
+    interview: Interviewers ask how you would stop a user getting an answer built from documents they are not allowed to see.
+    production: Permission-sync lag is a security window; design for prompt revocation (event-driven updates or query-time checks) and audit what was retrieved for whom.
+    sources:
+      - title: "LLM08:2025 Vector and Embedding Weaknesses"
+        url: https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/
+        publisher: OWASP GenAI Security Project
+      - title: Row Security Policies
+        url: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+        publisher: PostgreSQL Global Development Group
+      - title: Authorization Cheat Sheet
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+        publisher: OWASP
+  - id: rag.performance
+    title: RAG performance and freshness
+    module: production
+    level: advanced
+    priority: supporting
+    summary: Latency budgets, caching, incremental index updates, re-embedding costs and keeping the index in sync with sources.
+    requires: [rag.vector-databases, genai.cost-latency, rag.evaluation]
+    why: >-
+      Users notice every second of latency, and a stale index gives confidently outdated answers. Production
+      RAG has to stay fast, affordable and in sync with its sources as data grows.
+    keyIdeas:
+      - Break latency down by stage — query embedding, retrieval, reranking, time to first token and generation — and budget each; generation usually dominates.
+      - Cache what repeats (query embeddings, results for popular queries, and with care whole answers) and invalidate when the index changes.
+      - Update incrementally — detect changed documents by hash or timestamp, re-chunk and re-embed only those, and delete chunks of removed documents.
+      - Changing the embedding model or chunking means re-embedding everything; build the new index beside the old one and switch over after evaluation (blue/green).
+      - Cut memory with quantization (e.g. `halfvec` in pgvector, scalar or binary quantization in Qdrant) and re-check recall afterwards.
+    misconceptions:
+      - Freshness is not automatic; an index is a copy of your data that drifts unless something keeps it in sync.
+    tools: [pgvector, Qdrant]
+    interview: Expect to discuss where the time goes in a RAG request and how you would keep an index in sync with changing sources.
+    production: Track index freshness (time since the last successful sync per source) and recall after any index-parameter change, not just latency.
+    sources:
+      - title: pgvector README (indexing, half-precision vectors, performance)
+        url: https://github.com/pgvector/pgvector
+        publisher: pgvector
+      - title: Quantization
+        url: https://qdrant.tech/documentation/manage-data/quantization/
+        publisher: Qdrant
+      - title: Guidelines to choose an index
+        url: https://github.com/facebookresearch/faiss/wiki/Guidelines-to-choose-an-index
+        publisher: Meta (FAISS wiki)
+  - id: rag.observability
+    title: RAG observability
+    module: production
+    level: advanced
+    priority: supporting
+    summary: Trace each query through retrieval, ranking and generation, logging what was retrieved and why, to debug and improve with real traffic.
+    requires: [rag.evaluation, mlops.observability]
+    why: >-
+      Offline evaluation never covers everything real users ask. Tracing each production query shows what was
+      retrieved and why an answer went wrong, and turns real failures into improvements.
+    keyIdeas:
+      - Trace each request as nested spans — query rewrite, embedding, retrieval (chunk IDs and scores), reranking, prompt, LLM call (model, tokens, latency) and answer.
+      - Log enough to reproduce a result — index version, prompt-template version, model and parameters.
+      - Capture user feedback (ratings, corrections), attach it to traces, and sample poor traces into the evaluation set.
+      - OpenTelemetry's generative-AI semantic conventions define standard span attributes for model calls (they now live in their own repository and are still evolving); tools such as Langfuse and LangSmith add RAG-friendly views on top of traces.
+      - Watch trends — retrieval scores, "I don't know" rate, latency percentiles, cost per query — to catch drift.
+    misconceptions:
+      - Logging only the final answer is not enough; without the retrieved chunk IDs you cannot tell retrieval failures from generation failures.
+    tools: [Langfuse, OpenTelemetry]
+    interview: Interviewers ask what you would record for each RAG request and how you would use production traces to improve quality.
+    production: Traces contain user queries and document content; apply retention limits, redaction and the same access controls as the source data.
+    sources:
+      - title: OpenTelemetry semantic conventions for generative AI
+        url: https://github.com/open-telemetry/semantic-conventions-genai
+        publisher: OpenTelemetry (GitHub)
+      - title: Langfuse documentation
+        url: https://langfuse.com/docs
+        publisher: Langfuse
+  - id: rag.security
+    title: RAG security — poisoning and injection through retrieved text
+    module: production
+    level: advanced
+    priority: supporting
+    summary: Retrieved documents are untrusted input; attackers can plant text that hijacks the model, poisons answers or leaks data, so retrieval needs its own defences.
+    why: Anyone who can get text into your corpus — a shared drive, a web page, an email — can influence every answer that retrieves it.
+    requires: [rag.context-assembly, genai.prompt-injection]
+    keyIdeas:
+      - Indirect prompt injection hides instructions inside documents; the model may follow them when they appear in its context.
+      - Data poisoning plants false or misleading content so it ranks highly for target queries.
+      - "Mitigations: control who can add content, track provenance, delimit retrieved text and instruct the model to treat it as data, restrict tools available during RAG answers, and validate outputs."
+      - Embedding stores can leak information; apply access control on retrieval, not just on the final answer.
+    misconceptions:
+      - Delimiters and "ignore instructions in documents" prompts reduce but do not eliminate injection; limit what a hijacked answer can do.
+    interview: How could an attacker manipulate a RAG assistant without access to its code, and how would you defend it?
+    production: Log which documents were retrieved for each answer so a poisoned source can be found and removed quickly.
+    sources:
+      - title: OWASP Top 10 for LLM Applications
+        url: https://genai.owasp.org/llm-top-10/
+        publisher: OWASP Foundation

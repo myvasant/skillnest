@@ -1,0 +1,214 @@
+id: backend.api-design
+concept: backend.api-design
+title: Designing APIs
+subtitle: Consistent resource naming, request/response schemas, error formats, pagination, versioning and idempotency
+  keys make APIs predictable and evolvable
+estimatedMinutes: 45
+reviewedOn: '2026-11-04'
+summary: Consistent resource naming, request/response schemas, error formats, pagination, versioning and idempotency
+  keys make APIs predictable and evolvable.
+objectives:
+- Explain the core model behind designing apis.
+- Apply the main rules to a realistic engineering task.
+- Identify common mistakes and verify behaviour with focused tests.
+sources:
+- title: Google API Improvement Proposals (AIP)
+  url: https://google.aip.dev/
+  publisher: Google
+- title: 'RFC 9110: HTTP Semantics'
+  url: https://www.rfc-editor.org/rfc/rfc9110
+  publisher: IETF
+- title: The Idempotency-Key HTTP Header Field
+  url: https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/
+  publisher: IETF HTTPAPI Working Group
+  note: Internet-Draft (work in progress); check its current status.
+sections:
+- id: why
+  title: Why this matters
+  kind: why
+  blocks:
+  - type: markdown
+    body: Consistent resource naming, request/response schemas, error formats, pagination, versioning and idempotency
+      keys make APIs predictable and evolvable. An API is a contract that other teams and programs build on; inconsistent
+      naming, errors or paging force every client to special-case you, and careless changes break them.
+- id: mental-model
+  title: Core model and workflow
+  kind: mental-model
+  blocks:
+  - type: markdown
+    body: '- Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`, `GET
+      /orders/{id}`, `PATCH /orders/{id}`.
+
+      - Prefer cursor (keyset) pagination such as `?limit=50&cursor=...` for large or changing collections; offset
+      pagination slows down on deep pages and skips or repeats rows when data changes.
+
+      - GET, PUT and DELETE are idempotent by definition (RFC 9110); make retried POSTs safe with an `Idempotency-Key`
+      header whose result the server stores and replays.
+
+      - Adding optional fields is a compatible change; removing or renaming fields or changing their types is breaking
+      and needs a new version (for example `/v2`) plus a deprecation period.
+
+      - Publish the contract (OpenAPI) and use one error format and one naming style (for example snake_case) everywhere.'
+  - type: callout
+    variant: misconception
+    title: Common misconceptions
+    body: '- REST does not mean one endpoint per database table; resources should reflect what clients need, which
+      may combine several tables.
+
+      - Idempotent does not mean every response is identical; it means repeating the request has the same effect
+      on server state as sending it once.'
+- id: walkthrough
+  title: Worked example
+  kind: walkthrough
+  blocks:
+  - type: markdown
+    body: This small Python model isolates one rule from the production concept. It helps make the rule testable;
+      it is not a substitute for the framework or database itself.
+  - type: code
+    language: python
+    runnable: true
+    status: verified
+    code: "def is_idempotent(method):\n    return method.upper() in {\"GET\", \"HEAD\", \"OPTIONS\", \"PUT\", \"\
+      DELETE\"}\n\nprint(is_idempotent(\"PUT\"), is_idempotent(\"POST\"))"
+    caption: Runnable model of the lesson concept.
+- id: practice
+  title: Practice and implementation
+  kind: practice
+  blocks:
+  - type: markdown
+    body: Implement the helper first, then run the provided assertions. Consider malformed input and boundary cases.
+  - type: item
+    ref: api-design-code
+  - type: item
+    ref: api-design-explain
+- id: summary
+  title: Summary and mastery check
+  kind: summary
+  blocks:
+  - type: markdown
+    body: '**Remember**
+
+      - Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`, `GET /orders/{id}`,
+      `PATCH /orders/{id}`.
+
+      - Prefer cursor (keyset) pagination such as `?limit=50&cursor=...` for large or changing collections; offset
+      pagination slows down on deep pages and skips or repeats rows when data changes.
+
+      - GET, PUT and DELETE are idempotent by definition (RFC 9110); make retried POSTs safe with an `Idempotency-Key`
+      header whose result the server stores and replays.
+
+      - Adding optional fields is a compatible change; removing or renaming fields or changing their types is breaking
+      and needs a new version (for example `/v2`) plus a deprecation period.
+
+      - Publish the contract (OpenAPI) and use one error format and one naming style (for example snake_case) everywhere.
+
+
+      **Avoid**
+
+      - REST does not mean one endpoint per database table; resources should reflect what clients need, which may
+      combine several tables.
+
+      - Idempotent does not mean every response is identical; it means repeating the request has the same effect
+      on server state as sending it once.'
+  - type: item
+    ref: api-design-mcq
+  - type: item
+    ref: api-design-tf
+  - type: item
+    ref: api-design-code
+items:
+- id: api-design-mcq
+  type: mcq
+  skill: recognition
+  difficulty: 2
+  prompt: Which statement best captures the central idea of designing apis?
+  explanation: 'Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`,
+    `GET /orders/{id}`, `PATCH /orders/{id}`.'
+  options:
+  - id: a
+    text: 'Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`, `GET
+      /orders/{id}`, `PATCH /orders/{id}`.'
+    correct: true
+    feedback: 'Correct: this is the core rule described in the lesson.'
+  - id: b
+    text: REST does not mean one endpoint per database table; resources should reflect what clients need, which
+      may combine several tables.
+    feedback: This is a common misconception; see the explanation above.
+  - id: c
+    text: The implementation does not need tests or operational checks.
+    feedback: Reliable systems require verification and explicit failure handling.
+- id: api-design-tf
+  type: true-false
+  skill: explanation
+  difficulty: 1
+  prompt: REST does not mean one endpoint per database table; resources should reflect what clients need, which
+    may combine several tables.
+  answer: false
+  explanation: This statement describes a known misconception. Use the underlying mechanism and test evidence rather
+    than relying on the shortcut.
+- id: api-design-explain
+  type: explain
+  skill: transfer
+  difficulty: 2
+  prompt: You are implementing designing apis in a real application. What design decisions would you make, what
+    failure case would you test, and what evidence would tell you the implementation is correct?
+  rubric:
+  - Describe the relevant mechanism and the design choice it implies.
+  - Name a realistic failure or edge case and a concrete test for it.
+  - Explain a security, correctness or operational trade-off.
+  modelAnswer: Start with the system contract and its failure modes. Choose the simplest implementation that meets
+    the contract, validate inputs at the boundary, and test both successful and unsuccessful cases. Observe the
+    relevant status, state or output and document any limitations.
+  explanation: A strong response links design decisions to observable behaviour and explicitly handles edge cases.
+- id: api-design-code
+  type: code
+  skill: implementation
+  difficulty: 2
+  prompt: Complete the function for designing apis. Implement the stated rule and make sure both ordinary and edge-case
+    tests pass.
+  starterCode: "def is_idempotent(method):\n    raise NotImplementedError('Complete this function')"
+  solution: "def is_idempotent(method):\n    return method.upper() in {\"GET\", \"HEAD\", \"OPTIONS\", \"PUT\",\
+    \ \"DELETE\"}"
+  tests:
+  - name: Core behaviour
+    code: assert is_idempotent("get") is True
+  - name: Edge cases
+    code: 'assert is_idempotent("DELETE") is True
+
+      assert is_idempotent("POST") is False'
+  hints:
+  - Read the rule in the mental-model section before coding.
+  - Keep the function deterministic and handle boundary cases explicitly.
+  - Run every assertion before considering the exercise complete.
+  explanation: This exercise checks practical application of the lesson rule and includes edge cases to help detect
+    incorrect assumptions.
+masteryCheck:
+  passThreshold: 0.8
+  items:
+  - api-design-mcq
+  - api-design-tf
+  - api-design-code
+cheatsheet: '**Core model**
+
+  - Model resources as plural nouns and let HTTP methods be the verbs: `GET /orders`, `POST /orders`, `GET /orders/{id}`,
+  `PATCH /orders/{id}`.
+
+  - Prefer cursor (keyset) pagination such as `?limit=50&cursor=...` for large or changing collections; offset pagination
+  slows down on deep pages and skips or repeats rows when data changes.
+
+  - GET, PUT and DELETE are idempotent by definition (RFC 9110); make retried POSTs safe with an `Idempotency-Key`
+  header whose result the server stores and replays.
+
+  - Adding optional fields is a compatible change; removing or renaming fields or changing their types is breaking
+  and needs a new version (for example `/v2`) plus a deprecation period.
+
+  - Publish the contract (OpenAPI) and use one error format and one naming style (for example snake_case) everywhere.
+
+
+  **Common mistakes**
+
+  - REST does not mean one endpoint per database table; resources should reflect what clients need, which may combine
+  several tables.
+
+  - Idempotent does not mean every response is identical; it means repeating the request has the same effect on
+  server state as sending it once.'
